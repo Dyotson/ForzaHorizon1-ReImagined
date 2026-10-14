@@ -86,10 +86,13 @@ jobs:
           # log GitHub cannot serve. The build only needs the result, so warnings are off, and the
           # output goes to a file of which only the failures are shown.
           sed -i -E 's/^    -W(all|extra)$/    -w/' "$SRC/CMakeLists.txt"
+          # clang-cl ignores two of the SDK's GCC-style flags: -fno-char8_t (xboxkrnl_ob.cpp passes
+          # a u8 literal as std::string_view) and -ffp-model=strict. Their clang-cl spellings:
+          sed -i -e 's|^    -fno-char8_t$|    /Zc:char8_t-|' -e 's|^    -ffp-model=strict$|    /fp:strict|' "$SRC/CMakeLists.txt"
           cmake -S "$SRC" -B "$SRC/out/build/win" -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=23 -DREXGLUE_USE_VULKAN=ON -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/cmake/windows-native-clang-cl.cmake"
-          if ! cmake --build "$SRC/out/build/win" > "$RUNNER_TEMP/build.log" 2>&1; then
+          if ! cmake --build "$SRC/out/build/win" -- -k 0 > "$RUNNER_TEMP/build.log" 2>&1; then
             grep -a -n -B2 -A12 -E 'FAILED:|: error|LNK[0-9]+:' "$RUNNER_TEMP/build.log" | head -120
             tail -n 30 "$RUNNER_TEMP/build.log"
             exit 1
