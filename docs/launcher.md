@@ -342,10 +342,16 @@ click (`SetCursorPos` + `mouse_event`, `SendKeys`) and take screenshots (`Graphi
   accepted; a damaged file is called damaged; `DataNNNN` / `.data` / package resolve to the package). Proof of
   the build: `--build --title-update <TU4 zip>` from a scratch root whose `default.xex` and facades have the
   header of 0.0.0.12 / media `4000D145`: accepted (message above), TU4 applied (370 of 371 page groups, the
-  same page as in docs/dlc.md; the facades 61/61, 54/54), codegen and build as follows (see the end of this
-  section). Not verified, as no such file was at hand: the real 0.0.0.9, 0.0.0.10 and 0.0.0.12 executables;
+  same page as in docs/dlc.md; the facades 61/61, 54/54), codegen and 359 ninja steps (5.2 min at `-j4`, 2.0 GB
+  peak), then the game booted with a scratch profile and ran: first-run video setup, intro videos, new game, in
+  the open world driving. Not verified, as no such file was at hand: the real 0.0.0.9, 0.0.0.10 and 0.0.0.12 executables;
   they are accepted only if their images are as the table above says (the fingerprint decides on the
   player's machine, and a different one is refused with section and addresses, which the player can post).
+  A test trap met on the way: with `media/` and the other game folders as **symbolic links** into another copy,
+  the game stops at "Disc Read Error" (`NtCreateFile ... game:\media\aiopenworld.zip -> 0xc000000f`, the file
+  exists): the runtime does not follow a symlinked directory under `game:`. It is not the header (the same
+  executables booted with the folders hard-linked); the launcher copies real files, so players are not affected,
+  but a game folder made of symlinks (to point the launcher at a game elsewhere) does not work.
 * **#26 (Setup clipped at 1040 px).** Reproduced (Segoe UI). Cause: the Windows-only "I accept Microsoft's license
   terms ..." `QCheckBox`, whose text cannot wrap, forced the scroll page's minimum width past the window.
   `pages.WrappedCheck` (a check box plus a wrapping label) fixes it; verified by screenshot at the default size.
