@@ -32,6 +32,19 @@ This repository contains **no game code and no game data**. You need your own co
 game (the Games on Demand package of the base version, Title ID `4D5309C9`). The recompiled
 C++ is generated from your copy on your machine; no binaries are published here.
 
+## Contents
+
+- [Screenshots](#screenshots)
+- [What works](#what-works)
+- [Known issues](#known-issues)
+- [Requirements](#requirements)
+- [Building (Linux)](#building-linux)
+- [Windows](#windows)
+- [Playing](#playing)
+  - [Playing online](#playing-online)
+- [More documentation](#more-documentation)
+- [Legal](#legal)
+
 ## Screenshots
 
 Captured from the recompiled game running natively on Linux.
@@ -43,9 +56,9 @@ Captured from the recompiled game running natively on Linux.
 
 ## What works
 
-- **Single player:** boot, menus, the opening drive, free roam, festival events and races
-  (tested with a circuit race against 7 AI drivers), audio, saves, and all DLC packages.
-  Saves from Xenia Canary can be continued.
+- **Single player:** the whole game, from the opening drive to the end of the festival,
+  has been played through on ReImagined: free roam, festival events and races, showcase
+  events, audio, saves, and all DLC packages. Saves from Xenia Canary can be continued.
 - **60, 120 or 144 fps:** `frame_rate = 60` (or 120, 144, any rate up to 240) in
   `forza.toml`. Free roam holds 60, about 115 at 120 and 112 at 144; a race with 7 AI cars
   60, 76 and 70, bound by the GPU emulation. Physics, the race clock and online play keep
@@ -59,7 +72,6 @@ Captured from the recompiled game running natively on Linux.
 
 ## Known issues
 
-- Early work in progress; tested mostly in short sessions.
 - The Auction House exists on the server only; its screens were removed from the game, and
   the storefront answers empty.
 - Keyboard and mouse (`--mnk_mode=true`) is untested; use a controller.
@@ -146,8 +158,8 @@ own server, see [`docs/hosting.md`](docs/hosting.md).
 [`docs/PROJECT.md`](docs/PROJECT.md) (status log, findings, debugging recipes),
 [`docs/playing.md`](docs/playing.md), [`docs/hosting.md`](docs/hosting.md),
 [`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md),
-[`docs/BACKLOG.md`](docs/BACKLOG.md) (planned work: installers, more than 8 players in
-free roam).
+and the [issue tracker](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues)
+(known bugs and planned work).
 
 ## Legal
 
