@@ -398,7 +398,7 @@ class SetupPage(QWidget):
         if have:
             ok, msg = installer.check_game_folder(root)
             self.c1.set_badge("Ready" if ok else "Problem", ok)
-            self.msg1.setText(("Using " if ok else "") + (str(root) if ok else msg))
+            self.msg1.setText(("Using " + str(root) + ("  -  " + msg if "different printing" in msg else "")) if ok else msg)
             self.msg1.setObjectName("muted" if ok else "bad")
         else:
             self.c1.set_badge("Needed", None)
@@ -516,16 +516,16 @@ class SetupPage(QWidget):
         if p.is_file() and p.suffix.lower() == ".xex" or (p.is_dir() and (p / "default.xex").is_file()
                                                          and not p.name.endswith(".data")):
             folder = p.parent if p.is_file() else p
-            ok, msg = installer.check_game_folder(folder)
-            if not ok:
-                self._show_fail("msg1", self.msg1, msg)
-                return
-            self.fail.pop("msg1", None)
-            self.cfg["game_root"] = str(folder)
-            self.cfg.save()
-            self.msg1.setText(f"Using the game files in {folder}")
-            self.changed.emit()
-            self.refresh()
+
+            def use(ok, msg, folder=folder):   # runs before _finished, which refreshes
+                if ok:
+                    self.cfg["game_root"] = str(folder)
+                    self.cfg.save()
+
+            # the executable of another printing of the game is compared with the supported one: seconds
+            t = workers.verify_task(str(folder))
+            t.done.connect(use)
+            self._start(t, self.bar1, self.cancel1, self.msg1)
             return
         try:
             installer.resolve_package(str(p))

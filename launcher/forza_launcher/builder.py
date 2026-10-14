@@ -575,6 +575,11 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     if not (game_files / "default.xex").is_file():
         raise BuildError(f"No default.xex in {game_files}: extract your game files first.")
+    from . import installer   # the executables must be the supported code (another printing is fine)
+    ok, why = installer.check_game_folder(game_files)
+    if not ok:
+        raise BuildError(why)
+    rep.log(why)
     cid = current_build_id(root, opts.title_update)
     state = read_state(root)
     if opts.clean:

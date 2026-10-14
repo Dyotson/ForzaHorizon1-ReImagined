@@ -66,7 +66,7 @@ def headless_extract(argv):
             last["pct"] = pct
             print(f"extracting: {pct}% ({done / 2**30:.1f} of {total / 2**30:.1f} GB)", flush=True)
     try:
-        total = installer.extract_game(a.package, root / "game", progress)
+        total = installer.extract_game(a.package, root / "game", progress, note=print)
     except installer.InstallError as e:
         print(f"extraction failed: {e}", file=sys.stderr)
         return 1
@@ -102,7 +102,8 @@ def headless_build(argv):
             print(f"== {text}", flush=True)
 
     opts = builder.Options(root, a.jobs, accept_ms_license=a.accept_microsoft_license, clean=a.clean,
-                           title_update="" if a.base else (a.title_update or cfg["tu_package"].strip()),
+                           title_update="" if a.base else (str(Path(a.title_update).expanduser().resolve()) if a.title_update
+                                                else cfg["tu_package"].strip()),
                            prefer_downloaded=a.download_toolchain)
     try:
         rt = builder.run_build(opts, Console(), root / "game")

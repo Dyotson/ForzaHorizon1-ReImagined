@@ -14,10 +14,11 @@ machine from their own copy:
 1. **Setup > Game files**: the player's Games on Demand package (`4D5309C9/00007000/<name>`
    plus `<name>.data/`), a disc 1 ISO (`tools/xiso_extract.py`, docs/disc.md), a bare
    `default.xex`, or an already extracted folder. A package is extracted with
-   `tools/xcontent_extract.py`; `default.xex` is extracted first and checked
-   (title `4D5309C9`, version 0.0.0.7, entry point `0x82A6FBC0` = the base version, module hash
-   `D48ABF1704CE5C4A`; a title update (TU4, hash `336A44DC03EC8782`) or another game is
-   refused with a clear message before the long copy).
+   `tools/xcontent_extract.py`; `default.xex` is extracted first and checked before the long copy
+   (`installer.inspect_xex`, below): title `4D5309C9`, entry point `0x82A6FBC0`, version equal to its base
+   version (not patched). The supported printing (0.0.0.7, media id `2B7A1346`) is accepted on its header;
+   any other printing is accepted only when its code is the same (image fingerprint). A title update
+   already applied, a patch file, another game or other code is refused with the reason.
 2. **Title Update 4** (recommended: Horizon Rally and the 1000 Club need it; still optional)
    and **DLC** (optional): pickers for the player's own TU4 package (the STFS package under
    `4D5309C9/000B0000`, or a zip holding it) and DLC folder. The DLC folder is listed with the
@@ -314,6 +315,37 @@ click (`SetCursorPos` + `mouse_event`, `SendKeys`) and take screenshots (`Graphi
   the VM). A folder missing a file is refused with the file named; the same wipe made the message vanish when the
   player went on to fill the title update field (refresh). The message now says to choose the whole extracted game
   folder (the three files).
+* **#29 / #30 again (v0.1.2: players still stuck at Setup; round 3).** Their `launcher.log` files showed the
+  refusal the previous round made visible: `version 0.0.0.9 / 0.0.0.10 / 0.0.0.12, base the same, media id
+  6368CD69 / 2DC7007B / 4000D145, entry point 0x82a6fbc0`, "it looks like a title update" (wrong: these are
+  retail printings of the base game, not updates). The launcher accepted only `(version 7, entry point)`. The
+  executables of these printings are the same build (docs/disc.md), so the rule is now by code, not by number:
+  `forza_launcher/xexcheck.py` decodes the image (AES via `tools/apply_title_update.py`: openssl or
+  `cryptography` when present, pure Python otherwise, 14 s here on the 23 MB image; runs in the extraction
+  thread, in a task when "Use these files" is pressed, and the verdict is remembered per file in
+  `xex_checks.json` next to `launcher.json`, so the window's frequent refreshes are free) and compares SHA-1
+  prefixes of 64 KB pieces of every section (`[va, va+size)`, so padding between sections is ignored) with
+  `forza_launcher/xex_reference.py` (hashes only; written by `tools/xex_reference.py extracted/game` from the
+  supported files, 458 hashes for the three executables). Same for the two facade DLLs. What the verdict
+  says: accepted with "This is a different printing of the game (version X, media id Y): its code is the same as
+  the supported one"; refused as "A title update is already applied" (version != base: TU4 output is 0.0.4.12 on
+  base 0.0.0.12), "a title update patch" (module flags), "damaged" (the image fails its own header's page
+  digests) or "is not the supported code: it differs in: section .text (code) at 0x823f0000-0x823fffff ..."
+  (any section, code or data, with the address ranges of the 64 KB pieces). `run_build` runs the same check,
+  so a headless build cannot start from other code. Second bug in the same log: the player chose
+  `<name>.data\Data0000`; `resolve_package` now maps a `DataNNNN` file (or the `.data` folder) to the package file
+  beside the folder. A relative `--title-update` path to `--build` is made absolute (the title update tool ran in
+  another directory).
+  Tests: `python3 -m unittest launcher/test_xex.py` (header-rewritten copies of the supported files as
+  0.0.0.9/10/11/12 are accepted; the TU4 output is refused as a title update; one changed byte in `.text`,
+  `.data` or a facade's code is refused naming the section; a changed string in the padding after `.edata` is
+  accepted; a damaged file is called damaged; `DataNNNN` / `.data` / package resolve to the package). Proof of
+  the build: `--build --title-update <TU4 zip>` from a scratch root whose `default.xex` and facades have the
+  header of 0.0.0.12 / media `4000D145`: accepted (message above), TU4 applied (370 of 371 page groups, the
+  same page as in docs/dlc.md; the facades 61/61, 54/54), codegen and build as follows (see the end of this
+  section). Not verified, as no such file was at hand: the real 0.0.0.9, 0.0.0.10 and 0.0.0.12 executables;
+  they are accepted only if their images are as the table above says (the fingerprint decides on the
+  player's machine, and a different one is refused with section and addresses, which the player can post).
 * **#26 (Setup clipped at 1040 px).** Reproduced (Segoe UI). Cause: the Windows-only "I accept Microsoft's license
   terms ..." `QCheckBox`, whose text cannot wrap, forced the scroll page's minimum width past the window.
   `pages.WrappedCheck` (a check box plus a wrapping label) fixes it; verified by screenshot at the default size.

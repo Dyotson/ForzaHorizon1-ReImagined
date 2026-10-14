@@ -3,6 +3,7 @@ tools/install_dlc.py (imported as they are; both only read the package)."""
 import contextlib
 import io
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -14,6 +15,8 @@ import install_dlc  # noqa: E402
 import xcontent_extract  # noqa: E402
 import xiso_extract  # noqa: E402
 
+from . import xex_reference, xexcheck  # noqa: E402
+
 GOD = 0x7000
 # Not copied from a disc image: the console system update the disc carries (tools/xiso_extract.py).
 DISC_SKIP = ("$systemupdate",)
@@ -24,13 +27,18 @@ class InstallError(Exception):
 
 
 def resolve_package(path: str) -> Path:
-    """Accepts the package file, its <name>.data folder, or the 00007000 folder."""
+    """Accepts the package file, its <name>.data folder or one of the DataNNNN files in it (what
+    some file pickers end up on), or the 00007000 folder."""
     p = Path(path).expanduser()
+    if p.is_file() and p.parent.name.endswith(".data") and re.fullmatch(r"Data\d+", p.name, re.I):
+        p = p.parent   # a part of the package: the package is the file next to this folder
     if p.is_dir():
         if p.name.endswith(".data"):
             sibling = p.with_name(p.name[:-5])
             if sibling.is_file():
                 return sibling
+            raise InstallError(f"Choose the package file itself: the file named {sibling.name}, next to the "
+                               f"{p.name} folder (it is missing here).")
         files = [f for f in sorted(p.iterdir()) if f.is_file()
                  and (p / (f.name + ".data")).is_dir()]
         if len(files) == 1:
@@ -63,10 +71,11 @@ def free_space(path: Path) -> int:
     return shutil.disk_usage(p).free
 
 
-def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
+def extract_game(package: str, dest: Path, progress, cancelled=lambda: False, note=lambda text: None):
     """Extract a Games on Demand package to dest (default.xex ends up in dest). progress(done,
     total, name) is called per file. Extracts to a sibling folder first so a failed or
-    cancelled run never leaves a half game behind."""
+    cancelled run never leaves a half game behind. note(text) gets the verdict on the
+    executable (a different printing of the game is accepted and said so)."""
     pkg_path = resolve_package(package)
     if is_disc_image(pkg_path):   # a disc image (ISO): the same XDVDFS tree, at the disc's offset
         try:
@@ -104,13 +113,19 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
                 raise Cancelled()
             progress(done, total, e.path)
             xcontent_extract.extract(pkg, e, str(part))
+            if n == 0 and e.path.lower() == "default.xex":
+                progress(done, total, "checking default.xex (can take a few seconds)")
             done += 0 if e.is_dir else e.size
             if n == 0 and e.path.lower() == "default.xex":
                 ok, msg = inspect_xex(part / "default.xex")
                 if not ok:
                     raise InstallError(msg)
+                note(msg)
         if not (part / "default.xex").is_file():
             raise InstallError("The package has no default.xex: is it the base game?")
+        ok, msg = check_facades(part)   # the DLLs of another printing are compared with the supported ones
+        if not ok:
+            raise InstallError(msg)
     except (Cancelled, InstallError):
         shutil.rmtree(part, ignore_errors=True)
         raise
@@ -217,23 +232,38 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
 
 # --- checking default.xex --------------------------------------------------------------------
 
-# The base-version executables the project is made for, by (version, entry point). Disc layouts of
-# one build differ only in the header and a few data strings (docs/disc.md); add a region's here
-# once its code is checked (tools/apply_title_update.py prints how many page groups match).
-KNOWN_BASE = {(7, 0x82A6FBC0): "Forza Horizon base version"}
-BASE_VERSION = 7
+ENTRY_POINT = 0x82A6FBC0
+# The printings of the base game seen so far, by (version, media id). Retail discs and packages come
+# in several (same build, other version numbers and media ids); the header says nothing about the
+# code, so only the supported printing is accepted on its header alone and any other is accepted
+# when its code matches the supported one (xexcheck.py), whether it is listed here or not. The
+# labels are for messages.
+SUPPORTED = (7, 0x2B7A1346)
+KNOWN_BASE = {
+    (7, 0x2B7A1346): "Europe/Asia disc, Games on Demand package",
+    (9, 0x6368CD69): "retail printing 0.0.0.9",
+    (10, 0x2DC7007B): "retail printing 0.0.0.10",
+    (12, 0x4000D145): "retail printing 0.0.0.12 (the one Title Update 4 is made for)",
+}
 REQUIRED_FILES = ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex")
+FLAG_PATCH = 0x60   # delta or full patch (.xexp), not a module
 
 
 def xex_version(v: int) -> str:
     return f"{v >> 28}.{(v >> 24) & 15}.{(v >> 8) & 0xFFFF}.{v & 0xFF}"
 
 
+def _what_differs(diffs):
+    return "; ".join(diffs[:4]) + (f"; and {len(diffs) - 4} more" if len(diffs) > 4 else "")
+
+
 def inspect_xex(path: Path):
-    """Read a default.xex's header. Returns (ok, message). The base version of Forza Horizon
-    (title 4D5309C9, version 0.0.0.7, entry point 0x82A6FBC0) is what the project is made for;
-    the title updates (TU4 and others) have other code and do not work."""
-    import struct
+    """Check a default.xex. Returns (ok, message). Accepted: the base game of Forza Horizon (title
+    4D5309C9, entry point 0x82A6FBC0, version equal to its base version) whose code is the supported
+    one: the supported printing (0.0.0.7, media 2B7A1346) by its header, any other printing after
+    comparing its image with the supported one. Refused, with the reason: another game, a title
+    update (TU4 is 0.0.4.12 on base 0.0.0.12, and its code differs; the project applies it itself),
+    another executable, a damaged file, or a printing whose code is not the supported one."""
     try:
         with open(path, "rb") as f:
             raw = f.read(0x4000)
@@ -241,38 +271,93 @@ def inspect_xex(path: Path):
         return False, f"Cannot read {path}: {e}"
     if raw[:4] != b"XEX2":
         return False, f"{path.name} is not an Xbox 360 executable (XEX2)."
-    try:
-        count = struct.unpack_from(">I", raw, 0x14)[0]
-        opts = {}
-        for i in range(count):
-            key, val = struct.unpack_from(">II", raw, 0x18 + i * 8)
-            opts[key] = val
-        media, version, base, title = struct.unpack_from(">IIII", raw, opts[0x40006])
-        entry = opts.get(0x10100)
-    except (struct.error, KeyError):
+    info = xexcheck.header_info(raw)
+    if info is None:
         return False, f"{path.name} has an unusual header; it is not Forza Horizon's default.xex."
+    media, version, base, title, entry, flags = info
     if f"{title:08X}" != TITLE_ID:
         return False, (f"This is not Forza Horizon: its title id is {title:08X}, not {TITLE_ID}. "
                        "Point to the game's Games on Demand package or disc (Disc 1).")
-    found = f"version {xex_version(version)}, base {xex_version(base)}, media id {media:08X}, entry point {entry or 0:#x}"
-    if (version, entry) in KNOWN_BASE and version == base:
-        return True, f"{KNOWN_BASE[(version, entry)]} ({xex_version(version)}, media id {media:08X})."
-    if version != base or version > BASE_VERSION:   # TU4 is 0.0.4.12 (base 0.0.0.12)
-        return False, (f"This default.xex is {found}: it looks like a title update (TU4 or another). "
-                       "This project needs the base version of the game, the one on the disc or in the "
-                       "plain Games on Demand package, without title updates applied.")
-    return False, (f"This default.xex ({found}) is not a version this project knows (0.0.0.7, entry "
-                   "point 0x82a6fbc0). Another region's disc may differ: please report it with the numbers above (GitHub issues).")
+    found = (f"version {xex_version(version)}, base {xex_version(base)}, media id {media:08X}, "
+             f"entry point {entry:#x}")
+    if flags & FLAG_PATCH:
+        return False, (f"This file is a title update patch ({found}), not the game. Choose the game's "
+                       "default.xex (the base game from the disc or the plain Games on Demand package); give "
+                       "the title update package under Title update.")
+    if version != base:
+        return False, (f"A title update is already applied to this default.xex ({found}). The launcher applies "
+                       "Title Update 4 itself and needs the game without any update: the base game from your "
+                       "disc or the plain Games on Demand package, with the update given under Title update.")
+    if entry != ENTRY_POINT:
+        return False, (f"This default.xex ({found}) is not the executable this project knows (entry point "
+                       f"{ENTRY_POINT:#x}). Please report the numbers above (GitHub issues).")
+    if (version, media) == SUPPORTED:
+        return True, f"Forza Horizon base version ({xex_version(version)}, media id {media:08X})."
+    # Another printing: the code decides.
+    try:
+        same, diffs, intact = xexcheck.check_code(Path(path), "default.xex")
+    except (xexcheck.Unreadable, OSError) as e:
+        return False, f"Cannot check {path.name}: {e}"
+    if not intact:
+        return False, (f"This default.xex ({found}) is damaged: its contents do not match its own checksums. "
+                       "Extract the game files again.")
+    if same:
+        return True, (f"This is a different printing of the game (version {xex_version(version)}, media id "
+                      f"{media:08X}): its code is the same as the supported one.")
+    return False, (f"This default.xex ({found}) is not the supported code: it differs from the supported "
+                   f"version ({xex_version(SUPPORTED[0])}) in: {_what_differs(diffs)}. Please report the numbers "
+                   "above (GitHub issues, with the launcher.log); a different printing of the game may need support.")
+
+
+def inspect_facade(path: Path):
+    """(ok, message) for XMediaFacade_default.xex / SpeechFacade_default.xex: the supported file by
+    its header, another printing's by comparing its image."""
+    name = path.name
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(0x4000)
+    except OSError as e:
+        return False, f"Cannot read {path}: {e}"
+    info = xexcheck.header_info(raw)
+    if info is None:
+        return False, f"{name} is not an Xbox 360 executable (XEX2)."
+    media, version, base, _title, _entry, _flags = info
+    if (version, base, media) == xex_reference.MODULES[name]["header"]:
+        return True, ""
+    try:
+        same, diffs, intact = xexcheck.check_code(Path(path), name)
+    except (xexcheck.Unreadable, OSError) as e:
+        return False, f"Cannot check {name}: {e}"
+    if not intact:
+        return False, f"{name} is damaged: its contents do not match its own checksums. Extract the game files again."
+    if not same:
+        return False, (f"{name} (version {xex_version(version)}, media id {media:08X}) is not the "
+                       f"supported code: it differs in: {_what_differs(diffs)}. Please report this (GitHub issues).")
+    return True, ""
+
+
+def check_facades(folder: Path):
+    """(ok, message) for the facade DLLs present in a folder."""
+    for n in REQUIRED_FILES[1:]:
+        if (folder / n).is_file():
+            ok, msg = inspect_facade(folder / n)
+            if not ok:
+                return False, msg
+    return True, ""
 
 
 def check_game_folder(folder: Path):
     """(ok, message) for an extracted game folder: the three XEX files the build needs and
-    a base-version default.xex."""
+    a default.xex and facades with the supported code."""
     missing = [n for n in REQUIRED_FILES if not (folder / n).is_file()]
     if missing:
         return False, (f"{folder} is missing {', '.join(missing)}. Choose the folder of the whole extracted "
                        f"game, the one that holds {', '.join(REQUIRED_FILES)} (a default.xex alone is not enough).")
-    return inspect_xex(folder / "default.xex")
+    ok, msg = inspect_xex(folder / "default.xex")
+    if not ok:
+        return ok, msg
+    fok, fmsg = check_facades(folder)
+    return (True, msg) if fok else (False, fmsg)
 
 
 TITLE_UPDATE = 0xB0000

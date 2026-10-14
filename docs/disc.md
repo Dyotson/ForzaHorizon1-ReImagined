@@ -49,17 +49,50 @@ the same 2446 files with the same sizes. Byte differences:
 |---|---|---|---|---|
 | Games on Demand package | 0.0.0.7 | `2B7A1346` | `0x82A6FBC0` | security info at `0x128` (0x80 bytes of zeros after the option table) |
 | Disc 1, Europe/Asia, XGD3 | 0.0.0.7 | `2B7A1346` | `0x82A6FBC0` | security info at `0xA8`, the standard layout |
+| Retail printing seen in players' logs (#29, #30) | 0.0.0.9 | `6368CD69` | `0x82A6FBC0` | not seen |
+| Retail printing seen in players' logs | 0.0.0.10 | `2DC7007B` | `0x82A6FBC0` | not seen |
+| Retail printing seen in players' logs; the one Title Update 4 is made for | 0.0.0.12 | `4000D145` | `0x82A6FBC0` | not seen |
 
-The issue assumed the disc carried 0.0.0.12 (the executable Title Update 4 updates). It does
-not: this disc has the same version and code as the package, so the launcher accepted it
-without any change (`installer.inspect_xex` checks title id, version and entry point; it
-reads no hash). Codegen and the hints work on it unchanged.
+The issue assumed the disc carried 0.0.0.12 (the executable Title Update 4 updates). The disc
+tested does not: it has the same version and code as the package. Other printings exist
+(the last three rows; players reported them, from logs that showed only the numbers above, and
+the launcher v0.1.2 refused them as "a title update": wrong, they are base versions, `base ==
+version`). What is known about their code: for 0.0.0.12, docs/dlc.md: Title Update 4 applied to
+the supported image matches its page digests in 370 of 371 page groups, the odd one being the page
+after `.edata` (a database file name in the padding behind the section, outside every section's
+range), so the 0.0.0.12 image is the supported one in everything the update does not replace and
+the patched result equals the real update's. 0.0.0.9 and 0.0.0.10 are not known beyond the
+numbers; the launcher decides by looking.
 
-Adding a version: `KNOWN_BASE` in `launcher/forza_launcher/installer.py` maps
-`(version, entry point)` to a label. A default.xex that is not in the table is refused with
-the version, base version, media id and entry point it has, and a request to report it.
-The USA disc may have another media id (and possibly other code); check it by applying
-Title Update 4 to it (below), which verifies the code page by page.
+## The rule (launcher, `installer.inspect_xex`; #29, #30)
+
+A `default.xex` is accepted when its title id is `4D5309C9`, its entry point `0x82A6FBC0`, it is not a
+patch and `base version == version`, **and** its code is the supported one:
+
+* the supported printing (0.0.0.7, media `2B7A1346`) is accepted on its header (as before);
+* any other printing is decoded (`forza_launcher/xexcheck.py`) and each section's virtual range
+  (`.rdata`, `.pdata`, `.text`, ..., `.reloc`) is hashed in 64 KB pieces and compared with
+  `forza_launcher/xex_reference.py`, which `tools/xex_reference.py GAME_DIR` writes from the
+  supported files (SHA-1 prefixes only; no game bytes). Everything in the sections must be equal, data
+  included: the codegen reads the image (`.rdata`, `.pdata`, the code), the runtime loads the player's
+  file, and the hints are addresses in it; padding between sections and the headers (version, media id,
+  signature, layout) are ignored. The facade DLLs are compared the same way.
+* otherwise it is refused naming the section (code or data) and the address ranges that differ.
+
+What the build needs from the file: nothing pins the hash, size or media id: `forza_manifest.toml`
+only gives paths (the module hash in its comment is Xenia's, for the patches file), and the generated
+code embeds the image base and size (`0x1620000`), which the check compares. The headers differ
+between printings (security info layout, version, media id, signature), which only matters to
+`tools/apply_title_update.py`: it repacks the header when the delta needs the standard layout and
+verifies every block against the update's hashes and page digests, so a printing it cannot patch is
+refused there with a message rather than patched wrongly. Checked with copies of the supported
+files with the header of 0.0.0.9/10/12 (`launcher/test_xex.py`): accepted, Title Update 4
+applies (370 of 371 page groups), codegen and build work (docs/launcher.md, round 3).
+
+Adding a printing: nothing to add; the check is by code. `KNOWN_BASE` in
+`launcher/forza_launcher/installer.py` only labels versions seen. If the fingerprint refuses a real
+printing, the message lists the sections and addresses that differ: check whether they matter
+before widening the rule.
 
 ## Title Update 4 from the disc's executable
 

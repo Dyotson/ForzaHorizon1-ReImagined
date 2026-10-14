@@ -61,9 +61,21 @@ def extract_task(package, dest):
         def prog(done, total, name):
             t.progress.emit(done / total if total else 0, name)
         t.status.emit("Extracting the game files")
-        total = installer.extract_game(package, Path(dest), prog, t.cancelled)
-        return f"Extracted {total / 2**30:.1f} GB."
+        notes = []
+        total = installer.extract_game(package, Path(dest), prog, t.cancelled, notes.append)
+        return f"Extracted {total / 2**30:.1f} GB. " + " ".join(notes)
     return Task(fn, "extract game files")
+
+
+def verify_task(folder):
+    """Check an extracted game folder (decoding the executable of another printing takes a while)."""
+    def fn(t: Task):
+        t.status.emit("Checking the game files")
+        ok, msg = installer.check_game_folder(Path(folder))
+        if not ok:
+            raise installer.InstallError(msg)
+        return msg
+    return Task(fn, "check game files")
 
 
 def dlc_task(folder, user_data):
