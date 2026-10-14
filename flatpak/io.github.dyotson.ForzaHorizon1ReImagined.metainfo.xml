@@ -71,10 +71,10 @@
     <control>gamepad</control>
   </supports>
   <requires>
-    <memory>8000</memory>
     <internet>first-run</internet>
   </requires>
   <recommends>
+    <memory>8000</memory>
     <internet>always</internet>
   </recommends>
   <provides>

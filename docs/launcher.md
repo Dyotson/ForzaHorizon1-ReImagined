@@ -185,3 +185,38 @@ frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only
   redistributable), SDK overlays 7 MB (Linux) and 18 MB (Windows: runtime, Xenos plugin, codegen
   tool, headers, import libraries, licenses; no Microsoft files).
 * Code signing of the Windows installer (SmartScreen will warn).
+
+## Flatpak (Linux, issue #1): status and next steps
+
+Files: `flatpak/` (manifest `io.github.dyotson.ForzaHorizon1ReImagined.yml`, `.desktop`, AppStream
+`.metainfo.xml` (validates with `flatpak-builder-lint appstream`), `stage.py`, `rebuild.sh`,
+`forza-reimagined.sh`, `flatpak-job.snippet.yml`). Local build: `flatpak/rebuild.sh` (needs
+`flatpak install --user flathub org.flatpak.Builder org.freedesktop.Sdk//26.08
+org.freedesktop.Sdk.Extension.llvm22//26.08`; big files go to `~/.cache/forza-flatpak/`).
+
+Design: the app's runtime is `org.freedesktop.Sdk//26.08` itself (glibc 2.44, g++ 16 headers, cmake 4.4,
+ninja, python 3.14 are there at run time), and `org.freedesktop.Sdk.Extension.llvm22` (clang 22.1.8,
+accepted: the launcher needs >= 21) is declared as the app's extension with `autodownload`. The
+launcher runs from source with the SDK's python; PySide6-Essentials 6.12 and shiboken6 are pinned
+wheels in the manifest. `stage.py` copies what the launcher needs (launcher, tools, project sources,
+server, the CI-built SDK overlay, licenses; no game code, data or generated code) into
+`flatpak/stage/` (git-ignored). `paths.IN_FLATPAK` (FLATPAK_ID) adds the extension's `bin` to PATH and
+switches Qt to its own file dialogs (the portal would hand out the one picked file, losing a Games on
+Demand package's `<name>.data`). Permissions: wayland, fallback-x11, pulseaudio, network, `--device=all`,
+read-only `home`, `/media`, `/run/media`, `/mnt` (other disks: `flatpak override --user --filesystem=PATH:ro`).
+Saves, config, extracted game and build live in `~/.var/app/<id>/`. New CLI: `forza-launcher --extract PACKAGE`.
+
+Tested (this host, Fedora Atomic, user installation): the app builds and installs; `--extract` of the
+real GoD package (7.1 GB, about 15 s); `--build --title-update <TU4 zip> --jobs 8` inside the sandbox with
+the SDK's cmake/ninja and clang 22.1 (no downloads except the 122 MB SDK nightly): 3.4 min wall, 3.1 GB
+peak build memory, TU4 applied, 357 ninja steps; the game started from the launcher's own launch plan
+(Play code path) in the sandbox on Wayland/radv with the local Forza Live server child and a copy of a
+Xenia save. Repo size of the app commit 98 MB (734 MB installed with the 496 MB LLVM extension).
+
+NOT done: reaching the main menu / free roam and the screenshot, the game's peak RSS (the README's
+"about 4 GB of free RAM" line is therefore unchanged and unverified for the game itself), `flatpak
+build-bundle` and the reinstall test, running the window itself, the PySide6 size trim, and the CI job.
+The CI job is `flatpak/flatpak-job.snippet.yml` (flatpak-github-actions v6.8 pinned, freedesktop-26.08
+image; reuses `sdk-overlay-linux`; gets the SDK's LICENSE from the pinned SDK commit); one hand run
+(38574730110) was started and not checked, so it is not in `release.yml`. Flathub lint: the app id fails
+`appid-url-not-reachable` (the repo is `ForzaHorizon1-ReImagined`) and `home:ro` needs a justification.
