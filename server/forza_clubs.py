@@ -509,8 +509,9 @@ def read_blob(name, limit=0):
     return data[:limit] if limit else data
 
 
-def shared_car_create(xuid, body):
-    p, _ = x.decode(A.ForzaSharedCarCreate_Params, body)
+def shared_car_create(xuid, body, ex=False):
+    """SharedCar.Create, or Title Update 4's CreateEx (the car data has hasRallyUpgrades)."""
+    p, _ = x.decode(A.ForzaSharedCarCreateEx_Params if ex else A.ForzaSharedCarCreate_Params, body)
     club, _ = membership(xuid)
     if not club:
         return x.failure(1, "not in a club")
@@ -539,7 +540,9 @@ def shared_car_create(xuid, body):
     return x.reply(A.ForzaSharedCarCreate_Results, {"carId": car_id})
 
 
-def get_club_cars(xuid, body):
+def get_club_cars(xuid, body, ex=False):
+    """SharedCar.GetClubCars, or Title Update 4's GetClubCarsEx (rows with hasRallyUpgrades,
+    contentId)."""
     p, _ = x.decode(A.ForzaSharedCarGetClubCars_Params, body)
     club, _ = membership(xuid)
     out = []
@@ -558,9 +561,10 @@ def get_club_cars(xuid, body):
                    lastUsedDate=c["used"], sharedCarId=c["id"], raceCount=c["raceCount"],
                    year=info[0], makeId=info[1], modelFamilyId=info[2], bodyFamilyId=info[3],
                    carTypeId=info[4], enginePlacementId=info[5], baseCost=info[6],
-                   version=c["version"])
+                   version=c["version"], hasRallyUpgrades=car.get("hasRallyUpgrades", 0))
         out.append(row)
-    return x.reply(A.ForzaSharedCarGetClubCars_Results, {"carData": out[:p["maxResults"]]})
+    results = A.ForzaSharedCarGetClubCarsEx_Results if ex else A.ForzaSharedCarGetClubCars_Results
+    return x.reply(results, {"carData": out[:p["maxResults"]]})
 
 
 def get_car_details(xuid, body):
@@ -647,6 +651,8 @@ def services():
         ("CarClub", "GetClanFullInfoByTag"): lambda xuid, body: get_clan_full_info(xuid, body, True),
         ("SharedCar", "Create"): shared_car_create,
         ("SharedCar", "GetClubCars"): get_club_cars,
+        ("SharedCar", "CreateEx"): lambda xuid, body: shared_car_create(xuid, body, True),
+        ("SharedCar", "GetClubCarsEx"): lambda xuid, body: get_club_cars(xuid, body, True),
         ("SharedCar", "GetCarDetails"): get_car_details,
         ("SharedCar", "DownloadSharedCar"): download_shared_car,
         ("SharedCar", "IncrementRaceCount"): increment_race_count,

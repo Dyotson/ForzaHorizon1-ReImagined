@@ -243,6 +243,10 @@ HopperData = S(("id", I32), ("name", WSTR(64)), ("description", WSTR(1024)),
                ("shouldVoteCarClassBeforeLaunch", BOOL), ("randomizedOrder", BOOL),
                ("intermissionTimeMs", I32))
 HopperGetList_Results = S(("hopperCategories", ARR(HopperCategory)), ("hoppers", ARR(HopperData)))
+# Title Update 4 asks with GetListEx: each hopper also names the offer (DLC) it needs (0: none).
+HopperDataEx = S(*HopperData.sub, ("requiredOfferId", U64))
+HopperGetListEx_Results = S(("hopperCategories", ARR(HopperCategory)),
+                            ("hoppers", ARR(HopperDataEx)))
 SessionFilterSettings = S(
     ("numStartingMatchmakingQueryResults", U32), ("shouldQosProbe", BOOL),
     ("shouldReportQosToServer", BOOL), ("maxWaitingForQosDataSeconds", U32),

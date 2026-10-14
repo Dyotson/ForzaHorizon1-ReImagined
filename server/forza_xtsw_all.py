@@ -4,6 +4,8 @@ Generated from the game's type descriptors (read from a running game, see
 docs/title_services.md): <Class><Method>_Params and _Results for all 292 records. Names keep
 the game's prefixes (Forza, ForzaWebServices, WebServices). WSTR(n)/BYTES(n)/ARR(t, n): n is
 the game's buffer capacity (0: none given). tools/xtsw_decode.py decodes request dumps with it.
+Title Update 4 has the same records and 7 more (at the end; read from a running TU4 game, array
+capacities not read).
 """
 
 from forza_xtsw import ARR, BOOL, BYTES, F32, GUID, I16, I32, I64, S, SYSTIME, U8, U16, U32, U64, WSTR, XNKID  # noqa: F401
@@ -300,3 +302,12 @@ ContentDownloadContent_Params = S(("contentId", I32), ("payloadOffset", U32), ("
 ContentDownloadContent_Results = S(("isLastBuffer", BOOL), ("downloadData", BYTES(0)), ("totalSize", U32))
 ContentUploadContent_Params = S(("contentId", I32), ("payloadOffset", U32), ("payloadTotalSize", U32), ("uploadData", BYTES(0)))
 ContentUploadContent_Results = S(("payloadUploadedSize", U32))
+
+# Title Update 4 only.
+ForzaChallengeChallengeCompleted_Params = S(("carId", U16), ("challengeThumbprint", U32))
+ForzaHopperGetListEx_Params = S(("maxCategoryResults", U32), ("maxHopperResults", U32))
+ForzaHopperGetListEx_Results = S(("hopperCategories", ARR(S(("name", WSTR(64)), ("description", WSTR(1024)), ("hopperStartIndex", U32)), 0)), ("hoppers", ARR(S(("id", I32), ("name", WSTR(64)), ("description", WSTR(1024)), ("playerCount", I32), ("allowVoteToSkip", BOOL), ("allowVoteToKick", BOOL), ("allowVoteToRebalance", BOOL), ("payoutModifier", F32), ("hideTrueSkill", BOOL), ("maxPartySize", U8), ("icon", I32), ("minAllowedRaces", I32), ("maxAllowedRaces", I32), ("maxAllowedWins", I32), ("shouldVoteCarClassBeforeLaunch", BOOL), ("randomizedOrder", BOOL), ("intermissionTimeMs", I32), ("requiredOfferId", U64)), 0)))
+ForzaSharedCarCreateEx_Params = S(("completeCarData", S(("gameCarId", GUID), ("ProfileId", BYTES(24)), ("modelId", U16), ("manufacturerColorIndex", U16), ("carColorRGB", I32), ("isMetallic", BOOL), ("specialColorIndex", U16), ("perfIndex", F32), ("simPeakPower", F32), ("curbWeight", F32), ("classId", U8), ("driveTypeId", U8), ("engineConfigId", U8), ("cylinderId", U8), ("aspirationTypeId", U8), ("displacementId", I32), ("isStock", BOOL), ("speedRating", F32), ("accelerationRating", F32), ("launchRating", F32), ("brakingRating", F32), ("handlingRating", F32), ("simPeakTorque", F32), ("weightDistribution", F32), ("hasRallyUpgrades", BOOL))), ("texturesId", I32), ("liveryDetails", BYTES(0)), ("tuning", BYTES(0)), ("overWriteExisting", BOOL))
+ForzaSharedCarCreateEx_Results = S(("carId", I32))
+ForzaSharedCarGetClubCarsEx_Params = S(("maxResults", I32))
+ForzaSharedCarGetClubCarsEx_Results = S(("carData", ARR(S(("owner", S(("qwXuid", U64), ("wzGamerTag", WSTR(16)), ("flags", U8), ("clanId", I32), ("clanTag", WSTR(5)), ("roleInClan", I32), ("currentCareerLevel", U8), ("currentBadgeId", I16), ("currentPlayerTitleId", I16), ("currentXPTotal", U32))), ("sharedDate", SYSTIME), ("lastUsedDate", SYSTIME), ("sharedCarId", I32), ("modelId", U16), ("raceCount", I32), ("perfIndex", F32), ("year", U16), ("makeId", U16), ("modelFamilyId", U16), ("bodyFamilyId", U16), ("carTypeId", U8), ("regionId", U8), ("countryId", U8), ("familySpecialId", U8), ("enginePlacementId", U8), ("simPeakPower", F32), ("curbWeight", F32), ("classId", U8), ("driveTypeId", U8), ("engineConfigId", U8), ("cylinderId", U8), ("aspirationTypeId", U8), ("displacementId", I32), ("isStock", BOOL), ("speedRating", F32), ("accelerationRating", F32), ("launchRating", F32), ("brakingRating", F32), ("handlingRating", F32), ("simPeakTorque", F32), ("weightDistribution", F32), ("MakeName", WSTR(31)), ("ModelName", WSTR(81)), ("baseCost", I32), ("hasRallyUpgrades", BOOL), ("contentId", I32), ("version", I32)), 0)))

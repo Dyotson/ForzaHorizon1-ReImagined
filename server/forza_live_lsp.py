@@ -10,7 +10,8 @@ services). This answers the ones online play needs:
                                RetrieveOnlineCredits, WriteRaceStats(Ex) (kept per player)
     Forza.WebServices.OnlineProfile  UpdateAll (online XP and credits, kept per player:
                                the game takes its online XP from Logon2), UpdateAllTables
-    Forza.WebServices.Hopper   GetList (the Find Game playlists), GetSearchSettings,
+    Forza.WebServices.Hopper   GetList (the Find Game playlists; GetListEx on Title
+                               Update 4), GetSearchSettings,
                                GetGameOptions (each round's track and game type),
                                GetSessionListFilterSettings, UserRegister, ReportQosData,
                                ReportVoting, GetRaceMultipliers
@@ -314,6 +315,15 @@ def hopper_get_list(xuid, body):
         "hoppers": hoppers[:params["maxHopperResults"]]})
 
 
+def hopper_get_list_ex(xuid, body):
+    """Title Update 4's GetList: the same playlists, none of them needing a DLC offer."""
+    params, _ = x.decode(x.HopperGetList_Params, body)
+    hoppers = [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS]
+    return x.reply(x.HopperGetListEx_Results, {
+        "hopperCategories": HOPPER_CATEGORIES[:params["maxCategoryResults"]],
+        "hoppers": hoppers[:params["maxHopperResults"]]})
+
+
 def hopper_user_register(xuid, body):
     params, _ = x.decode(x.HopperUserRegister_Params, body)
     log.info("title: hopper %d register %016X session %s", params["hopperId"], xuid,
@@ -449,6 +459,7 @@ SERVICES = {
     ("OnlineProfile", "UpdateAll"): online_profile_update_all,
     ("OnlineProfile", "UpdateAllTables"): lambda xuid, body: x.reply(),
     ("Hopper", "GetList"): hopper_get_list,
+    ("Hopper", "GetListEx"): hopper_get_list_ex,  # Title Update 4
     ("Hopper", "GetSearchSettings"): hopper_get_search_settings,
     ("Hopper", "GetSessionListFilterSettings"):
         lambda xuid, body: x.reply(x.HopperGetSessionListFilterSettings_Results,
