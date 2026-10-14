@@ -4,6 +4,12 @@
 
 <h1 align="center">Forza Horizon 1: ReImagined</h1>
 
+> [!TIP]
+> **The launcher is out: [v0.1.0](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest)**
+> (Linux Flatpak for any distro, Windows installer; both experimental). It builds the game
+> from your own copy, no build steps needed. [Announcement](https://github.com/Dyotson/ForzaHorizon1-ReImagined/discussions/21)
+> · [Website](https://forza.dyotson.dev)
+
 <p align="center">
   The original 2012 Forza Horizon, running natively on PC and rebuilt around the modern
   Horizon experience: a shared online open world, leaderboards and rivals, high frame rates.
@@ -113,7 +119,7 @@ Captured from the recompiled game running natively on Linux.
 - Races with many AI cars are GPU-bound: 76 fps at a 120 fps target and 70 at 144 (60 holds).
 - Windows builds are cross-compiled from Linux and have only been tried under Proton, not
   on Windows itself; the launcher's Windows path and installer have never run on Windows.
-- The launcher is built and tested on Linux end to end, but its first release is not out yet.
+- The launcher (v0.1.0) is experimental: tested end to end on Linux (Flatpak), not yet on Windows.
 - Title Update 4 and base-game players can't play together (separate rooms), and a profile
   that ran on TU4 is refused by the base build.
 
@@ -134,7 +140,7 @@ Captured from the recompiled game running natively on Linux.
 
 ## Install with the launcher
 
-Once the first release is out, this is the way to install. The launcher builds the game on
+This is the way to install. The launcher builds the game on
 your machine from your own files; nothing of the game is ever downloaded or shipped.
 
 1. Get the launcher from the [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest):
