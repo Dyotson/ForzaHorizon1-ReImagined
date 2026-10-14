@@ -223,3 +223,36 @@ back every frame, while the game only needs the thumbnail renders. Not measured 
 60. Next: read back only while a thumbnail is being made (the hooks can set the setting at
 run time: it is read at each resolve), or `some` (copy on cache miss) if it gets the
 thumbnails right. `readback_resolve = "none"` in `forza.toml` restores the old speed.
+
+### readback_resolve cost (#27, 2026-10-14, unfinished)
+
+`readback_resolve` (SDK `IssueCopy_ReadbackResolvePath`): in every mode but `none`, each
+resolve (EDRAM to memory) also copies its written range into a host readback buffer
+(extra barriers and a shared-memory state change). `fast` then waits for nothing, maps
+the *other* of two buffers (last resolve of the same address and length, so a frame
+late), invalidates it and memcpy's it into guest memory on every resolve; a first-seen
+(address, length) is a cache miss and waits for the GPU (`AwaitAllQueueOperationsCompletion`)
+and reads the new data. `some` does the same but only copies on a cache miss (buffers
+are evicted after 60 unused frames, so a car picture rendered rarely is mostly a miss).
+`full` waits for the GPU on every resolve. `none` skips all of it.
+
+Race at 144 (TU4 build, scratch copy of the Xenia save, `tools/perf_scenario.sh race`,
+guest fps of the race scene; the shader cache was still compiling 9-25 pipelines per
+window, load average 2.5-4.5 from the previous run, so CONTENDED and only indicative):
+`none` 88.3 fps (p50 11.0, p95 14.6 ms), `some` 91.1 (p50 10.9, p95 14.6). The `fast`
+run and free roam at 60/144 were stopped before they finished: no conclusion yet on
+whether `some` makes correct pictures or what `fast` costs on a quiet machine.
+
+Findings for the next try:
+- Pictures are 768x288 `k_8_8_8_8` tiled textures (docs/framerate.md);
+  `tools/xdc_decode.py FILE.xdc OUT.png` decodes them (Thumbnail_38/44 of the Xenia save
+  are correct renders: a 3/4 view and a side view of the car; Thumbnail_9 is a different,
+  parts atlas).
+- The save is `sub_82546168` (TU4 `sub_825B60C0`), called only from `sub_82546460`
+  (callers 82555E18, 826D5E2C, 827B7E98, 827BD678). The render before it is not found yet.
+- Targeted readback must switch on before the guest issues the picture's commands (the
+  GPU thread resolves asynchronously, before the CPU compresses), e.g. a guest hook
+  setting an SDK flag at the render start and clearing it after the save; or an SDK filter
+  on the resolve size (thumbnail texture 884,736 bytes).
+- The race scenario needs the pristine Xenia save (`~/xenia_canary_windows/content`), not a
+  profile the game has since changed (a garage screen came up instead of the race).
