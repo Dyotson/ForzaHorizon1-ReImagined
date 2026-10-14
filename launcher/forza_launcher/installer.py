@@ -86,6 +86,9 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
             entries = pkg.entries()
         except SystemExit as e:
             raise InstallError(str(e))
+    if not any(e.path.lower() == "default.xex" for e in entries):
+        raise InstallError("There is no default.xex here: this is not the base game. For a disc, "
+                           "choose Disc 1, the one with default.xex.")
     total = sum(e.size for e in entries if not e.is_dir)
     part = dest.with_name(dest.name + ".part")
     if free_space(dest.parent) < total + (1 << 28):
@@ -107,7 +110,7 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
                 if not ok:
                     raise InstallError(msg)
         if not (part / "default.xex").is_file():
-            raise InstallError("There is no default.xex here: is it the base game (Disc 1)?")
+            raise InstallError("The package has no default.xex: is it the base game?")
     except (Cancelled, InstallError):
         shutil.rmtree(part, ignore_errors=True)
         raise

@@ -76,8 +76,10 @@ same six bytes.
 
 Proof (2026-10-14): the launcher's headless path (`forza-launcher --extract ISO --root R`,
 then `--build --root R --title-update <TU4 zip>`) ran in a scratch data root: codegen, a
-full TU4 build at `-j4` from the disc's files, and a boot to the main menu with HORIZON
-RALLY listed (scratch profile).
+full TU4 build at `-j4` from the disc's files (5.0 min, peak 1.9 GB), and a boot to the main
+menu, which lists SINGLE PLAYER, MULTIPLAYER and HORIZON RALLY (scratch profile, offline).
+A disc image cut short, a file that is not an image and a missing file are refused with a
+message (`tools/xiso_extract.py` names a truncated image).
 
 ## Disc 2
 
@@ -104,7 +106,7 @@ Findings from disc 1 (no disc 2 image was available; nothing below was checked a
   Disc 2 or unknown) by the car's pack. All 176 cars of
   `Data_Car` have their files on disc 1 (`media/cars/*.zip`) and `IsInstalled = 1`, so
   nothing in disc 1's database needs disc 2 to reach the menu or free roam. The pack cars
-  are not in that table; a garage or a lobby that holds one is reported as missing content
+  do not seem to be in that table; a garage or a lobby that holds one is reported as missing content
   ("Disc 2" when the car belongs to these packs).
 
 Not implemented: installing disc 2 (ISO or folder). The plan, once an image is at hand:

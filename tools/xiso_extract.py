@@ -73,7 +73,10 @@ class Iso(xc.Xdvdfs):
     def read_block(self, block, n=SECTOR):
         f = self.files[0]
         f.seek(self.offset + block * SECTOR)
-        return f.read(n)
+        data = f.read(n)
+        if len(data) < n:
+            raise IsoError("The image is truncated (a directory lies past its end).")
+        return data
 
     def runs_for(self, block, length):
         return [[0, self.offset + block * SECTOR, length]] if length else []
