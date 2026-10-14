@@ -28,7 +28,11 @@ public class Decomp extends GhidraScript {
         if (ins.getMnemonicString().equals("blr")) { hasBlr = true; break; }
       }
       long e = fn.getEntryPoint().getOffset();
-      if (hasBlr || (e >= 0x82A7D000L && e < 0x82A7F000L)) { fn.setNoReturn(false); fixed++; }
+      // DECOMP_ALL_RETURN=1: every function returns (functions ending in a branch to the
+      // register-restore helpers, like sub_82411478, were taken for noreturn).
+      if (hasBlr || (e >= 0x82A7D000L && e < 0x82A7F000L) || System.getenv("DECOMP_ALL_RETURN") != null) {
+        fn.setNoReturn(false); fixed++;
+      }
     }
     println("noreturn fixed: " + fixed);
     DecompInterface di = new DecompInterface();

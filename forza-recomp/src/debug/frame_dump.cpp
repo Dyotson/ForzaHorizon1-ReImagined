@@ -13,6 +13,9 @@
 // FORZA_SCREENSHOT_TRIGGER=<path> saves the host's output image instead (what the
 // window shows, at the draw resolution scale, e.g. --resolution_scale=2) as
 // forza_shot_<secs>.ppm in the same directory whenever that file appears.
+// FORZA_SCREENSHOT_BURST=N[:K] makes each trigger save N images, one every K guest
+// frames (K defaults to 1), named with milliseconds, for measuring how fast something
+// moves on screen.
 //
 // FORZA_FPSLOG=1 logs the guest frame rate (VdSwap calls) every 5 seconds.
 //
@@ -216,8 +219,8 @@ void MaybeTriggerRenderDocCapture(double now) {
 // Saves the presenter's current guest output image (what the window shows before
 // scaling to it, at the draw resolution scale) as a binary PPM. On its own thread:
 // the capture waits for a GPU copy.
-void CaptureHostOutput(double now, const std::string& dir) {
-  std::thread([now, dir] {
+void CaptureHostOutput(double now, const std::string& dir, bool precise = false) {
+  std::thread([now, dir, precise] {
     auto* runtime = rex::Runtime::instance();
     auto* graphics = runtime ? runtime->graphics_system() : nullptr;
     auto* presenter = graphics ? graphics->presenter() : nullptr;
@@ -227,7 +230,8 @@ void CaptureHostOutput(double now, const std::string& dir) {
       return;
     }
     char name[64];
-    std::snprintf(name, sizeof(name), "/forza_shot_%07.2f.ppm", now);
+    std::snprintf(name, sizeof(name), precise ? "/forza_shot_%08.3f.ppm" : "/forza_shot_%07.2f.ppm",
+                  now);
     const std::string path = dir + name;
     FILE* f = std::fopen((path + ".tmp").c_str(), "wb");
     if (!f) return;
@@ -281,9 +285,25 @@ extern "C" REX_FUNC(__imp__VdSwap) {
   }
   static const char* shot_trigger = std::getenv("FORZA_SCREENSHOT_TRIGGER");
   static int shot_polls = 0;
-  if (shot_trigger && *shot_trigger && ++shot_polls % 10 == 0 &&
-      std::remove(shot_trigger) == 0) {
-    CaptureHostOutput(elapsed, schedule.dir);
+  static int burst_n = 1, burst_every = 1, burst_left = 0, burst_frame = 0;
+  static std::once_flag burst_once;
+  std::call_once(burst_once, [] {
+    if (const char* v = std::getenv("FORZA_SCREENSHOT_BURST")) {
+      std::sscanf(v, "%d:%d", &burst_n, &burst_every);
+      burst_n = std::max(1, burst_n);
+      burst_every = std::max(1, burst_every);
+    }
+  });
+  if (burst_left > 0) {
+    if (++burst_frame % burst_every == 0) {
+      CaptureHostOutput(elapsed, schedule.dir, true);
+      --burst_left;
+    }
+  } else if (shot_trigger && *shot_trigger && ++shot_polls % 10 == 0 &&
+             std::remove(shot_trigger) == 0) {
+    CaptureHostOutput(elapsed, schedule.dir, burst_n > 1);
+    burst_left = burst_n - 1;
+    burst_frame = 0;
   }
   if (schedule.next < schedule.times.size() && fetch_addr) {
     double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
