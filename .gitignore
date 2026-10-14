@@ -33,3 +33,4 @@ flatpak/stage/
 flatpak-build-dir/
 flatpak-repo/
 *.flatpak
+HorizonISO/

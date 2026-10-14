@@ -67,8 +67,15 @@ include("${CMAKE_CURRENT_BINARY_DIR}/rexglue_project.cmake")
 # would rewrite generated/ under the native build). The build-time codegen step stays
 # (rexglue.cmake orders the generated sources after it) but runs true instead.
 if((CMAKE_CROSSCOMPILING OR FORZA_SKIP_CODEGEN) AND TARGET rex::rexglue)
+    # A no-op that takes any arguments; Windows has no /usr/bin/true.
+    if(CMAKE_HOST_WIN32)
+        set(_codegen_noop "${CMAKE_CURRENT_BINARY_DIR}/codegen_skipped.cmd")
+        file(WRITE "${_codegen_noop}" "@exit /b 0\r\n")
+    else()
+        set(_codegen_noop /usr/bin/true)
+    endif()
     set_target_properties(rex::rexglue PROPERTIES
-        IMPORTED_LOCATION /usr/bin/true IMPORTED_LOCATION_RELEASE /usr/bin/true)
+        IMPORTED_LOCATION "${_codegen_noop}" IMPORTED_LOCATION_RELEASE "${_codegen_noop}")
     message(STATUS "Codegen is skipped: compiling generated/ as it is")
 elseif(TARGET rex::rexglue AND EXISTS "${FORZA_REXGLUE}")
     get_target_property(_configs rex::rexglue IMPORTED_CONFIGURATIONS)
