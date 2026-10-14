@@ -16,8 +16,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   title screen (with Steam Input or Sunshine virtual pads around, your pad is often not
   the first one, and the game used to ask that pad to sign in).
   `FORZA_PAD_PER_USER=1` gives each pad its own player again.
-- **Keyboard:** the SDK's keyboard emulation of a pad is available with `--mnk_mode=true`
-  (bindings: the SDK's `keybind_*` settings; not tested yet).
+- **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
+  launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a
   Forza Live server (`server/forza_live_server.py`, Python 3 standard library only).
   `play.sh` starts one on this machine for the session (UDP 21200, HTTP 21201, data in
@@ -72,3 +72,69 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   The Xenia original is never modified. With several Xenia profiles, name one:
   `tools/play.sh --xenia E030000004B490FA`. (Equivalent by hand: copy the save under the
   runtime's profile folder and start with `--profile_xuid=<XUID>`.)
+
+## Keyboard and mouse
+
+`mnk_mode = true` makes the SDK present the keyboard (and mouse) as a controller on player 1.
+It was played end to end this way: menus, free roam, a Festival race from the sign-up to the
+countdown and the race itself, the pause menu, the map and photo mode. Keys work while the
+game window has focus.
+
+| Controller | Default keys | In the game |
+| --- | --- | --- |
+| Left stick | `W` `A` `S` `D` | steering (`A` `D`), menu and map navigation |
+| Right stick | arrow keys, or the mouse | free look, photo mode camera, map zoom |
+| Right trigger | `E` or `O` | accelerate |
+| Left trigger | `Q` or `I` | brake, reverse |
+| A | `Space` or `;` | select, handbrake, take photo |
+| B | `Backspace` or `'` | back, resume; shift up with manual gears |
+| X | `L` | sign up for an event, focus in photo mode; shift down with manual gears |
+| Y | `P` | rewind (Difficulty: Rewind must be on), effects in photo mode |
+| Left / right bumper | `1` / `3` | (unused) / change camera |
+| Left / right stick press | `F` / `K` | (unused) / look straight back |
+| Back | `Z` or `Tab` | map; with manual gears, enter an event |
+| Start | `X` or `Return` | pause menu, past the title screen |
+| D-pad | `Shift` + arrow keys | radio |
+
+Triggers and keys are all or nothing, as on a pad pressed to the stop; there is no analog
+throttle. The left stick ramps instead (`mnk_stick_ramp`, default 0.2 s): a key moves it to
+60 % at once and to full lock over 0.2 s, and releases in half that, so a tap steers
+gently and a held key still reaches full lock. Without the ramp (`mnk_stick_ramp = 0`) a
+key is full lock at once (a second of it took the starter car from 54 to 27 km/h).
+
+**The mouse** (`mnk_mouse = true`) moves the right stick by its speed: 1000 pixels a second
+is half the stick at `mnk_sensitivity = 1`, and the camera returns to centre when the mouse
+stops, as with a stick (raise the sensitivity for a slow mouse). While the game has focus
+the pointer is captured and hidden (Alt+Tab or the compositor's own shortcut leaves). The
+game's menus have no pointer, so the buttons do nothing there, and the wheel is unused.
+
+**Rebinding:** `keybind_<name>` in `forza.toml` or on the launcher's Controls page, e.g.
+`keybind_right_trigger = "W,E"`. Each takes comma-separated alternatives. Names: letters,
+digits, `F1`-`F24`, `Space`, `Return`, `Tab`, `Backspace`, `Escape`, `Up` `Down` `Left`
+`Right`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`, `Backslash`, `LBracket`,
+`RBracket`, `Minus`, `Plus`, `Backtick`, `Numpad0`-`Numpad9`, `Home` `End` `PageUp`
+`PageDown` `Insert` `Delete`, `LMB` `RMB` `MMB` (mouse buttons), and `Shift`, `Control`,
+`Alt`, alone or in a combination (`Shift+Up`). A combination only fires with exactly those
+modifiers down, which is why the D-pad (`Shift+Up`) and the right stick (`Up`) can share
+the arrow keys. Names: `keybind_a b x y left_trigger right_trigger left_shoulder
+right_shoulder lstick_up lstick_down lstick_left lstick_right lstick_press rstick_up
+rstick_down rstick_left rstick_right rstick_press dpad_up dpad_down dpad_left dpad_right
+back start guide`.
+
+Results by activity:
+
+| Activity | Result |
+| --- | --- |
+| Menus (title, main, pause, options, difficulty, event cards) | works; `W` `S` `A` `D` navigate (`A` `D` change a setting), `Space` selects, `Backspace` goes back; a tap of 70 ms or more registers |
+| Free roam: steer, accelerate, brake, reverse, handbrake | works; steering ramps (above); throttle and brake are all or nothing |
+| Gears (Difficulty: Shifting manual) | works: `Backspace` up, `L` down |
+| Camera change, look back, free look (arrows or mouse), rewind | works; rewind needs Difficulty: Rewind on (it is off by default) |
+| Race: sign-up (`L`, or `Z` with manual gears), enter event, start, drive, rewind, pause menu | works |
+| Map | works: `WASD` moves the cursor, the arrows or the mouse zoom, `Backspace` leaves |
+| Photo mode | works: `WASD` moves the camera, arrows or mouse turn it, `Space` takes the photo, `Backspace` exits |
+| Awkward | no analog throttle, brake or steering; no pointer in menus; with manual gears `Z` enters events, so open the map from the pause menu |
+| Not tried | the radio keys, the confirmation of "Retire from event" by keyboard (another window took focus during that test), online play |
+
+SDK patch 0040 (`docs/sdk_patches.md`) adds the stick ramp, the mouse speed model and
+modifier keys as bindings; without it `mnk_stick_ramp` does not exist and the mouse is
+about five times weaker.

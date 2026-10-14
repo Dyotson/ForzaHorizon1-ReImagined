@@ -74,7 +74,9 @@ Captured from the recompiled game running natively on Linux.
 
 - The Auction House exists on the server only; its screens were removed from the game, and
   the storefront answers empty.
-- Keyboard and mouse (`--mnk_mode=true`) is untested; use a controller.
+- Keyboard and mouse (`mnk_mode = true`) play through menus, free roam, races and photo mode;
+  throttle and brake are all or nothing and the menus have no pointer
+  ([`docs/playing.md`](docs/playing.md#keyboard-and-mouse)).
 - Windows builds are cross-compiled from Linux and have only been tried under Proton, not
   on Windows itself.
 - Races with many AI cars are GPU-bound and below 60 fps.

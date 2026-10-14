@@ -521,6 +521,11 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   `tools/live_session.sh DIR` + `tools/live_step.sh DIR WAIT INPUT...` (input FIFO,
   screenshot `DIR/shot.png` through `FORZA_SCREENSHOT_TRIGGER`). Headless frame dumps come
   out all zero (seen in Reach); check rendering with screenshots from a windowed run.
+- Keyboard and mouse: `python3 tools/uinput_keys.py FIFO &` makes a virtual keyboard and
+  mouse (uinput); `echo "tap SPACE 0.1" > FIFO` presses keys, `move 1500 0 1000` moves the
+  mouse 1500 px in 1 s. Start the game with `--mnk_mode=true --mnk_mouse=true` through
+  `tools/live_session.sh`, and keep its window focused: another game window opening takes
+  the keys away (a game that ignores the keys is usually that). Screenshots as above.
 - `FORZA_FPSLOG=1` logs the frame rate every 5 s; `FORZA_AUDIOLOG=1` the peak/RMS of the
   audio the game submits (non-zero means it makes sound).
 - A fault no handler takes aborts with a host stack in the log (`src/debug/fault_guard.cpp`):
