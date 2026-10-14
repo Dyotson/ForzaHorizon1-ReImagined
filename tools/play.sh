@@ -5,6 +5,15 @@
 #   tools/play.sh                 # your profile and progress in ~/.local/share/forza
 #   tools/play.sh --xenia [XUID]  # continue your Xenia save (see below)
 #   tools/play.sh --offline       # no Xbox LIVE (no Forza Live server)
+#   tools/play.sh --base          # the base game instead of Title Update 4 (see below)
+#
+# Title Update 4 (docs/dlc.md): when its build exists (forza-recomp/out/build/linux-tu4, see
+# README: Building) it is the default: Horizon Rally and the 1000 Club need it. The update's
+# files (tools/apply_title_update.py: patched default.xex, facades, media.zip) are mounted as
+# update: from FORZA_UPDATE (default extracted/tu4). A profile save that TU4 loaded is
+# converted (ForzaProfile/VersionFlags, NeedsAA) and the base build refuses it ("MISSING
+# TITLE UPDATE"): --base is for profiles that never ran on TU4. Without the TU4 build the
+# base build is used.
 #
 # Xbox LIVE: the game is signed in to LIVE through a Forza Live server (server/), as a
 # Gold member. live_server in forza.toml or FORZA_SERVER=host[:port] names a shared one;
@@ -24,19 +33,20 @@
 # $FORZA_XENIA_CONTENT (default ~/xenia_canary_windows/content). Installed DLC
 # (tools/install_dlc.py) is shared with the normal profile.
 #
-# Environment: FORZA_BUILD (build dir under forza-recomp/out/build, default linux), REXSDK
+# Environment: FORZA_BUILD (build dir under forza-recomp/out/build, default linux-tu4 when it
+# exists, else linux), FORZA_UPDATE (the update: folder of a TU4 build), REXSDK
 # (SDK prefix; default the patched overlay that tools/build_rexglue_sdk.sh makes),
 # FORZA_DATA (game files, default extracted/game). The log is ~/.local/share/forza/forza.log.
 # Adapted from RecompiledHaloReach's tools/play.sh.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="$ROOT/forza-recomp/out/build/${FORZA_BUILD:-linux}"
+BUILD_ROOT="$ROOT/forza-recomp/out/build"
 DATA="${FORZA_DATA:-$ROOT/extracted/game}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/forza"
 TITLE=4D5309C9
 LOCAL_PROFILE=B13EBABEBABEBABE  # the runtime's own profile folder
 
-xenia=0; refresh=0; xuid=""; offline=0
+xenia=0; refresh=0; xuid=""; offline=0; base=0
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -45,11 +55,26 @@ while [ $# -gt 0 ]; do
             [ "$1" = --xenia-refresh ] && refresh=1
             if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9A-Fa-f]{16}$ ]]; then xuid="${2^^}"; shift; fi ;;
         --offline) offline=1 ;;
+        --base) base=1 ;;
         *) args+=("$1") ;;
     esac
     shift
 done
 
+# Which build: --base forces the base game; else FORZA_BUILD; else Title Update 4 if built.
+if [ "$base" = 1 ]; then FORZA_BUILD=linux
+elif [ -z "${FORZA_BUILD:-}" ]; then
+    if [ -x "$BUILD_ROOT/linux-tu4/forza" ]; then FORZA_BUILD=linux-tu4; else FORZA_BUILD=linux; fi
+fi
+BUILD="$BUILD_ROOT/$FORZA_BUILD"
+if [[ "$FORZA_BUILD" == *tu4* ]]; then
+    UPDATE="${FORZA_UPDATE:-$ROOT/extracted/tu4}"
+    [ -f "$UPDATE/default.xex" ] || { echo "no patched game files at $UPDATE (tools/apply_title_update.py, see README: Building)" >&2; exit 1; }
+    case " ${args[*]:-} " in *" --update_data_root"*) ;; *) args=(--update_data_root="$UPDATE" "${args[@]}") ;; esac
+    echo "play.sh: Title Update 4 build ($FORZA_BUILD); --base for the base game" >&2
+else
+    echo "play.sh: base game build ($FORZA_BUILD): no Horizon Rally, no 1000 Club" >&2
+fi
 [ -x "$BUILD/forza" ] || { echo "no build at $BUILD (see README: Building)" >&2; exit 1; }
 [ -f "$DATA/default.xex" ] || { echo "no game files at $DATA (see README: Building, step 2)" >&2; exit 1; }
 SDK="${REXSDK:-$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64}"
