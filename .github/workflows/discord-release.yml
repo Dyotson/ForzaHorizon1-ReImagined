@@ -38,7 +38,7 @@ jobs:
             | {
                 username: "Forza Horizon 1: ReImagined",
                 avatar_url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png",
-                content: "New release: **\($rel.name)**",
+                content: "@everyone New release: **\($rel.name)**",
                 embeds: [{
                   title: $rel.name,
                   url: $rel.url,
@@ -47,7 +47,7 @@ jobs:
                   thumbnail: { url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png" },
                   footer: { text: (if $rel.isPrerelease then "Pre-release" else "Windows installer · Linux Flatpak and .tar.gz" end) }
                 }],
-                allowed_mentions: { parse: [] }
+                allowed_mentions: { parse: ["everyone"] }
               }' > payload.json
           curl -fsS -H "Content-Type: application/json" --data @payload.json "$WEBHOOK"
           echo "Posted $TAG to Discord."
