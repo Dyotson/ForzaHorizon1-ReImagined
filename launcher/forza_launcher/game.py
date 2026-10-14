@@ -45,13 +45,11 @@ def candidate_dirs(cfg: Config):
     override = cfg.advanced.get("game_dir", "").strip() or os.environ.get("FORZA_GAME_DIR", "")
     if override:
         yield Path(override), "set in Advanced settings", False
-    yield paths.app_dir(), "next to the launcher", False
-    if paths.in_checkout():
-        plat = "windows" if paths.IS_WINDOWS else "linux"
-        yield paths.REPO_ROOT / "forza-recomp/out/dist" / plat, "the package in this checkout", False
-        if not paths.IS_WINDOWS:
-            build = os.environ.get("FORZA_BUILD", "linux")
-            yield paths.REPO_ROOT / "forza-recomp/out/build" / build, "the build in this checkout", True
+    from . import builder
+    yield builder.runtime_dir(cfg.data_home()), "built by the launcher", False
+    if paths.in_checkout() and not paths.IS_WINDOWS:  # development: this checkout's own build
+        build = os.environ.get("FORZA_BUILD", "linux")
+        yield paths.REPO_ROOT / "forza-recomp/out/build" / build, "the build in this checkout", True
 
 
 def find_game(cfg: Config):
@@ -66,10 +64,8 @@ def find_game(cfg: Config):
 
 
 def missing_message(looked):
-    return ("The game program (%s) was not found next to the launcher.\n"
-            "This launcher download does not include it. Use the full installer, or put the "
-            "game's files in the launcher folder, or point to them under Settings > Advanced.\n"
-            "Looked in:\n  %s" % (EXE, "\n  ".join(looked)))
+    return ("The game has not been built on this computer yet. Open Setup and press Build.\n"
+            "Looked in:\n  " + "\n  ".join(looked))
 
 
 def game_version(game: GameInstall | None) -> str:

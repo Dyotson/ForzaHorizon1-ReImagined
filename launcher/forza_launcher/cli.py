@@ -4,6 +4,7 @@
   forza-launcher --dry-run       print the forza.toml and command line Play would use (nothing is written)
   forza-launcher --live-server SCRIPT [args]   run the Forza Live server (the frozen app does this
                                  for the local server, so the player needs no Python)
+  forza-launcher --build [--root DIR] [--jobs N] [--clean]   build the game without the window
   forza-launcher --version
 """
 import runpy
@@ -45,6 +46,37 @@ def dry_run():
     return 0
 
 
+def headless_build(argv):
+    import argparse
+    from pathlib import Path
+    from . import builder
+    from .config import Config
+    ap = argparse.ArgumentParser(prog="forza-launcher --build")
+    ap.add_argument("--root", help="data root (default: the launcher's)")
+    ap.add_argument("--jobs", type=int, default=0)
+    ap.add_argument("--clean", action="store_true")
+    ap.add_argument("--accept-microsoft-license", action="store_true")
+    a = ap.parse_args(argv)
+    cfg = Config()
+    root = Path(a.root) if a.root else cfg.data_home()
+
+    class Console(builder.Reporter):
+        def log(self, text):
+            print(text, flush=True)
+
+        def status(self, text):
+            print(f"== {text}", flush=True)
+
+    opts = builder.Options(root, a.jobs, accept_ms_license=a.accept_microsoft_license, clean=a.clean)
+    try:
+        rt = builder.run_build(opts, Console(), root / "game")
+    except builder.BuildError as e:
+        print(f"build failed: {e}", file=sys.stderr)
+        return 1
+    print(f"runtime: {rt}")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["--live-server"]:
@@ -53,6 +85,8 @@ def main(argv=None):
     if argv[:1] == ["--version"]:
         print(__version__)
         return 0
+    if argv[:1] == ["--build"]:
+        return headless_build(argv[1:])
     if argv[:1] == ["--dry-run"]:
         return dry_run()
     from .ui.window import run

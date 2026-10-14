@@ -18,7 +18,7 @@ def _default():
         "version": 1,
         "game_package": "",       # the Games on Demand package (file)
         "dlc_dir": "",            # folder of DLC packages (4D5309C9/00000002)
-        "game_files_ok": False,   # set after a successful extraction
+        "game_root": "",          # an already extracted folder to use instead of data/game
         "dlc_installed": 0,
         "online": {"mode": "public", "custom_server": ""},
         "profile": {"mode": "own", "xenia_content": "", "xenia_xuid": ""},
@@ -102,7 +102,8 @@ class Config:
         return Path(override) if override else paths.data_home()
 
     def game_files(self) -> Path:
-        return self.data_home() / "game"
+        override = self.d.get("game_root", "").strip()
+        return Path(override) if override else self.data_home() / "game"
 
     def game_files_ready(self) -> bool:
         return (self.game_files() / "default.xex").is_file()

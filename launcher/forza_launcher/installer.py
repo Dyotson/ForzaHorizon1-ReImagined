@@ -7,16 +7,13 @@ import shutil
 from pathlib import Path
 
 from . import TITLE_ID, paths
+from .fetch import Cancelled  # noqa: F401
 
 paths.ensure_tools_importable()
 import install_dlc  # noqa: E402
 import xcontent_extract  # noqa: E402
 
 GOD = 0x7000
-
-
-class Cancelled(Exception):
-    pass
 
 
 class InstallError(Exception):
@@ -83,12 +80,18 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
     part.mkdir(parents=True)
     done = 0
     try:
-        for e in entries:
+        # default.xex first: a title update or another game is refused before the long copy
+        entries = sorted(entries, key=lambda e: e.path.lower() != "default.xex")
+        for n, e in enumerate(entries):
             if cancelled():
                 raise Cancelled()
             progress(done, total, e.path)
             xcontent_extract.extract(pkg, e, str(part))
             done += 0 if e.is_dir else e.size
+            if n == 0 and e.path.lower() == "default.xex":
+                ok, msg = inspect_xex(part / "default.xex")
+                if not ok:
+                    raise InstallError(msg)
         if not (part / "default.xex").is_file():
             raise InstallError("The package has no default.xex: is it the base game?")
     except (Cancelled, InstallError):
@@ -170,3 +173,55 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
         xcontent_extract.extract = real_extract
     progress(total, total, "")
     return count
+
+
+# --- checking default.xex --------------------------------------------------------------------
+
+BASE_ENTRY = 0x82A6FBC0     # entry point of the base version's default.xex
+BASE_VERSION = 7
+REQUIRED_FILES = ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex")
+
+
+def inspect_xex(path: Path):
+    """Read a default.xex's header. Returns (ok, message). The base version of Forza Horizon
+    (title 4D5309C9, version 0.0.0.7, entry point 0x82A6FBC0) is what the project is made for;
+    the title updates (TU4 and others) have other code and do not work."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(0x4000)
+    except OSError as e:
+        return False, f"Cannot read {path}: {e}"
+    if raw[:4] != b"XEX2":
+        return False, f"{path.name} is not an Xbox 360 executable (XEX2)."
+    try:
+        count = struct.unpack_from(">I", raw, 0x14)[0]
+        opts = {}
+        for i in range(count):
+            key, val = struct.unpack_from(">II", raw, 0x18 + i * 8)
+            opts[key] = val
+        media, version, base, title = struct.unpack_from(">IIII", raw, opts[0x40006])
+        entry = opts.get(0x10100)
+    except (struct.error, KeyError):
+        return False, f"{path.name} has an unusual header; it is not Forza Horizon's default.xex."
+    if f"{title:08X}" != TITLE_ID:
+        return False, (f"This is not Forza Horizon: its title id is {title:08X}, not {TITLE_ID}. "
+                       "Point to the game's Games on Demand package.")
+    if entry == BASE_ENTRY and version == BASE_VERSION and base == BASE_VERSION:
+        return True, f"Forza Horizon base version (0.0.0.{version}, media id {media:08X})."
+    if version != base or version > BASE_VERSION:
+        return False, (f"This default.xex is version 0.0.0.{version} (base 0.0.0.{base}): it looks like a "
+                       "title update (TU4 or another). This project needs the base version of the "
+                       "game, the one on the disc or in the plain Games on Demand package, without "
+                       "title updates applied.")
+    return False, (f"This default.xex does not match the base version (entry point "
+                   f"{entry:#x} instead of {BASE_ENTRY:#x}). It is not supported.")
+
+
+def check_game_folder(folder: Path):
+    """(ok, message) for an extracted game folder: the three XEX files the build needs and
+    a base-version default.xex."""
+    missing = [n for n in REQUIRED_FILES if not (folder / n).is_file()]
+    if missing:
+        return False, f"{folder} is missing {', '.join(missing)}."
+    return inspect_xex(folder / "default.xex")
