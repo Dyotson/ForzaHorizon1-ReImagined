@@ -58,7 +58,7 @@ The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
-scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*`, 25 keybinds,
+scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
 deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,

@@ -101,11 +101,17 @@ if IS_WINDOWS:
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
-    "Emulate a controller with the keyboard (untested; a controller is better).", "Keyboard")
-add("mnk_mouse", "Mouse steers the right stick", "Controls", "bool", False,
-    "Off: the right stick comes from the arrow keys only.", "Keyboard")
+    "Keys stand in for a controller (the bindings below).", "Keyboard")
+add("mnk_mouse", "Mouse moves the right stick", "Controls", "bool", False,
+    "Look around (and aim the photo mode camera) with the mouse; the pointer is captured "
+    "while the game has focus. Off: the right stick comes from its keys only.", "Keyboard")
 add("mnk_sensitivity", "Mouse sensitivity", "Controls", "float", 1.0,
-    "", "Keyboard", lo=0.01, hi=10, step=0.1)
+    "1.0 turns the right stick halfway at 1000 pixels a second.", "Keyboard",
+    lo=0.01, hi=10, step=0.1)
+add("mnk_stick_ramp", "Steering ramp (seconds)", "Controls", "float", 0.2,
+    "How long a held key takes to push the left stick (steering) from its first "
+    "deflection to full lock; letting go takes half as long. 0 is all or nothing.",
+    "Keyboard", lo=0, hi=2, step=0.05)
 add("mnk_passthrough", "Raw keyboard to the game", "Controls", "bool", False,
     "For titles that read a USB keyboard. Not needed for Forza.", "Keyboard")
 add("vibration", "Controller vibration", "Controls", "bool", True, "", "Controller")
@@ -136,7 +142,8 @@ KEYBINDS = [
 ]
 for _k, _label, _default in KEYBINDS:
     add("keybind_" + _k, _label, "Controls", "keys", _default,
-        "SDL key names, comma separated for alternatives (Shift+Up for a combination).",
+        "Key names (A, Space, Return, Up, Semicolon, F5, Numpad1, LMB for the left mouse "
+        "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
 
 # --- Audio -----------------------------------------------------------------------------
