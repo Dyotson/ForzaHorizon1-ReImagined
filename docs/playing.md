@@ -8,6 +8,7 @@ Moved out of the README; the short version is there.
 tools/play.sh                 # play with your own profile (~/.local/share/forza)
 tools/play.sh --xenia         # continue your Xenia Canary save (a copy; see below)
 tools/play.sh --offline       # without Xbox LIVE
+tools/play.sh --base          # the base game instead of Title Update 4
 tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR:-/tmp}/forza_run
 ```
 
@@ -60,8 +61,19 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   at 120 and 112 at 144; a race with 7 AI cars 60, 76 and 70, bound by the GPU emulation
   ([`docs/framerate.md`](docs/framerate.md)). 144 needs the SDK overlay with patch 0037
   (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam.
+- **Title Update 4 (default):** `play.sh` runs `forza-recomp/out/build/linux-tu4` when it
+  exists (how to build it: README, Building; `FORZA_BUILD=linux-tu4`) and mounts the
+  update's files (`extracted/tu4/`, or `FORZA_UPDATE`) as `update:` with
+  `--update_data_root`. Horizon Rally and the 1000 Club are in this build only, and the
+  Xenia save of a TU4 player needs it. TU4 converts a profile save when it loads it
+  (`ForzaProfile/VersionFlags` 0 to 4, flags 2, a `NeedsAA` file); the base build then
+  refuses the profile ("MISSING TITLE UPDATE: Your profile save game requires the latest
+  title update"). `--base` (or `FORZA_BUILD=linux`) runs the base build: only for profiles
+  that never ran on TU4, so keep a copy of the profile folder before the first TU4 run.
+  Without a TU4 build `play.sh` uses the base one. Details: [`docs/dlc.md`](dlc.md).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
-  once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`.
+  once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002` (all 23 packages;
+  the Rally Expansion's and the 1000 Club's modes need the TU4 build, their cars work on both).
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.
 - **Your Xenia save:** `tools/play.sh --xenia` copies your Xenia Canary profile's Forza
   Horizon save (`~/xenia_canary_windows/content/<XUID>/4D5309C9`, or

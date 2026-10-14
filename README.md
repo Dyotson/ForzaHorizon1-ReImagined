@@ -58,7 +58,13 @@ Captured from the recompiled game running natively on Linux.
 
 - **Single player:** the whole game, from the opening drive to the end of the festival,
   has been played through on ReImagined: free roam, festival events and races, showcase
-  events, audio, saves, and all DLC packages. Saves from Xenia Canary can be continued.
+  events, audio, saves, and all 23 DLC packages (every DLC car counts as installed; see
+  [`docs/dlc.md`](docs/dlc.md)). Saves from Xenia Canary can be continued.
+- **Title Update 4, Horizon Rally and the 1000 Club:** the Rally Expansion's mode and map
+  and the 1000 Club exist only in the TU4 build, which is built from your own copy of the
+  update (`tools/apply_title_update.py`, below) and is the default of `tools/play.sh`.
+  Horizon Rally loads its map and resumes the rally progress of a Xenia save; the 1000
+  Club opens when signed in to the Forza Live server.
 - **60, 120 or 144 fps:** `frame_rate = 60` (or 120, 144, any rate up to 240) in
   `forza.toml`. Free roam holds 60, about 115 at 120 and 112 at 144; a race with 7 AI cars
   60, 76 and 70, bound by the GPU emulation. Physics, the race clock and online play keep
@@ -86,7 +92,8 @@ Captured from the recompiled game running natively on Linux.
 - Linux x86-64 with a Vulkan 1.3 GPU, about 10 GB of free RAM and 20 GB of disk
   (7.6 GB of extracted game files plus the build). Windows: see below.
 - Your own Forza Horizon Games on Demand package (`4D5309C9/00007000/<name>` plus
-  `<name>.data/`), base version.
+  `<name>.data/`), base version. Optional but recommended: the Title Update 4 package
+  (`4D5309C9/000B0000/<name>`, update 4000D145) for Horizon Rally and the 1000 Club.
 - Clang (tested with 23), CMake >= 3.25, Ninja, Python 3, Git, OpenSSL (for
   `tools/xex_image.py` only).
 - [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) 0.10.0.24 nightly
@@ -109,6 +116,24 @@ cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYP
   -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64
 ninja -C forza-recomp/out/build/linux
 ```
+
+**Title Update 4** (needed for Horizon Rally and the 1000 Club; recommended): apply the
+update to your `default.xex` (about 2 s; it writes the patched executable, the two facade
+DLLs and the update's `media.zip` to `extracted/tu4/`) and build the TU4 version next to the
+base one. It has its own hints (`hints_tu4/`) and generated code (`generated_tu4/`); a full
+build is about 15 minutes at `-j4`. `git checkout forza-recomp/generated/rexglue.cmake`
+afterwards if codegen shows it modified.
+
+```sh
+python3 tools/apply_title_update.py extracted/game/default.xex /path/to/<title update package or zip> extracted/tu4/default.xex
+cmake -S forza-recomp -B forza-recomp/out/build/linux-tu4 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64 \
+  -DFORZA_TITLE_UPDATE=4
+ninja -C forza-recomp/out/build/linux-tu4
+```
+
+The launcher does all of this from the two packages (Setup: game files, Title Update 4,
+DLC; [`docs/launcher.md`](docs/launcher.md)).
 
 ## Windows
 
@@ -138,7 +163,14 @@ Forza Live server when Python is installed, or uses `FORZA_SERVER` / `live_serve
 tools/play.sh                 # play with your own profile (~/.local/share/forza)
 tools/play.sh --xenia         # continue your Xenia Canary save (a copy)
 tools/play.sh --offline       # without Xbox LIVE
+tools/play.sh --base          # the base game instead of Title Update 4
 ```
+
+`play.sh` runs the Title Update 4 build (`forza-recomp/out/build/linux-tu4`) when it exists
+and the base build otherwise. TU4 converts a profile save when it loads it
+(`ForzaProfile/VersionFlags`, a `NeedsAA` file), and the base build then refuses that
+profile ("MISSING TITLE UPDATE"): `--base` is for profiles that never ran on TU4, and a copy
+of the profile folder lets you go back.
 
 Install DLC once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`. Controllers,
 saves, the Xenia save import and more are in [`docs/playing.md`](docs/playing.md).
