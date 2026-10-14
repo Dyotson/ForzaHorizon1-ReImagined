@@ -315,8 +315,8 @@ Fix: `readback_resolve` defaults to `fast` (`ApplyForzaGpuCvarDefaults` in
 from `forza.toml` or the command line wins). Checked on the TU4 build without the flag: an
 upgrade rebuilt a broken thumbnail as a correct render. Cost (race at 144, contended runs:
 a VM and a browser were busy, so only indicative): none 91.0 guest fps (intro 104.2),
-fast 80.6 (intro 98.4); a second none run under heavier load 80.9. At 30 and 60 the race
-holds its target with or without it in earlier runs.
+fast 80.6 (intro 98.4); a second none run under heavier load 80.9. Not measured at 30
+and 60 yet; redo on an idle machine.
 
 **Crowd at the race start (#7) moves faster above 30.** Screenshot bursts
 (`FORZA_SCREENSHOT_BURST=N:K`, every frame) of the Millennia Masters intro, 4 s after START
