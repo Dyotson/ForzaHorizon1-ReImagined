@@ -241,10 +241,12 @@ class SetupPage(QWidget):
         lay.addWidget(self.c1.frame)
 
         # 2. title update -----------------------------------------------------------------
-        self.ctu = StepCard(2, "Title update (optional)",
-                            "Your Title Update 4 package (the file in 4D5309C9/000B0000, update 4000D145 version 4). "
-                            "It is applied to your default.xex before the game is built. The DLC is likely to need it: "
-                            "without it, DLC cars and events may be missing or not work.")
+        self.ctu = StepCard(2, "Title Update 4 (recommended)",
+                            "Recommended: needed for Horizon Rally and the 1000 Club (the Rally Expansion and the "
+                            "1000 Club Expansion). Your Title Update 4 package (the file in 4D5309C9/000B0000, "
+                            "update 4000D145), or a zip holding it. It is applied to your default.xex and the game "
+                            "is built from that version. Optional: without it you get the base game, and the "
+                            "expansions' cars but not their modes.")
         row, self.tu, _ = path_row("Title update package", self._pick_tu, None)
         self.tu.setText(cfg["tu_package"])
         self.tu.editingFinished.connect(self._tu_changed)
@@ -368,12 +370,13 @@ class SetupPage(QWidget):
         if tu:
             ok_tu, msg_tu = installer.inspect_title_update(tu)
             self.ctu.set_badge("Ready" if ok_tu else "Problem", ok_tu)
-            self.msgtu.setText(msg_tu + ("  The title update step of the build is not available yet in this "
-                                         "launcher version." if ok_tu and builder.title_update_script() is None else ""))
+            self.msgtu.setText(msg_tu + ("  This launcher has no title update tool: reinstall it."
+                                         if ok_tu and builder.title_update_script() is None else
+                                         "  The game is built with Title Update 4." if ok_tu else ""))
             self.msgtu.setStyleSheet(f"color: {theme.MUTED if ok_tu else theme.ERR};")
         else:
-            self.ctu.set_badge("Optional", None)
-            self.msgtu.setText("")
+            self.ctu.set_badge("Recommended", None)
+            self.msgtu.setText("No title update: the base game is built (no Horizon Rally, no 1000 Club).")
         d = self.dlc.text().strip()
         if d:
             try:
@@ -530,6 +533,14 @@ class SetupPage(QWidget):
         if not ok:
             QMessageBox.warning(self, "Game files", msg)
             return
+        tu = cfg["tu_package"].strip()
+        if tu:
+            ok_tu, msg_tu = installer.inspect_title_update(tu)
+            if not ok_tu:
+                QMessageBox.warning(self, "Title update",
+                                    msg_tu + "\n\nChoose a valid Title Update 4 package, or clear the field to build "
+                                    "the base game.")
+                return
         if self.ms is not None and not self.ms.isChecked():
             have_vs = Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
             if not have_vs.is_file() and not (cfg.data_home() / "xwin" / "crt" / "include").is_dir():

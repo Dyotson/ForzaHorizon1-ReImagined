@@ -16,14 +16,23 @@ machine from their own copy:
    (title `4D5309C9`, version 0.0.0.7, entry point `0x82A6FBC0` = the base version, module hash
    `D48ABF1704CE5C4A`; a title update (TU4, hash `336A44DC03EC8782`) or another game is
    refused with a clear message before the long copy).
-2. **Title update** (optional, see "Open" below) and **DLC** (optional): pickers for the
-   player's own TU4 package and DLC folder. The DLC folder is listed with the packages' names
-   and installed with `tools/install_dlc.py` (to the game's user data folder).
+2. **Title Update 4** (recommended: Horizon Rally and the 1000 Club need it; still optional)
+   and **DLC** (optional): pickers for the player's own TU4 package (the STFS package under
+   `4D5309C9/000B0000`, or a zip holding it) and DLC folder. The DLC folder is listed with the
+   packages' names and installed with `tools/install_dlc.py` (to the game's user data folder).
+   With a TU4 package the build runs `tools/apply_title_update.py BASE_XEX TU_PACKAGE
+   <data>/build/tu/default.xex` (patched `default.xex`, both facade DLLs and `media.zip`, about
+   2 s), copies `forza_manifest_tu4.toml` with its three `file_path`s and `game_root` pointed at
+   `build/tu`, configures with `-DFORZA_TITLE_UPDATE=4` (`hints_tu4/`, `generated_tu4/`) and
+   stages `build/tu` as `runtime/update`, which Play passes as `--update_data_root`
+   (`--game_data_root` stays the disc's files). Without it the base manifest is built and
+   `runtime/update` removed. `--build` takes `--title-update PATH` (default: the launcher's
+   setting) and `--base`.
 3. **Build**: preflight (RAM, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
    result is staged into `<data>/runtime`. The build is repeated only when the launcher or
-   project version changes (a hash of `forza-recomp/` sources, the launcher version and the
-   SDK pin). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
+   project version changes, or the title update is added, removed or replaced (a hash of
+   `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`, `Documents\forza` on Windows,
@@ -128,23 +137,28 @@ Verified on Linux:
   `--cache_root`, `--profile_xuid`; the Xenia save copy and DLC link were run).
 * PyInstaller (the spec bundles tools, assets and the Forza Live server's stdlib imports),
   the frozen app starts, runs the local server (`--live-server`) and a whole build; `install.sh`.
+* Title Update 4 (2026-10-14, source tree, system clang 23, `--jobs 4`, nice 10, SDK downloaded):
+  `--build --title-update <the TU package zip>` applied the update (2 s), generated code from
+  `forza_manifest_tu4.toml` pointed at `build/tu`, built 350 steps in 3.6 min (2.0 GB peak) and staged
+  `runtime/update` (patched `default.xex`, both facades, `media.zip`); the runtime booted with
+  `--update_data_root=runtime/update` to the main menu, which lists HORIZON RALLY. Rebuild detection:
+  the same package reads "built", no package reads "stale: the title update was removed".
+  A fresh build found one bug that the in-tree build hid: `src/main.cpp` included the base
+  `generated/default/forza_init.h` (present in the checkout, absent in the launcher's tree); a TU4
+  build now includes `generated_tu4/`.
 * Workflows: `actionlint` clean, YAML loads. Landing page: Chromium at 1440x900 and 390x844
   (no console errors, no horizontal scroll, lightbox works).
 
 Not verified: **everything Windows** (build path, xwin, Visual Studio detection, Inno Setup,
-the Windows SDK job), the Linux SDK CI job, `release.yml` as a whole (no run), the title update
-step (the tool exists, the integration is wired but never ran), the Xenia/DLC behaviour in game.
+the Windows SDK job), the Linux SDK CI job, `release.yml` as a whole (no run), the TU4 step in the
+frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only the source tree ran it).
 
 ## Open
 
-* **Title update and DLC.** The TU step calls `tools/apply_title_update.py BASE_XEX TU_PACKAGE
-  OUT_XEX` (it exists; owned by the DLC work). The launcher then points the manifest at the
-  patched `default.xex` and the two patched facade DLLs next to it, stages `OUT_DIR/update/`
-  as `runtime/update` and passes `--update_data_root`. Unconfirmed: whether the runtime must
-  also read the patched `default.xex` as its game data (then `--game_data_root` needs a
-  folder holding it), and whether TU and DLC are required together. Until confirmed both are
-  marked optional in the UI. A suggestion for `tools/install_dlc.py` (not edited): a
-  `progress` callback; the launcher counts bytes by wrapping `xcontent_extract.extract`.
+* **Title update and DLC.** Both are optional in the UI; TU4 is marked recommended. A TU4 profile
+  save (converted by the game) is refused by the base build, so a player who has one needs the
+  TU4 build. A suggestion for `tools/install_dlc.py` (not edited): a `progress` callback; the
+  launcher counts bytes by wrapping `xcontent_extract.extract`.
 * The Windows build path, the Windows SDK job, the Linux SDK job, Inno Setup and the whole
   release workflow have never run. They follow `tools/build_windows.sh` and
   `tools/build_rexglue_sdk.sh`; expect a first round of fixes.

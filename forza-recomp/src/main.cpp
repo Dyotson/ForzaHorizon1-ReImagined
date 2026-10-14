@@ -1,6 +1,10 @@
 // forza - ReXGlue Recompiled Project
 
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+#include "generated_tu4/default/forza_init.h"  // codegen output of forza_manifest_tu4.toml
+#else
 #include "generated/default/forza_init.h"
+#endif
 
 #include "forza_app.h"
 #include "hooks/frame_time.h"

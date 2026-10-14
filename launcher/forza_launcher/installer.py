@@ -256,19 +256,32 @@ TITLE_UPDATE = 0xB0000
 def inspect_title_update(path: str):
     """(ok, message) for the player's title update package (TU4: the package of the 4000D145
     update, version 4)."""
+    import tempfile
+    import zipfile
+    tmp = None
     try:
         p = Path(path).expanduser()
-        if p.is_dir():
-            files = [f for f in p.iterdir() if f.is_file()]
+        if p.is_file() and zipfile.is_zipfile(p):   # a zip holding the package (apply_title_update reads it too)
+            with zipfile.ZipFile(p) as z:
+                members = [i for i in z.infolist() if not i.is_dir() and i.file_size > 0x1000]
+                if len(members) != 1:
+                    return False, "This zip does not hold a single title update package."
+                tmp = tempfile.mkdtemp(prefix="forza-tu-")
+                p = Path(z.extract(members[0], tmp))
+        elif p.is_dir():
+            files = [f for f in p.rglob("*") if f.is_file()]
             if len(files) != 1:
                 return False, "Choose the title update package file itself."
             p = files[0]
         pkg, hdr = inspect_package(p)
-    except InstallError as e:
+    except (InstallError, OSError, zipfile.BadZipFile) as e:
         return False, str(e)
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
     if f"{hdr.title_id:08X}" != TITLE_ID:
         return False, f"This package is for title {hdr.title_id:08X}, not Forza Horizon."
     if hdr.content_type != TITLE_UPDATE:
         return False, (f"This is not a title update (content type {hdr.content_type:#x}); the title update is "
                        "the package under 4D5309C9/000B0000.")
-    return True, f"Title update {hdr.display_name or p.name} (version {hdr.version >> 16}.{hdr.version & 0xFFFF})."
+    return True, f"Title update package: {hdr.display_name or p.name}."

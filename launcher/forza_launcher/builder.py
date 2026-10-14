@@ -52,7 +52,7 @@ class Options:
     accept_ms_license: bool = False
     prefer_downloaded: bool = False
     clean: bool = False
-    title_update: str = ""   # the player's TU4 package (optional)
+    title_update: str = ""   # the player's TU4 package (recommended: Rally, 1000 Club; optional)
 
     def __post_init__(self):
         self.root = Path(self.root)
@@ -129,14 +129,25 @@ def sources_hash(proj: Path) -> str:
     return h.hexdigest()
 
 
+def tu_id(title_update: str = "") -> str:
+    """'' for the base game, else an id of the chosen Title Update 4 package (its size or name)."""
+    if not title_update:
+        return ""
+    p = Path(title_update).expanduser()
+    try:
+        return "tu4:" + (str(p.stat().st_size) if p.is_file() else p.name)
+    except OSError:
+        return "tu4:" + p.name
+
+
 def current_build_id(root: Path, title_update: str = "") -> str | None:
+    """Changes with the launcher version, the project sources, the SDK pin and whether (and
+    which) Title Update 4 is used, so choosing or dropping the update asks for a rebuild."""
     proj = project_dir()
     if proj is None:
         return None
-    tu = ""
-    if title_update and Path(title_update).is_file():
-        tu = str(Path(title_update).stat().st_size)
-    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}|{tu}".encode()).hexdigest()[:16]
+    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}|{tu_id(title_update)}"
+                        .encode()).hexdigest()[:16]
 
 
 def read_state(root: Path) -> dict:
@@ -160,7 +171,11 @@ def build_status(root: Path, title_update: str = ""):
     rt = runtime_dir(root) / ("forza" + EXE)
     if st.get("complete") and rt.is_file():
         if st.get("id") == cid:
-            return "built", f"Built {st.get('when', '')}"
+            return "built", f"Built {st.get('when', '')}" + (" with Title Update 4" if st.get("tu4") else
+                                                              " without a title update (no Horizon Rally, no 1000 Club)")
+        if bool(st.get("tu4")) != bool(title_update):
+            return "stale", ("A Title Update 4 package is chosen: rebuild to play Horizon Rally and the 1000 Club."
+                             if title_update else "The title update was removed: rebuild for the base game.")
         return "stale", "A new version of the project needs a rebuild."
     if st.get("started"):
         return "partial", "A build was started and not finished; it resumes where it stopped."
@@ -371,32 +386,45 @@ def title_update_script() -> Path | None:
     return None
 
 
+TU_EXECUTABLES = ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex")
+
+
+def tu_dir(root: Path) -> Path:
+    """Where the update is applied: the patched executables and the update's other files
+    (media.zip). This folder is the game's update: (--update_data_root)."""
+    return build_dir(root) / "tu"
+
+
 def apply_title_update(opts: Options, rep: Reporter, game_files: Path) -> Path | None:
-    """STUB until tools/apply_title_update.py lands (it is written by the DLC work, see
-    docs/dlc.md): base default.xex + the player's title update package -> a patched
-    default.xex that codegen then uses. Assumed interface:
-        apply_title_update.py BASE_XEX TU_PACKAGE OUT_XEX
-    Returns the patched xex, or None when no title update is used."""
+    """tools/apply_title_update.py BASE_XEX TU_PACKAGE OUT_XEX (docs/dlc.md): writes the patched
+    default.xex and both facade DLLs, and the update's media.zip, into OUT_XEX's folder.
+    Returns that folder, or None when no title update is used."""
     if not opts.title_update:
         return None
+    pkg = Path(opts.title_update).expanduser()
+    if not pkg.exists():
+        raise BuildError(f"The title update package {pkg} does not exist.")
     script = title_update_script()
     if script is None:
-        rep.log("WARNING: a title update was chosen, but this launcher has no tools/apply_title_update.py "
-                "yet: building from the base default.xex without it.")
-        rep.status("Title update step not available yet: using the base game")
-        return None
-    out = build_dir(opts.root) / "tu" / "default.xex"
+        raise BuildError("This launcher has no tools/apply_title_update.py: reinstall the launcher, or "
+                         "clear the title update to build the base game.")
+    out = tu_dir(opts.root) / "default.xex"
+    shutil.rmtree(out.parent, ignore_errors=True)
     out.parent.mkdir(parents=True, exist_ok=True)
     rep.status("Applying your title update")
     cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
-        script, game_files / "default.xex", opts.title_update, out]
+        script, game_files / "default.xex", pkg, out]
     run(cmd, opts.root, os.environ.copy(), rep, low_priority=opts.low_priority)
-    if not out.is_file():
-        raise BuildError("The title update step did not produce a patched default.xex.")
-    return out
+    missing = [n for n in TU_EXECUTABLES if not (out.parent / n).is_file()]
+    if missing:
+        raise BuildError("The title update step did not produce " + ", ".join(missing) + ".")
+    return out.parent
 
 
-def sync_sources(opts: Options, rep: Reporter, game_files: Path, xex: Path | None = None) -> Path:
+def sync_sources(opts: Options, rep: Reporter, game_files: Path, tu: Path | None = None) -> Path:
+    """Copies the project sources into the build folder, pointing the manifests at the player's
+    files: forza_manifest.toml at the extracted game, forza_manifest_tu4.toml (used with a title
+    update) at the folder apply_title_update.py wrote."""
     proj = project_dir()
     if proj is None:
         raise BuildError("The project sources (project/forza-recomp) are not installed next to the launcher.")
@@ -409,14 +437,8 @@ def sync_sources(opts: Options, rep: Reporter, game_files: Path, xex: Path | Non
         wanted.add(rel)
         data = src.read_bytes()
         if rel.as_posix().startswith("forza_manifest") and rel.suffix == ".toml":
-            if xex is not None:  # a title update: the patched executables are in one folder
-                data = data.replace(b"../extracted/tu4", xex.parent.resolve().as_posix().encode())
-                if rel.as_posix() == "forza_manifest.toml":   # no TU manifest: swap the base xex
-                    for name in ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex"):
-                        patched = xex.parent / name
-                        if patched.is_file():
-                            data = data.replace(f"../extracted/game/{name}".encode(),
-                                                patched.resolve().as_posix().encode())
+            if tu is not None:   # file_path x3 and game_root of the TU4 manifest
+                data = data.replace(b"../extracted/tu4", tu.resolve().as_posix().encode())
             data = data.replace(b"../extracted/game", game_files.resolve().as_posix().encode())
         if not dst.is_file() or dst.read_bytes() != data:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -491,9 +513,9 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     tools = ensure_toolchain(opts, rep, 0.0, 0.14)
     rep.status("Preparing the SDK")
     sdk = ensure_sdk(opts, rep, 0.14, 0.17)
-    patched = apply_title_update(opts, rep, game_files)
+    tu = apply_title_update(opts, rep, game_files)
     rep.status("Preparing the project sources")
-    src = sync_sources(opts, rep, game_files, patched)
+    src = sync_sources(opts, rep, game_files, tu)
     env = build_env.tool_env(tools)
     cmake_extra = []
     if IS_WIN:
@@ -506,12 +528,16 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     else:
         cmake_extra += ["-DCMAKE_CXX_COMPILER=" + tools.cxx]
     rexglue = sdk / "bin" / ("rexglue" + EXE)
-    # With a title update the project builds from its TU manifest (patched executables, own hints).
+    # With a title update the project builds from its TU4 manifest (the patched executables, own
+    # hints_tu4/ and generated_tu4/), not the base manifest: the base hints are at base addresses.
+    # Always passed, so a build folder used for the other version is reconfigured.
     manifest = "forza_manifest.toml"
-    if patched is not None and (src / "forza_manifest_tu4.toml").is_file():
+    if tu is not None:
         manifest = "forza_manifest_tu4.toml"
-        cmake_extra.append("-DFORZA_TITLE_UPDATE=4")
-        rep.log("building with Title Update 4 (" + manifest + ")")
+        if not (src / manifest).is_file():
+            raise BuildError("These project sources have no Title Update 4 support (forza_manifest_tu4.toml).")
+    cmake_extra.append("-DFORZA_TITLE_UPDATE=" + ("4" if tu is not None else "0"))
+    rep.log("building " + ("with Title Update 4 (" + manifest + ")" if tu is not None else "the base game"))
 
     # Codegen: recompile the player's default.xex (and its two DLLs) to C++.
     rep.status("Generating code from your default.xex (a minute or two)")
@@ -548,14 +574,15 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
 
     rep.status("Installing")
     rt = stage_runtime(opts, rep, bdir, sdk)
-    update = build_dir(root) / "tu" / "update"
-    if patched is not None and update.is_dir():   # the title update's other files (media.zip)
-        shutil.rmtree(rt / "update", ignore_errors=True)
-        shutil.copytree(update, rt / "update")
+    # runtime/update is the game's update: (--update_data_root): the patched executables and the
+    # update's media.zip. A base build has none.
+    shutil.rmtree(rt / "update", ignore_errors=True)
+    if tu is not None:
+        shutil.copytree(tu, rt / "update")
     wall = time.time() - t0
     peak = monitor.get("peak", 0)
     write_state(root, {"started": t0, "id": cid, "complete": True,
-                       "when": time.strftime("%Y-%m-%d %H:%M"), "seconds": round(wall),
+                       "when": time.strftime("%Y-%m-%d %H:%M"), "tu4": tu is not None, "seconds": round(wall),
                        "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
     (rt / "version.txt").write_text(f"built {time.strftime('%Y-%m-%d')} (sources {sources_hash(project_dir())[:8]})\n")
     rep.progress(1.0, "done")
@@ -599,4 +626,5 @@ def clean_build_tree(root: Path) -> int:
     size = sum(f.stat().st_size for f in b.rglob("*") if f.is_file()) if b.exists() else 0
     shutil.rmtree(b / "forza-recomp" / "out", ignore_errors=True)
     shutil.rmtree(b / "forza-recomp" / "generated", ignore_errors=True)
+    shutil.rmtree(b / "forza-recomp" / "generated_tu4", ignore_errors=True)
     return size
