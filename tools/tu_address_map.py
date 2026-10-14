@@ -9,9 +9,9 @@ unchanged functions match in order even where the update inserted or changed cod
 address maps to the same offset in the matched function (only when both have the same
 length). A function start the alignment left out goes where its callers' calls go (call
 sites in matched functions of the same length), before similarity within the gap and the
-code around it are tried. Data addresses map through the code that uses them: lis/addi (and lis + load or
-store) pairs at the same offset of matched functions give anchor pairs, and an address
-takes the shift of its nearest anchors when they agree.
+code around it are tried. Data addresses map through the code that uses them: lis/addi
+(and lis + load or store) pairs at the same offset of matched functions give anchor pairs,
+and an address takes the shift of its nearest anchors when they agree.
 
 Usage:
   tu_address_map.py OLD_XEX NEW_XEX ADDR...           print OLD -> NEW for each address
