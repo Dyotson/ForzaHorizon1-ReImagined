@@ -8,6 +8,7 @@ extracted/
 # Codegen output (translated game code) lives in the private -generated repo;
 # only the SDK's CMake glue is tracked.
 forza-recomp/generated/*
+forza-recomp/generated_tu4/
 !forza-recomp/generated/rexglue.cmake
 forza-recomp/out/
 forza-recomp/codegen-warnings.log

@@ -11,7 +11,8 @@ Usage:
                     4D5309C9/000B0000/tu00000001_00000000), a .zip holding it, a folder
                     holding one of those or the extracted files, or a bare .xexp.
       OUT_XEX       the patched default.xex. The update's other files (Forza Horizon's
-                    TU4 has media.zip) are extracted next to it, into OUT_DIR/update/.
+                    TU4 has media.zip) are extracted next to it: OUT_XEX's folder is
+                    what the game mounts as update: (the update_data_root setting).
   apply_title_update.py --check XEX     print the version, module flags and page-digest check
 
 The output XEX is unencrypted, with "basic" (no) compression and the target headers of the
@@ -573,9 +574,9 @@ def main(argv):
             xexp = os.path.join(files, facade + "p")
             if os.path.isfile(xexp) and os.path.isfile(os.path.join(base_dir, facade)):
                 patch_file(os.path.join(base_dir, facade), xexp, os.path.join(out_dir, facade))
-        # Everything else the update carries (TU4: media.zip) goes to OUT_DIR/update/,
-        # the folder the runtime mounts as update:.
-        upd = os.path.join(out_dir, "update")
+        # Everything else the update carries (TU4: media.zip) goes next to the patched
+        # executable: that folder is mounted as update:.
+        upd = out_dir
         for root, _, names in os.walk(files):
             for n in names:
                 if n.lower().endswith(".xexp"):

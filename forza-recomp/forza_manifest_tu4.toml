@@ -1,0 +1,27 @@
+# Codegen manifest for Forza Horizon (4D5309C9) with Title Update 4 (default.xex 0.0.4.12,
+# module hash 336A44DC03EC8782): the executable and facade DLLs that
+# tools/apply_title_update.py writes to extracted/tu4/ (docs/dlc.md). Hints in hints_tu4/
+# (ported from hints/ with tools/tu_address_map.py, then completed with the finder tools).
+# Build with -DFORZA_TITLE_UPDATE=4.
+
+[project]
+name = "forza"
+sdk_version = "0.10.0"
+game_root = "../extracted/tu4"
+
+[entrypoint]
+file_path = "../extracted/tu4/default.xex"
+out_directory_path = "generated_tu4/default"
+includes = ["hints_tu4/tail_targets.toml", "hints_tu4/rexcrt.toml", "hints_tu4/default_indirect_entries.toml", "hints_tu4/default_orphan_functions.toml", "hints_tu4/physics_loader_check.toml"]
+
+[[modules]]
+guest_path = "XMediaFacade_default.xex"
+file_path = "../extracted/tu4/XMediaFacade_default.xex"
+out_directory_path = "generated_tu4/xmediafacade"
+includes = ["hints_tu4/xmediafacade.toml", "hints_tu4/xmediafacade_indirect_entries.toml", "hints_tu4/xmediafacade_orphan_functions.toml"]
+
+[[modules]]
+guest_path = "SpeechFacade_default.xex"
+file_path = "../extracted/tu4/SpeechFacade_default.xex"
+out_directory_path = "generated_tu4/speechfacade"
+includes = ["hints_tu4/speechfacade.toml", "hints_tu4/speechfacade_indirect_entries.toml", "hints_tu4/speechfacade_orphan_functions.toml"]

@@ -1,0 +1,39 @@
+# Diagnostics for the free-roam physics-loader fault (docs/PROJECT.md): before
+# sub_82DFFC48 loops over a 12-byte record's entries into its 8-slot stack array, check
+# the count (r8 = byte 9 of the record at r29) and log the record and its owner when it
+# is out of range. src/hooks/physics_loader_check.cpp.
+[[midasm_hook]]
+address = 0x82DFFC9C
+name = "ForzaCheckPhysicsRecord_82D3DB54"
+registers = ["r3"]
+
+# sub_82E06C98 passes three 16-byte result structs on its stack (r1+384, +400, +416) to
+# sub_82E06350 / sub_82E061E8, then takes item indices from their +12 words (r1+396,
+# r1+412) for sub_82DFFC48. To tell "not written" from "written with garbage", fill the
+# index words with a sentinel before the calls and check them where they are used.
+[[midasm_hook]]
+address = 0x82E06F54
+name = "ForzaSeedPhysicsIndices_82D44E4C"
+registers = ["r3"]
+
+[[midasm_hook]]
+address = 0x82E070EC
+name = "ForzaCheckPhysicsIndices_82D44FE4"
+registers = ["r3"]
+
+# The EPA/GJK workspace (sub_82E03E08 initializes it on the caller's stack right before
+# sub_82E05F48) leaves its 30 vertex slots (+0x1AA0, 32 bytes: support point of A, then
+# of B, item index in each w lane) unwritten until a support point is added. Seed the w
+# lanes with a sentinel naming the slot, so an index that comes from a never-written slot
+# shows up as 0xEEEEssC0 / 0xDDDDssC0 in the check above.
+[[midasm_hook]]
+address = 0x82E05F48
+name = "ForzaSeedEpaSlots_82D43E40"
+registers = ["r3"]
+
+# Same for the GJK simplex (sub_82DD3FF0 initializes it: flags at +144, its four 32-byte
+# vertices at +16 are left unwritten); EPA (sub_82E05E78) copies its first vertices.
+[[midasm_hook]]
+address = 0x82DD3FF0
+name = "ForzaSeedSimplex_82D12178"
+registers = ["r3"]

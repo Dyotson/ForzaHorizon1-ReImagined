@@ -29,6 +29,7 @@
 // world_challenges (on) turns it off; FORZA_CHALLENGE_TRACE=1 logs the car position.
 
 #include "../kernel/live.h"
+#include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/hud_overlay.h"
 
@@ -51,7 +52,7 @@ REXCVAR_DEFINE_BOOL(world_challenges, true, "Network/Forza Live",
                     "Horizon World: head-to-head challenges (X behind another player's car)");
 
 namespace {
-constexpr uint32_t kCarRoot = 0x832DF024;
+constexpr uint32_t kCarRoot = FORZA_ADDR(0x832DF024);
 constexpr uint16_t kButtonB = 0x2000, kButtonX = 0x4000;
 // CHALLENGE ops (server/forza_challenge.py).
 constexpr uint8_t kPos = 1, kRequest = 2, kAnswer = 3, kFinish = 4, kLeft = 5;
@@ -159,9 +160,9 @@ bool SatNav(PPCContext& ctx, uint8_t* base, bool set, float x, float y, float z)
   const uint32_t table = Load32(forza::GuestPtr(base, components));
   if (!Plausible(table)) return false;
   const uint32_t roads = Load32(forza::GuestPtr(
-      base, table + 4 * Load32(forza::GuestPtr(base, 0x832FF090))));
+      base, table + 4 * Load32(forza::GuestPtr(base, FORZA_ADDR(0x832FF090)))));
   const uint32_t satnav = Load32(forza::GuestPtr(
-      base, table + 4 * Load32(forza::GuestPtr(base, 0x832FF054))));
+      base, table + 4 * Load32(forza::GuestPtr(base, FORZA_ADDR(0x832FF054)))));
   if (!Plausible(roads) || !Plausible(satnav)) return false;
   PPCContext saved = ctx;
   ctx.r1.u64 = ctx.r1.u32 - 0x400;  // our frame below the hooked function's

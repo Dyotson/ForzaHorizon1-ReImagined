@@ -1,0 +1,3 @@
+[functions]
+# Virtual-call thunks reached only by `b` from the import/export stubs.
+0x890E2FA0 = { name = "sub_890E2FA0" }  # b from 0x890E2FBC

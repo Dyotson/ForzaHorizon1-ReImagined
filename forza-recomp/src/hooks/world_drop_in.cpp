@@ -32,6 +32,7 @@
 // live_xmsg.cpp which member of a world the game made its host after the host left.
 
 #include "../kernel/live.h"
+#include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
 #include <rex/cvar.h>
@@ -53,8 +54,8 @@ namespace {
 constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
 constexpr uint8_t kPresetFreeRoam = 7;          // GameTypePreset of the round (online game +436)
-constexpr uint32_t kOnlineGame = 0x83305CC4;    // pointer to the online game object
-constexpr uint32_t kGameModeInfo = 0x832DF00C;  // pointer; +52 is the HUD/game mode value
+constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);    // pointer to the online game object
+constexpr uint32_t kGameModeInfo = FORZA_ADDR(0x832DF00C);  // pointer; +52 is the HUD/game mode value
 constexpr uint32_t kRaceTypeOnlineRace = 6, kRaceTypeOnlineFreeRoam = 18;
 constexpr uint32_t kHudModeFreeRoam = 17;
 
@@ -89,14 +90,14 @@ uint32_t WorldGame(uint8_t* base) {
 // Return addresses of the sub_82865340 calls that make a custom free roam joinable.
 bool JoinInProgressSite(uint32_t lr, const PPCContext& ctx) {
   switch (lr) {
-    case 0x8270101C:  // lobby screen update: JUMP IN available (also needs the game's start time)
-    case 0x828196F4:  // lobby countdown in state 10: time until JUMP IN
-    case 0x8281B364:  // lobby state 10 label: FREE ROAM IN PROGRESS, not WAITING FOR FINISH
-    case 0x82893B20:  // host: a player's ready flag while the game runs (JUMP IN sets it)
-    case 0x8288DCD8:  // every peer: a player whose status became "in game" gets its car
-    case 0x82624B04:  // in the free roam, as in a custom one
+    case FORZA_ADDR(0x8270101C):  // lobby screen update: JUMP IN available (also needs the game's start time)
+    case FORZA_ADDR(0x828196F4):  // lobby countdown in state 10: time until JUMP IN
+    case FORZA_ADDR(0x8281B364):  // lobby state 10 label: FREE ROAM IN PROGRESS, not WAITING FOR FINISH
+    case FORZA_ADDR(0x82893B20):  // host: a player's ready flag while the game runs (JUMP IN sets it)
+    case FORZA_ADDR(0x8288DCD8):  // every peer: a player whose status became "in game" gets its car
+    case FORZA_ADDR(0x82624B04):  // in the free roam, as in a custom one
       return true;
-    case 0x826E5354:  // lobby button filter, "custom games only": the JUMP IN button (index 6)
+    case FORZA_ADDR(0x826E5354):  // lobby button filter, "custom games only": the JUMP IN button (index 6)
       return ctx.r29.u32 == 6;
     default:  // the game's options (0x828837A8: the hopper's), the other lobby buttons, ...
       return false;
@@ -137,7 +138,7 @@ extern "C" REX_FUNC(sub_82865340) {
 // sub_825548A0(settings, race type, &game type): the launch (sub_8286A2E0, returning to
 // 0x8286A418) builds the race settings for the game it starts.
 extern "C" REX_FUNC(sub_825548A0) {
-  if (uint32_t(ctx.lr) == 0x8286A418 && ctx.r4.u32 == kRaceTypeOnlineRace && WorldGame(base)) {
+  if (uint32_t(ctx.lr) == FORZA_ADDR(0x8286A418) && ctx.r4.u32 == kRaceTypeOnlineRace && WorldGame(base)) {
     ctx.r4.u64 = kRaceTypeOnlineFreeRoam;
     if (const uint32_t info = Load32(forza::GuestPtr(base, kGameModeInfo))) {
       Store32(forza::GuestPtr(base, info + 52), kHudModeFreeRoam);

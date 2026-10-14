@@ -37,6 +37,7 @@
 // their difficulty).
 
 #include "../kernel/live.h"
+#include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
 #include <rex/cvar.h>
@@ -74,8 +75,8 @@ namespace {
 constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
 constexpr uint8_t kPresetFreeRoam = 7;
-constexpr uint32_t kOnlineGame = 0x83305CC4;  // pointer to the online game object
-constexpr uint32_t kIsAiPlayer = 0x82865528;  // predicate for sub_828754A0: CPU driver
+constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);  // pointer to the online game object
+constexpr uint32_t kIsAiPlayer = FORZA_ADDR(0x82865528);  // predicate for sub_828754A0: CPU driver
 constexpr uint8_t kStatusHostEndsFreeRoam = 5;
 
 // Online game fields (offsets from *(kOnlineGame)).
@@ -405,7 +406,7 @@ extern "C" REX_FUNC(sub_8286A468) {
 // has just set them loading, so a peer never loaded an event (it waited in the lobby until
 // the host's race kicked it after 45 s). CPU drivers don't count for that check.
 extern "C" REX_FUNC(sub_82880A88) {
-  if (uint32_t(ctx.lr) == 0x82875A10) {
+  if (uint32_t(ctx.lr) == FORZA_ADDR(0x82875A10)) {
     const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
     if (r[7] == 1) {
       ctx.r3.u64 = 0;
@@ -627,7 +628,7 @@ extern "C" REX_FUNC(__imp__sub_82CF7278);
 extern "C" REX_FUNC(sub_82573660) {
   const uint32_t player = ctx.r4.u32, lr = uint32_t(ctx.lr);
   if (Trace()) TracePlayer("remove local", ctx, base, player, ctx.r5.u32);
-  if (lr == 0x82633824 && REXCVAR_GET(world_events) && WorldPlaylistGame(base)) {
+  if (lr == FORZA_ADDR(0x82633824) && REXCVAR_GET(world_events) && WorldPlaylistGame(base)) {
     const uint32_t record = StatusRecord(ctx, base, player);
     if (record && forza::GuestPtr(base, record)[7] == 1 &&
         !(CallVirtual(ctx, base, player, 0x9C) & 0xFF)) {

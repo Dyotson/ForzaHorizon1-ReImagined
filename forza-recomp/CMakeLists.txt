@@ -9,11 +9,25 @@ project(forza LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Which executable: the disc's (0) or Title Update 4 (4): its own manifest, hints
+# (hints_tu4/) and codegen output (generated_tu4/), docs/dlc.md.
+set(FORZA_TITLE_UPDATE 0 CACHE STRING "Game version to build: 0 (base) or 4 (Title Update 4)")
+set_property(CACHE FORZA_TITLE_UPDATE PROPERTY STRINGS 0 4)
+if(FORZA_TITLE_UPDATE STREQUAL "4")
+    set(FORZA_MANIFEST forza_manifest_tu4.toml)
+    set(FORZA_GENERATED generated_tu4)
+elseif(FORZA_TITLE_UPDATE STREQUAL "0")
+    set(FORZA_MANIFEST forza_manifest.toml)
+    set(FORZA_GENERATED generated)
+else()
+    message(FATAL_ERROR "FORZA_TITLE_UPDATE must be 0 or 4")
+endif()
+
 # Builds handed a finished generated/ (CI building from the private copy of the codegen
 # output) have no default.xex to run codegen on.
 option(FORZA_SKIP_CODEGEN "Compile generated/ as it is, never run codegen" OFF)
-if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/sources.cmake")
-    message(FATAL_ERROR "FORZA_SKIP_CODEGEN is on but generated/default has no codegen output")
+if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERATED}/default/sources.cmake")
+    message(FATAL_ERROR "FORZA_SKIP_CODEGEN is on but ${FORZA_GENERATED}/default has no codegen output")
 endif()
 
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
@@ -26,7 +40,7 @@ set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/bi
 # checkout (no generated/default yet) codegen runs here once; otherwise the first build
 # would run it but compile none of its output.
 if(NOT CMAKE_CROSSCOMPILING AND NOT REXSDK_DIR AND
-   NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/sources.cmake")
+   NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERATED}/default/sources.cmake")
     find_package(rexglue 0.10.0 REQUIRED CONFIG)
     get_target_property(_rexglue rex::rexglue LOCATION)
     if(EXISTS "${FORZA_REXGLUE}")
@@ -34,12 +48,25 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT REXSDK_DIR AND
     endif()
     message(STATUS "First configure: running codegen (${_rexglue}), this takes a while")
     execute_process(
-        COMMAND "${_rexglue}" codegen "${CMAKE_CURRENT_SOURCE_DIR}/forza_manifest.toml"
+        COMMAND "${_rexglue}" codegen "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_MANIFEST}"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
-include(generated/rexglue.cmake)
+# generated/rexglue.cmake is rewritten by every codegen run with fixed paths (generated/,
+# forza_manifest.toml); a Title Update build includes a copy pointed at its own.
+if(FORZA_GENERATED STREQUAL "generated")
+    include(generated/rexglue.cmake)
+else()
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake" _rexglue_cmake)
+    string(REPLACE "generated/default" "${FORZA_GENERATED}/default" _rexglue_cmake "${_rexglue_cmake}")
+    string(REPLACE "forza_manifest.toml" "${FORZA_MANIFEST}" _rexglue_cmake "${_rexglue_cmake}")
+    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rexglue_${FORZA_GENERATED}.cmake"
+         CONTENT "${_rexglue_cmake}" @ONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake")
+    include("${CMAKE_CURRENT_BINARY_DIR}/rexglue_${FORZA_GENERATED}.cmake")
+endif()
 
 # A cross build compiles the generated code the native build made; it must not run
 # codegen itself (the SDK's rexglue for the target cannot run here, and regenerating
@@ -57,7 +84,7 @@ elseif(TARGET rex::rexglue AND EXISTS "${FORZA_REXGLUE}")
             IMPORTED_LOCATION_${_config} "${FORZA_REXGLUE}")
     endforeach()
     # A new tool reruns codegen (its depfile lists only the inputs).
-    add_custom_command(OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERATED}/default/codegen.build.stamp"
         APPEND DEPENDS "${FORZA_REXGLUE}")
     message(STATUS "Codegen tool: ${FORZA_REXGLUE}")
 elseif(TARGET rex::rexglue)
@@ -113,6 +140,7 @@ else()
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
+target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client

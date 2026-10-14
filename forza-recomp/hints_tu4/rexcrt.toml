@@ -1,0 +1,17 @@
+# Statically linked XAPI routines replaced by native SDK implementations.
+[rexcrt]
+# Fibers. The guest versions save/restore GPRs and return into another fiber's
+# LR, which cannot work for recompiled code (the host stack does not move).
+# Same XAPI build as Halo: Reach (identical code, see RecompiledHaloReach's
+# hints/rexcrt.toml); KTHREAD (PCR+0x100) +0x164 holds the current fiber.
+# GetCurrentFiber (0x831ADAE0) only reads that field and stays guest code.
+ConvertThreadToFiber = 0x831ADAF0
+ConvertFiberToThread = 0x831ADB80
+CreateFiber = 0x831ADBD0
+DeleteFiber = 0x831ADCB0
+SwitchToFiber = 0x831ADD10
+
+[functions]
+# SwitchToFiber's body (the thunk above is `b 0x831AF790`): full thread context
+# save (GPRs, FPRs, VMX128) into the current fiber, placed after a no-return call.
+0x831AF790 = { name = "FiberContextSave_830ED910" }

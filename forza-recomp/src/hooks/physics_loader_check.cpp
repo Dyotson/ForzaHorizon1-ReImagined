@@ -11,6 +11,7 @@
 // before adding a vertex because a dot product overflowed to infinity instead of Xenon's
 // QNaN; SDK patch 0025 fixed that in the codegen), so reading one is caught every time.
 
+#include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
 #include <rex/logging.h>

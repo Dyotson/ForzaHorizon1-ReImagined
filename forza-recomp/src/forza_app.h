@@ -106,10 +106,25 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-  // Override virtual hooks for customization:
-  // void OnLoadXexImage(std::string& xex_image) override {}
-  // void OnPostLoadXexImage() override {}
-  // void OnConfigurePaths(rex::PathConfig& paths) override {}
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+  // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
+  // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
+  // update_data_root setting; default: tu4 next to the game folder). The executable loads
+  // from there, and the facades with it (the game names them relative to it).
+  void OnConfigurePaths(rex::PathConfig& paths) override {
+    if (paths.update_data_root.empty()) {
+      auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
+      if (!game.has_filename()) game = game.parent_path();
+      paths.update_data_root = game.parent_path() / "tu4";
+    }
+    if (!std::filesystem::exists(paths.update_data_root / "default.xex")) {
+      REXLOG_ERROR("This build is for Title Update 4 and needs the patched default.xex in {} "
+                   "(tools/apply_title_update.py; set update_data_root)",
+                   paths.update_data_root.string());
+    }
+  }
+  void OnLoadXexImage(std::string& xex_image) override { xex_image = "update:\\default.xex"; }
+#endif
 
  private:
   rex::system::IGraphicsSystem* graphics_ = nullptr;

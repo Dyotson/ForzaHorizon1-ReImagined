@@ -27,6 +27,7 @@
 
 #include "frame_time.h"
 
+#include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
 #include <rex/chrono/clock.h>
@@ -48,10 +49,10 @@ REXCVAR_DECLARE(int32_t, frame_rate);  // src/main.cpp
 
 namespace {
 
-constexpr uint32_t kOptions = 0x832E29A0;           // sub_82479E88's static object
-constexpr uint32_t kOptionsGuard = 0x832E4A70;      // its construction guard (bit 0)
+constexpr uint32_t kOptions = FORZA_ADDR(0x832E29A0);           // sub_82479E88's static object
+constexpr uint32_t kOptionsGuard = FORZA_ADDR(0x832E4A70);      // its construction guard (bit 0)
 constexpr uint32_t kMainThread30Fps = kOptions + 0x95B;
-constexpr uint32_t kFrameTimeCallReturn = 0x823EDB08;  // sub_823ED888's call of sub_8247C168
+constexpr uint32_t kFrameTimeCallReturn = FORZA_ADDR(0x823EDB08);  // sub_823ED888's call of sub_8247C168
 
 uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 
