@@ -440,7 +440,7 @@ class SettingsPage(QWidget):
             return w
 
         items = [
-            line("Game program folder", "Where the game's executable is. Empty: next to the launcher.",
+            line("Game program folder", "Where the game's executable is. Empty: the game the launcher built (the runtime folder in the game data folder).",
                  "game_dir", "automatic", True),
             line("Game data folder", "Saves, DLC, shader cache, extracted game files and the log. "
                  "Empty: " + str(game.paths.data_home()), "data_root", "automatic", True),

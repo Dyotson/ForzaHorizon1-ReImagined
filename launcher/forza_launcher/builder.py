@@ -109,7 +109,7 @@ def source_files(proj: Path):
     for dirpath, dirs, files in os.walk(base):
         rel = Path(dirpath).relative_to(base)
         dirs[:] = sorted(d for d in dirs if d not in EXCLUDE_DIRS and
-                         not (rel == Path(".") and d == "generated"))
+                         not (rel == Path(".") and d.startswith("generated")))
         for f in sorted(files):
             if f.endswith((".pyc", ".log")):
                 continue
@@ -408,12 +408,15 @@ def sync_sources(opts: Options, rep: Reporter, game_files: Path, xex: Path | Non
         src, dst = proj / "forza-recomp" / rel, dest / rel
         wanted.add(rel)
         data = src.read_bytes()
-        if rel.as_posix() == "forza_manifest.toml":
-            if xex is not None:  # the title-updated executables replace the base ones
-                for name in ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex"):
-                    patched = xex.parent / name
-                    if patched.is_file():
-                        data = data.replace(f"../extracted/game/{name}".encode(), patched.resolve().as_posix().encode())
+        if rel.as_posix().startswith("forza_manifest") and rel.suffix == ".toml":
+            if xex is not None:  # a title update: the patched executables are in one folder
+                data = data.replace(b"../extracted/tu4", xex.parent.resolve().as_posix().encode())
+                if rel.as_posix() == "forza_manifest.toml":   # no TU manifest: swap the base xex
+                    for name in ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex"):
+                        patched = xex.parent / name
+                        if patched.is_file():
+                            data = data.replace(f"../extracted/game/{name}".encode(),
+                                                patched.resolve().as_posix().encode())
             data = data.replace(b"../extracted/game", game_files.resolve().as_posix().encode())
         if not dst.is_file() or dst.read_bytes() != data:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -503,11 +506,17 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     else:
         cmake_extra += ["-DCMAKE_CXX_COMPILER=" + tools.cxx]
     rexglue = sdk / "bin" / ("rexglue" + EXE)
+    # With a title update the project builds from its TU manifest (patched executables, own hints).
+    manifest = "forza_manifest.toml"
+    if patched is not None and (src / "forza_manifest_tu4.toml").is_file():
+        manifest = "forza_manifest_tu4.toml"
+        cmake_extra.append("-DFORZA_TITLE_UPDATE=4")
+        rep.log("building with Title Update 4 (" + manifest + ")")
 
     # Codegen: recompile the player's default.xex (and its two DLLs) to C++.
     rep.status("Generating code from your default.xex (a minute or two)")
     rep.progress(0.18, "codegen")
-    run([rexglue, "codegen", "forza_manifest.toml"], src, env, rep, low_priority=opts.low_priority)
+    run([rexglue, "codegen", manifest], src, env, rep, low_priority=opts.low_priority)
     rep.progress(0.22)
 
     bdir = src / "out" / "build" / PLAT
