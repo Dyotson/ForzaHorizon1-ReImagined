@@ -87,6 +87,16 @@ Notes:
   thunk again.
 - Cost: codegen about 70 s, a full build about 15 minutes at -j4 on this machine.
 
+### For the launcher
+
+- `apply_title_update.py BASE_XEX TU_PACKAGE OUT_XEX` writes `default.xex`, both facades
+  and `media.zip` into OUT_XEX's folder; that folder is the game's `update:`.
+- Build with `-DFORZA_TITLE_UPDATE=4` from `forza_manifest_tu4.toml`, rewriting its
+  `../extracted/tu4` paths (the three `file_path`s and `game_root`) to that folder. Not
+  `forza_manifest.toml` with the patched XEX: the base hints are at base addresses.
+- Run with `--update_data_root=<that folder>` (the default is `tu4` next to the game
+  folder). `--game_data_root` stays the disc's files.
+
 ### Status
 
 - TU4 reaches the main menu, which lists HORIZON RALLY next to Single Player and
