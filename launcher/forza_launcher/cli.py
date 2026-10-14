@@ -58,6 +58,8 @@ def headless_build(argv):
     ap.add_argument("--clean", action="store_true")
     ap.add_argument("--accept-microsoft-license", action="store_true")
     ap.add_argument("--title-update", default="", help="your TU4 package")
+    ap.add_argument("--download-toolchain", action="store_true",
+                    help="use the pinned LLVM, CMake and ninja even when the system has them")
     a = ap.parse_args(argv)
     cfg = Config()
     root = Path(a.root) if a.root else cfg.data_home()
@@ -70,7 +72,7 @@ def headless_build(argv):
             print(f"== {text}", flush=True)
 
     opts = builder.Options(root, a.jobs, accept_ms_license=a.accept_microsoft_license, clean=a.clean,
-                           title_update=a.title_update)
+                           title_update=a.title_update, prefer_downloaded=a.download_toolchain)
     try:
         rt = builder.run_build(opts, Console(), root / "game")
     except builder.BuildError as e:

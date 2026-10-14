@@ -237,8 +237,14 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     # The profile: your own, or a copy of your Xenia Canary save (play.sh --xenia).
     log_file = home / "forza.log"
     if cfg.profile["mode"] == "xenia":
-        root, xuid = prepare_xenia(cfg, refresh_xenia, log) if write else (
-            home / "xenia-<XUID>", cfg.profile.get("xenia_xuid") or "<XUID>")
+        if write:
+            root, xuid = prepare_xenia(cfg, refresh_xenia, log)
+        else:  # a preview: no copy
+            xuid = cfg.profile.get("xenia_xuid", "").strip().upper()
+            if not xuid:
+                found = xenia_candidates(Path(cfg.profile.get("xenia_content") or default_xenia_content()))
+                xuid = found[0] if len(found) == 1 else "<XUID>"
+            root = home / f"xenia-{xuid}"
         args += [f"--user_data_root={root}", f"--cache_root={home / 'cache'}",
                  f"--profile_xuid={xuid}"]
     elif cfg.advanced.get("data_root", "").strip():

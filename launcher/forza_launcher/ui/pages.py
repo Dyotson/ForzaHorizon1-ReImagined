@@ -101,14 +101,14 @@ class PlayPage(QWidget):
 
     def refresh(self):
         cfg = self.cfg
-        files_ok, files_msg = False, "Not set up yet."
         root = cfg.game_files()
         if (root / "default.xex").is_file():
             files_ok, files_msg = installer.check_game_folder(root)
             if files_ok:
-                files_msg = f"{root}"
-        self.r_files.set(files_ok if files_ok else False, files_msg if files_ok else
-                         (files_msg if (root / "default.xex").is_file() else "Not set up yet: open Setup."))
+                files_msg = str(root)
+        else:
+            files_ok, files_msg = False, "Not set up yet: open Setup."
+        self.r_files.set(files_ok, files_msg)
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
         if install is not None and (state in ("built", "stale") or install.source != "built by the launcher"):
@@ -610,6 +610,8 @@ class SetupPage(QWidget):
         self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.ERR};")
         if not ok and self._bar is self.bar3:
             self.status3.setText(message + "  Press Resume build to continue.")
+        # keep the QThread object alive until its run() has really returned
+        self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
         self.window.set_busy(False)
         self.refresh()

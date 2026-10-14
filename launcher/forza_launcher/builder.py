@@ -265,8 +265,25 @@ def _dl_progress(rep, lo, hi, what):
     return cb
 
 
+LLVM_BIN_KEEP = {
+    "clang", "clang++", "clang-cl", "clang-cpp", "clang-scan-deps", "lld", "ld.lld", "ld64.lld", "lld-link",
+    "llvm-ar", "llvm-ranlib", "llvm-nm", "llvm-objcopy", "llvm-strip", "llvm-objdump", "llvm-readelf",
+    "llvm-readobj", "llvm-lib", "llvm-rc", "llvm-cvtres", "llvm-mt", "llvm-dlltool", "llvm-symbolizer",
+}
+
+
+def llvm_member_wanted(name: str) -> bool:
+    """The full LLVM release is 12 GB unpacked; the build needs the compiler driver, the linker,
+    the archiver tools and the compiler's own headers (lib/clang)."""
+    parts = Path(name).parts
+    if parts[0] == "bin" and len(parts) == 2:
+        base = parts[1][:-4] if parts[1].endswith(".exe") else parts[1]
+        return base in LLVM_BIN_KEEP or re.fullmatch(r"clang-\d+", base) is not None
+    return parts[0] in ("lib",) and len(parts) > 1 and parts[1] == "clang" or parts[0].upper().startswith("LICENSE")
+
+
 def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
-    tools = build_env.detect_tools(opts.root, opts.prefer_downloaded)
+    tools = build_env.detect_tools(opts.root, opts.prefer_downloaded, max_age=0)
     for p in tools.problems:
         raise BuildError(p)
     if not tools.missing:
@@ -285,8 +302,9 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
         rep.status(f"Unpacking {name}")
         if name.startswith("llvm"):
             dest = tdir / f"llvm-{pins.LLVM_VERSION}"
-            fetch.unpack(name, arc, dest, strip=1, progress=_dl_progress(rep, a + (b - a) * 0.6, b, "unpack"),
-                         cancelled=rep.cancelled)
+            fetch.unpack(name, arc, dest, strip=1, only=llvm_member_wanted,
+                         progress=_dl_progress(rep, a + (b - a) * 0.6, b, "unpack"), cancelled=rep.cancelled)
+            arc.unlink(missing_ok=True)  # 2 GB: not needed any more
         elif name.startswith("cmake"):
             fetch.unpack(name, arc, tdir / f"cmake-{pins.CMAKE_VERSION}", strip=1, cancelled=rep.cancelled)
         elif name.startswith("ninja"):
@@ -294,7 +312,7 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
             if not IS_WIN:
                 os.chmod(tdir / f"ninja-{pins.NINJA_VERSION}" / "ninja", 0o755)
         rep.progress(b)
-    tools = build_env.detect_tools(opts.root, opts.prefer_downloaded)
+    tools = build_env.detect_tools(opts.root, opts.prefer_downloaded, max_age=0)
     for p in tools.problems:
         raise BuildError(p)
     if tools.missing:

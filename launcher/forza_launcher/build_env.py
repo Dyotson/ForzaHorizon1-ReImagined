@@ -50,7 +50,7 @@ def free_disk(path: Path) -> int:
 # Rough needs, from a build of this project: the extracted game 7.6 GB, the build tree about
 # 4 GB, the SDK 1.5 GB, and a downloaded toolchain 6 GB more.
 NEED_DISK_GB = 20
-NEED_DISK_TOOLCHAIN_GB = 7
+NEED_DISK_TOOLCHAIN_GB = 5
 NEED_RAM_GB = 8
 RAM_PER_JOB_GB = 1.5
 
@@ -128,10 +128,21 @@ def downloaded_paths(root: Path):
     }
 
 
+_CXX_CACHE = {}
+_TOOLS_CACHE = {}
+
+
 def cxx_works(cxx: str, env=None) -> str | None:
-    """None when the compiler builds C++23 with the standard library; else why not."""
+    """None when the compiler builds C++23 with the standard library; else why not. (Cached: it
+    runs the compiler.)"""
     if sys.platform == "win32":
         return None
+    if cxx not in _CXX_CACHE:
+        _CXX_CACHE[cxx] = _cxx_works(cxx, env)
+    return _CXX_CACHE[cxx]
+
+
+def _cxx_works(cxx: str, env=None) -> str | None:
     with tempfile.TemporaryDirectory() as d:
         src = Path(d) / "t.cpp"
         src.write_text('#include <format>\n#include <string>\n#include <thread>\n'
@@ -143,7 +154,19 @@ def cxx_works(cxx: str, env=None) -> str | None:
     return None
 
 
-def detect_tools(root: Path, prefer_downloaded=False) -> Tools:
+def detect_tools(root: Path, prefer_downloaded=False, max_age=5.0) -> Tools:
+    """Cached for a few seconds: the window asks often. Pass max_age=0 to look again."""
+    import time
+    key = (str(root), prefer_downloaded)
+    hit = _TOOLS_CACHE.get(key)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    tools = _detect_tools(root, prefer_downloaded)
+    _TOOLS_CACHE[key] = (time.time(), tools)
+    return tools
+
+
+def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
     t = Tools()
     p = _plat()
     dp = downloaded_paths(root)

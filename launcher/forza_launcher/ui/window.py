@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
                 e.ignore()
                 return
             self.setup.task.cancel()
-            self.setup.task.wait(8000)
+            self.setup.task.wait(15000)
         self.settings.flush()
         self.stop_game()
         super().closeEvent(e)

@@ -114,9 +114,27 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
     return total
 
 
+_DLC_CACHE = {}
+
+
 def describe_dlc_folder(folder: str):
-    """[(file name, display name)] of the DLC packages in a folder, or raises InstallError."""
-    return [(f.name, name) for f, name, _ in list_dlc_packages(Path(folder).expanduser())]
+    """[(file name, display name)] of the DLC packages in a folder, or raises InstallError.
+    Cached per folder and modification time (each package is opened to read its name)."""
+    p = Path(folder).expanduser()
+    try:
+        key = (str(p), p.stat().st_mtime_ns)
+    except OSError:
+        key = (str(p), 0)
+    if key not in _DLC_CACHE:
+        found = list_dlc_packages(p)
+        for _f, _n, pkg in found:
+            for f in getattr(pkg, "files", []):
+                try:
+                    f.close()
+                except Exception:
+                    pass
+        _DLC_CACHE[key] = [(f.name, name) for f, name, _ in found]
+    return _DLC_CACHE[key]
 
 
 def list_dlc_packages(folder: Path):
