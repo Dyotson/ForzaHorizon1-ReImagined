@@ -19,28 +19,21 @@ jobs:
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
   sdk-linux:
-    runs-on: ubuntu-24.04
+    # 22.04: the oldest runner image, so the overlay needs glibc 2.35 only
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
-        name: Build dependencies
+        name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-14 cmake ninja-build python3 git patchelf \
-            libx11-dev libxcb1-dev libxext-dev libxfixes-dev libxcursor-dev libxi-dev libxrandr-dev \
-            libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev libxkbcommon-dev \
-            libdrm-dev libgl1-mesa-dev libvulkan-dev
-      - if: steps.cache.outputs.cache-hit != 'true'
-        name: LLVM and the pinned SDK nightly
-        run: |
-          python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
-          python3 launcher/packaging/ci_fetch.py sdk-linux "$HOME/rexglue-sdk-nightly/0.10.0.24"
+          launcher/packaging/ci_linux_sdk_setup.sh
           echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+          echo "$HOME/cmake/bin" >> "$GITHUB_PATH"
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build the patched SDK pieces
         run: |
@@ -57,6 +50,8 @@ jobs:
   sdk-windows:
     runs-on: windows-2022
     steps:
+      # Keep line endings as committed: with autocrlf the patches get CRLF and git apply fails.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4

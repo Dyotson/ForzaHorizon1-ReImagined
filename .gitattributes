@@ -1,0 +1,4 @@
+# Patches must stay byte-exact (a Windows checkout with autocrlf would break git apply).
+patches/** -text
+*.patch -text
+*.sh text eol=lf
