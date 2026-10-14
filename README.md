@@ -5,10 +5,10 @@
 <h1 align="center">Forza Horizon 1: ReImagined</h1>
 
 > [!TIP]
-> **The launcher is out: [v0.1.0](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest)**
+> **The launcher is out: [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest)**
 > (Linux Flatpak for any distro, Windows installer; both experimental). It builds the game
 > from your own copy, no build steps needed. [Announcement](https://github.com/Dyotson/ForzaHorizon1-ReImagined/discussions/21)
-> · [Website](https://forza.dyotson.dev)
+> · [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/DAHCbyrpFj)
 
 <p align="center">
   The original 2012 Forza Horizon, running natively on PC and rebuilt around the modern
@@ -51,6 +51,7 @@ C++ is generated from your copy on your machine; no binaries are published here.
 - [Playing](#playing)
   - [Playing online](#playing-online)
 - [More documentation](#more-documentation)
+- [Community](#community)
 - [Legal](#legal)
 
 ## Screenshots
@@ -256,6 +257,12 @@ own server, see [`docs/hosting.md`](docs/hosting.md).
 [`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md),
 and the [issue tracker](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues)
 (known bugs and planned work).
+
+## Community
+
+Questions, help with setup and online sessions: [Discord](https://discord.gg/DAHCbyrpFj).
+Bugs and feature requests: [issues](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues)
+(the bug report template asks for your OS, GPU and log).
 
 ## Legal
 
