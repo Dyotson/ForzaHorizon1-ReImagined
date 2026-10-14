@@ -343,7 +343,14 @@ counters on about 5800 functions, rates per scene at 30 and 144):
   `CTrackRenderModel`, procedural geometry loads) runs 10-100x more calls a second at 144:
   per-frame budgets, faster streaming, not animation.
 
+A RenderDoc capture of the intro at 144 (5,782 draws over 3 guest frames, 4 s after
+START RACE) was taken; the draw list was not analysed before the session ended.
+
 Still open: what animates the stands spectators (`media/spectators`, `.anim.bin` clips,
 `PROC_CHARACTER_SK*` shaders; loaded by `sub_8314B6D0` from `sub_82DE4DBC`). Next: find
 the spectator draw's shader constants (time or frame index) in a RenderDoc capture, or the
-code that writes them.
+code that writes them. Next experiment: in a capture, pixel history on a spectator
+(the blue-dress woman in the stands shot) gives the spectator draw and its vertex shader;
+compare that draw's float constants across the captured frames for one that steps by a
+fixed amount per frame (1/30 s or 1), then find the guest code that writes it (watch the
+constant's guest address with gdb, `docs/PROJECT.md`).
