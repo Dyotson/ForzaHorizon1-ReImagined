@@ -79,13 +79,25 @@ constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);  // pointer to the onli
 constexpr uint32_t kIsAiPlayer = FORZA_ADDR(0x82865528);  // predicate for sub_828754A0: CPU driver
 constexpr uint8_t kStatusHostEndsFreeRoam = 5;
 
-// Online game fields (offsets from *(kOnlineGame)).
+// Online game fields (offsets from *(kOnlineGame)). Title Update 4 put 4 bytes in front
+// of the game options (preset at +4) and 8 more at their end (0x2DC bytes), so the fields
+// from the options on moved (docs/dlc.md, "Title Update 4 online").
 constexpr uint32_t kMode = 0x28, kState = 0x2C, kInGame = 0x30, kLaunchTime = 0x4C;
 constexpr uint32_t kPlayers = 0x10C, kHost = 0x158;
 constexpr uint32_t kOptions = 0x1B4;  // the round's game options (0x2D0 bytes)
-constexpr uint32_t kMaxPlayers = 0x1CC, kMaxAi = 0x1CD, kAiDifficulty = 0x44A;
-constexpr uint32_t kNextReady = 0x484, kNextOptions = 0x488;  // the next round's options
-constexpr uint32_t kIntermission = 0x7E4, kShortIntermission = 0x7E8;
+// Within game options: GameTypePreset, TrackId, MaxPlayers, MaxAIPlayers, AI difficulty.
+constexpr uint32_t kOptPreset = FORZA_TU4 ? 4 : 0, kOptTrack = kOptPreset + 4;
+constexpr uint32_t kOptMaxPlayers = kOptPreset + 0x18, kOptMaxAi = kOptPreset + 0x19;
+constexpr uint32_t kOptAiDifficulty = kOptPreset + 0x296;
+constexpr uint32_t kPreset = kOptions + kOptPreset, kTrack = kOptions + kOptTrack;
+constexpr uint32_t kMaxPlayers = kOptions + kOptMaxPlayers, kMaxAi = kOptions + kOptMaxAi;
+constexpr uint32_t kAiDifficulty = kOptions + kOptAiDifficulty;
+// The next round's options (kNextReady set once they arrived).
+constexpr uint32_t kNextReady = FORZA_TU4 ? 0x490 : 0x484;
+constexpr uint32_t kNextOptions = FORZA_TU4 ? 0x494 : 0x488, kNextPreset = kNextOptions + kOptPreset;
+constexpr uint32_t kRound = FORZA_TU4 ? 0x7F4 : 0x7DC;  // the hopper's round counter (16 bits)
+constexpr uint32_t kIntermission = FORZA_TU4 ? 0x7FC : 0x7E4;
+constexpr uint32_t kShortIntermission = kIntermission + 4;
 
 uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 void Store32(uint8_t* p, uint32_t v) {
@@ -160,9 +172,9 @@ void LogGame(const char* what, uint8_t* base, uint32_t game, uint32_t lr) {
               "track {} max {} max AI {} AI diff {} next {} preset {} round {} intermission "
               "{}/{} launch {}",
               what, lr, Load32(g + kMode), Load32(g + kState), Load32(g + kInGame), g[kHost],
-              Load32(g + kPlayers), g[kOptions], Load32(g + kOptions + 4), g[kMaxPlayers],
-              g[kMaxAi], g[kAiDifficulty], g[kNextReady], g[kNextOptions],
-              (g[0x7DC] << 8) | g[0x7DD], Load32(g + kIntermission),
+              Load32(g + kPlayers), g[kPreset], Load32(g + kTrack), g[kMaxPlayers],
+              g[kMaxAi], g[kAiDifficulty], g[kNextReady], g[kNextPreset],
+              (g[kRound] << 8) | g[kRound + 1], Load32(g + kIntermission),
               Load32(g + kShortIntermission), Load32(g + kLaunchTime));
 }
 }  // namespace
@@ -278,7 +290,7 @@ void LogCpuDrivers(PPCContext& ctx, uint8_t* base, const char* what) {
 }  // namespace
 
 // sub_8286A800(game, skip): the host asks for the next round's options (Find Game: the
-// hopper's GetGameOptions, round counter +0x7DC).
+// hopper's GetGameOptions, round counter kRound).
 extern "C" REX_FUNC(sub_8286A800) {
   if (Trace()) LogGame("next round options requested", base, ctx.r3.u32, uint32_t(ctx.lr));
   __imp__sub_8286A800(ctx, base);
@@ -289,7 +301,8 @@ extern "C" REX_FUNC(sub_8287E538) {
   if (Trace()) {
     const uint8_t* o = forza::GuestPtr(base, ctx.r4.u32);
     REXLOG_INFO("EVENT: options set (lr {:08X}): preset {} track {} max {} max AI {} AI diff {}",
-                uint32_t(ctx.lr), o[0], Load32(o + 4), o[0x18], o[0x19], o[0x296]);
+                uint32_t(ctx.lr), o[kOptPreset], Load32(o + kOptTrack), o[kOptMaxPlayers],
+                o[kOptMaxAi], o[kOptAiDifficulty]);
   }
   __imp__sub_8287E538(ctx, base);
 }
@@ -303,7 +316,7 @@ extern "C" REX_FUNC(sub_8287BBE0) {
   if (Trace()) LogGame("AI fill", base, game, uint32_t(ctx.lr));
   if (REXCVAR_GET(world_events) && game && game == WorldPlaylistGame(base)) {
     uint8_t* g = forza::GuestPtr(base, game);
-    if (g[kHost] && g[kOptions] != kPresetFreeRoam) {
+    if (g[kHost] && g[kPreset] != kPresetFreeRoam) {
       if (event_max_ai == 0xFF) event_max_ai = g[kMaxAi];
       const bool peers = Humans(ctx, base, game) > 1;
       const uint8_t max_ai = peers && !REXCVAR_GET(world_event_cpu_with_peers) ? 0 : event_max_ai;
@@ -381,12 +394,12 @@ extern "C" REX_FUNC(sub_8286A468) {
   }
   __imp__sub_8286A468(ctx, base);
   if (status != 4 || !REXCVAR_GET(world_events) || game != WorldPlaylistGame(base)) return;
-  if (Trace() && forza::GuestPtr(base, game)[kOptions] != kPresetFreeRoam &&
+  if (Trace() && forza::GuestPtr(base, game)[kPreset] != kPresetFreeRoam &&
       player == CallGuest(ctx, base, __imp__sub_828653D8, game)) {
     LogCpuDrivers(ctx, base, "in game");
   }
   uint8_t* g = forza::GuestPtr(base, game);
-  if (!g[kHost] || g[kOptions] == kPresetFreeRoam) return;
+  if (!g[kHost] || g[kPreset] == kPresetFreeRoam) return;
   if (player != CallGuest(ctx, base, __imp__sub_828653D8, game)) return;
   int count = 0;
   for (const uint32_t p : ManagerPlayers(ctx, base, 0x20)) {
@@ -427,7 +440,7 @@ extern "C" REX_FUNC(sub_828655E0) {
     const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
     if (r[7] == 1) {
       if (const uint32_t game = WorldPlaylistGame(base)) {
-        if (forza::GuestPtr(base, game)[kOptions] != kPresetFreeRoam) {
+        if (forza::GuestPtr(base, game)[kPreset] != kPresetFreeRoam) {
           ctx.r3.u64 = 1;
           return;
         }
@@ -454,12 +467,12 @@ extern "C" REX_FUNC(sub_82880A90) {
 // the server asked for.
 extern "C" REX_FUNC(sub_825ADB30) {
   if (const uint32_t world = WorldPlaylistGame(base)) {
-    if (forza::GuestPtr(base, world)[kOptions] == kPresetFreeRoam) forza::WorldChallengeFrame(ctx, base);
+    if (forza::GuestPtr(base, world)[kPreset] == kPresetFreeRoam) forza::WorldChallengeFrame(ctx, base);
   }
   const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0;
   if (game) {
     uint8_t* g = forza::GuestPtr(base, game);
-    const bool world = g[kOptions] == kPresetFreeRoam && g[kHost] != 0;
+    const bool world = g[kPreset] == kPresetFreeRoam && g[kHost] != 0;
     const uint32_t event = requested_event.load();
     const int64_t now = NowMs();
     if (!world) {
@@ -472,12 +485,12 @@ extern "C" REX_FUNC(sub_825ADB30) {
       REXLOG_INFO("WORLD: the server starts event {}: asking for the next round", event);
       CallGuest(ctx, base, sub_8286A800, game, 1);
     } else if (taking == Taking::kAsked) {
-      const bool next_is_event = g[kNextReady] && g[kNextOptions] != kPresetFreeRoam;
+      const bool next_is_event = g[kNextReady] && g[kNextPreset] != kPresetFreeRoam;
       if (next_is_event || now - taking_since > 15000) {
         const uint32_t player = CallGuest(ctx, base, __imp__sub_828653D8, game);
         REXLOG_INFO("WORLD: {} the free roam for event {} (next round preset {})",
                     next_is_event ? "ending" : "no event round came; ending anyway",
-                    taking_event, g[kNextOptions]);
+                    taking_event, g[kNextPreset]);
         if (player) CallGuest(ctx, base, sub_8286A468, game, player, kStatusHostEndsFreeRoam);
         taking = Taking::kEnded;
       }
@@ -492,7 +505,7 @@ extern "C" REX_FUNC(sub_825ADB30) {
 extern "C" REX_FUNC(sub_8287F670) {
   if (const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0) {
     uint8_t* g = forza::GuestPtr(base, game);
-    const bool event = g[kOptions] != kPresetFreeRoam;
+    const bool event = g[kPreset] != kPresetFreeRoam;
     if (event) taking = Taking::kIdle;  // the free roam that took the event is over
     if (event) {
       const uint32_t wait = uint32_t(std::max(0, REXCVAR_GET(world_event_wait_seconds))) * 1000;
@@ -504,8 +517,8 @@ extern "C" REX_FUNC(sub_8287F670) {
       if (Load32(g + kIntermission) != wait) {
         Store32(g + kIntermission, wait);
         Store32(g + kShortIntermission, wait);
-        REXLOG_INFO("WORLD: event round (preset {}, track {}): {} s wait lobby", g[kOptions],
-                    Load32(g + kOptions + 4), wait / 1000);
+        REXLOG_INFO("WORLD: event round (preset {}, track {}): {} s wait lobby", g[kPreset],
+                    Load32(g + kTrack), wait / 1000);
       }
       const uint32_t launch = Load32(g + kLaunchTime);
       if (g[kHost] && launch > 1 && Load32(g + kState) == 4) {
@@ -530,7 +543,7 @@ extern "C" REX_FUNC(sub_8287F670) {
 extern "C" REX_FUNC(sub_82877470) {
   if (const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0) {
     uint8_t* g = forza::GuestPtr(base, game);
-    if (g[kOptions] != kPresetFreeRoam && g[kHost]) {
+    if (g[kPreset] != kPresetFreeRoam && g[kHost]) {
       const uint32_t humans = Humans(ctx, base, game);
       const int32_t knob = REXCVAR_GET(world_event_ai_grid);
       const uint32_t grid = knob > 0 ? uint32_t(knob) : g[kMaxPlayers] ? g[kMaxPlayers] : 8;

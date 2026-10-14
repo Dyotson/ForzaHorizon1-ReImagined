@@ -53,11 +53,17 @@ REXCVAR_DEFINE_BOOL(world_drop_in, true, "Network/Forza Live",
 namespace {
 constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
-constexpr uint8_t kPresetFreeRoam = 7;          // GameTypePreset of the round (online game +436)
+constexpr uint8_t kPresetFreeRoam = 7;          // GameTypePreset of the round (kPreset below)
 constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);    // pointer to the online game object
 constexpr uint32_t kGameModeInfo = FORZA_ADDR(0x832DF00C);  // pointer; +52 is the HUD/game mode value
 constexpr uint32_t kRaceTypeOnlineRace = 6, kRaceTypeOnlineFreeRoam = 18;
 constexpr uint32_t kHudModeFreeRoam = 17;
+
+// Online game fields (world_events.cpp has the rest). Title Update 4 moved those from the
+// game options (+0x1B4) on: the preset by 4 bytes, the launch check's by 24.
+constexpr uint32_t kHost = 344, kInGame = 48;
+constexpr uint32_t kPreset = FORZA_TU4 ? 440 : 436;
+constexpr uint32_t kBucketCheck = FORZA_TU4 ? 2172 : 2148, kBucketCheckDue = kBucketCheck + 4;
 
 uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 void Store32(uint8_t* p, uint32_t v) {
@@ -83,7 +89,7 @@ uint32_t WorldGame(uint8_t* base) {
   const uint32_t game = Load32(forza::GuestPtr(base, kOnlineGame));
   if (!game) return 0;
   const uint8_t* g = forza::GuestPtr(base, game);
-  if (Load32(g + 40) != kModeFindGame || g[436] != kPresetFreeRoam) return 0;
+  if (Load32(g + 40) != kModeFindGame || g[kPreset] != kPresetFreeRoam) return 0;
   return game;
 }
 
@@ -153,9 +159,9 @@ extern "C" REX_FUNC(sub_825548A0) {
 extern "C" REX_FUNC(sub_82875FB8) {
   if (const uint32_t game = WorldGame(base)) {
     uint8_t* g = forza::GuestPtr(base, game);
-    const bool host = g[344] != 0, in_game = Load32(g + 48) == 1;
-    if (host && !in_game && !Load32(g + 2148) && !g[2152]) {
-      g[2152] = 1;
+    const bool host = g[kHost] != 0, in_game = Load32(g + kInGame) == 1;
+    if (host && !in_game && !Load32(g + kBucketCheck) && !g[kBucketCheckDue]) {
+      g[kBucketCheckDue] = 1;
       static std::atomic<int> logged{0};
       if (Trace() && logged.fetch_add(1) < 3) {
         REXLOG_INFO("WORLD: the world's host is alone in its lobby: checking the launch");
@@ -174,6 +180,6 @@ int OnlineGameIsHost() {
   uint8_t* base = kernel->memory()->virtual_membase();
   const uint32_t game = Load32(forza::GuestPtr(base, kOnlineGame));
   if (!game) return -1;
-  return forza::GuestPtr(base, game)[344] != 0;
+  return forza::GuestPtr(base, game)[kHost] != 0;
 }
 }  // namespace forza

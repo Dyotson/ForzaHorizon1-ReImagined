@@ -41,6 +41,13 @@ import xex_image  # noqa: E402
 MASK16_OPS = {14, 15, 24, 25} | set(range(32, 56))  # addi addis ori oris, D-form loads/stores
 
 
+def branch_target(addr, w):
+    d = w & 0x03FFFFFC
+    if d & 0x02000000:
+        d -= 0x04000000
+    return (addr + d) & 0xFFFFFFFF
+
+
 def norm_word(w):
     op = w >> 26
     if op == 18:
@@ -74,6 +81,13 @@ class Image:
     def norm(self, start, length):
         out = [norm_word(w) for w in self.code(start, length)]
         return hashlib.sha1(struct.pack(f">{len(out)}I", *out)).digest()[:8]
+
+    def leaf_length(self, start, limit=64):
+        for k in range(limit):
+            w = self.word(start + 4 * k)
+            if w == 0x4E800020 or (w >> 26 == 18 and not w & 3):
+                return 4 * (k + 1)
+        return 0
 
     def norm_text(self):
         """Normalized words of the executable sections: [(start address, bytes)]."""
@@ -198,6 +212,32 @@ class AddressMap:
                 continue
         return None
 
+    def call_vote(self, addr):
+        """A function's new address from its callers: each call site in a matched function
+        of the same length (so at the same offset) names the new function it calls."""
+        if getattr(self, "_callers", None) is None:
+            self._callers = {}
+            for s, n in self.old.funcs:
+                for k, w in enumerate(self.old.code(s, n)):
+                    if w >> 26 == 18 and not w & 2:
+                        self._callers.setdefault(branch_target(s + 4 * k, w), []).append(s + 4 * k)
+        votes = {}
+        for site in self._callers.get(addr, ()):
+            i = self.old.containing(site)
+            j = self.fmap.get(i) if i is not None else None
+            if j is None or self.old.funcs[i][1] != self.new.funcs[j][1]:
+                continue
+            new_site = self.new.funcs[j][0] + site - self.old.funcs[i][0]
+            w = self.new.word(new_site)
+            if w >> 26 == 18 and not w & 2:
+                t = branch_target(new_site, w)
+                votes[t] = votes.get(t, 0) + 1
+        if not votes:
+            return None
+        best = max(votes, key=votes.get)
+        n, total = votes[best], sum(votes.values())
+        return best if n >= 2 and 5 * n >= 4 * total else None
+
     def map(self, addr):
         """(new address, how) or (None, why)."""
         if self.old.is_code(addr):
@@ -207,6 +247,18 @@ class AddressMap:
                 (s1, n1), (s2, n2) = self.old.funcs[i], self.new.funcs[j]
                 if addr == s1 or n1 == n2:
                     return s2 + (addr - s1), "code"
+            # A function start the alignment left out: its callers say where it went (a
+            # similar function nearby, or the same code at the same offset, can be another).
+            new = self.call_vote(addr) if i is None or addr == self.old.funcs[i][0] else None
+            if new is not None:
+                k = self.new.containing(new)
+                n2 = self.new.funcs[k][1] if k is not None and self.new.funcs[k][0] == new else 0
+                n1 = self.old.funcs[i][1] if i is not None else 0
+                if not n1 or not n2:  # no .pdata entry (a leaf): up to its first blr or b
+                    n1, n2 = self.old.leaf_length(addr), self.new.leaf_length(new)
+                if n2 and n1 == n2 and self.old.norm(addr, n1) == self.new.norm(new, n2):
+                    return new, "code (by its callers)"
+                return new, "code (by its callers; the function changed: check it)"
             if i is not None and i in self.fuzzy:
                 j = self.fuzzy[i]
                 (s1, n1), (s2, n2) = self.old.funcs[i], self.new.funcs[j]

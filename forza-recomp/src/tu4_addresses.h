@@ -6,14 +6,14 @@
 
 #include <cstdint>
 
-#define sub_823FD208 sub_8242D1A0  // check
+#define sub_823FD208 sub_8242D1A0
 #define __imp__sub_823FD208 __imp__sub_8242D1A0
 #define sub_8247C168 sub_824AB6C8
 #define __imp__sub_8247C168 __imp__sub_824AB6C8
 #define sub_8247C678 sub_824ABBD8
 #define __imp__sub_8247C678 __imp__sub_824ABBD8
-#define sub_8247F018 sub_824AE6B0  // check
-#define __imp__sub_8247F018 __imp__sub_824AE6B0
+#define sub_8247F018 sub_825A1EB8
+#define __imp__sub_8247F018 __imp__sub_825A1EB8
 #define sub_824F1A80 sub_8255D7E8
 #define __imp__sub_824F1A80 __imp__sub_8255D7E8
 #define sub_82502DD8 sub_8256D008
@@ -32,7 +32,7 @@
 #define __imp__sub_82577AD8 __imp__sub_825EC700
 #define sub_825ADB30 sub_82633570  // check
 #define __imp__sub_825ADB30 __imp__sub_82633570
-#define sub_82865340 sub_82915B58  // check
+#define sub_82865340 sub_82915B58
 #define __imp__sub_82865340 __imp__sub_82915B58
 #define sub_828653D8 sub_82915BE0
 #define __imp__sub_828653D8 __imp__sub_82915BE0
@@ -52,8 +52,8 @@
 #define __imp__sub_8286E660 __imp__sub_8291F028
 #define sub_8286FC98 sub_82920608
 #define __imp__sub_8286FC98 __imp__sub_82920608
-#define sub_828736E0 sub_82623550  // check
-#define __imp__sub_828736E0 __imp__sub_82623550
+#define sub_828736E0 sub_824B06A0
+#define __imp__sub_828736E0 __imp__sub_824B06A0
 #define sub_828754A0 sub_82926648
 #define __imp__sub_828754A0 __imp__sub_82926648
 #define sub_82875840 sub_829269E8
@@ -74,9 +74,9 @@
 #define __imp__sub_8287E538 __imp__sub_8292F918
 #define sub_8287F670 sub_82930AF8
 #define __imp__sub_8287F670 __imp__sub_82930AF8
-#define sub_82880A88 sub_82931F10  // check
+#define sub_82880A88 sub_82931F10
 #define __imp__sub_82880A88 __imp__sub_82931F10
-#define sub_82880A90 sub_82931F18  // check
+#define sub_82880A90 sub_82931F18
 #define __imp__sub_82880A90 __imp__sub_82931F18
 #define sub_8299FB40 sub_82A54068
 #define __imp__sub_8299FB40 __imp__sub_82A54068
