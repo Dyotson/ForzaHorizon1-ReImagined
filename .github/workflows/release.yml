@@ -192,6 +192,22 @@ jobs:
           name: launcher-windows
           path: installer/*.exe
 
+  # The installer on a clean Windows machine: silent install, files and shortcuts, the launcher's
+  # --version and --dry-run, silent uninstall (launcher/packaging/test_installer.ps1).
+  installer-test:
+    needs: launcher-windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: launcher-windows
+          path: installer
+      - shell: pwsh
+        run: |
+          $exe = (Get-ChildItem installer\*Setup*.exe | Select-Object -First 1).FullName
+          launcher\packaging\test_installer.ps1 -Setup $exe
+
   # The Linux Flatpak: the launcher run by the freedesktop SDK 26.08 (which also builds the game on
   # the player's machine, with the SDK's LLVM extension), the project sources and the patched SDK
   # pieces of sdk-linux. Also holds no game code. Built with flatpak-builder in the flathub image.
@@ -226,7 +242,7 @@ jobs:
 
   publish:
     if: github.ref_type == 'tag'
-    needs: [launcher-linux, launcher-windows, flatpak]
+    needs: [launcher-linux, launcher-windows, installer-test, flatpak]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
