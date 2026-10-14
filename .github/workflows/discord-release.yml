@@ -1,0 +1,53 @@
+# Posts a published release to the Discord announcements channel through a webhook.
+# Set the repository secret DISCORD_WEBHOOK_URL (Discord: channel settings > Integrations >
+# Webhooks > New Webhook > Copy Webhook URL). Without it the job does nothing.
+# A release published with the workflow's own GITHUB_TOKEN does not trigger this; releases
+# published by a person (or `gh release edit --draft=false`) do. Run it by hand to (re)post a tag.
+name: discord-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to post (e.g. v0.1.3)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_WEBHOOK_URL is not set; nothing to post."
+            exit 0
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,body,url,isPrerelease > release.json
+          jq -n --slurpfile r release.json --arg repo "$GITHUB_REPOSITORY" '
+            $r[0] as $rel
+            | ($rel.body | if length > 3500 then .[0:3500] + "\n\n[...]" else . end) as $notes
+            | {
+                username: "Forza Horizon 1: ReImagined",
+                avatar_url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png",
+                content: "New release: **\($rel.name)**",
+                embeds: [{
+                  title: $rel.name,
+                  url: $rel.url,
+                  description: ($notes + "\n\n**[Download](\($rel.url))** · [Website](https://forza.dyotson.dev)"),
+                  color: 16747843,
+                  thumbnail: { url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png" },
+                  footer: { text: (if $rel.isPrerelease then "Pre-release" else "Windows installer · Linux Flatpak and .tar.gz" end) }
+                }],
+                allowed_mentions: { parse: [] }
+              }' > payload.json
+          curl -fsS -H "Content-Type: application/json" --data @payload.json "$WEBHOOK"
+          echo "Posted $TAG to Discord."
