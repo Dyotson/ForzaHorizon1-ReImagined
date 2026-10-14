@@ -33,8 +33,8 @@ REXCVAR_DEFINE_BOOL(live_signin, true, "Network/Forza Live",
                     "Sign in to Xbox LIVE through the Forza Live server: friends, Live lobbies "
                     "(FORZA_LIVE_SIGNIN overrides)");
 REXCVAR_DEFINE_STRING(live_room, "", "Network/Forza Live",
-                      "Only players in the same room on the server see each other "
-                      "(FORZA_ROOM overrides)");
+                      "Only players in the same room on the server see each other; Title "
+                      "Update 4 players are in the room plus \"#TU4\" (FORZA_ROOM overrides)");
 REXCVAR_DEFINE_STRING(gamertag, "", "Network/Forza Live",
                       "Your gamertag, 15 characters. Empty: the one in live_identity.txt "
                       "(FORZA_GAMERTAG overrides)");
@@ -133,7 +133,14 @@ const std::string& LiveServerSpec() {
 }
 
 const std::string& LiveRoom() {
+  // A Title Update 4 game and a base one can't play together (each one's join of the
+  // other's session fails at once, and each player ends up alone in a session of its own;
+  // docs/dlc.md, "Title Update 4 online"), so a TU4 build joins the room with "#TU4" added.
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+  static const std::string room = EnvOr("FORZA_ROOM", REXCVAR_GET(live_room)).substr(0, 32) + "#TU4";
+#else
   static const std::string room = EnvOr("FORZA_ROOM", REXCVAR_GET(live_room)).substr(0, 32);
+#endif
   return room;
 }
 
