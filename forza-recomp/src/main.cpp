@@ -73,3 +73,12 @@ void ApplyForzaCvarDefaults() {
     SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
   }
 }
+
+void ApplyForzaGpuCvarDefaults() {
+  // The game renders each car's thumbnail (Car Select, garage, the car panel), reads the
+  // resolved image back on the CPU, compresses it and saves it in the profile
+  // (ForzaProfile/Thumbnails). Without resolve readback the CPU reads stale guest memory and
+  // the saved thumbnail is noise (docs/framerate.md). "fast" copies resolves back a frame
+  // late, as Xenia does for this game.
+  SetSdkCvarDefault("readback_resolve", "fast");
+}

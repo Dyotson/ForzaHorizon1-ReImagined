@@ -27,8 +27,10 @@ void InstallFaultGuard();  // src/debug/fault_guard.cpp
 void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
 }  // namespace forza
 
-// SDK settings with this game's defaults (src/main.cpp).
+// SDK settings with this game's defaults (src/main.cpp); the GPU plugin's own settings exist
+// only once the plugin is loaded.
 void ApplyForzaCvarDefaults();
+void ApplyForzaGpuCvarDefaults();
 
 // GPU backend on Windows (the gpu_backend setting, src/main.cpp).
 std::string ForzaGpuBackend();
@@ -59,6 +61,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
     }
     graphics_ = config.graphics.get();
+    ApplyForzaGpuCvarDefaults();
   }
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
