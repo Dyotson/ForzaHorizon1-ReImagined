@@ -19,6 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = cfg
         self.session = None
+        self.session_plan = None
         self._busy = False
         self.setWindowTitle(APP_NAME)
         icon = paths.asset("logo.png")
@@ -216,9 +217,12 @@ class MainWindow(QMainWindow):
             session = game.Session(plan)
             session.start()
         except (RuntimeError, OSError) as e:
-            self.play.show_message(f"Could not start the game: {e}", True)
+            paths.log_error("start the game", e)
+            self.play.show_message(f"Could not start the game: {e}\nLog: {paths.launcher_log()}", True, keep=True)
             return
         self.session = session
+        self.session_plan = plan
+        self.play.clear_message()
         self.play.show_message("The game is running. " + " ".join(plan.notes))
         self.poll.start()
         self.play.refresh()
@@ -237,10 +241,12 @@ class MainWindow(QMainWindow):
         self.poll.stop()
         self.session.cleanup()
         self.session = None
+        plan = self.session_plan
+        self.play.clear_message()
         if code == 0:
             self.play.show_message("The game closed.")
         else:
-            self.play.show_message(f"The game stopped (exit code {code}). The log folder has forza.log.", True)
+            self.play.show_message(game.crash_reason(plan, code), True, keep=True)
         self.play.refresh()
 
 

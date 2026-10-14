@@ -92,6 +92,7 @@ class PlayPage(QWidget):
         lay.addWidget(self.msg)
         lay.addStretch(1)
         self.mode = "setup"
+        self._keep_warn = False
 
     def _clicked(self):
         if self.mode == "setup":
@@ -141,10 +142,20 @@ class PlayPage(QWidget):
             else:
                 self.mode = "setup"
                 self.play.setText("Set up the game")
-        self.warn.setVisible(False)
+        if not self._keep_warn:
+            self.warn.setVisible(False)
 
-    def show_message(self, text, warn=False):
+    def clear_message(self):
+        self._keep_warn = False
+        self.warn.hide()
+        self.msg.setText("")
+
+    def show_message(self, text, warn=False, keep=False):
+        """A warning stays until the next start: refresh() runs right after it and used to hide
+        it, so a game that failed to start left no trace but a stale "The game is running"."""
         if warn:
+            self._keep_warn = keep
+            self.msg.setText("")
             self.warn.setText(text)
             self.warn.show()
         else:

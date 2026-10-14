@@ -292,6 +292,38 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
                       toml_text, server_argv, notes, home)
 
 
+def log_path_of(plan: "LaunchPlan"):
+    for a in plan.argv:
+        if str(a).startswith("--log_file="):
+            return Path(str(a).split("=", 1)[1])
+    return None
+
+
+def crash_reason(plan: "LaunchPlan", code) -> str:
+    """A readable text for a game that stopped early: its exit code, the last error lines of its
+    log and, for the usual causes, what to do."""
+    log = log_path_of(plan)
+    errors = []
+    try:
+        if log is not None and log.is_file():
+            with open(log, "r", encoding="utf-8", errors="replace") as f:
+                tail = f.readlines()[-200:]
+            errors = [ln.strip() for ln in tail if "[error]" in ln or "[critical]" in ln or "[fatal]" in ln][-3:]
+    except OSError:
+        pass
+    text = f"The game stopped (exit code {code})."
+    joined = " ".join(errors)
+    if "Vulkan" in joined:
+        text += (" It needs a graphics card with Vulkan support and an up-to-date graphics driver; none was "
+                 "found (a virtual machine or a remote desktop session usually has none).")
+    elif "memory" in joined.lower() or "alloc" in joined.lower():
+        text += " It may have run out of memory: close other programs and try again."
+    if errors:
+        text += "\nLast errors in the log:\n" + "\n".join(errors)
+    text += f"\nLog: {log}" if log is not None else "\nOpen the log folder: forza.log has the details."
+    return text
+
+
 class Session:
     """A running game, and the local Forza Live server started for it."""
 

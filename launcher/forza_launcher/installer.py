@@ -262,7 +262,7 @@ def inspect_xex(path: Path):
                        "This project needs the base version of the game, the one on the disc or in the "
                        "plain Games on Demand package, without title updates applied.")
     return False, (f"This default.xex ({found}) is not a version this project knows (0.0.0.7, entry "
-                   "point 0x82a6fbc0). Another region's disc may differ: please report it.")
+                   "point 0x82a6fbc0). Another region's disc may differ: please report it with the numbers above (GitHub issues).")
 
 
 def check_game_folder(folder: Path):
@@ -270,7 +270,8 @@ def check_game_folder(folder: Path):
     a base-version default.xex."""
     missing = [n for n in REQUIRED_FILES if not (folder / n).is_file()]
     if missing:
-        return False, f"{folder} is missing {', '.join(missing)}."
+        return False, (f"{folder} is missing {', '.join(missing)}. Choose the folder of the whole extracted "
+                       f"game, the one that holds {', '.join(REQUIRED_FILES)} (a default.xex alone is not enough).")
     return inspect_xex(folder / "default.xex")
 
 
