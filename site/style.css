@@ -141,6 +141,17 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 
 :focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
 
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 18px; }
+.stats div { background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.stats dt { font-size: 30px; font-weight: 900; line-height: 1.1; background: linear-gradient(90deg, var(--orange), var(--pink)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stats dd { margin: 4px 0 0; font-size: 14px; color: #e6dcff; line-height: 1.35; }
+.fps { width: 100%; border-collapse: collapse; margin: 0 0 12px; font-variant-numeric: tabular-nums; }
+.fps caption { text-align: left; font-weight: 800; color: var(--cream); padding-bottom: 6px; }
+.fps th, .fps td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+.fps thead th { color: var(--muted); font-size: 13px; font-weight: 700; }
+.fps tbody th { color: var(--orange); font-weight: 800; text-align: left; }
+.fps thead th:first-child { text-align: left; }
+
 /* phones: the road runs down the left edge */
 @media (max-width: 820px) {
   :root { --road-w: 26px; }

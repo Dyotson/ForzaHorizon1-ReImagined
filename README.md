@@ -17,7 +17,8 @@ recompiling the original PowerPC executable to C++ with the
 the project focuses on:
 
 - **Better gameplay:** 60, 120 or 144 fps with the physics and race timing intact, native
-  controllers, saves and all DLC.
+  controllers or keyboard and mouse, saves, Title Update 4 with Horizon Rally and the 1000
+  Club, and all 23 DLC packages.
 - **Online free roam:** the **Horizon World** playlist drops every online player into one
   shared Colorado, where you drive, meet and race together; the goal is an MMO-like world
   where events fill up with players and the grid's free slots with AI
@@ -38,6 +39,7 @@ C++ is generated from your copy on your machine; no binaries are published here.
 - [What works](#what-works)
 - [Known issues](#known-issues)
 - [Requirements](#requirements)
+- [Install with the launcher](#install-with-the-launcher)
 - [Building (Linux)](#building-linux)
 - [Windows](#windows)
 - [Playing](#playing)
@@ -56,48 +58,97 @@ Captured from the recompiled game running natively on Linux.
 
 ## What works
 
-- **Single player:** the whole game, from the opening drive to the end of the festival,
-  has been played through on ReImagined: free roam, festival events and races, showcase
-  events, audio, saves, and all 23 DLC packages (every DLC car counts as installed; see
-  [`docs/dlc.md`](docs/dlc.md)). Saves from Xenia Canary can be continued.
-- **Title Update 4, Horizon Rally and the 1000 Club:** the Rally Expansion's mode and map
-  and the 1000 Club exist only in the TU4 build, which is built from your own copy of the
-  update (`tools/apply_title_update.py`, below) and is the default of `tools/play.sh`.
-  Horizon Rally loads its map and resumes the rally progress of a Xenia save; the 1000
-  Club opens when signed in to the Forza Live server.
-- **60, 120 or 144 fps:** `frame_rate = 60` (or 120, 144, any rate up to 240) in
-  `forza.toml`. Free roam holds 60, about 115 at 120 and 112 at 144; a race with 7 AI cars
-  60, 76 and 70, bound by the GPU emulation. Physics, the race clock and online play keep
-  their timing ([`docs/framerate.md`](docs/framerate.md)).
+- **The whole game, single player:** the opening drive to the end of the festival has been
+  played through on ReImagined: free roam, festival events and races, showcase events,
+  audio and saves. Saves from Xenia Canary can be continued (`tools/play.sh --xenia`).
+- **Title Update 4 (the default), Horizon Rally and the 1000 Club:** TU4 is built from your
+  own copy of the update (`tools/apply_title_update.py`, about 2 s). It adds the **Horizon
+  Rally** expansion (its map loads and resumes the rally progress of a Xenia save) and the
+  **1000 Club** in the pause menu (opens when signed in to the Forza Live server).
+  [`docs/dlc.md`](docs/dlc.md)
+- **All 23 DLC packages:** every DLC car counts as installed, the Rally Expansion's 15 and
+  the 1000 Club's cars included (`tools/install_dlc.py`).
+- **Keyboard and mouse or controller:** `mnk_mode = true` plays the menus, free roam, a
+  race from sign-up to the finish, the pause menu, the map and photo mode with the
+  keyboard (WASD, rebindable keys, a steering ramp and the mouse as the right stick).
+  Throttle and brake are on/off. Any connected controller drives player 1.
+  [`docs/playing.md`](docs/playing.md#keyboard-and-mouse)
+- **60, 120 or 144 fps** (`frame_rate` in `forza.toml`, any rate up to 240), with physics, the
+  race clock and online play keeping their timing. Measured on a Ryzen 7 7800X3D with a
+  Radeon RX 9060 XT ([`docs/framerate.md`](docs/framerate.md), [`docs/perf.md`](docs/perf.md)):
+
+  | `frame_rate` | Free roam | Race, 7 AI cars (Clear Springs Circuit) |
+  |---|---|---|
+  | 60 | 59.9 fps | 59.6 fps |
+  | 120 | 115.2 fps | 75.7 fps |
+  | 144 | 111.5 fps | 70.1 fps |
+
+  The race is bound by the GPU emulation above 60; the game itself ran its main loop at
+  the target rate in every run. 0 to 100 km/h takes 2.4 s at every rate.
 - **Online** (through the Forza Live server): sign-in as a Gold member, Find Game and races
-  with XP and credits, parties and custom games, a shared online free roam (the Horizon World
-  playlist), Playground Games modes (Infected, Cat & Mouse, King), leaderboards and Rivals
-  (times, ghosts and bounties shared between players), car clubs and the club garage, and
-  the Message Center (beaten-time alerts, gifts, club requests, invitations, news).
-  Details in [`docs/online_vision.md`](docs/online_vision.md) and [`docs/title_services.md`](docs/title_services.md).
+  with XP and credits, parties and custom games, a shared online free roam (the **Horizon
+  World** playlist: 8 players per world, JUMP IN while a world runs, the next player
+  placed with you when the host leaves), Playground Games modes (Infected, Cat & Mouse,
+  King), leaderboards and Rivals (times, ghosts and bounties shared between players), car
+  clubs and the club garage, and the Message Center (beaten-time alerts, gifts, club
+  requests, invitations, news). Details in [`docs/online_vision.md`](docs/online_vision.md)
+  and [`docs/title_services.md`](docs/title_services.md).
+- **Title Update 4 online** (tested with two players on a local server): Horizon World (one
+  player placed into the other's world), a 30 s event lobby filled with CPU drivers (2
+  humans and 6 CPU in an 8-car race) with scores, XP and credits, head-to-head challenges,
+  the Rivals screen, the 1000 Club and host migration. Base-game and TU4 players are kept in
+  separate rooms, since the two versions cannot play together
+  ([`docs/dlc.md`](docs/dlc.md#online-20)).
+- **Your own server:** the Forza Live server (`server/`, Python 3 standard library only, or
+  Docker) is self-hostable ([`docs/hosting.md`](docs/hosting.md)), and there is a public
+  instance to join.
 
 ## Known issues
 
 - The Auction House exists on the server only; its screens were removed from the game, and
   the storefront answers empty.
-- Keyboard and mouse (`mnk_mode = true`) play through menus, free roam, races and photo mode;
-  throttle and brake are all or nothing and the menus have no pointer
+- Throttle, brake and steering on the keyboard are all or nothing (the steering has a ramp),
+  and the game's menus have no pointer, so the mouse does nothing there
   ([`docs/playing.md`](docs/playing.md#keyboard-and-mouse)).
+- Races with many AI cars are GPU-bound: 76 fps at a 120 fps target and 70 at 144 (60 holds).
 - Windows builds are cross-compiled from Linux and have only been tried under Proton, not
-  on Windows itself.
-- Races with many AI cars are GPU-bound and below 60 fps.
+  on Windows itself; the launcher's Windows path and installer have never run on Windows.
+- The launcher is built and tested on Linux end to end, but its first release is not out yet.
+- Title Update 4 and base-game players can't play together (separate rooms), and a profile
+  that ran on TU4 is refused by the base build.
 
 ## Requirements
 
-- Linux x86-64 with a Vulkan 1.3 GPU, about 10 GB of free RAM and 20 GB of disk
-  (7.6 GB of extracted game files plus the build). Windows: see below.
+- Linux x86-64 or Windows 10/11 64-bit, with a Vulkan 1.3 GPU, about 4 GB of free RAM for the
+  build (it peaks near 2 GB at `-j4`) and about 15 GB of disk (7.6 GB of extracted game
+  files, the SDK 1.6 GB, the build tree about 1 GB, a downloaded compiler 1.1 GB). Windows:
+  see below.
 - Your own Forza Horizon Games on Demand package (`4D5309C9/00007000/<name>` plus
   `<name>.data/`), base version. Optional but recommended: the Title Update 4 package
   (`4D5309C9/000B0000/<name>`, update 4000D145) for Horizon Rally and the 1000 Club.
-- Clang (tested with 23), CMake >= 3.25, Ninja, Python 3, Git, OpenSSL (for
-  `tools/xex_image.py` only).
+- For the manual build: Clang (tested with 23), CMake >= 3.25, Ninja, Python 3, Git,
+  OpenSSL (for `tools/xex_image.py` only). The launcher downloads what is missing.
 - [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) 0.10.0.24 nightly
   (`nightly-20261002-bd833a2a`).
+
+## Install with the launcher
+
+Once the first release is out, this is the way to install. The launcher builds the game on
+your machine from your own files; nothing of the game is ever downloaded or shipped.
+
+1. Get the launcher from the [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest):
+   on Linux a **Flatpak** (works on Bazzite, SteamOS, Chimera, Ubuntu, Fedora and Arch; a
+   `.tar.gz` is the alternative), on Windows an **installer**.
+2. In **Setup**, point it at your Games on Demand package (it is extracted and checked
+   first), and optionally at your Title Update 4 package and DLC folder.
+3. **Build**: it generates the game from your copy and compiles it, downloading a compiler
+   and the SDK when you have none. Measured on 8 cores at `-j4`: a full build with Title
+   Update 4 takes about 3.6 to 4.6 minutes, peaks near 2 GB of RAM and leaves about 15 GB on
+   disk. It can be cancelled and resumed, and is repeated only when something changed.
+4. **Play**. Every setting of `forza.toml` has a page in **Settings** (frame rate, display,
+   keyboard and mouse bindings, online server, profile, Xenia save import).
+
+Details: [`docs/launcher.md`](docs/launcher.md). The steps below are the same build by hand.
 
 ## Building (Linux)
 
@@ -121,7 +172,7 @@ ninja -C forza-recomp/out/build/linux
 update to your `default.xex` (about 2 s; it writes the patched executable, the two facade
 DLLs and the update's `media.zip` to `extracted/tu4/`) and build the TU4 version next to the
 base one. It has its own hints (`hints_tu4/`) and generated code (`generated_tu4/`); a full
-build is about 15 minutes at `-j4`. `git checkout forza-recomp/generated/rexglue.cmake`
+build is about 4 minutes at `-j4` on 8 cores. `git checkout forza-recomp/generated/rexglue.cmake`
 afterwards if codegen shows it modified.
 
 ```sh
@@ -132,8 +183,7 @@ cmake -S forza-recomp -B forza-recomp/out/build/linux-tu4 -G Ninja -DCMAKE_BUILD
 ninja -C forza-recomp/out/build/linux-tu4
 ```
 
-The launcher does all of this from the two packages (Setup: game files, Title Update 4,
-DLC; [`docs/launcher.md`](docs/launcher.md)).
+The launcher does all of this from the two packages ([above](#install-with-the-launcher)).
 
 ## Windows
 
