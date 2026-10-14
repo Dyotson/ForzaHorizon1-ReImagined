@@ -757,7 +757,8 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     # update) is deleted, not resumed; so is one ninja cannot get clean (see compile_pass).
     for attempt in (1, 2):
         reset_stale_build_tree(bdir, stamp, rep)
-        fixed = clamp_future_times([src, sdk, build_dir(root) / "toolchain"])
+        fixed = clamp_future_times([src, sdk, build_dir(root) / "toolchain", build_env.toolchain_dir(root),
+                                    root / "xwin"])
         if fixed:
             rep.log(f"{fixed} files had a modification time in the future (the clock of this computer is "
                     "behind, or an installer stamped them): set to now.")
