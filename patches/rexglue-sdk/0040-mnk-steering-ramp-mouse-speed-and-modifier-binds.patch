@@ -1,0 +1,163 @@
+diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
+index 3d2c378..4aa3fb8 100644
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/ui/window.h>
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstdlib>
+ #include <cstring>
+@@ -29,6 +30,11 @@ REXCVAR_DEFINE_BOOL(mnk_mouse, false, "Input",
+                     "from the keybind_rstick_* keys only");
+ REXCVAR_DEFINE_DOUBLE(mnk_sensitivity, 1.0, "Input", "Mouse sensitivity for right stick")
+     .range(0.01, 10.0);
++REXCVAR_DEFINE_DOUBLE(mnk_stick_ramp, 0.2, "Input",
++                      "Seconds the keys take to push the left stick from its first deflection "
++                      "to full, and half that to let it go (steering with keys is not all or "
++                      "nothing). 0 turns the ramp off")
++    .range(0.0, 2.0);
+ 
+ REXCVAR_DEFINE_STRING(keybind_a, "Semicolon,Space", "Input/Keybinds/Controller", "A button");
+ REXCVAR_DEFINE_STRING(keybind_b, "Quote,Backspace", "Input/Keybinds/Controller", "B button");
+@@ -133,19 +139,67 @@ std::string_view TrimSpaces(std::string_view s) {
+ 
+ bool TokenPressed(const bool (&key_down)[256], std::string_view token, uint8_t live_mods) {
+   uint8_t want = TakeModifiers(token);
+-  if (want != live_mods) {
+-    return false;
+-  }
+   rex::ui::VirtualKey vk = rex::ui::ParseVirtualKey(token);
+   if (vk == rex::ui::VirtualKey::kNone) {
+     return false;
+   }
++  // A modifier key bound on its own ("Shift") must not be held back by itself being a
++  // live modifier.
++  if (vk == rex::ui::VirtualKey::kShift) {
++    live_mods &= ~kModShift;
++  } else if (vk == rex::ui::VirtualKey::kControl) {
++    live_mods &= ~kModCtrl;
++  } else if (vk == rex::ui::VirtualKey::kMenu) {
++    live_mods &= ~kModAlt;
++  }
++  if (want != live_mods) {
++    return false;
++  }
+   uint16_t idx = static_cast<uint16_t>(vk);
+   return idx < 256 && key_down[idx];
+ }
+ 
+ std::atomic<bool> mouse_look_active{true};
+ 
++// Time-based state of GetDeviceState, which the game polls at its own rate (several times a
++// frame at times). Only the one keyboard and mouse device exists, and its state mutex is held.
++struct StickState {
++  float value = 0.0f;  // -1..1
++};
++StickState left_stick_x, left_stick_y;
++float mouse_rate_x = 0.0f, mouse_rate_y = 0.0f;  // low-passed pixels per second
++std::chrono::steady_clock::time_point last_poll{};
++
++// A key moves the stick from 0 to kRampStart at once (a short tap must clear the game's
++// dead zone), then to full over `ramp` seconds; letting go takes half as long.
++constexpr float kRampStart = 0.6f;
++
++float RampAxis(StickState& axis, float target, float dt, float ramp) {
++  if (ramp <= 0.0f) {
++    axis.value = target;
++    return axis.value;
++  }
++  const float attack = dt / ramp;
++  const bool releasing = target == 0.0f || (axis.value != 0.0f && (target > 0) != (axis.value > 0));
++  if (releasing) {
++    const float next = std::fabs(axis.value) - 2.0f * attack;
++    axis.value = (next > 0.0f ? next : 0.0f) * (axis.value < 0 ? -1.0f : 1.0f);
++    if (target == 0.0f) {
++      return axis.value;
++    }
++    if (axis.value != 0.0f) {
++      return axis.value;
++    }
++  }
++  float mag = std::fabs(axis.value);
++  if (mag < kRampStart) {
++    mag = kRampStart;
++  }
++  mag = std::min(1.0f, mag + attack);
++  axis.value = target < 0 ? -mag : mag;
++  return axis.value;
++}
++
+ // ui::VirtualKey follows Windows VK_ numbering; the guest wants USB HID usage
+ // page 0x07.
+ uint8_t VirtualKeyToHIDUsage(rex::ui::VirtualKey vk_enum) {
+@@ -485,16 +539,26 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+   uint8_t lt = IsBindPressed(key_down_, REXCVAR_GET(keybind_left_trigger)) ? 0xFF : 0;
+   uint8_t rt = IsBindPressed(key_down_, REXCVAR_GET(keybind_right_trigger)) ? 0xFF : 0;
+ 
+-  int32_t lx = 0;
+-  int32_t ly = 0;
++  const auto now = std::chrono::steady_clock::now();
++  float dt = last_poll.time_since_epoch().count() == 0
++                 ? 0.0f
++                 : std::chrono::duration<float>(now - last_poll).count();
++  last_poll = now;
++  dt = std::clamp(dt, 0.0f, 0.1f);
++  const float ramp = static_cast<float>(REXCVAR_GET(mnk_stick_ramp));
++
++  float lx_target = 0.0f;
++  float ly_target = 0.0f;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_left)))
+-    lx -= INT16_MAX;
++    lx_target -= 1.0f;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_right)))
+-    lx += INT16_MAX;
++    lx_target += 1.0f;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_up)))
+-    ly += INT16_MAX;
++    ly_target += 1.0f;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_down)))
+-    ly -= INT16_MAX;
++    ly_target -= 1.0f;
++  int32_t lx = static_cast<int32_t>(RampAxis(left_stick_x, lx_target, dt, ramp) * INT16_MAX);
++  int32_t ly = static_cast<int32_t>(RampAxis(left_stick_y, ly_target, dt, ramp) * INT16_MAX);
+ 
+   int32_t rx = 0;
+   int32_t ry = 0;
+@@ -508,16 +572,29 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+     ry -= INT16_MAX;
+ 
+   if (REXCVAR_GET(mnk_mouse) && IsMouseLookActive()) {
++    // The mouse is a stick that follows its speed. The speed is low-passed over the polls
++    // (the game may poll twice in a frame, and the second poll sees no motion), and scaled
++    // so that 1000 px/s is half the stick at sensitivity 1.
++    constexpr float kTau = 0.05f;
++    constexpr double kBaseScale = 16.0;
++    if (dt > 0.0f) {
++      const float alpha = 1.0f - std::exp(-dt / kTau);
++      mouse_rate_x += (mouse_dx_ / dt - mouse_rate_x) * alpha;
++      mouse_rate_y += (mouse_dy_ / dt - mouse_rate_y) * alpha;
++    }
+     double sensitivity = REXCVAR_GET(mnk_sensitivity);
+-    constexpr double kBaseScale = 200.0;
+-    rx += static_cast<int32_t>(double(mouse_dx_) * sensitivity * kBaseScale);
+-    ry += static_cast<int32_t>(double(-mouse_dy_) * sensitivity * kBaseScale);
++    rx += static_cast<int32_t>(double(mouse_rate_x) * sensitivity * kBaseScale);
++    ry += static_cast<int32_t>(double(-mouse_rate_y) * sensitivity * kBaseScale);
++  } else {
++    mouse_rate_x = mouse_rate_y = 0.0f;
+   }
+   // Drained unconditionally: deltas keep accumulating in OnMouseMove while the
+   // mouse is off, and toggling it on would otherwise dump the whole backlog
+   // into one frame as a camera snap.
+-  mouse_dx_ = 0.0f;
+-  mouse_dy_ = 0.0f;
++  if (dt > 0.0f || !REXCVAR_GET(mnk_mouse)) {
++    mouse_dx_ = 0.0f;
++    mouse_dy_ = 0.0f;
++  }
+ 
+   auto clamp16 = [](int32_t v) -> int16_t {
+     return static_cast<int16_t>(std::clamp(v, (int32_t)INT16_MIN, (int32_t)INT16_MAX));
