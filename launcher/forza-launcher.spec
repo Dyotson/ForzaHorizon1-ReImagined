@@ -30,6 +30,7 @@ datas = [
     (str(images / "social-preview.png"), "assets"),
     (str(root / "forza_launcher" / "ui" / "down.svg"), "forza_launcher/ui"),
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
+    (str(repo / "tools" / "xiso_extract.py"), "tools"),
     (str(repo / "tools" / "install_dlc.py"), "tools"),
 ]
 # The title update step (a Python tool the frozen app runs itself with --run-script).
@@ -41,7 +42,7 @@ a = Analysis(
     [str(root / "main.py")],
     pathex=[str(root), str(repo / "tools")],
     datas=datas,
-    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "tomllib"],
+    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],

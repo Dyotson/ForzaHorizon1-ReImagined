@@ -12,8 +12,9 @@ ReXGlue SDK pieces (SDK code, BSD-3-Clause). The launcher builds the game on the
 machine from their own copy:
 
 1. **Setup > Game files**: the player's Games on Demand package (`4D5309C9/00007000/<name>`
-   plus `<name>.data/`), a bare `default.xex`, or an already extracted folder. A package is
-   extracted with `tools/xcontent_extract.py`; `default.xex` is extracted first and checked
+   plus `<name>.data/`), a disc 1 ISO (`tools/xiso_extract.py`, docs/disc.md), a bare
+   `default.xex`, or an already extracted folder. A package is extracted with
+   `tools/xcontent_extract.py`; `default.xex` is extracted first and checked
    (title `4D5309C9`, version 0.0.0.7, entry point `0x82A6FBC0` = the base version, module hash
    `D48ABF1704CE5C4A`; a title update (TU4, hash `336A44DC03EC8782`) or another game is
    refused with a clear message before the long copy).

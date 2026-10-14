@@ -36,7 +36,7 @@ the project focuses on:
   join.
 
 This repository contains **no game code and no game data**. You need your own copy of the
-game (the Games on Demand package of the base version, Title ID `4D5309C9`). The recompiled
+game (the Games on Demand package or the disc 1 ISO of the base version, Title ID `4D5309C9`). The recompiled
 C++ is generated from your copy on your machine; no binaries are published here.
 
 ## Contents
@@ -130,8 +130,9 @@ Captured from the recompiled game running natively on Linux.
   `-j4` and 3.2 GB at `-j8`, and is not run together with the game) and about 15 GB of disk (7.6 GB of extracted game
   files, the SDK 1.6 GB, the build tree about 1 GB, a downloaded compiler 1.1 GB). Windows:
   see below.
-- Your own Forza Horizon Games on Demand package (`4D5309C9/00007000/<name>` plus
-  `<name>.data/`), base version. Optional but recommended: the Title Update 4 package
+- Your own copy of Forza Horizon, base version: the Games on Demand package
+  (`4D5309C9/00007000/<name>` plus `<name>.data/`), or the retail **disc 1 as an ISO** (or a
+  folder with its files; see [docs/disc.md](docs/disc.md)). Optional but recommended: the Title Update 4 package
   (`4D5309C9/000B0000/<name>`, update 4000D145) for Horizon Rally and the 1000 Club.
 - For the manual build: Clang (tested with 23), CMake >= 3.25, Ninja, Python 3, Git,
   OpenSSL (for `tools/xex_image.py` only). The launcher downloads what is missing.
@@ -150,8 +151,8 @@ your machine from your own files; nothing of the game is ever downloaded or ship
    SDK runtime from Flathub by itself); install the compiler extension once with
    `flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08` (0.5 GB; without it the
    launcher downloads a 2 GB compiler instead and tells you so).
-2. In **Setup**, point it at your Games on Demand package (it is extracted and checked
-   first), and optionally at your Title Update 4 package and DLC folder.
+2. In **Setup**, point it at your Games on Demand package or your disc 1 ISO (it is
+   extracted and checked first), and optionally at your Title Update 4 package and DLC folder.
 3. **Build**: it generates the game from your copy and compiles it, downloading a compiler
    and the SDK when you have none. Measured on 8 cores at `-j4`: a full build with Title
    Update 4 takes about 3.6 to 4.6 minutes, peaks near 2 GB of RAM and leaves about 15 GB on

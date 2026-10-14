@@ -12,8 +12,11 @@ from .fetch import Cancelled  # noqa: F401
 paths.ensure_tools_importable()
 import install_dlc  # noqa: E402
 import xcontent_extract  # noqa: E402
+import xiso_extract  # noqa: E402
 
 GOD = 0x7000
+# Not copied from a disc image: the console system update the disc carries (tools/xiso_extract.py).
+DISC_SKIP = ("$systemupdate",)
 
 
 class InstallError(Exception):
@@ -35,7 +38,11 @@ def resolve_package(path: str) -> Path:
         raise InstallError("Choose the package file itself (the file next to its .data folder).")
     if not p.is_file():
         raise InstallError(f"{p} does not exist.")
-    return p
+    return p   # a Games on Demand package or a disc image (extract_game tells which)
+
+
+def is_disc_image(path: Path) -> bool:
+    return path.is_file() and xiso_extract.is_iso(path)
 
 
 def inspect_package(path: Path):
@@ -61,17 +68,24 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
     total, name) is called per file. Extracts to a sibling folder first so a failed or
     cancelled run never leaves a half game behind."""
     pkg_path = resolve_package(package)
-    pkg, hdr = inspect_package(pkg_path)
-    if f"{hdr.title_id:08X}" != TITLE_ID:
-        raise InstallError(f"This package is for title {hdr.title_id:08X}, not Forza Horizon "
-                           f"({TITLE_ID}).")
-    if hdr.content_type != GOD:
-        raise InstallError("This is not a Games on Demand package (the base game is the file "
-                           f"under {TITLE_ID}/00007000). DLC goes under Install DLC.")
-    try:
-        entries = pkg.entries()
-    except SystemExit as e:
-        raise InstallError(str(e))
+    if is_disc_image(pkg_path):   # a disc image (ISO): the same XDVDFS tree, at the disc's offset
+        try:
+            pkg = xiso_extract.open_iso(pkg_path)
+            entries = [e for e in pkg.entries() if e.path.split("/")[0].lower() not in DISC_SKIP]
+        except xiso_extract.IsoError as e:
+            raise InstallError(str(e))
+    else:
+        pkg, hdr = inspect_package(pkg_path)
+        if f"{hdr.title_id:08X}" != TITLE_ID:
+            raise InstallError(f"This package is for title {hdr.title_id:08X}, not Forza Horizon "
+                               f"({TITLE_ID}).")
+        if hdr.content_type != GOD:
+            raise InstallError("This is not a Games on Demand package (the base game is the file "
+                               f"under {TITLE_ID}/00007000). DLC goes under Install DLC.")
+        try:
+            entries = pkg.entries()
+        except SystemExit as e:
+            raise InstallError(str(e))
     total = sum(e.size for e in entries if not e.is_dir)
     part = dest.with_name(dest.name + ".part")
     if free_space(dest.parent) < total + (1 << 28):
@@ -93,7 +107,7 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
                 if not ok:
                     raise InstallError(msg)
         if not (part / "default.xex").is_file():
-            raise InstallError("The package has no default.xex: is it the base game?")
+            raise InstallError("There is no default.xex here: is it the base game (Disc 1)?")
     except (Cancelled, InstallError):
         shutil.rmtree(part, ignore_errors=True)
         raise
@@ -200,9 +214,16 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
 
 # --- checking default.xex --------------------------------------------------------------------
 
-BASE_ENTRY = 0x82A6FBC0     # entry point of the base version's default.xex
+# The base-version executables the project is made for, by (version, entry point). Disc layouts of
+# one build differ only in the header and a few data strings (docs/disc.md); add a region's here
+# once its code is checked (tools/apply_title_update.py prints how many page groups match).
+KNOWN_BASE = {(7, 0x82A6FBC0): "Forza Horizon base version"}
 BASE_VERSION = 7
 REQUIRED_FILES = ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex")
+
+
+def xex_version(v: int) -> str:
+    return f"{v >> 28}.{(v >> 24) & 15}.{(v >> 8) & 0xFFFF}.{v & 0xFF}"
 
 
 def inspect_xex(path: Path):
@@ -229,16 +250,16 @@ def inspect_xex(path: Path):
         return False, f"{path.name} has an unusual header; it is not Forza Horizon's default.xex."
     if f"{title:08X}" != TITLE_ID:
         return False, (f"This is not Forza Horizon: its title id is {title:08X}, not {TITLE_ID}. "
-                       "Point to the game's Games on Demand package.")
-    if entry == BASE_ENTRY and version == BASE_VERSION and base == BASE_VERSION:
-        return True, f"Forza Horizon base version (0.0.0.{version}, media id {media:08X})."
-    if version != base or version > BASE_VERSION:
-        return False, (f"This default.xex is version 0.0.0.{version} (base 0.0.0.{base}): it looks like a "
-                       "title update (TU4 or another). This project needs the base version of the "
-                       "game, the one on the disc or in the plain Games on Demand package, without "
-                       "title updates applied.")
-    return False, (f"This default.xex does not match the base version (entry point "
-                   f"{entry:#x} instead of {BASE_ENTRY:#x}). It is not supported.")
+                       "Point to the game's Games on Demand package or disc (Disc 1).")
+    found = f"version {xex_version(version)}, base {xex_version(base)}, media id {media:08X}, entry point {entry or 0:#x}"
+    if (version, entry) in KNOWN_BASE and version == base:
+        return True, f"{KNOWN_BASE[(version, entry)]} ({xex_version(version)}, media id {media:08X})."
+    if version != base or version > BASE_VERSION:   # TU4 is 0.0.4.12 (base 0.0.0.12)
+        return False, (f"This default.xex is {found}: it looks like a title update (TU4 or another). "
+                       "This project needs the base version of the game, the one on the disc or in the "
+                       "plain Games on Demand package, without title updates applied.")
+    return False, (f"This default.xex ({found}) is not a version this project knows (0.0.0.7, entry "
+                   "point 0x82a6fbc0). Another region's disc may differ: please report it.")
 
 
 def check_game_folder(folder: Path):

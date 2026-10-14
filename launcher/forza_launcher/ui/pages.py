@@ -217,7 +217,7 @@ class SetupPage(QWidget):
         # 1. game files ---------------------------------------------------------------
         self.c1 = StepCard(1, "Your game files",
                            "Choose your Games on Demand package (the file in 4D5309C9/00007000, next to its "
-                           ".data folder), a default.xex, or a folder you already extracted. The base version of "
+                           ".data folder), your disc 1 ISO, a default.xex, or a folder you already extracted. The base version of "
                            "the game is needed, without title updates.")
         row, self.pkg, _ = path_row("Package, default.xex or folder", self._pick_file, self._pick_dir)
         self.pkg.setText(cfg["game_package"])
@@ -452,7 +452,7 @@ class SetupPage(QWidget):
 
     # ---- step 1 ------------------------------------------------------------------------
     def _pick_file(self):
-        f, _ = QFileDialog.getOpenFileName(self, "Games on Demand package or default.xex",
+        f, _ = QFileDialog.getOpenFileName(self, "Games on Demand package, disc ISO or default.xex",
                                            self.pkg.text() or str(Path.home()))
         if f:
             self.pkg.setText(f)

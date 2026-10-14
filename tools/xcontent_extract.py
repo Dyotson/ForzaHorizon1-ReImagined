@@ -50,7 +50,51 @@ class Entry:
         self.path, self.is_dir, self.size, self.runs = path, is_dir, size, runs
 
 
-class Svod:
+class Xdvdfs:
+    """The XDVDFS directory tree. A subclass provides BLOCK, read_block(block, n) and
+    runs_for(block, length) -> [[file index, byte offset, byte count], ...]; `root_block` and
+    `root_size` come from the volume descriptor ("MICROSOFT*XBOX*MEDIA" + <II>)."""
+
+    BLOCK = 0x800
+
+    def entries(self):
+        out = []
+        self._walk_dir(self.root_block, self.root_size, "", out)
+        return out
+
+    def _walk_dir(self, block, size, prefix, out):
+        # Directory entries are addressed by 4-byte ordinals; one directory can span
+        # several sectors, each mapped on its own (hash blocks may sit in between).
+        nsectors = max(1, (size + self.BLOCK - 1) // self.BLOCK)
+        data = b"".join(self.read_block(block + i) for i in range(nsectors))
+        stack, seen = [0], set()
+        items = []
+        while stack:
+            ordinal = stack.pop()
+            off = ordinal * 4
+            if off in seen or off + 14 > len(data):
+                continue
+            seen.add(off)
+            left, right, start, length, attr, nlen = struct.unpack_from("<HHIIBB", data, off)
+            if left == 0xFFFF and right == 0xFFFF:
+                continue
+            name = data[off + 14:off + 14 + nlen].decode("latin-1")
+            if left:
+                stack.append(left)
+            if right:
+                stack.append(right)
+            items.append((name, start, length, attr))
+        for name, start, length, attr in sorted(items, key=lambda x: x[0].lower()):
+            path = prefix + name
+            if attr & 0x10:
+                out.append(Entry(path, True, 0, []))
+                if length:
+                    self._walk_dir(start, length, path + "/", out)
+            else:
+                out.append(Entry(path, False, length, self.runs_for(start, length)))
+
+
+class Svod(Xdvdfs):
     """GOD/SVOD: XDVDFS sectors (0x800) spread over DataNNNN fragments with hash tables."""
 
     BLOCK = 0x800
@@ -124,42 +168,6 @@ class Svod:
             block += 1
             remaining -= 1
         return runs
-
-    def entries(self):
-        out = []
-        self._walk_dir(self.root_block, self.root_size, "", out)
-        return out
-
-    def _walk_dir(self, block, size, prefix, out):
-        # Directory entries are addressed by 4-byte ordinals; one directory can span
-        # several sectors, each mapped on its own (hash blocks may sit in between).
-        nsectors = max(1, (size + self.BLOCK - 1) // self.BLOCK)
-        data = b"".join(self.read_block(block + i) for i in range(nsectors))
-        stack, seen = [0], set()
-        items = []
-        while stack:
-            ordinal = stack.pop()
-            off = ordinal * 4
-            if off in seen or off + 14 > len(data):
-                continue
-            seen.add(off)
-            left, right, start, length, attr, nlen = struct.unpack_from("<HHIIBB", data, off)
-            if left == 0xFFFF and right == 0xFFFF:
-                continue
-            name = data[off + 14:off + 14 + nlen].decode("latin-1")
-            if left:
-                stack.append(left)
-            if right:
-                stack.append(right)
-            items.append((name, start, length, attr))
-        for name, start, length, attr in sorted(items, key=lambda x: x[0].lower()):
-            path = prefix + name
-            if attr & 0x10:
-                out.append(Entry(path, True, 0, []))
-                if length:
-                    self._walk_dir(start, length, path + "/", out)
-            else:
-                out.append(Entry(path, False, length, self.runs_for(start, length)))
 
 
 class Stfs:

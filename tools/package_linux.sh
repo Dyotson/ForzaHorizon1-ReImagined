@@ -37,7 +37,7 @@ else
     cmake -P "$rpath_script"
     rm -f "$rpath_script"
 fi
-cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
+cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/xiso_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 cp "$ROOT"/server/*.py "$DIST/server/"
 cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
