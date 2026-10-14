@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Assemble the folder the Flatpak manifest installs (flatpak/stage/, not tracked by git):
+
+  stage/
+    forza_launcher/ main.py          the launcher (plain Python, run by the SDK's python3)
+    assets/                          logo.svg, logo.png, social-preview.png
+    tools/                           the Python tools the launcher runs (extraction, DLC, title update)
+    project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
+    server/                          the Forza Live server
+    sdk-overlay/rexglue-overlay-linux-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
+    licenses/
+    wheels/                          not here: the manifest downloads the PySide6 wheels itself
+
+Nothing of the game goes in: no game code, no game data, no built game. The player's machine
+builds that. The same pieces launcher/packaging/make_package.py puts in the .tar.gz.
+
+  flatpak/stage.py --overlay rexglue-overlay-linux-amd64.tar.gz [--sdk-license FILE] [--version X]
+"""
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+sys.path.insert(0, str(REPO / "launcher"))
+from forza_launcher import builder  # noqa: E402
+
+TOOLS = ("xcontent_extract.py", "install_dlc.py", "apply_title_update.py", "lzx_delta.py")
+ASSETS = ("logo.svg", "logo.png", "social-preview.png")
+
+
+def copy(src: Path, dst: Path):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--overlay", required=True, help="rexglue-overlay-linux-amd64.tar.gz")
+    ap.add_argument("--sdk-license", help="the ReXGlue SDK's LICENSE (BSD-3-Clause), reproduced in the package")
+    ap.add_argument("--out", default=str(HERE / "stage"))
+    ap.add_argument("--version", help="launcher version (default: the one in _version.py)")
+    a = ap.parse_args()
+    out = Path(a.out)
+    shutil.rmtree(out, ignore_errors=True)
+
+    shutil.copytree(REPO / "launcher" / "forza_launcher", out / "forza_launcher",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    copy(REPO / "launcher" / "main.py", out / "main.py")
+    if a.version:
+        (out / "forza_launcher" / "_version.py").write_text(
+            f'"""Launcher version."""\n__version__ = "{a.version}"\n', encoding="utf-8")
+    for n in ASSETS:
+        copy(REPO / "docs" / "images" / n, out / "assets" / n)
+    for n in TOOLS:
+        copy(REPO / "tools" / n, out / "tools" / n)
+    for rel in builder.source_files(REPO):
+        copy(REPO / "forza-recomp" / rel, out / "project" / "forza-recomp" / rel)
+    for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
+        copy(f, out / "project" / "tools" / "cmake" / f.name)
+    for f in sorted((REPO / "server").glob("*.py")):
+        if not f.name.startswith("test_"):
+            copy(f, out / "server" / f.name)
+    if (REPO / "server" / "playground_rounds.xml").is_file():
+        copy(REPO / "server" / "playground_rounds.xml", out / "server" / "playground_rounds.xml")
+    copy(Path(a.overlay), out / "sdk-overlay" / "rexglue-overlay-linux-amd64.tar.gz")
+    copy(REPO / "LICENSE", out / "licenses" / "ForzaHorizon1-ReImagined.txt")
+    if a.sdk_license:
+        copy(Path(a.sdk_license), out / "licenses" / "rexglue-sdk.txt")
+    print(out)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.dyotson.ForzaHorizon1ReImagined</id>
+  <name>Forza Horizon 1: ReImagined</name>
+  <summary>Build and play Forza Horizon (Xbox 360) natively, from your own game files</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT AND BSD-3-Clause</project_license>
+  <developer id="io.github.dyotson">
+    <name>Dyotson</name>
+  </developer>
+  <description>
+    <p>
+      Forza Horizon 1: ReImagined is a static recompilation of Forza Horizon (Xbox 360) to a native
+      Linux program. This launcher builds the game on your computer from your own copy of Forza
+      Horizon and then runs it, with Vulkan rendering, keyboard, mouse and controller support, a
+      frame rate you choose, and online play through a Forza Live server.
+    </p>
+    <p>
+      No game code and no game data are included. You need your own Games on Demand package of
+      Forza Horizon (base version); the Title Update 4 package is optional but recommended
+      (Horizon Rally, the 1000 Club). The launcher extracts your files, translates the game's
+      executable to C++ and compiles it inside this sandbox, using the freedesktop SDK and its LLVM
+      extension, so no compiler or development packages are needed on your system.
+    </p>
+    <p>
+      Forza Horizon is a trademark of Microsoft. This project is not affiliated with, endorsed by or
+      sponsored by Microsoft, Playground Games or Turn 10 Studios.
+    </p>
+    <p>
+      The first build takes about five minutes on a modern 8-core computer and needs about 15 GB of
+      free disk space. Saves, settings and logs stay in the application's data folder.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.dyotson.ForzaHorizon1ReImagined.desktop</launchable>
+  <url type="homepage">https://dyotson.github.io/ForzaHorizon1-ReImagined/</url>
+  <url type="bugtracker">https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues</url>
+  <url type="vcs-browser">https://github.com/Dyotson/ForzaHorizon1-ReImagined</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Dyotson/ForzaHorizon1-ReImagined/main/docs/images/forza-free-roam.jpg</image>
+      <caption>Free roam</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Dyotson/ForzaHorizon1-ReImagined/main/docs/images/forza-race.jpg</image>
+      <caption>A race</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Dyotson/ForzaHorizon1-ReImagined/main/docs/images/forza-prologue-drive.jpg</image>
+      <caption>The prologue drive</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Dyotson/ForzaHorizon1-ReImagined/main/docs/images/forza-horizon-world-online.jpg</image>
+      <caption>Horizon World online</caption>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Game</category>
+    <category>Simulation</category>
+  </categories>
+  <keywords>
+    <keyword>forza</keyword>
+    <keyword>horizon</keyword>
+    <keyword>racing</keyword>
+    <keyword>xbox 360</keyword>
+    <keyword>recompilation</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>gamepad</control>
+  </supports>
+  <requires>
+    <memory>8000</memory>
+    <internet>first-run</internet>
+  </requires>
+  <recommends>
+    <internet>always</internet>
+  </recommends>
+  <provides>
+    <binary>forza-reimagined</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-10-14">
+      <description>
+        <p>First release: the launcher, with Title Update 4 (Horizon Rally, the 1000 Club) and online play.</p>
+      </description>
+    </release>
+  </releases>
+</component>

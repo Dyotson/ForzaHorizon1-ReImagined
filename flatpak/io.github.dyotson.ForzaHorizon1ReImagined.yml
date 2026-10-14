@@ -1,0 +1,79 @@
+# Flatpak manifest (issue #1). See docs/launcher.md, "Flatpak".
+#
+# The runtime is org.freedesktop.Sdk itself, not Platform: the launcher compiles the game on the
+# player's machine, so the C++ headers, glibc, cmake, ninja and python must exist at run time, and
+# only the Sdk carries them. The compiler is the Sdk's LLVM extension (clang 22; the launcher
+# accepts clang >= 21), declared below as an extension of this app so that flatpak installs it
+# together with the app. Nothing of the game is in this package.
+#
+# Build (from the repository root):
+#   flatpak/stage.py --overlay rexglue-overlay-linux-amd64.tar.gz --sdk-license LICENSE-of-the-SDK
+#   flatpak-builder --user --install --force-clean build-dir flatpak/io.github.dyotson.ForzaHorizon1ReImagined.yml
+app-id: io.github.dyotson.ForzaHorizon1ReImagined
+runtime: org.freedesktop.Sdk
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: forza-reimagined
+
+finish-args:
+  - --share=ipc
+  - --share=network                # the Forza Live server; the SDK download; the pinned LLVM fallback
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=all                   # GPU (Vulkan), game controllers
+  # The player's own game files (a Games on Demand package is a file plus a <name>.data folder,
+  # which the file chooser portal would not hand over together), title update and DLC. Read only.
+  - --filesystem=home:ro
+  - --filesystem=/media:ro
+  - --filesystem=/run/media:ro
+  - --filesystem=/mnt:ro
+  - --talk-name=org.freedesktop.ScreenSaver
+
+add-extensions:
+  org.freedesktop.Sdk.Extension.llvm22:
+    directory: lib/sdk/llvm22
+    version: '26.08'
+    autodownload: true
+    autodelete: false
+
+cleanup-commands:
+  - mkdir -p ${FLATPAK_DEST}/lib/sdk/llvm22
+
+modules:
+  # The launcher's only third-party dependency. PySide6 6.12 wheels (Qt 6.12 inside), pinned.
+  - name: pyside6
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} --no-build-isolation pyside6_essentials shiboken6
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/7b/3c/7597d8dcb36aa8315427635ec6ec9d850ffbad4ce78b9118ac854889f2d3/pyside6_essentials-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: 16f4b5e41daf49235ae048458243da9efe5f3d8040f9cc5aa454ce69893d3bd9
+        only-arches: [x86_64]
+      - type: file
+        url: https://files.pythonhosted.org/packages/49/c2/a04fa003b4360e99d8e3fc2829abacf37396ace63ea1cd616402209ec7c6/shiboken6-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl
+        sha256: 3bde565bb0890044b5c7f63808adddede5abc241e9395a2bfed61919884d6240
+        only-arches: [x86_64]
+
+  - name: forza-reimagined
+    buildsystem: simple
+    build-commands:
+      - install -d ${FLATPAK_DEST}/share/forza-reimagined
+      - cp -r stage/. ${FLATPAK_DEST}/share/forza-reimagined/
+      - python3 -m compileall -q ${FLATPAK_DEST}/share/forza-reimagined/forza_launcher
+      - install -Dm755 forza-reimagined.sh ${FLATPAK_DEST}/bin/forza-reimagined
+      - install -Dm644 io.github.dyotson.ForzaHorizon1ReImagined.desktop -t ${FLATPAK_DEST}/share/applications
+      - install -Dm644 io.github.dyotson.ForzaHorizon1ReImagined.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo
+      - install -Dm644 stage/assets/logo.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/io.github.dyotson.ForzaHorizon1ReImagined.svg
+      - install -Dm644 stage/assets/logo.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/io.github.dyotson.ForzaHorizon1ReImagined.png
+    sources:
+      - type: dir
+        path: stage
+        dest: stage
+      - type: file
+        path: forza-reimagined.sh
+      - type: file
+        path: io.github.dyotson.ForzaHorizon1ReImagined.desktop
+      - type: file
+        path: io.github.dyotson.ForzaHorizon1ReImagined.metainfo.xml

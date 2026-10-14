@@ -5,6 +5,7 @@
   forza-launcher --live-server SCRIPT [args]   run the Forza Live server (the frozen app does this
                                  for the local server, so the player needs no Python)
   forza-launcher --run-script SCRIPT [args]   run a bundled Python tool (the frozen app has no Python)
+  forza-launcher --extract PACKAGE [--root DIR]   extract your Games on Demand package without the window
   forza-launcher --build [--root DIR] [--jobs N] [--clean]   build the game without the window
   forza-launcher --version
 """
@@ -44,6 +45,32 @@ def dry_run():
         print("# local server\n" + " ".join(plan.server_argv))
     for n in plan.notes:
         print("# note: " + n)
+    return 0
+
+
+def headless_extract(argv):
+    import argparse
+    from pathlib import Path
+    from .config import Config
+    ap = argparse.ArgumentParser(prog="forza-launcher --extract")
+    ap.add_argument("package", help="the Games on Demand package (4D5309C9/00007000/<name>), next to its .data folder")
+    ap.add_argument("--root", help="data root (default: the launcher's); the game goes to ROOT/game")
+    a = ap.parse_args(argv)
+    from . import installer
+    root = Path(a.root) if a.root else Config().data_home()
+    last = {"pct": -1}
+
+    def progress(done, total, name):
+        pct = int(100 * done / total) if total else 100
+        if pct != last["pct"] and pct % 5 == 0:
+            last["pct"] = pct
+            print(f"extracting: {pct}% ({done / 2**30:.1f} of {total / 2**30:.1f} GB)", flush=True)
+    try:
+        total = installer.extract_game(a.package, root / "game", progress)
+    except installer.InstallError as e:
+        print(f"extraction failed: {e}", file=sys.stderr)
+        return 1
+    print(f"extracted {total / 2**30:.1f} GB to {root / 'game'}")
     return 0
 
 
@@ -97,6 +124,8 @@ def main(argv=None):
     if argv[:1] == ["--version"]:
         print(__version__)
         return 0
+    if argv[:1] == ["--extract"]:
+        return headless_extract(argv[1:])
     if argv[:1] == ["--build"]:
         return headless_build(argv[1:])
     if argv[:1] == ["--dry-run"]:

@@ -248,7 +248,12 @@ def run(argv):
     QApplication.setHighDpiScaleFactorRoundingPolicy(_Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication([sys.argv[0]] + argv)
     app.setApplicationName("forza-reimagined-launcher")
-    app.setDesktopFileName("forza-reimagined")
+    app.setDesktopFileName(paths.FLATPAK_ID or "forza-reimagined")
+    if paths.IN_FLATPAK:
+        # The portal's file chooser hands out /run/user/.../doc paths for the one file picked, so a
+        # Games on Demand package would lose its <name>.data folder. The Flatpak is given read access
+        # to the home folder and removable media instead, and the Qt dialog shows the real paths.
+        app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app.setStyleSheet(theme.QSS)
     win = MainWindow(Config())
     win.show()

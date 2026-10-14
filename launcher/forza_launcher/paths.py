@@ -4,6 +4,10 @@ import sys
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
+# Running inside the Flatpak sandbox (flatpak/): the runtime is org.freedesktop.Sdk, so the C++
+# headers, cmake, ninja and python are in /usr, and the LLVM extension is mounted below.
+FLATPAK_ID = os.environ.get("FLATPAK_ID", "")
+IN_FLATPAK = bool(FLATPAK_ID) or Path("/.flatpak-info").exists()
 FROZEN = bool(getattr(sys, "frozen", False))
 PKG_DIR = Path(__file__).resolve().parent
 # launcher/ in a source checkout; the PyInstaller bundle directory when frozen.
@@ -16,6 +20,20 @@ def app_dir() -> Path:
     if FROZEN:
         return Path(sys.executable).resolve().parent
     return PKG_DIR.parent
+
+
+def flatpak_llvm_dirs() -> list:
+    """bin/ of the org.freedesktop.Sdk.Extension.llvm* extensions mounted in this sandbox (newest
+    first): where the app's own extension point or the Sdk's puts them."""
+    out = []
+    for base in ("/app/lib/sdk", "/usr/lib/sdk"):
+        try:
+            names = sorted((n for n in os.listdir(base) if n.startswith("llvm")),
+                           key=lambda n: int(n[4:]) if n[4:].isdigit() else 0, reverse=True)
+        except OSError:
+            continue
+        out += [f"{base}/{n}/bin" for n in names if os.path.isfile(f"{base}/{n}/bin/clang")]
+    return out
 
 
 def in_checkout() -> bool:

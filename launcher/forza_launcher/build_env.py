@@ -166,8 +166,18 @@ def detect_tools(root: Path, prefer_downloaded=False, max_age=5.0) -> Tools:
     return tools
 
 
+def _flatpak_path():
+    """Inside the Flatpak the compiler comes with the SDK's LLVM extension (not on PATH by itself)."""
+    if paths.IN_FLATPAK:
+        have = os.environ.get("PATH", "").split(os.pathsep)
+        extra = [d for d in paths.flatpak_llvm_dirs() if d not in have]
+        if extra:
+            os.environ["PATH"] = os.pathsep.join(extra + have)
+
+
 def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
     t = Tools()
+    _flatpak_path()
     p = _plat()
     dp = downloaded_paths(root)
     exe = ".exe" if p == "windows" else ""

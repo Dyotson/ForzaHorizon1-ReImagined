@@ -27,3 +27,9 @@ forza_live_data/
 tools/unxmem
 # DLC packages the user dropped in for testing (game data)
 HorizonDLC/
+flatpak/stage/
+# Flatpak build products (flatpak/stage.py, flatpak-builder)
+.flatpak-builder/
+flatpak-build-dir/
+flatpak-repo/
+*.flatpak

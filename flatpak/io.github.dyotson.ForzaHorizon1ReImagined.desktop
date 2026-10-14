@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Forza Horizon 1: ReImagined
+GenericName=Launcher for the Forza Horizon recompilation
+Comment=Build and play Forza Horizon (Xbox 360) natively from your own game files
+Exec=forza-reimagined
+Icon=io.github.dyotson.ForzaHorizon1ReImagined
+Terminal=false
+Categories=Game;Simulation;
+Keywords=forza;horizon;racing;xbox360;recompilation;
+StartupWMClass=io.github.dyotson.ForzaHorizon1ReImagined
