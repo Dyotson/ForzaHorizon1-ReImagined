@@ -1,7 +1,7 @@
 # Launcher, installers and landing page
 
-Issue #1. State: Linux path built and tested end to end; Windows path written but **not
-tested on Windows**; `release.yml` ran green by hand (run 38572896631: SDK for Linux and Windows,
+Issue #1. State: Linux path built and tested end to end; Windows path built and run once in a VM (see "Windows"), **on real
+hardware**; `release.yml` ran green by hand (run 38572896631: SDK for Linux and Windows,
 both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
@@ -57,7 +57,7 @@ The launcher's own config is `~/.config/forza-reimagined/launcher.json`
   Redistribution: the SDK is BSD-3-Clause (copyright Tom Clay, portions Xenia); the binary
   form must reproduce the notice, which `licenses/rexglue-sdk.txt` in every package does.
   The overlay holds SDK code only, no game code.
-* Windows (untested): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
+* Windows (built once in the VM, see "Windows"): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
   way. The MSVC CRT and Windows SDK come from an installed Visual Studio / Build Tools
   (`vswhere`, `vcvars64.bat`) if there is one, else **xwin** on the player's machine after the
   player ticks "I accept Microsoft's license" (the launcher links the license; nothing of
@@ -151,7 +151,7 @@ Verified on Linux:
 * Workflows: `actionlint` clean, YAML loads. Landing page: Chromium at 1440x900 and 390x844
   (no console errors, no horizontal scroll, lightbox works).
 
-Not verified: **everything Windows at run time** (the installer was built by CI but never run;
+Windows run time: see "Windows" below (installer, extraction, a whole build, Play without a GPU were run in a VM; not on Visual Studio or Windows 10; was never run before 2026-10-14:
 build path, xwin, Visual Studio detection), the `publish` job (tags only), the TU4 step in the
 frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only the source tree ran it).
 
@@ -284,15 +284,59 @@ Results, release v0.1.1 `ForzaHorizon1-ReImagined-Setup-0.1.1.exe`:
 * `launcher/packaging/test_installer.ps1 -Setup <exe> [-ExpectVersion X]` automates the above (install,
   assert files/shortcuts/registry, `--version`, `--dry-run`, uninstall, assert removed); it passed on the VM.
 
-Not done (stopped early): game files extraction and the build in the VM (xwin path, toolchain download,
-SDK overlay, codegen, ninja, wall time/peak memory), Play without Vulkan (note: `vulkan-1.dll` is present
-in System32 of the VM, the GPU is a VirtIO display), and the CI job. Next steps: fix the Setup page width,
-then `--extract` and `--build --title-update <zip> --jobs 4 --accept-microsoft-license` in the VM (watch
-Windows path/quoting issues in `builder.msvc_environment`, the xwin splat and the overlay tar).
-`ResourceMonitor` reports no peak memory on Windows (it reads /proc); sample the process tree with
-PowerShell if the number is wanted.
+### Round 2 (same day, VM as above; issues #26, #28, #29, #30): what was found and fixed
 
-CI job to add to `release.yml` (not yet validated in Actions; the script itself ran on the VM):
+VM access that worked: `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 tester@127.0.0.1`
+(the host key changes when the container is re-created; without those options a script hangs on the
+prompt). The Samba share (`\\host.lan\Data`) is slow to show new files to the VM (minutes of stale
+directory listings): use it to move big files, and `scp` for scripts. For GUI tests a PowerShell loop
+started by a scheduled task in the console session (`schtasks /create ... /ru tester /it`) ran scripts that
+click (`SetCursorPos` + `mouse_event`, `SendKeys`) and take screenshots (`Graphics.CopyFromScreen`), which
+`scp` brings back; the screen is 1280x800. Python 3.12 + PySide6 in the VM runs the launcher from a
+`git archive` of the tree, so a fix is tested in a minute.
+
+* **#29 (Extract game files stays at 0% and vanishes).** Extraction itself works on Windows: a real Games on
+  Demand package (7.1 GB, 4 cores, a few minutes), the same package converted by iso2god 1.8.1 from the EU/Asia
+  ISO, and the ISO itself (`tools/xiso_extract.py`) all extract in the GUI (source tree and the v0.1.1 frozen
+  app) and with `--extract`. Root cause: the worker thread DID report its error, and the Setup page erased
+  it. `SetupPage._finished` printed the message and then called `refresh()`, which, with no `default.xex`
+  yet (the extraction deletes its `.part` folder on failure), blanked the message label and set the badge back to
+  "Needed". Any refusal after the progress bar started (a `default.xex` that is not the base version, not enough free
+  disk space, a disk error) looked like the bar disappearing. Reproduced by making `KNOWN_BASE` empty in the VM.
+  Fix (e59faa1): failures are kept in `SetupPage.fail` until the next run, shown red, with a dialog and the
+  path of the new `launcher.log` (`%APPDATA%\ForzaReImagined\launcher.log`, tracebacks included); `Task.run`
+  catches `BaseException` (a `SystemExit` from a tool would have ended the thread without a signal), logs it and
+  `sys.excepthook` shows a dialog for anything that reaches the top. The same wipe hit the build (`status3`) and
+  the Play page (below). What the players' copies actually fail on is still unknown; the message now says
+  (version, entry point, media id of their `default.xex`).
+* **#30 (extracted folder, picked its `default.xex`, step 1 stays "Needed", no error).** A complete extracted
+  folder (`default.xex` + both facade files) is accepted with "Use these files" or "Choose folder" (checked in
+  the VM). A folder missing a file is refused with the file named; the same wipe made the message vanish when the
+  player went on to fill the title update field (refresh). The message now says to choose the whole extracted game
+  folder (the three files).
+* **#26 (Setup clipped at 1040 px).** Reproduced (Segoe UI). Cause: the Windows-only "I accept Microsoft's license
+  terms ..." `QCheckBox`, whose text cannot wrap, forced the scroll page's minimum width past the window.
+  `pages.WrappedCheck` (a check box plus a wrapping label) fixes it; verified by screenshot at the default size.
+* **#28 (`\usr\bin\true codegen`).** d33e2d4 verified: a Windows build from the CI installer of main
+  (0.0.0-dev.649f0bc, frozen, Visual Studio absent so xwin) with TU4 + 23 DLC + the ISO as game files, through the
+  window (Build, license ticked, `-j3`, low priority): LLVM 23.1.3 / CMake 4.4.4 / ninja downloaded, xwin splat,
+  TU4 applied, 357 ninja steps, `forza.exe` linked and staged: **563 s wall (9.4 min, with the downloads) and a
+  1.5 GB peak** (summed working set of the process tree, now measured on Windows through Toolhelp +
+  `GetProcessMemoryInfo`; `builder._windows_tree_memory`). On disk: build 0.9 GB (after link), toolchain + xwin 1.7 GB,
+  game 7.6 GB. The preflight says "8 GB installed, 5 GB free (need about 8 GB)" as an error on this 8 GB VM and asks
+  "Try anyway?"; the build did not run out of memory.
+* **Play without a GPU.** `forza.exe` starts, logs `Failed to create a Vulkan instance: ErrorIncompatibleDriver`
+  and exits with code 1 within a second. The launcher said "The game is running." forever: `Play.show_message(warn)`
+  was hidden by the `refresh()` that follows. Now (9949778) the Play page keeps a red box: exit code, a sentence
+  for the usual cause (no Vulkan GPU), the last three error lines of `forza.log`, the log path.
+* **Installer test in CI.** The `installer-test` job (windows-2022, `test_installer.ps1`) ran on the CI-built
+  installer: every check passed, but the step exited 1 (the last native command, `--dry-run`, returned 1);
+  `exit 0` added. `release.yml` run 38641731120 validates it (artifacts only).
+
+Still not tested: a Visual Studio Build Tools machine (the `vswhere`/`vcvars64.bat` path), Windows 10, a real GPU,
+long user names or a data folder with spaces/non-ASCII characters, antivirus interfering.
+
+The `installer-test` job in `release.yml` (it runs the script on the CI-built installer):
 
 ```yaml
   installer-test:
