@@ -56,3 +56,4 @@ Check (-not (Test-Path $uninstKey)) "uninstall entry removed"
 
 if ($failed.Count -gt 0) { Write-Host "`n$($failed.Count) check(s) failed"; exit 1 }
 Write-Host "`nall checks passed"
+exit 0
