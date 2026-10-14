@@ -1,6 +1,6 @@
 # Builds the launcher installers and attaches them to the release.
 #
-# The installers hold the launcher, the project's own sources, the Forza Live server and the
+# The installers and the Flatpak bundle hold the launcher, the project's own sources, the Forza Live server and the
 # patched ReXGlue SDK pieces. They hold NO game code, NO game data and NO built game: the
 # launcher builds the game on the player's computer from their own copy of Forza Horizon.
 #
@@ -192,9 +192,41 @@ jobs:
           name: launcher-windows
           path: installer/*.exe
 
+  # The Linux Flatpak: the launcher run by the freedesktop SDK 26.08 (which also builds the game on
+  # the player's machine, with the SDK's LLVM extension), the project sources and the patched SDK
+  # pieces of sdk-linux. Also holds no game code. Built with flatpak-builder in the flathub image.
+  flatpak:
+    needs: sdk-linux
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-overlay-linux
+          path: overlay
+      - name: Stage the files the Flatpak installs
+        run: |
+          v="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev.$(echo "$GITHUB_SHA" | cut -c1-7)"
+          # the SDK's license (BSD-3-Clause), reproduced with its patched pieces; the pinned commit of pins.SDK_TAG
+          curl -fsSL -o rexglue-sdk-LICENSE https://raw.githubusercontent.com/rexglue/rexglue-sdk/bd833a2ab69d305f99ddf57418fc38ffec8af93d/LICENSE
+          python3 flatpak/stage.py --overlay overlay/rexglue-overlay-linux-amd64.tar.gz \
+            --sdk-license rexglue-sdk-LICENSE --version "$v"
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@aa777012a985fe1b1fd3e66ea2173609cf0c9a70 # v6.8
+        with:
+          bundle: ForzaHorizon1-ReImagined-x86_64.flatpak
+          manifest-path: flatpak/io.github.dyotson.ForzaHorizon1ReImagined.yml
+          cache: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: ForzaHorizon1-ReImagined-x86_64.flatpak
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [launcher-linux, launcher-windows]
+    needs: [launcher-linux, launcher-windows, flatpak]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

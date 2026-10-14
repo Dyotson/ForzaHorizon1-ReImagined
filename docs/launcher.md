@@ -190,7 +190,7 @@ frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only
 
 Files: `flatpak/` (manifest `io.github.dyotson.ForzaHorizon1ReImagined.yml`, `.desktop`, AppStream
 `.metainfo.xml` (validates with `flatpak-builder-lint appstream`), `stage.py`, `rebuild.sh`,
-`forza-reimagined.sh`, `flatpak-job.snippet.yml`). Local build: `flatpak/rebuild.sh` (needs
+`forza-reimagined.sh`; the CI job `flatpak` is in `.github/workflows/release.yml`). Local build: `flatpak/rebuild.sh` (needs
 `flatpak install --user flathub org.flatpak.Builder org.freedesktop.Sdk//26.08
 org.freedesktop.Sdk.Extension.llvm22//26.08`; big files go to `~/.cache/forza-flatpak/`).
 
