@@ -14,6 +14,12 @@
 #define __imp__sub_8247C678 __imp__sub_824ABBD8
 #define sub_8247F018 sub_824AE6B0  // check
 #define __imp__sub_8247F018 __imp__sub_824AE6B0
+#define sub_824F1A80 sub_8255D7E8
+#define __imp__sub_824F1A80 __imp__sub_8255D7E8
+#define sub_82502DD8 sub_8256D008
+#define __imp__sub_82502DD8 __imp__sub_8256D008
+#define sub_82502E18 sub_8256D048
+#define __imp__sub_82502E18 __imp__sub_8256D048
 #define sub_825548A0 sub_825D3860  // check
 #define __imp__sub_825548A0 __imp__sub_825D3860
 #define sub_825723B0 sub_825E7B40

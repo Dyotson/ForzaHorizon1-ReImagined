@@ -60,7 +60,8 @@ Notes:
 
 - `-DFORZA_TITLE_UPDATE=4` picks `forza_manifest_tu4.toml` (input `extracted/tu4/`, hints in
   `hints_tu4/`, output `generated_tu4/`; codegen rewrites `generated/rexglue.cmake` with
-  fixed paths each run, so CMake includes a copy pointed at `generated_tu4/`). Both
+  the paths of the manifest that ran, so each build includes its own copy, made at
+  configure time; after a TU4 codegen run git shows that file changed: `git checkout` it). Both
   versions build from the same tree into separate build folders; the base build is
   unchanged.
 - Hints: `tools/tu_address_map.py` maps base addresses to TU4 ones (functions paired
@@ -100,6 +101,54 @@ Notes:
   "MISSING TITLE UPDATE: Your profile save game requires the latest title update". Going
   to TU4 is one way: keep a copy of the profile folder to go back.
 
+## Every package (#18)
+
+The 23 installed packages (`tools/install_dlc.py`), and what the game answers for their
+cars (`FORZA_DLC_LOG=1`, `src/debug/dlc_log.cpp`: each IsCarInstalled /
+IsCarInstalledAndPurchased / IsCarOnDisc answer is logged once). Car lists come from each
+package's database patch (`media/db/patch/*_merge.slt` in its DLC zips); single-car
+packages map their offer to a car of the disc's database (`ContentOffersMapping`).
+Measured 2026-10-14 with all 23 installed, signed in to the Forza Live server: base build
+with the normal profile, TU4 build with a Xenia save, each into free roam.
+
+| Package | Offer | Cars (media names) | Base | TU4 |
+|---|---|---|---|---|
+| 1000 Club Expansion Pack | 2700 | 2: RUF_CTR2_95, FOR_F100_56 | installed | installed |
+| 2010 Ferrari 458 Italia | 1002 | 1: FER_F142_10 | installed | installed |
+| 2010 Nissan 370Z | 1004 | 1: NIS_370Z_10 | installed | installed |
+| 2010 Volkswagen Golf R | 1005 | 1: VW_GolfR_10 | installed | installed |
+| 2011 Mercedes-Benz SLS AMG | 1001 | 1: MER_SLSAMG_11 | installed | installed |
+| 2012 Aston Martin Virage | 1003 | 1: AST_Virage_12 | installed | installed |
+| 2013 Ford Mustang Boss 302  - Pizza Hut Edition | 2800 | 1: FOR_MustangBoss302_PZA_13 | installed | installed |
+| 2013 Ford Shelby GT500 - Rockstar Energy | 1300 | 1: FOR_ShelbyGT500LCE_13 | installed | installed |
+| April TopGear Car Pack | 2600 | 6: FOR_TransitSSV_11, BOW_NemesisEXR_12, ALF_ZagatoTZ3Stradale_12, BMW_M3GTR_HZN_05, AST_Vanquish_13, MER_CLKGTR_HZN_98 | installed | installed |
+| December IGN Car Pack | 1500 | 7: AST_DBS_09, AMC_JavelinAMX_71, MCL_F1_93, FER_F12_13, FOR_GTX1_06, HUM_H1AlphaOpenTop_06, FOR_SVTRaptorHALO_12 | installed | installed |
+| February Jalopnik Car Pack | 1900 | 7: NIS_510_70, DEV_GTX_10, FOR_CountrySquire_66, MAZ_RX3_73, TOY_FJCruiser_12, SUB_BRZ_13, FER_512TR_HZN_91 | installed | installed |
+| Honda Challenge Car Pack | 1800 | 3: HON_CivicSi_13, HON_HPDRallyFit_10, HON_CivicSi_86 | installed | installed |
+| January Recaro Car Pack | 1700 | 7: MER_SLR_05, PAG_ZondaCinque_09, FOR_Mustang_95, LEX_LFANurburgring_12, LOT_ExigeS_12, GMC_Vandura_83, CAD_Escalade_12 | installed | installed |
+| LCE: Day1 DLC Pack | 1200 | 11: CHE_BelAir_57, FOR_MustangBoss302_13, AUD_LCESportQuattro_83, VW_LCESciroccoR_11, FOR_LCESVTRaptor_12, MIT_LCELancerEvoXGSR_08, DOD_LCEChargerSRT8_12, LAM_AventadorJ_12, ALF_8CSpider_10, FER_599XXEvolution_12, GUM_ApolloEnraged_12 | installed | installed |
+| March Meguiar's Car Pack | 2400 | 7: PEU_206RC_04, JOS_JT1_10, BMW_M135i_13, FER_360Challenge_HZN_03, NIS_R390_HZN_98, AUD_RS4Avant_13, MER_G65AMG_13 | installed | installed |
+| November Bondurant Car Pack | 1400 | 7: SHE_Cobra427_65, NIS_240SX_94, JEE_Wrangler_12, BMW_M3GTS_10, LAM_GallardoLP570Spyder_12, SHE_1000_12, FOR_ShelbyGT500LCE_13 | installed | installed |
+| October Car Pack | 1100 | 11: CHE_BelAir_57, FOR_MustangBoss302_13, AUD_LCESportQuattro_83, VW_LCESciroccoR_11, FOR_LCESVTRaptor_12, MIT_LCELancerEvoXGSR_08, DOD_LCEChargerSRT8_12, LAM_AventadorJ_12, ALF_8CSpider_10, FER_599XXEvolution_12, GUM_ApolloEnraged_12 | installed | installed |
+| Pre-Order Car Pack | 2500 | 5: NIS_370Z_10, FER_F142_10, MER_SLSAMG_11, VW_GolfR_10, AST_Virage_12 | installed | installed |
+| Rally Expansion Pack | 1600 | 16: FOR_FocusSVT_03, SUB_WRXSTi_05, MIT_LancerEvoVIIIMR_04, FOR_EscortRSCosworth_92, LAN_037Stradale_82, TOY_CelicaST185_90, SUB_WRXSTi_05, AUS_MiniCooperS_65, TOY_Sprinter_85, PEU_205T16_84, LAN_DeltaS4_86, AUD_RS4_06, FOR_RS200Evolution_87, LAM_LP7004_12, ULT_GTR_12, FER_FXX_05 | installed | installed |
+| Season Pass | 206931968 | 0:  | - | - |
+| Season Pass: 2006 Lamborghini Miura Concept | 1450 | 1: LAM_Miura_06 | installed | installed |
+| VIP Membership & Cars Pack | 1006 | 5: PAG_Huayra_12, LAM_SestoElemento_11, RUF_Rt12R_11, KOE_Agera_11, AUD_R8GTSpyder_12 | installed | installed |
+| VIP Membership & Cars Pack | 2100 | 5: LAM_SestoElemento_11, KOE_Agera_11, PAG_Huayra_12, RUF_Rt12R_11, AUD_R8GTSpyder_12 | installed | installed |
+
+- Every DLC car counts as installed on both builds, the Rally and 1000 Club cars too
+  (the base merges their database patches; TU4's own `gamedb.slt`, in its media.zip,
+  already has the 15 Rally cars and the 1600 and 2700 offers). What the expansions add
+  besides cars is TU4 code: the Horizon Rally mode and its map (#16) and the 1000 Club
+  (#17) exist only in the TU4 build.
+- The 12 packages of the second DLC set (1000 Club, Rally, the car packs, VIP) are byte
+  for byte the installed ones; `install_dlc.py` needs no change.
+- Not checked one by one: each car in the Autoshow and garage (model, audio, thumbnail).
+- The failed `DLCRoot` lookups in the log (#5) are the game probing every package for
+  optional files (`DLCRootN:\media\dlczips\stringtables.xml`, per-zip
+  `media\db\patch\`, `effects\`, `dynamicpost\...` folders): not errors.
+
 ## Missing DLC content message (#9)
 
 The text is `TitleUpdate2.str` 0x44E6: "You have cars in your garage that are missing DLC
@@ -120,3 +169,12 @@ IsCarOnDisc(CarId)=0` on the game database. The SQL functions are registered in
 `sub_82502E18`, `IsCarOnDisc` = `sub_824F1A80` (both installed checks go through a cache,
 `sub_82502CB8`). So the message means: the save's garage holds a car whose content is
 neither on the disc nor installed.
+
+Not reproduced (2026-10-14): base build with the normal profile and with the Xenia save,
+signed in or not, START pressed at once or after the attract screens; TU4 build with the
+Xenia save. Every IsCarInstalled answer was 1 (`FORZA_DLC_LOG=1`). The message can only
+come from a garage car the game does not count as installed: a car from a package that is
+not installed in the user data folder the game uses (`<user data>/0000000000000000/
+4D5309C9/00000002`; `play.sh --xenia` and the launcher link it into the Xenia copy), or a
+package installed without its header (`Headers/00000002/<name>.header`). With
+`FORZA_DLC_LOG=1` the log names the car: a line `IsCarInstalled(id N, type 1) = 0`.

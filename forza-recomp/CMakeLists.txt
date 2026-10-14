@@ -53,20 +53,14 @@ if(NOT CMAKE_CROSSCOMPILING AND NOT REXSDK_DIR AND
         COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
-# generated/rexglue.cmake is rewritten by every codegen run with fixed paths (generated/,
-# forza_manifest.toml); a Title Update build includes a copy pointed at its own.
-if(FORZA_GENERATED STREQUAL "generated")
-    include(generated/rexglue.cmake)
-else()
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake" _rexglue_cmake)
-    string(REPLACE "generated/default" "${FORZA_GENERATED}/default" _rexglue_cmake "${_rexglue_cmake}")
-    string(REPLACE "forza_manifest.toml" "${FORZA_MANIFEST}" _rexglue_cmake "${_rexglue_cmake}")
-    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rexglue_${FORZA_GENERATED}.cmake"
-         CONTENT "${_rexglue_cmake}" @ONLY)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-                 "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake")
-    include("${CMAKE_CURRENT_BINARY_DIR}/rexglue_${FORZA_GENERATED}.cmake")
-endif()
+# generated/rexglue.cmake is rewritten by every codegen run, with the paths of the manifest
+# that ran (generated/ or generated_tu4/); this build includes a copy pointed at its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake" _rexglue_cmake)
+string(REGEX REPLACE "generated(_tu4)?/default" "${FORZA_GENERATED}/default" _rexglue_cmake "${_rexglue_cmake}")
+string(REGEX REPLACE "forza_manifest(_tu4)?\\.toml" "${FORZA_MANIFEST}" _rexglue_cmake "${_rexglue_cmake}")
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rexglue_project.cmake" CONTENT "${_rexglue_cmake}" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake")
+include("${CMAKE_CURRENT_BINARY_DIR}/rexglue_project.cmake")
 
 # A cross build compiles the generated code the native build made; it must not run
 # codegen itself (the SDK's rexglue for the target cannot run here, and regenerating
@@ -97,6 +91,7 @@ set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
     src/debug/cpu_profile.cpp
+    src/debug/dlc_log.cpp
     src/debug/fault_guard.cpp
     src/debug/fiber_trace.cpp
     src/debug/frame_stats.cpp
