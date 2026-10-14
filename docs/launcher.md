@@ -1,7 +1,8 @@
 # Launcher, installers and landing page
 
 Issue #1. State: Linux path built and tested end to end; Windows path written but **not
-tested on Windows**; CI workflows are written and lint clean but have not run.
+tested on Windows**; `release.yml` ran green by hand (run 38572896631: SDK for Linux and Windows,
+both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
@@ -149,8 +150,8 @@ Verified on Linux:
 * Workflows: `actionlint` clean, YAML loads. Landing page: Chromium at 1440x900 and 390x844
   (no console errors, no horizontal scroll, lightbox works).
 
-Not verified: **everything Windows** (build path, xwin, Visual Studio detection, Inno Setup,
-the Windows SDK job), the Linux SDK CI job, `release.yml` as a whole (no run), the TU4 step in the
+Not verified: **everything Windows at run time** (the installer was built by CI but never run;
+build path, xwin, Visual Studio detection), the `publish` job (tags only), the TU4 step in the
 frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only the source tree ran it).
 
 ## Open
@@ -159,9 +160,8 @@ frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only
   save (converted by the game) is refused by the base build, so a player who has one needs the
   TU4 build. A suggestion for `tools/install_dlc.py` (not edited): a `progress` callback; the
   launcher counts bytes by wrapping `xcontent_extract.extract`.
-* The Windows build path, the Windows SDK job, the Linux SDK job, Inno Setup and the whole
-  release workflow have never run. They follow `tools/build_windows.sh` and
-  `tools/build_rexglue_sdk.sh`; expect a first round of fixes.
+* The Windows build path (on a player's machine), the installer and the `publish` job have never
+  run. The CI jobs build them; the Windows SDK overlay has not been used to build the game.
 * The Linux overlay is built on Ubuntu 22.04 (CI image `ubuntu-22.04`, glibc 2.35: the binaries
   need `GLIBC_2.35` and `GLIBCXX_3.4.32`, so any distro from 2022 on that has a g++ new enough
   for the game build runs it). 22.04 has neither C++23 headers nor CMake 3.25, so
@@ -176,4 +176,12 @@ frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only
   spirv_translator_fetch.cpp:2030`), which was the first dry run's failure. The clang-cl build
   of the SDK prints millions of warning lines (GitHub then cannot serve the log), so the job
   keeps the output in a file and prints only failures.
+  clang-cl reads the SDK's `-Wall` as `-Weverything` (millions of warnings, a 56 minute build)
+  and ignores `-fno-char8_t` and `-ffp-model=strict` (the first broke `xboxkrnl_ob.cpp`, a `u8`
+  literal passed as `std::string_view`), so the job rewrites those three lines of the SDK's top
+  `CMakeLists.txt` to `-w`, `/Zc:char8_t-` and `/fp:strict` before configuring. The build then
+  takes about 10 minutes. Hand-run artifacts (run 38572896631): Linux launcher package 79 MB
+  (starts, `--version`, `--dry-run`), Windows installer 69 MB (Inno Setup 6.7, with the VC++
+  redistributable), SDK overlays 7 MB (Linux) and 18 MB (Windows: runtime, Xenos plugin, codegen
+  tool, headers, import libraries, licenses; no Microsoft files).
 * Code signing of the Windows installer (SmartScreen will warn).
