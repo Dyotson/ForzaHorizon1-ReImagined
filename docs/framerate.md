@@ -346,32 +346,11 @@ counters on about 5800 functions, rates per scene at 30 and 144):
 A RenderDoc capture of the intro at 144 (5,782 draws over 3 guest frames, 4 s after
 START RACE) was taken; the draw list was not analysed before the session ended.
 
-**Cause found (2026-10-14, static analysis; not yet confirmed in a run).** The stands
-spectators are the skinned procedural crowd (`PROC_CHARACTER_SKIN*_VS`, vertex shader table
-index 66-69, created by `sub_8247A060`). Their bones come from animations baked at 1/30 s
-per frame (`sub_82DDD6A8` samples each Granny clip with the constant 1/30 at
-`0x820256E4`); the vertex shader's `AnimInfo` (c156) is that frame's offset. The chain:
-
-- `sub_824788B0` (per rendered view) tail-calls `sub_82DF7BB0` with the view's simulated
-  time since its last render (+0x1DE8) and the crowd object (+0x1DE4).
-- `sub_82DF7BB0` keeps a microsecond accumulator (crowd object +0x3EAE0, 25 ms frames,
-  25000 at `0x832B9BA8`) and stores the frames to advance at +0x3EAE4, then overwrites
-  that step with `dt > 0 ? 1 : 0`.
-- `sub_82E08A00` adds the step to each spectator's frame (u16 at +2, or +66 for the
-  second list; a new random clip when the clip ends) and appends the instance through
-  `sub_82DF79C8`/`sub_82DF7AC0`; `sub_82E20E80` turns them into 128-byte records
-  (InstanceMatrix, `AnimInfo.x = clip start + bones * frame`, FadeValues) that
-  `sub_8243C050` draws (constants c152-c157).
-
-So the crowd advances one baked frame per rendered frame: right at 30, about 3.5x at 144
-(the intro renders about 100 fps). Fix: `src/hooks/crowd_anim.cpp` replaces
-`sub_82DF7BB0` above 30 fps: the step is the number of 1/30 s periods the simulated time
-crossed, the remainder kept in the same accumulator (in 1/3 us); at 30 the game's
-function runs, `FORZA_CROWD_ANIM=game` keeps it at every rate. TU4: `sub_82EB9DF0`, the
-same code and offsets (`sub_82ECAB38` is TU4's `sub_82E08A00`). Both builds compile.
-
-Next: verify with screenshot bursts 4 s after START RACE at 30, 60, 120 and 144 (a
-spectator's arm wave should take about 0.9 s at every rate; `FORZA_CROWD_ANIM=game` for
-the before), with a fresh copy of the Xenia save. Check also that the intro's other
-"too fast" items (shots, camera sweep, countdown) were only the crowd: their timing was
-already measured as real time.
+Still open: what animates the stands spectators (`media/spectators`, `.anim.bin` clips,
+`PROC_CHARACTER_SK*` shaders; loaded by `sub_8314B6D0` from `sub_82DE4DBC`). Next: find
+the spectator draw's shader constants (time or frame index) in a RenderDoc capture, or the
+code that writes them. Next experiment: in a capture, pixel history on a spectator
+(the blue-dress woman in the stands shot) gives the spectator draw and its vertex shader;
+compare that draw's float constants across the captured frames for one that steps by a
+fixed amount per frame (1/30 s or 1), then find the guest code that writes it (watch the
+constant's guest address with gdb, `docs/PROJECT.md`).

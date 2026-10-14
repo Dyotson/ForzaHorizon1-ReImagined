@@ -86,8 +86,6 @@
 #define __imp__sub_82CF7278 __imp__sub_82DB8C18
 #define sub_82D3DB00 sub_82DFFC48
 #define __imp__sub_82D3DB00 __imp__sub_82DFFC48
-#define sub_82DF7BB0 sub_82EB9DF0  // check
-#define __imp__sub_82DF7BB0 __imp__sub_82EB9DF0
 
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
