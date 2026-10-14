@@ -7,7 +7,9 @@ normalized (branch displacements and 16-bit immediates of address-forming and me
 instructions masked) and the two function sequences are aligned with difflib, so runs of
 unchanged functions match in order even where the update inserted or changed code. A code
 address maps to the same offset in the matched function (only when both have the same
-length). Data addresses map through the code that uses them: lis/addi (and lis + load or
+length). A function start the alignment left out goes where its callers' calls go (call
+sites in matched functions of the same length), before similarity within the gap and the
+code around it are tried. Data addresses map through the code that uses them: lis/addi (and lis + load or
 store) pairs at the same offset of matched functions give anchor pairs, and an address
 takes the shift of its nearest anchors when they agree.
 
