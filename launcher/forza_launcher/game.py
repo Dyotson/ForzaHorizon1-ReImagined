@@ -264,6 +264,9 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
             notes.append("No custom server address set: starting offline.")
         unset.append("FORZA_SERVER")
 
+    if (game.dir / "update").is_dir() and not any(a.startswith("--update_data_root") for a in
+                                                  split_args(cfg.advanced.get("extra_args", ""))):
+        args.append(f"--update_data_root={game.dir / 'update'}")  # the title update's files
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
 

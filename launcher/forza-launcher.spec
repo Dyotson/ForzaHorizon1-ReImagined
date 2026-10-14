@@ -22,7 +22,7 @@ for f in (repo / "server").glob("*.py"):
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             hidden.add(node.module.split(".")[0])
 hidden = sorted(m for m in hidden if m in stdlib)
-hidden += ["sqlite3", "xml.etree.ElementTree", "http.server", "ssl", "hashlib", "hmac", "zlib"]
+hidden += ["zipfile", "tempfile", "shutil", "subprocess", "io", "sqlite3", "xml.etree.ElementTree", "http.server", "ssl", "hashlib", "hmac", "zlib"]
 
 datas = [
     (str(images / "logo.svg"), "assets"),
@@ -32,6 +32,10 @@ datas = [
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
     (str(repo / "tools" / "install_dlc.py"), "tools"),
 ]
+# The title update step (a Python tool the frozen app runs itself with --run-script).
+for _tool in ("apply_title_update.py", "lzx_delta.py"):
+    if (repo / "tools" / _tool).is_file():
+        datas.append((str(repo / "tools" / _tool), "tools"))
 
 a = Analysis(
     [str(root / "main.py")],

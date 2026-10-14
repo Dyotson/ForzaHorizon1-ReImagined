@@ -391,8 +391,11 @@ def sync_sources(opts: Options, rep: Reporter, game_files: Path, xex: Path | Non
         wanted.add(rel)
         data = src.read_bytes()
         if rel.as_posix() == "forza_manifest.toml":
-            if xex is not None:  # the title-updated executable replaces the base default.xex
-                data = data.replace(b"../extracted/game/default.xex", xex.resolve().as_posix().encode())
+            if xex is not None:  # the title-updated executables replace the base ones
+                for name in ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex"):
+                    patched = xex.parent / name
+                    if patched.is_file():
+                        data = data.replace(f"../extracted/game/{name}".encode(), patched.resolve().as_posix().encode())
             data = data.replace(b"../extracted/game", game_files.resolve().as_posix().encode())
         if not dst.is_file() or dst.read_bytes() != data:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -518,6 +521,10 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
 
     rep.status("Installing")
     rt = stage_runtime(opts, rep, bdir, sdk)
+    update = build_dir(root) / "tu" / "update"
+    if patched is not None and update.is_dir():   # the title update's other files (media.zip)
+        shutil.rmtree(rt / "update", ignore_errors=True)
+        shutil.copytree(update, rt / "update")
     wall = time.time() - t0
     peak = monitor.get("peak", 0)
     write_state(root, {"started": t0, "id": cid, "complete": True,
