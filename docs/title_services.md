@@ -111,7 +111,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | Sign-in (about 50 s after boot) | `User.Logon2(loginData)` | `responseData`: profile valid, a permission table allowing every feature (below), `userData` (XUID, gamertag, **currentXPTotal = the player's online XP**), timeouts |
 | | `OnlineProfile.UpdateAllTables`, `UpdateAll` | success; `UpdateAll`'s `playerRaceHistory` (level, XP, **onlineXP**, online races and wins) and `playerHistory` (credits) are kept per player |
 | | `DLCMetadata.GetStringTableInfo("EN")`, `Xls Content.DownloadContent(0, 0, 0x40000)` x2 | empty |
-| Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)` | the playlists (below) |
+| Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)`; Title Update 4: `GetListEx` (each hopper also has `requiredOfferId`, u64) | the playlists (below) |
 | Find Game, picking a playlist | `Hopper.GetSearchSettings(hopperId)`, `GetGameOptions(hopperId, roundNum, 0x8000)`, then (after the session search) `UserRegister(hopperId, sessionId)` every `nextRegisterSeconds` | search settings, the round's GameOptions XML, 60 s |
 | Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
 | Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | the score kept (scoreboards below) / success (profile kept) |

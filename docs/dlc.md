@@ -76,9 +76,9 @@ Notes:
   `src/tu4_addresses.h` (written by `tu_address_map.py --cpp forza-recomp/src ...`)
   renames each `sub_XXXXXXXX`/`__imp__sub_XXXXXXXX` they use and maps each
   `FORZA_ADDR(0x...)` constant; `src/platform/guest_addr.h` includes it in a TU4 build.
-  Entries marked "check" sit in functions the update changed (13 functions, 5 call-site
-  addresses, all in the online lobby / Horizon World hooks and the frame-time hook); they
-  were paired by similarity and are untested.
+  Entries marked "check" sit in functions the update changed; each was reviewed against
+  the TU4 code (see "Online" below). Struct layouts the update changed are picked with
+  `FORZA_TU4` (`guest_addr.h`).
 - Runtime: the TU4 build mounts the patched files' folder as `update:` (the SDK's
   `update_data_root`, default `tu4` next to the game folder) and links
   `game:\default.xex` and the two facades to it. TU4 looks the facades' exports up
@@ -110,6 +110,68 @@ Notes:
   from 0 to version 4, flags 2; a `NeedsAA` file appears). The base build then refuses it:
   "MISSING TITLE UPDATE: Your profile save game requires the latest title update". Going
   to TU4 is one way: keep a copy of the profile folder to go back.
+
+### Online (#20)
+
+Checked 2026-10-14 with two TU4 games (DriverA, DriverB) and one base game (BaseC) on a
+local Forza Live server, each with its own scratch copy of a Xenia career save (TU4
+converts it) and its own `XDG_DATA_HOME` (the online identity file lives there).
+
+What the update changed for the hooks, and the fixes:
+
+- Mapping (`tools/tu_address_map.py`): the 13 "check" functions and 5 call sites were
+  compared with the TU4 code (the generated code of both builds carries the disassembly,
+  so a base function and its TU4 pair diff directly, branch targets mapped). Two were
+  wrong, both paired by the code around them: the player list's constructor
+  `sub_8247F018` (paired with `sub_824AE6B0`, a tree header's: 16-byte node, flags) and
+  its clear `sub_828736E0` (paired with another list type's clear); TU4 has them at
+  `sub_825A1EB8` and `sub_824B06A0`, the same code. The tool now places a function start
+  the alignment left out by its callers: each call site in a matched function of the same
+  length names the new target (a majority of at least 2, 80 %); such entries are marked
+  "check" only when the code differs. The other 11 and the 5 call sites (each call site's
+  call goes to the mapped function) are right; the changes in them: the launch passes a
+  new flag to `sub_825548A0`, `sub_828786E8` checks one more condition per player, the
+  session teardown `sub_82CF7278` skips its message pump when a field is clear. None of
+  that touches what the hooks do. The hints (`hints_tu4/`) map the same with the new tool.
+- The online game object grew: TU4 put 4 bytes in front of the game options (the preset
+  at +0x1B8, the track +0x1BC, MaxPlayers/MaxAIPlayers +0x1D0/+0x1D1, AI difficulty
+  +0x44E) and 8 at their end (0x2DC bytes, was 0x2D0), so everything after them moved
+  (next round ready/options +0x490/+0x494, round counter +0x7F4, intermission +0x7FC/
+  +0x800, the launch check +0x87C/+0x880). The fields before the options (mode, state, in
+  game, players, host, launch time) and the vtable slots the hooks call did not move.
+  Found by diffing the field offsets of every matched function in the online code
+  (`0x82860000-0x828A0000`); `world_events.cpp` and `world_drop_in.cpp` use the TU4
+  offsets in a TU4 build. Read with the base offsets, the world hooks would have taken
+  every round for an event (preset 0) and written the intermission into other fields.
+- Title services: TU4 asks for the playlists with `Hopper.GetListEx` (each hopper also
+  has `requiredOfferId`, a u64 after `intermissionTimeMs`); with the server's empty
+  answer the game showed only its default playlist ("The Forza Horizon service is not
+  available"). The server answers it (no offer needed). A dump of TU4's service records
+  from a running game (`server/forza_xtsw_all.py`) found the other 292 unchanged and 7
+  new: `GetListEx`, `Challenge.ChallengeCompleted(carId u16, challengeThumbprint u32)`
+  (the 1000 Club; no results), `SharedCar.CreateEx` / `GetClubCarsEx` (the car data with
+  `hasRallyUpgrades`, rows with `contentId`), now handled like `Create` / `GetClubCars`.
+
+Results (TU4 + TU4):
+
+| Test | Result |
+|---|---|
+| Sign-in (Gold), party lobby, Find Game | playlists listed (after `GetListEx`) |
+| Horizon World | B alone: the world started at once (free roam HUD); A was placed into B's world, JUMP IN, both in the world, each console's car list has the other's car at the other's position |
+| Event (`/world/event`, event 4, 1 lap) | both to the event lobby: 2 humans + 6 CPU drivers, INTERMISSION from 30, class B cars; the race with 8 cars (each console runs 3 CPU drivers, sees the other's 3), A saw B's car and tag; CPU level Easy (2 of 8 human); after the race each console removed only its own CPU drivers, both back in the world's free roam; online race scores submitted, XP and credits given |
+| Head-to-head | A drove up behind B (29 m), X: B got the prompt, accepted; both "race to the Wind Farm", GPS route on both minimaps; B's game closed: A "YOU WIN: DriverB left" |
+| Rivals | GoPro Millennia Masters: Rivals screen (`GetRivalAndPersonalBest`, `GetBestScores`), Rivals race started and quit (`WriteRaceStatsEx`); a finished lap (a rival time) was not driven |
+| 1000 Club, signed in | opens (tutorial, challenge cards, `Scoreboard.GetRows`), challenges begun in a car |
+| Host leaves | when B quit, A became the world's host |
+
+TU4 and base together: they can't play together. The base game placed into a TU4 world
+joined the session and left it within 60 ms ("session teardown"), then hosted a world of
+its own; a TU4 game placed into a base world did the same. No crash, but the next player
+of either version could be sent into the other version's world and end up alone too. So a
+TU4 build signs in to the server's room with "#TU4" added (`LiveRoom()`,
+`src/kernel/identity.cpp`): matchmaking, the friends list and invites only see players of
+the same version. Tested: base BaseC and TU4 DriverA each hosted their own world (no
+cross-version join), TU4 DriverB was placed into DriverA's.
 
 ## Every package (#18)
 

@@ -28,7 +28,9 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   `FORZA_SERVER=host[:port]` (or `live_server = "host:port"` in `forza.toml` next to the
   binary). Your online identity (XUID, gamertag: your login name unless
   `FORZA_GAMERTAG` is set) is kept in `~/.local/share/forza/4D5309C9/live_identity.txt`.
-  Everyone in the server's room is your friend.
+  Everyone in the server's room is your friend. Title Update 4 and base-game players
+  can't play together: a TU4 game uses the room's "#TU4" version, so each meets only
+  players of its own version.
   **The shared world:** Multiplayer, Find Game, **Horizon World** (the first playlist).
   The server puts you into the fullest open world (8 players each) or you open a new one
   and start driving at once, alone, and everyone who picks it after you is placed with
