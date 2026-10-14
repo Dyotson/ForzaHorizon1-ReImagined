@@ -90,8 +90,8 @@ Defaults differ from the game's in one place: the first run sets `frame_rate = 6
   `ForzaHorizon1-ReImagined-linux-x86_64.tar.gz` with `install.sh`, `.desktop`, icon) and
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
-  redistributable installed when missing), and `publish` (tags only) creating the release and
-  uploading both. The version comes from the tag. Nothing here needs the game or generated code.
+  redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
+  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three. The version comes from the tag. Nothing here needs the game or generated code.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.
@@ -209,14 +209,52 @@ Saves, config, extracted game and build live in `~/.var/app/<id>/`. New CLI: `fo
 Tested (this host, Fedora Atomic, user installation): the app builds and installs; `--extract` of the
 real GoD package (7.1 GB, about 15 s); `--build --title-update <TU4 zip> --jobs 8` inside the sandbox with
 the SDK's cmake/ninja and clang 22.1 (no downloads except the 122 MB SDK nightly): 3.4 min wall, 3.1 GB
-peak build memory, TU4 applied, 357 ninja steps; the game started from the launcher's own launch plan
+peak build memory, TU4 applied, 357 ninja steps; the game was started from the launcher's own launch plan
 (Play code path) in the sandbox on Wayland/radv with the local Forza Live server child and a copy of a
-Xenia save. Repo size of the app commit 98 MB (734 MB installed with the 496 MB LLVM extension).
+Xenia save, but it stopped a second later for want of an audio backend (fixed, see below). Repo size of the app commit 98 MB (734 MB installed with the 496 MB LLVM extension).
 
-NOT done: reaching the main menu / free roam and the screenshot, the game's peak RSS (the README's
-"about 4 GB of free RAM" line is therefore unchanged and unverified for the game itself), `flatpak
-build-bundle` and the reinstall test, running the window itself, the PySide6 size trim, and the CI job.
-The CI job is `flatpak/flatpak-job.snippet.yml` (flatpak-github-actions v6.8 pinned, freedesktop-26.08
-image; reuses `sdk-overlay-linux`; gets the SDK's LICENSE from the pinned SDK commit); one hand run
-(38574730110) was started and not checked, so it is not in `release.yml`. Flathub lint: the app id fails
-`appid-url-not-reachable` (the repo is `ForzaHorizon1-ReImagined`) and `home:ro` needs a justification.
+Bundle test and game test (2026-10-14, CI run 38594452070, all five jobs green: sdk-linux,
+sdk-windows, launcher-linux, launcher-windows, flatpak; `publish` is tag-only). The `flatpak` job is
+in `release.yml` (flatpak-github-actions v6.8 pinned, freedesktop-26.08 image, reuses
+`sdk-overlay-linux`, the SDK's LICENSE from the pinned commit) and `publish` needs it and uploads the
+bundle with the installers. Bundle: `ForzaHorizon1-ReImagined-x86_64.flatpak`, 63 MB (app 259 MB
+installed; the Sdk runtime is 1.8 GB installed, the llvm22 extension 0.5 GB).
+
+* Installing the bundle on a clean user installation (`FLATPAK_USER_DIR` scratch, nothing from Flathub
+  present): `flatpak install --user --bundle` adds the Flathub remote from the bundle's runtime repo and
+  pulls the `org.freedesktop.Sdk//26.08` runtime and its GL/codec extensions by itself (23 s on a fast
+  line). It does NOT pull `org.freedesktop.Sdk.Extension.llvm22` (autodownload only applies to installs
+  from a remote). So the player runs `flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08`
+  once. Without it the launcher still works: it falls back to the pinned 2 GB LLVM download, but now
+  also shows the one command in Setup (a warning row, build_env.FLATPAK_LLVM_HINT) and in the build
+  log. README and the landing page name the command.
+* `--extract` of the 7.1 GB package: 5 s (page cache warm). `--build --title-update <TU4 zip> --jobs 8`:
+  3.7 to 4.0 min, 3.1 to 3.2 GB peak build memory (the 3.2 GB is for `-j8`).
+* FOUND AND FIXED: the first game start crashed in the guest (`KeBugCheckEx`, SIGTRAP) right after
+  "SDL_InitSubSystem(SDL_INIT_AUDIO) failed: Audio target 'pulseaudio' not available". The CI-built
+  SDK runtime (overlay, so the Flatpak AND the tar.gz) had SDL3 with no audio backend: the Ubuntu 22.04
+  runner had no libpulse/ALSA dev packages when SDL3 was configured (the host-built runtime links
+  libpulse, libasound, libdbus, fribidi, libthai through dlopen; the CI one had none of them).
+  `launcher/packaging/ci_linux_sdk_setup.sh` now installs libpulse-dev, libasound2-dev, libdbus-1-dev,
+  libfribidi-dev and libthai-dev; with the rebuilt overlay the game finds the PulseAudio socket of the
+  sandbox (PipeWire host: "HyperX ... 6 ch, 48000 Hz") and runs. The Windows overlay was not affected.
+* Play from the launcher's own Play button (the real window on Wayland, a scratch copy of the Xenia
+  save through Settings > Profile, the local Forza Live server, nothing from `~/.local/share/forza`):
+  title screen, START, main menu with SINGLE PLAYER / MULTIPLAYER / HORIZON RALLY, A, free roam in the
+  save's Aventador, driven with scripted RT and left stick (FORZA_AUTOPRESS_FIFO) for 3.5 minutes at
+  59.7 to 60 fps. Peak RSS of the game (VmHWM): 0.68 GB at the main menu, 1.0 GB entering free roam,
+  1.13 GB after 3.5 minutes of driving. README and the landing page say "about 4 GB free" now with these
+  numbers (game 1.1 GB; build 2 GB at -j4, 3.2 GB at -j8). Note: the launcher's preflight
+  (`build_env.NEED_RAM_GB = 8`) still errors under 8 GB installed; it is a conservative number, not measured.
+* The launcher window (not headless) runs under Qt's Wayland platform inside the sandbox (KDE Plasma 6,
+  radv), with the Qt file dialogs; screenshots taken with spectacle on the host.
+* Test recipe: `FLATPAK_USER_DIR=~/.cache/forza-flatpak/userdir` for a clean installation. The window
+  can be driven from a script run with the sandbox's python (`flatpak run --command=sh APP -c
+  'PYTHONPATH=/app/lib/python3*/site-packages python3 SCRIPT'`; the script and its output must live
+  under the home folder, /tmp is private, and home is read-only except `~/.var/app/<id>`).
+  The game inside the sandbox is invisible to the host's `ps` (own PID namespace): read
+  `/proc/<pid>/status` from a process inside it, stop it with `flatpak kill APP`.
+
+NOT done: the PySide6 size trim (the app is 259 MB installed, 63 MB bundled) and publishing to Flathub.
+Flathub lint: the app id fails `appid-url-not-reachable` (the repo is `ForzaHorizon1-ReImagined`) and
+`home:ro` needs a justification.

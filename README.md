@@ -119,8 +119,9 @@ Captured from the recompiled game running natively on Linux.
 
 ## Requirements
 
-- Linux x86-64 or Windows 10/11 64-bit, with a Vulkan 1.3 GPU, about 4 GB of free RAM for the
-  build (it peaks near 2 GB at `-j4`) and about 15 GB of disk (7.6 GB of extracted game
+- Linux x86-64 or Windows 10/11 64-bit, with a Vulkan 1.3 GPU, about 4 GB of free RAM (measured:
+  the game peaks at 1.1 GB from the main menu through free roam; the build peaks near 2 GB at
+  `-j4` and 3.2 GB at `-j8`, and is not run together with the game) and about 15 GB of disk (7.6 GB of extracted game
   files, the SDK 1.6 GB, the build tree about 1 GB, a downloaded compiler 1.1 GB). Windows:
   see below.
 - Your own Forza Horizon Games on Demand package (`4D5309C9/00007000/<name>` plus
@@ -138,7 +139,11 @@ your machine from your own files; nothing of the game is ever downloaded or ship
 
 1. Get the launcher from the [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest):
    on Linux a **Flatpak** (works on Bazzite, SteamOS, Chimera, Ubuntu, Fedora and Arch; a
-   `.tar.gz` is the alternative), on Windows an **installer**.
+   `.tar.gz` is the alternative), on Windows an **installer**. The Flatpak is installed with
+   `flatpak install --user ForzaHorizon1-ReImagined-x86_64.flatpak` (it pulls the freedesktop
+   SDK runtime from Flathub by itself); install the compiler extension once with
+   `flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08` (0.5 GB; without it the
+   launcher downloads a 2 GB compiler instead and tells you so).
 2. In **Setup**, point it at your Games on Demand package (it is extracted and checked
    first), and optionally at your Title Update 4 package and DLC folder.
 3. **Build**: it generates the game from your copy and compiles it, downloading a compiler
