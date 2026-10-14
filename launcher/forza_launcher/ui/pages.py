@@ -111,10 +111,10 @@ class PlayPage(QWidget):
         self.r_files.set(files_ok, files_msg)
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
-        if install is not None and (state in ("built", "stale") or install.source != "built by the launcher"):
+        if install is not None:
             self.r_build.set(True if state != "stale" else None,
                              f"{game.game_version(install)}  -  {install.dir}" +
-                             ("  (rebuild available)" if state == "stale" else ""))
+                             ("  (a rebuild is available: open Setup)" if state == "stale" else ""))
         else:
             self.r_build.set(False if state != "partial" else None, detail + " Open Setup and press Build.")
         n = game.installed_dlc(cfg)

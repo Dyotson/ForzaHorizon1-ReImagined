@@ -557,8 +557,7 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     write_state(root, {"started": t0, "id": cid, "complete": True,
                        "when": time.strftime("%Y-%m-%d %H:%M"), "seconds": round(wall),
                        "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
-    (rt / "version.txt").write_text(f"launcher {__version__}, built {time.strftime('%Y-%m-%d')} "
-                                    f"(sources {sources_hash(project_dir())[:8]})\n")
+    (rt / "version.txt").write_text(f"built {time.strftime('%Y-%m-%d')} (sources {sources_hash(project_dir())[:8]})\n")
     rep.progress(1.0, "done")
     rep.log(f"Build finished in {wall / 60:.1f} min, jobs {opts.jobs}, "
             f"peak build memory {peak / 2 ** 30:.1f} GB")

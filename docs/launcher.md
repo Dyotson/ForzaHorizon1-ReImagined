@@ -36,7 +36,8 @@ The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and
   `ninja` are used when present, else official LLVM 23.1.3, CMake 4.4.4 and ninja 1.13.2 are
-  downloaded into `toolchain/` (LLVM is a 2 GB download). The C++ standard library headers
+  downloaded into `toolchain/` (LLVM is a 2 GB download; only the compiler, linker and archiver
+  tools are unpacked, 0.8 GB, and the archive is deleted afterwards). The C++ standard library headers
   must come from the system (`g++`/`libstdc++` dev package: Debian `build-essential`, Fedora
   `gcc-c++`); the launcher tests a C++23 compile and says so if that fails.
 * The SDK: the pinned ReXGlue nightly (`nightly-20261002-bd833a2a`, downloaded from the SDK's
@@ -94,18 +95,45 @@ launcher/.venv/bin/python launcher/main.py --build --root /path --jobs 4   # the
 cd launcher && .venv/bin/pyinstaller --noconfirm forza-launcher.spec    # the frozen app
 ```
 
-## Measured (this machine: 8 cores, 31 GB, system clang 23.1.2; another game ran meanwhile)
+## Measured (8 cores, 31 GB RAM, system clang 23.1.2; another game was running meanwhile)
 
-A clean build through the launcher code (fresh data root, the pinned SDK nightly downloaded,
-codegen, configure, 346 ninja steps, `-j4`, low priority): **4.6 minutes**, peak build memory
-**1.8 GB** (resident memory of the build's process group, sampled every 2 s). The result booted
-to the title screen ("PRESS START") at 59.6 fps with `frame_rate = 60` written by the launcher.
-The packaged app (frozen, with the bundled overlay) and a build with the downloaded LLVM are
-in "Verified" below.
+Clean builds through the launcher code (fresh data root, the pinned SDK nightly downloaded,
+codegen, configure, 346 ninja steps, `-j4`, low priority), wall time and peak memory of the
+build's process group (sampled every 2 s):
+
+| Build | Wall time | Peak memory |
+| --- | --- | --- |
+| source tree, system clang 23 | 4.6 min | 1.8 GB |
+| the frozen app with the bundled overlay, system clang | 4.6 min | 1.8 GB |
+| frozen toolchain download: LLVM 23.1.3 (2 GB), cmake, ninja, then the same build | 4.2 min after the download (about 6 min in all) | 1.8 GB |
+
+On disk afterwards: build tree about 1 GB, SDK 1.6 GB, runtime 0.2 GB, the unpacked toolchain
+1.1 GB (only the compiler driver, linker, archiver tools and `lib/clang` of LLVM's 12 GB), the
+extracted game 7.6 GB. The binary built by the launcher booted to the title screen
+("PRESS START") and held 59.6 fps with the `frame_rate = 60` the launcher wrote.
 
 ## Verified / not verified
 
-See the end of this file (updated when the last runs finish).
+Verified on Linux:
+
+* Extraction of a real Games on Demand package (7.6 GB) with progress, `default.xex` checked
+  first (base version accepted; `/etc/hostname`, a missing path and a non-package are refused
+  with readable messages); 23 DLC packages listed by name and installed.
+* The full clean build above, three ways; Play from the launcher (local Forza Live server
+  started and stopped with the game, `/dev/shm` clean, no stray processes); cancel at step 60
+  and resume (ninja continued with 287 of 346 steps left); a download interrupted at 20 MB
+  resumed with Range and passed its sha256.
+* `--dry-run` output equals `tools/play.sh` for the same settings (`--game_data_root`,
+  `--log_file`, `FORZA_SERVER`, `LD_LIBRARY_PATH` order; `--xenia` gives `--user_data_root`,
+  `--cache_root`, `--profile_xuid`; the Xenia save copy and DLC link were run).
+* PyInstaller (the spec bundles tools, assets and the Forza Live server's stdlib imports),
+  the frozen app starts, runs the local server (`--live-server`) and a whole build; `install.sh`.
+* Workflows: `actionlint` clean, YAML loads. Landing page: Chromium at 1440x900 and 390x844
+  (no console errors, no horizontal scroll, lightbox works).
+
+Not verified: **everything Windows** (build path, xwin, Visual Studio detection, Inno Setup,
+the Windows SDK job), the Linux SDK CI job, `release.yml` as a whole (no run), the title update
+step (the tool exists, the integration is wired but never ran), the Xenia/DLC behaviour in game.
 
 ## Open
 
