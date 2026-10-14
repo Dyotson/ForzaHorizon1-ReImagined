@@ -23,7 +23,7 @@ machine from their own copy:
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
    result is staged into `<data>/runtime`. The build is repeated only when the launcher or
    project version changes (a hash of `forza-recomp/` sources, the launcher version and the
-   SDK pin). "Free disk space" deletes the build tree (about 4 GB); the game keeps working.
+   SDK pin). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`, `Documents\forza` on Windows,

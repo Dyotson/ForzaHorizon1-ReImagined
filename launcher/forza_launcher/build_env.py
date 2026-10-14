@@ -49,8 +49,8 @@ def free_disk(path: Path) -> int:
 
 # Rough needs, from a build of this project: the extracted game 7.6 GB, the build tree about
 # 4 GB, the SDK 1.5 GB, and a downloaded toolchain 6 GB more.
-NEED_DISK_GB = 20
-NEED_DISK_TOOLCHAIN_GB = 5
+NEED_DISK_GB = 15
+NEED_DISK_TOOLCHAIN_GB = 3
 NEED_RAM_GB = 8
 RAM_PER_JOB_GB = 1.5
 

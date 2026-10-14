@@ -322,7 +322,7 @@ class SetupPage(QWidget):
         brow.addWidget(self.cancel3)
         brow.addStretch(1)
         self.clean = QPushButton("Free disk space")
-        self.clean.setToolTip("Delete the build files (about 4 GB). The game keeps working; a later rebuild starts from scratch.")
+        self.clean.setToolTip("Delete the build files (about 1 GB). The game keeps working; a later rebuild starts from scratch.")
         self.clean.clicked.connect(self._clean)
         brow.addWidget(self.clean)
         self.c3.lay.addLayout(brow)
