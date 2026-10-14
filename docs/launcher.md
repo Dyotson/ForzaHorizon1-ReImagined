@@ -162,6 +162,18 @@ frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only
 * The Windows build path, the Windows SDK job, the Linux SDK job, Inno Setup and the whole
   release workflow have never run. They follow `tools/build_windows.sh` and
   `tools/build_rexglue_sdk.sh`; expect a first round of fixes.
-* The Linux overlay is built on Ubuntu 24.04 (g++ 14 headers for C++23); players on older
-  glibc may need a rebuild of the overlay on an older base.
+* The Linux overlay is built on Ubuntu 22.04 (CI image `ubuntu-22.04`, glibc 2.35: the binaries
+  need `GLIBC_2.35` and `GLIBCXX_3.4.32`, so any distro from 2022 on that has a g++ new enough
+  for the game build runs it). 22.04 has neither C++23 headers nor CMake 3.25, so
+  `launcher/packaging/ci_linux_sdk_setup.sh` takes g++-14 from the `ubuntu-toolchain-r/test` PPA
+  and CMake, ninja and LLVM from the launcher's pinned downloads (`ci_fetch.py`); the SDK's
+  extra `-dev` packages (`libx11-xcb-dev` was the missing one) are listed there. The same script
+  was run in an `ubuntu:22.04` container: configure, build and `package_sdk_overlay.sh` pass
+  (about 8 min on 8 cores).
+* Windows CI: `.gitattributes` marks `patches/**` as `-text` and the job sets
+  `core.autocrlf false` before checkout. With the runner's default autocrlf the patches get CRLF
+  line endings and `git apply` fails on the very first one (`patch failed:
+  spirv_translator_fetch.cpp:2030`), which was the first dry run's failure. The clang-cl build
+  of the SDK prints millions of warning lines (GitHub then cannot serve the log), so the job
+  keeps the output in a file and prints only failures.
 * Code signing of the Windows installer (SmartScreen will warn).

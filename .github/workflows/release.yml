@@ -82,20 +82,27 @@ jobs:
           export PATH="$FORZA_LLVM_BIN:$PATH"
           SRC="$RUNNER_TEMP/sdk-src/sdk"
           PREFIX="$RUNNER_TEMP/sdk-prefix"
+          # clang-cl reads -Wall as -Weverything: millions of warning lines, a 56 minute build and a
+          # log GitHub cannot serve. The build only needs the result, so warnings are off, and the
+          # output goes to a file of which only the failures are shown.
+          sed -i -E 's/^    -W(all|extra)$/    -w/' "$SRC/CMakeLists.txt"
           cmake -S "$SRC" -B "$SRC/out/build/win" -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=23 -DREXGLUE_USE_VULKAN=ON -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/cmake/windows-native-clang-cl.cmake"
-          # clang-cl prints millions of warning lines for the SDK (GitHub then cannot serve the
-          # log): keep the build output in a file and show only what failed.
           if ! cmake --build "$SRC/out/build/win" > "$RUNNER_TEMP/build.log" 2>&1; then
-            grep -a -n -A12 -E 'FAILED:|error:|LNK[0-9]+' "$RUNNER_TEMP/build.log" | grep -a -v 'warning:' | head -150
-            tail -n 40 "$RUNNER_TEMP/build.log"
+            grep -a -n -B2 -A12 -E 'FAILED:|: error|LNK[0-9]+:' "$RUNNER_TEMP/build.log" | head -120
+            tail -n 30 "$RUNNER_TEMP/build.log"
             exit 1
           fi
           tail -n 3 "$RUNNER_TEMP/build.log"
           cmake --install "$SRC/out/build/win"
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-windows-build-log
+          path: ${{ runner.temp }}/build.log
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-overlay-windows
