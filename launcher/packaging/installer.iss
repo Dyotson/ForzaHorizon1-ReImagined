@@ -7,6 +7,8 @@
   #define AppVersion "0.0.0"
 #endif
 #define AppName "Forza Horizon 1: ReImagined"
+; Folder and shortcut names: Windows does not allow ":" in them.
+#define ShortName "Forza Horizon 1 - ReImagined"
 
 [Setup]
 AppId={{B0C6F2A4-5D1E-4D0B-9B1B-7B5A0F3E6C21}
@@ -15,7 +17,7 @@ AppVersion={#AppVersion}
 AppPublisher=Dyotson
 AppPublisherURL=https://github.com/Dyotson/ForzaHorizon1-ReImagined
 DefaultDirName={localappdata}\Programs\ForzaHorizon1-ReImagined
-DefaultGroupName={#AppName}
+DefaultGroupName={#ShortName}
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -39,8 +41,8 @@ Source: "{#Redist}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVC
 #endif
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\forza-launcher.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\forza-launcher.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#ShortName}"; Filename: "{app}\forza-launcher.exe"
+Name: "{autodesktop}\{#ShortName}"; Filename: "{app}\forza-launcher.exe"; Tasks: desktopicon
 
 [Run]
 #ifdef Redist
