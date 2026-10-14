@@ -247,11 +247,11 @@ anyway), A (START RIVALS).
 - The developer options `framesperrender` and `unlockframerate` were not tried (they would
   run the main loop without the vblank wait).
 
-## Open: race-start animations look too fast (2026-10-12)
+## Fixed: race-start animations looked too fast (#7, 2026-10-12, fixed 2026-10-14)
 
 Report: in every race start the crowd, the intro shots, the camera sweep over the grid and
 the countdown look too fast. The player saw it at the default `frame_rate` (30) on a 144 Hz
-monitor, and again while watching test runs of the current build. Not fixed yet.
+monitor, and again while watching test runs of the current build. It was the stands crowd (below).
 
 What was measured (Millennia Masters race start, host wall clock, no debugger attached
 while sampling):
@@ -370,8 +370,29 @@ crossed, the remainder kept in the same accumulator (in 1/3 us); at 30 the game'
 function runs, `FORZA_CROWD_ANIM=game` keeps it at every rate. TU4: `sub_82EB9DF0`, the
 same code and offsets (`sub_82ECAB38` is TU4's `sub_82E08A00`). Both builds compile.
 
-Next: verify with screenshot bursts 4 s after START RACE at 30, 60, 120 and 144 (a
-spectator's arm wave should take about 0.9 s at every rate; `FORZA_CROWD_ANIM=game` for
-the before), with a fresh copy of the Xenia save. Check also that the intro's other
-"too fast" items (shots, camera sweep, countdown) were only the crowd: their timing was
-already measured as real time.
+**Verified (2026-10-14, TU4 build, scratch copy of the Xenia save, Millennia Masters race
+start, a log line in the hook counting the baked frames it hands out per 2 s of wall time;
+the log was not kept in the code).** Baked frames per second the crowd advances, intro
+4 s after START RACE:
+
+| frame_rate | renders/s of the crowd | with the fix | `FORZA_CROWD_ANIM=game` (before) |
+| --- | --- | --- | --- |
+| 30 | 30 | 29.7-30.0 | (the game's own code) |
+| 60 | 60 | 29.6-30.5 | not run |
+| 120 | about 100 | 29.8-30.0 | not run |
+| 144 | 70-115 (about 95) | 29.7-30.4 | 69-112 (2.3-3.7x) |
+
+So a baked clip plays in its real time at every rate (an arm wave of 27 frames: 0.9 s);
+before, at 144 it took 0.25-0.4 s, the 60-120 ms pose changes seen. In the screenshot
+bursts (`FORZA_SCREENSHOT_BURST=100:1`, TU4 and base build) the same spectators wave
+slowly at 60, 120 and 144 with the fix, a swing from arms up to arms out taking 0.5-0.75
+s; with `game` at 144 the same kind of swing took about 0.15 s. The period of a single
+spectator's wave was not measured directly: each spectator picks a random clip, bursts
+of 1-2 s at 144 hold at most one cycle, and the camera drifts, so frames from two runs
+cannot be compared pixel by pixel. The 30 steps a second are the measurement.
+
+Nothing else moved: race start, countdown and a full lap (1/4 laps after 21 s) ran
+normally at 144 with the fix (`tools/perf_scenario.sh race`, TU4): race clock 2.819 to
+21.167 s (18.348 s) between two screenshots 18.338 s apart in wall time, and no fault.
+The intro's shots, camera sweep and countdown were already real time (measured above), so
+the crowd was the only part that looked fast.
