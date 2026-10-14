@@ -181,6 +181,32 @@ class StepCard:
         self.badge.setStyleSheet(f"color: {color}; font-weight: 700;")
 
 
+class WrappedCheck(QWidget):
+    """A check box whose text wraps: a QCheckBox keeps its whole text on one line, and a long
+    one (the Microsoft license line on Windows, in Segoe UI) forced the Setup page wider than
+    the window (#26). Exposes isChecked, setChecked and toggled like a QCheckBox."""
+
+    def __init__(self, text):
+        super().__init__()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self.box = QCheckBox()
+        lay.addWidget(self.box, 0, Qt.AlignTop)
+        self.text = label(text, "")
+        self.text.setMinimumWidth(0)
+        self.text.setTextInteractionFlags(Qt.NoTextInteraction)
+        lay.addWidget(self.text, 1)
+        self.toggled = self.box.toggled
+        self.isChecked = self.box.isChecked
+        self.setChecked = self.box.setChecked
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.box.toggle()
+        super().mouseReleaseEvent(e)
+
+
 def path_row(placeholder, on_file=None, on_dir=None, file_title="Choose a file"):
     row = QHBoxLayout()
     edit = QLineEdit()
@@ -207,6 +233,7 @@ class SetupPage(QWidget):
         super().__init__()
         self.cfg, self.window = cfg, window
         self.task = None
+        self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         sc, lay = scroll_page("Setup", "The game is built on this computer from your own copy of Forza Horizon. "
@@ -298,12 +325,12 @@ class SetupPage(QWidget):
         jrow.addWidget(label("Each job uses about 1.5 GB of memory. More jobs are faster; too many run out of "
                              "memory.", "help"), 1)
         self.c3.lay.addLayout(jrow)
-        self.lowprio = QCheckBox("Run at low priority (the computer stays usable)")
+        self.lowprio = WrappedCheck("Run at low priority (the computer stays usable)")
         self.lowprio.setChecked(True)
         self.c3.lay.addWidget(self.lowprio)
         self.ms = None
         if sys.platform == "win32":
-            self.ms = QCheckBox("I accept Microsoft's license terms for the C++ runtime and Windows SDK "
+            self.ms = WrappedCheck("I accept Microsoft's license terms for the C++ runtime and Windows SDK "
                                 "(downloaded to this PC only if Visual Studio Build Tools are not installed)")
             self.ms.setChecked(bool(cfg.advanced.get("accept_ms_license")))
             self.ms.toggled.connect(lambda v: (cfg.advanced.__setitem__("accept_ms_license", v), cfg.save()))
@@ -364,8 +391,10 @@ class SetupPage(QWidget):
             self.msg1.setObjectName("muted" if ok else "bad")
         else:
             self.c1.set_badge("Needed", None)
-            self.msg1.setText("")
-        self.msg1.setStyleSheet(f"color: {theme.MUTED if not have or ok else theme.ERR};")
+            self.msg1.setText(self.fail.get("msg1", ""))
+        if have:
+            self.fail.pop("msg1", None)
+        self.msg1.setStyleSheet(f"color: {theme.ERR if self.fail.get('msg1') or (have and not ok) else theme.MUTED};")
         tu = cfg["tu_package"].strip()
         if tu:
             ok_tu, msg_tu = installer.inspect_title_update(tu)
@@ -395,9 +424,9 @@ class SetupPage(QWidget):
                      "none": ("Not built", None), "nosource": ("Missing sources", False)}[state]
         self.c3.set_badge(*label_for)
         self.go3.setText({"stale": "Rebuild", "partial": "Resume build", "built": "Rebuild"}.get(state, "Build"))
-        self.status3.setText(detail)
+        self.status3.setText(self.fail.get("status3") or detail)
         st = builder.read_state(cfg.data_home())
-        if state == "built" and st.get("seconds"):
+        if state == "built" and st.get("seconds") and not self.fail.get("status3"):
             self.status3.setText(f"{detail} (took {human_time(st['seconds'])}, up to {st.get('peak_rss_gb', '?')} GB of memory)")
         self.clean.setVisible(state == "built" and (builder.build_dir(cfg.data_home()) / "forza-recomp" / "out").exists())
         self._refresh_checks()
@@ -478,9 +507,9 @@ class SetupPage(QWidget):
             folder = p.parent if p.is_file() else p
             ok, msg = installer.check_game_folder(folder)
             if not ok:
-                self.msg1.setText(msg)
-                self.msg1.setStyleSheet(f"color: {theme.ERR};")
+                self._show_fail("msg1", self.msg1, msg)
                 return
+            self.fail.pop("msg1", None)
             self.cfg["game_root"] = str(folder)
             self.cfg.save()
             self.msg1.setText(f"Using the game files in {folder}")
@@ -490,8 +519,7 @@ class SetupPage(QWidget):
         try:
             installer.resolve_package(str(p))
         except installer.InstallError as e:
-            self.msg1.setText(str(e))
-            self.msg1.setStyleSheet(f"color: {theme.ERR};")
+            self._show_fail("msg1", self.msg1, str(e))
             return
         dest = self.cfg.data_home() / "game"
         if (dest / "default.xex").is_file():
@@ -595,6 +623,7 @@ class SetupPage(QWidget):
         if self.busy():
             return
         self.task = task
+        self.fail.clear()
         self._bar, self._cancel_btn, self._msg = bar, cancel_btn, msg
         bar.show()
         bar.setValue(0)
@@ -617,21 +646,35 @@ class SetupPage(QWidget):
         if self._bar is self.bar3:
             self._tick()
 
+    def _show_fail(self, key, label_widget, message):
+        """Show a failure in red and keep it there: refresh() runs right after a task ends and
+        used to wipe the message, so a failed extraction just looked like the bar vanishing."""
+        self.fail[key] = message
+        label_widget.setText(message)
+        label_widget.setStyleSheet(f"color: {theme.ERR};")
+
     def _finished(self, ok, message):
         self.timer.stop()
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
             self._cancel_btn.hide()
-        self._msg.setText(message)
-        self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.ERR};")
+        key = {id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3"}.get(id(self._msg), "msg")
+        failed = not ok and message != "Cancelled."
         if not ok and self._bar is self.bar3:
-            self.status3.setText(message + "  Press Resume build to continue.")
+            message += "  Press Resume build to continue."
+        if failed:
+            self._show_fail(key, self._msg, message)
+        else:
+            self._msg.setText(message)
+            self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.MUTED};")
         # keep the QThread object alive until its run() has really returned
         self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
         self.window.set_busy(False)
         self.refresh()
         self.changed.emit()
+        if failed:
+            QMessageBox.warning(self, "Something went wrong", message)
 
     def _cancel(self):
         if self.task:

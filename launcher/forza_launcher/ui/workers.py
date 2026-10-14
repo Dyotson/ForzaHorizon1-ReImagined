@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from .. import builder, fetch, installer
+from .. import builder, fetch, installer, paths
 
 
 class Task(QThread):
@@ -12,9 +12,9 @@ class Task(QThread):
     progress = Signal(float, str)   # 0..1, detail
     done = Signal(bool, str)        # success, message
 
-    def __init__(self, fn):
+    def __init__(self, fn, name="task"):
         super().__init__()
-        self.fn = fn
+        self.fn, self.name = fn, name
         self._cancel = False
 
     def cancel(self):
@@ -30,9 +30,11 @@ class Task(QThread):
         except (installer.Cancelled, fetch.Cancelled):
             self.done.emit(False, "Cancelled.")
         except (installer.InstallError, builder.BuildError) as e:
-            self.done.emit(False, str(e))
-        except Exception as e:  # never let a thread die silently
-            self.done.emit(False, f"{type(e).__name__}: {e}")
+            log = paths.log_error(f"{self.name}: {e}")
+            self.done.emit(False, f"{e}\n(Details: {log})")
+        except BaseException as e:  # never let a thread die silently (SystemExit from a tool included)
+            log = paths.log_error(f"{self.name}: unexpected {type(e).__name__}", e)
+            self.done.emit(False, f"Unexpected error: {type(e).__name__}: {e}\n(Details: {log})")
 
 
 class TaskReporter(builder.Reporter):
@@ -61,7 +63,7 @@ def extract_task(package, dest):
         t.status.emit("Extracting the game files")
         total = installer.extract_game(package, Path(dest), prog, t.cancelled)
         return f"Extracted {total / 2**30:.1f} GB."
-    return Task(fn)
+    return Task(fn, "extract game files")
 
 
 def dlc_task(folder, user_data):
@@ -71,11 +73,11 @@ def dlc_task(folder, user_data):
         t.status.emit("Installing DLC")
         n = installer.install_dlc_folder(folder, Path(user_data), prog, t.cancelled, t.log.emit)
         return f"Installed {n} DLC package(s)."
-    return Task(fn)
+    return Task(fn, "install DLC")
 
 
 def build_task(opts, game_files):
     def fn(t: Task):
         rt = builder.run_build(opts, TaskReporter(t), Path(game_files))
         return f"Built: {rt}"
-    return Task(fn)
+    return Task(fn, "build")

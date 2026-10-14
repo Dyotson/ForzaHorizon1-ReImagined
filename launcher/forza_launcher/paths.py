@@ -48,6 +48,31 @@ def config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "forza-reimagined"
 
 
+def launcher_log() -> Path:
+    """The launcher's own log (errors of the window and its tasks, with tracebacks)."""
+    return config_dir() / "launcher.log"
+
+
+def log_error(context: str, exc: BaseException | None = None) -> Path:
+    """Append an error (and the traceback of `exc`, or of the exception being handled) to the
+    launcher log; never raises. Returns the log's path."""
+    import time
+    import traceback
+    path = launcher_log()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 2_000_000:
+            path.replace(path.with_suffix(".log.old"))
+        with open(path, "a", encoding="utf-8", errors="replace") as f:
+            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {context}\n")
+            if exc is not None:
+                f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            f.write("\n")
+    except OSError:
+        pass
+    return path
+
+
 def data_home() -> Path:
     """The game's user data root: saves, DLC, online identity, shader cache, forza.log.
     Matches play.sh (~/.local/share/forza) and play.bat (Documents\\forza)."""

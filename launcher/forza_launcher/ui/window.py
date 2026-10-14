@@ -1,5 +1,6 @@
 """The main window: a sidebar and the Play, Setup, Settings and About pages."""
 import sys
+import threading
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon, QPixmap
@@ -255,6 +256,19 @@ def run(argv):
         # to the home folder and removable media instead, and the Qt dialog shows the real paths.
         app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app.setStyleSheet(theme.QSS)
+
+    def report(exc_type, exc, tb):
+        """Any exception that reaches the top (a slot, a thread): log it and say so, never vanish."""
+        exc.__traceback__ = tb
+        log = paths.log_error(f"unhandled {exc_type.__name__}", exc)
+        if threading.current_thread() is not threading.main_thread():
+            return   # a dialog must come from the GUI thread; the task wrappers report their own failures
+        try:
+            QMessageBox.critical(None, "Unexpected error", f"{exc_type.__name__}: {exc}\n\nDetails: {log}")
+        except Exception:
+            pass
+    sys.excepthook = report
+    threading.excepthook = lambda a: report(a.exc_type, a.exc_value, a.exc_traceback)
     win = MainWindow(Config())
     win.show()
     return app.exec()

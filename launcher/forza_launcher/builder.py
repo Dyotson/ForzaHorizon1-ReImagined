@@ -196,8 +196,75 @@ def kill_tree(proc):
         pass
 
 
+def _windows_tree_memory(root_pid):
+    """Summed working set (bytes) of a process and all its descendants (Win32 through ctypes:
+    a Toolhelp snapshot for the parent links, GetProcessMemoryInfo for the memory)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ENTRY(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    class COUNTERS(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ENTRY)]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(COUNTERS), wintypes.DWORD]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)   # TH32CS_SNAPPROCESS
+    if snap in (None, wintypes.HANDLE(-1).value):
+        return 0
+    parents = {}
+    try:
+        e = ENTRY()
+        e.dwSize = ctypes.sizeof(ENTRY)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            parents[e.th32ProcessID] = e.th32ParentProcessID
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    tree, grew = {root_pid}, True
+    while grew:
+        grew = False
+        for pid, ppid in parents.items():
+            if ppid in tree and pid not in tree:
+                tree.add(pid)
+                grew = True
+    total = 0
+    for pid in tree:
+        h = k32.OpenProcess(0x1000 | 0x0400, False, pid)   # QUERY_LIMITED_INFORMATION | QUERY_INFORMATION
+        if not h:
+            h = k32.OpenProcess(0x1000, False, pid)
+        if not h:
+            continue
+        try:
+            c = COUNTERS()
+            c.cb = ctypes.sizeof(COUNTERS)
+            if psapi.GetProcessMemoryInfo(h, ctypes.byref(c), c.cb):
+                total += c.WorkingSetSize
+        finally:
+            k32.CloseHandle(h)
+    return total
+
+
 class ResourceMonitor(threading.Thread):
-    """Samples the summed resident memory of the build's process group (Linux)."""
+    """Samples the summed resident memory of the build's process tree: the session on Linux
+    (/proc), the process and its descendants on Windows (Win32 through ctypes)."""
 
     def __init__(self, sid):
         super().__init__(daemon=True)
@@ -205,6 +272,11 @@ class ResourceMonitor(threading.Thread):
 
     def run(self):
         if IS_WIN:
+            while not self.stop_flag.wait(2.0):
+                try:
+                    self.peak = max(self.peak, _windows_tree_memory(self.sid))
+                except Exception:   # a monitor must never break the build
+                    return
             return
         page = os.sysconf("SC_PAGE_SIZE")
         while not self.stop_flag.wait(2.0):
@@ -242,7 +314,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     except OSError as e:
         raise BuildError(f"Could not start {cmd[0]}: {e}")
     mon = None
-    if monitor is not None and not IS_WIN:
+    if monitor is not None:
         mon = ResourceMonitor(proc.pid)
         mon.start()
     stop = threading.Event()
