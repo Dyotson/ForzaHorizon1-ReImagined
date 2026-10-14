@@ -148,57 +148,75 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False, no
 
 _DLC_CACHE = {}
 
+_NO_DLC = ("No DLC found in that folder. Pick the folder of your DLC packages, or a Xenia content "
+           "folder (or its 0000000000000000, 4D5309C9 or 00000002 folder).")
+
 
 def describe_dlc_folder(folder: str):
-    """[(file name, display name)] of the DLC packages in a folder, or raises InstallError.
-    Cached per folder and modification time (each package is opened to read its name)."""
+    """([(name, display name)] of the DLC in a folder, [(name, reason)] of what was skipped).
+    The DLC is STFS packages (files) and/or extracted package folders (a Xenia content folder or
+    one of its subfolders). Raises InstallError. Cached per folder and modification time (each
+    package is opened to read its name)."""
     p = Path(folder).expanduser()
     try:
         key = (str(p), p.stat().st_mtime_ns)
     except OSError:
         key = (str(p), 0)
     if key not in _DLC_CACHE:
-        found = list_dlc_packages(p)
-        for _f, _n, pkg in found:
+        packages, dirs, skipped = list_dlc(p)
+        for _f, _n, pkg in packages:
             for f in getattr(pkg, "files", []):
                 try:
                     f.close()
                 except Exception:
                     pass
-        _DLC_CACHE[key] = [(f.name, name) for f, name, _ in found]
+        _DLC_CACHE[key] = ([(f.name, name) for f, name, _ in packages] + [(n, disp) for _p, n, disp, _h in dirs],
+                           skipped)
     return _DLC_CACHE[key]
+
+
+def list_dlc(folder: Path):
+    """What a DLC folder holds: ([(path, display name, package)] of the STFS marketplace packages,
+    [(path, name, display name, header path)] of the extracted package folders, [(name, reason)]
+    skipped folders)."""
+    if not folder.is_dir():
+        raise InstallError(f"{folder} is not a folder.")
+    try:
+        _root, dirs, files, skipped = install_dlc.scan_folder(str(folder))
+    except OSError as e:
+        raise InstallError(f"Cannot read {folder}: {e}")
+    out = []
+    for f in files:
+        try:
+            pkg = xcontent_extract.open_package(f)
+        except (SystemExit, Exception):
+            continue
+        if pkg.hdr.content_type == install_dlc.MARKETPLACE:
+            out.append((Path(f), pkg.hdr.display_name, pkg))
+    return out, dirs, skipped
 
 
 def list_dlc_packages(folder: Path):
     """The files of a DLC folder that are STFS marketplace packages: [(path, display name, size)]."""
-    out = []
-    root = folder
-    if not root.is_dir():
-        raise InstallError(f"{root} is not a folder.")
-    for f in sorted(root.iterdir()):
-        if not f.is_file():
-            continue
-        try:
-            pkg = xcontent_extract.open_package(str(f))
-        except (SystemExit, Exception):
-            continue
-        if pkg.hdr.content_type == install_dlc.MARKETPLACE:
-            out.append((f, pkg.hdr.display_name, pkg))
-    return out
+    return list_dlc(folder)[0]
 
 
 def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda: False, log=print):
-    """Install every DLC package of a folder. Returns the number of packages installed."""
-    found = list_dlc_packages(Path(folder).expanduser())
-    if not found:
-        raise InstallError("No DLC packages in that folder (it is the 4D5309C9/00000002 folder "
-                           "of your content).")
+    """Install every DLC package of a folder (package files and extracted package folders).
+    Returns the number of packages installed."""
+    found, dirs, skipped = list_dlc(Path(folder).expanduser())
+    for n, why in skipped:
+        log(f"skipping {n}: {why}")
+    if not found and not dirs:
+        raise InstallError(_NO_DLC)
     total = 0
     for _f, _n, pkg in found:
         try:
             total += sum(e.size for e in pkg.entries() if not e.is_dir)
         except SystemExit:
             pass
+    for d, *_r in dirs:
+        total += install_dlc.folder_size(d)
     done = [0]
     real_extract = xcontent_extract.extract
 
@@ -209,6 +227,13 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
         real_extract(pkg, entry, outdir)
         if not entry.is_dir:
             done[0] += entry.size
+
+    def copy(src, dst):
+        if cancelled():
+            raise Cancelled()
+        progress(done[0], total, os.path.basename(src))
+        shutil.copy2(src, dst)
+        done[0] += os.path.getsize(dst)
 
     xcontent_extract.extract = counted
     count = 0
@@ -224,8 +249,18 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
             for line in buf.getvalue().splitlines():
                 log(line)
             count += 1
+        for d, name, disp, header in dirs:
+            try:
+                install_dlc.install_folder(d, name, header, str(user_data), copy=copy, display_name=disp)
+            except OSError as e:
+                log(f"{name}: {e}")
+                continue
+            log(f"{disp}: {name}" + ("" if header else " (header generated)"))
+            count += 1
     finally:
         xcontent_extract.extract = real_extract
+    if not count:
+        raise InstallError("None of the DLC in that folder could be installed (see the log).")
     progress(total, total, "")
     return count
 

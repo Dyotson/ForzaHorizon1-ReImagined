@@ -22,7 +22,14 @@ machine from their own copy:
 2. **Title Update 4** (recommended: Horizon Rally and the 1000 Club need it; still optional)
    and **DLC** (optional): pickers for the player's own TU4 package (the STFS package under
    `4D5309C9/000B0000`, or a zip holding it) and DLC folder. The DLC folder is listed with the
-   packages' names and installed with `tools/install_dlc.py` (to the game's user data folder).
+   packages' names and installed with `tools/install_dlc.py` (to the game's user data folder). It takes
+   a folder of STFS package files, or DLC that is already extracted in Xenia's layout (a Xenia
+   `content` folder, its `0000000000000000`, `4D5309C9` or `00000002` folder; package folders named
+   like the package files), or both in one folder. Each package folder is copied as it is, with its
+   `../Headers/00000002/<name>.header` when there is one (license mask set to all bits), else a
+   header is generated (display name from a table of the 23 known package names, else "DLC <name>").
+   Folders that do not look like DLC (a name that is not 8 to 42 hex digits, no files inside) are
+   skipped and listed in the card.
    With a TU4 package the build runs `tools/apply_title_update.py BASE_XEX TU_PACKAGE
    <data>/build/tu/default.xex` (patched `default.xex`, both facade DLLs and `media.zip`, about
    2 s), copies `forza_manifest_tu4.toml` with its three `file_path`s and `game_root` pointed at
@@ -138,6 +145,21 @@ Verified on Linux:
 * `--dry-run` output equals `tools/play.sh` for the same settings (`--game_data_root`,
   `--log_file`, `FORZA_SERVER`, `LD_LIBRARY_PATH` order; `--xenia` gives `--user_data_root`,
   `--cache_root`, `--profile_xuid`; the Xenia save copy and DLC link were run).
+* DLC from a Xenia content folder (#36, 2026-10-14, Linux): `tools/install_dlc.py` and the DLC card take
+  a Xenia `content` folder, its `0000000000000000`, `4D5309C9` or `00000002` folder, a folder of package
+  files, or both mixed. Xenia writes the same header (0x148 bytes of XCONTENT_AGGREGATE_DATA plus a
+  little-endian license mask) as this tool; its masks come from the package's STFS licenses (0, 1, 2 or
+  all bits in the 23 headers of a Xenia folder), so the copy sets the mask to all bits (the runtime reads
+  bytes 0x148..0x14C, `ContentPackage::LoadPackageLicenseMask`). Tested with copies of the 23 installed
+  packages in scratch user data roots: with `Headers/` (masks rewritten to 0, 1 and 2, plus an empty
+  folder and a folder named like no package: both skipped and listed), without `Headers/` (headers
+  generated, byte for byte the originals), only the `00000002` folder, the `4D5309C9` and
+  `0000000000000000` folders, a mix of package files and folders, and package files (two synthetic STFS
+  packages, as before); the Setup page (Qt offscreen) listed the names and the skipped folders, installed
+  23 packages and showed "23 installed". Booting the TU4 build on each of the two Xenia-style
+  copies (`FORZA_DLC_LOG=1`, START and A scripted into the main menu): the game probed 20 `DLCRoot`
+  mounts and answered 252 `IsCarInstalled` queries, all "installed", none "not installed".
+  The Horizon Rally menu entry was not looked at in this run.
 * PyInstaller (the spec bundles tools, assets and the Forza Live server's stdlib imports),
   the frozen app starts, runs the local server (`--live-server`) and a whole build; `install.sh`.
 * Title Update 4 (2026-10-14, source tree, system clang 23, `--jobs 4`, nice 10, SDK downloaded):

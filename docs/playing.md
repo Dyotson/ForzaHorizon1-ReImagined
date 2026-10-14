@@ -74,7 +74,9 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   that never ran on TU4, so keep a copy of the profile folder before the first TU4 run.
   Without a TU4 build `play.sh` uses the base one. Details: [`docs/dlc.md`](dlc.md).
 - **DLC:** install your DLC packages (the `4D5309C9/00000002/` folder of your content)
-  once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002` (all 23 packages;
+  once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002` (all 23 packages; a
+  Xenia `content` folder with the DLC already extracted works too, or its `00000002` folder,
+  and so does the launcher's DLC step;
   the Rally Expansion's and the 1000 Club's modes need the TU4 build, their cars work on both).
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.
 - **Your Xenia save:** `tools/play.sh --xenia` copies your Xenia Canary profile's Forza

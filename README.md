@@ -235,7 +235,7 @@ and the base build otherwise. TU4 converts a profile save when it loads it
 profile ("MISSING TITLE UPDATE"): `--base` is for profiles that never ran on TU4, and a copy
 of the profile folder lets you go back.
 
-Install DLC once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002`. Controllers,
+Install DLC once with `python3 tools/install_dlc.py /path/to/4D5309C9/00000002` (STFS packages, or a Xenia `content` folder with the DLC extracted; the launcher's DLC step takes both). Controllers,
 saves, the Xenia save import and more are in [`docs/playing.md`](docs/playing.md).
 
 ### Playing online

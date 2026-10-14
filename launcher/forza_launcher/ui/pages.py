@@ -295,9 +295,10 @@ class SetupPage(QWidget):
 
         # 3. DLC ------------------------------------------------------------------------
         self.c2 = StepCard(3, "DLC (optional)",
-                           "The folder with your DLC packages (4D5309C9/00000002). They are installed for the game "
-                           "to find; you can add more later. Without DLC the extra cars and events are missing.")
-        row, self.dlc, _ = path_row("Folder of DLC packages", None, self._pick_dlc)
+                           "The folder with your DLC: packages (4D5309C9/00000002), or a Xenia content folder (or its "
+                           "00000002 folder). They are installed for the game to find; you can add more later. "
+                           "Without DLC the extra cars and events are missing.")
+        row, self.dlc, _ = path_row("Folder of DLC", None, self._pick_dlc)
         self.dlc.setText(cfg["dlc_dir"])
         self.dlc.editingFinished.connect(self._dlc_changed)
         self.c2.lay.addLayout(row)
@@ -420,10 +421,14 @@ class SetupPage(QWidget):
         d = self.dlc.text().strip()
         if d:
             try:
-                found = installer.describe_dlc_folder(d)
-                self.dlclist.setText(f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
-                                     (" ..." if len(found) > 12 else "")) if found else self.dlclist.setText(
-                    "No DLC packages found in this folder.")
+                found, skipped = installer.describe_dlc_folder(d)
+                txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
+                       (" ..." if len(found) > 12 else "")) if found else (
+                    "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
+                if skipped:
+                    txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
+                            ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
+                self.dlclist.setText(txt)
             except installer.InstallError as e:
                 self.dlclist.setText(str(e))
         else:
@@ -555,7 +560,7 @@ class SetupPage(QWidget):
 
     # ---- step 2 ------------------------------------------------------------------------
     def _pick_dlc(self):
-        d = QFileDialog.getExistingDirectory(self, "Folder of DLC packages", self.dlc.text() or str(Path.home()))
+        d = QFileDialog.getExistingDirectory(self, "Folder of DLC (packages or a Xenia content folder)", self.dlc.text() or str(Path.home()))
         if d:
             self.dlc.setText(d)
             self._dlc_changed()
