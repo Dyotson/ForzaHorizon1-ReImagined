@@ -343,6 +343,92 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
         raise BuildError(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the log above.")
 
 
+# ---- the build tree's file times -------------------------------------------------------------
+
+def _rmtree(path: Path):
+    """shutil.rmtree that also removes read-only files (Windows)."""
+    def fix(func, p, *exc):
+        try:
+            os.chmod(p, 0o700)
+            func(p)
+        except OSError:
+            pass
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=fix)
+    else:
+        shutil.rmtree(path, onerror=fix)
+
+
+def clamp_future_times(roots, now: float | None = None, slack: float = 2.0) -> int:
+    """Sets every file or folder under `roots` whose modification time is in the future to now;
+    returns how many. CMake's regeneration rule (build.ninja depends on every CMake file it read)
+    never becomes clean while one of them is newer than the clock, and ninja gives up after 100
+    tries ("manifest 'build.ninja' still dirty after 100 tries", issue #35). Files get such times
+    from installers (Inno Setup stamped the installed files with the build machine's local time,
+    read as the player's: hours ahead west of UTC), from archives, and from a clock that was
+    wrong while they were written."""
+    now = time.time() if now is None else now
+    n = 0
+    for root in roots:
+        root = Path(root)
+        if not root.exists():
+            continue
+        for dirpath, dirs, files in os.walk(root):
+            for name in dirs + files:
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.lstat(p)
+                    if st.st_mtime > now + slack and not os.path.islink(p):
+                        os.utime(p, (min(st.st_atime, now), now))
+                        n += 1
+                except OSError:
+                    continue
+        try:
+            if root.stat().st_mtime > now + slack:
+                os.utime(root, (now, now))
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
+STAMP_NAME = ".forza-configure-stamp"
+
+
+def configure_stamp(tools, sdk_ident: str, tu: bool) -> str:
+    """What the CMake build tree was configured with: the launcher version (its project sources,
+    toolchain file and options), the SDK, the compilers and whether a title update is used. A tree
+    configured with anything else is deleted and configured again, not resumed."""
+    return hashlib.sha1("|".join([__version__, PLAT, pins.SDK_TAG, sdk_ident, str(bool(tu)),
+                                  tools.cc, tools.cxx, tools.cmake, tools.ninja,
+                                  json.dumps(tools.source, sort_keys=True)]).encode()).hexdigest()
+
+
+def reset_stale_build_tree(bdir: Path, stamp: str, rep: Reporter):
+    """Deletes the CMake build tree `bdir` when it was configured by something else than `stamp`
+    (or by a launcher too old to write one), which is what a resumed build after an update is."""
+    if not bdir.exists():
+        return
+    try:
+        old = (bdir / STAMP_NAME).read_text().strip()
+    except OSError:
+        old = ""
+    if old != stamp:
+        rep.log("The earlier build was made by another version of the launcher or toolchain: "
+                "configuring from scratch.")
+        _rmtree(bdir)
+
+
+def write_configure_stamp(bdir: Path, stamp: str):
+    try:
+        (bdir / STAMP_NAME).write_text(stamp)
+    except OSError:
+        pass
+
+
+DIRTY_MANIFEST = "still dirty after"
+
+
 # ---- the steps ----------------------------------------------------------------------------
 
 def _dl_progress(rep, lo, hi, what):
@@ -522,6 +608,19 @@ def sync_sources(opts: Options, rep: Reporter, game_files: Path, tu: Path | None
     return dest
 
 
+def sync_toolchain_file(root: Path) -> Path:
+    """The Windows toolchain file, copied into the build folder: CMake reads it again on every
+    run, and the copy in the installation has the installer's file time (in the future west of
+    UTC, issue #35), which keeps build.ninja dirty."""
+    src = project_dir() / "tools" / "cmake" / "windows-native-clang-cl.cmake"
+    dst = build_dir(root) / "toolchain" / "windows-native-clang-cl.cmake"
+    data = src.read_bytes()
+    if not dst.is_file() or dst.read_bytes() != data:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+    return dst
+
+
 def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     """Windows: the environment (INCLUDE, LIB, PATH) of the MSVC CRT and Windows SDK, from an
     installed Visual Studio, else from xwin, which needs the player to accept Microsoft's license."""
@@ -568,6 +667,30 @@ def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
 NINJA_RE = re.compile(r"^\[(\d+)/(\d+)\]")
 
 
+def compile_passes(opts: Options, rep: Reporter, tools, src: Path, bdir: Path, env, monitor):
+    """Compile. Codegen may rewrite the DLL modules' sources during the first pass, which ninja only
+    sees on its next run, so it runs twice (the second pass is a no-op when nothing changed).
+    A BuildError with dirty_manifest set: ninja gave up regenerating build.ninja."""
+    for attempt in (1, 2):
+        rep.status("Compiling" + (" (second pass)" if attempt == 2 else ": this takes a long time"))
+        dirty = {"seen": False}
+
+        def on_line(line):
+            if DIRTY_MANIFEST in line:
+                dirty["seen"] = True
+            m = NINJA_RE.match(line)
+            if m:
+                n, total = int(m.group(1)), int(m.group(2))
+                if total:
+                    rep.progress(0.24 + 0.70 * n / total, f"compiling {n} of {total}")
+        try:
+            run([tools.ninja, "-C", bdir, f"-j{opts.jobs}"], src, env, rep, on_line=on_line,
+                low_priority=opts.low_priority, monitor=monitor)
+        except BuildError as e:
+            e.dirty_manifest = dirty["seen"]
+            raise
+
+
 def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     """The whole pipeline; returns the runtime directory. Safe to cancel and run again."""
     t0 = time.time()
@@ -603,7 +726,7 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
         env["PATH"] = os.pathsep.join([llvm_bin] + [p for p in tools.path_dirs if p != llvm_bin] +
                                       [env.get("PATH", "")])
         env["FORZA_LLVM_BIN"] = llvm_bin
-        cmake_extra += ["-DCMAKE_TOOLCHAIN_FILE=" + str((project_dir() / "tools/cmake/windows-native-clang-cl.cmake").as_posix())]
+        cmake_extra += ["-DCMAKE_TOOLCHAIN_FILE=" + sync_toolchain_file(root).as_posix()]
     else:
         cmake_extra += ["-DCMAKE_CXX_COMPILER=" + tools.cxx]
     rexglue = sdk / "bin" / ("rexglue" + EXE)
@@ -625,30 +748,45 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     rep.progress(0.22)
 
     bdir = src / "out" / "build" / PLAT
-    rep.status("Configuring")
-    run([tools.cmake, "-S", src, "-B", bdir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-         f"-DCMAKE_PREFIX_PATH={sdk.as_posix()}", f"-Drexglue_DIR={(sdk / 'lib/cmake/rexglue').as_posix()}",
-         f"-DFORZA_REXGLUE={rexglue.as_posix()}",
-         f"-DCMAKE_MAKE_PROGRAM={Path(tools.ninja).as_posix()}"] +
-        ([f"-DFORZA_XENOS_PLUGIN={(sdk / 'lib/librexgpu-xenos.so').as_posix()}"] if not IS_WIN else []) +
-        cmake_extra, src, env, rep, low_priority=opts.low_priority)
-    rep.progress(0.24)
+    overlay = sdk_overlay_archive()
+    dev = dev_sdk_overlay()
+    sdk_ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    stamp = configure_stamp(tools, sdk_ident, tu is not None)
 
-    # Compile. Codegen may rewrite the DLL modules' sources during the first pass, which ninja only
-    # sees on its next run, so it runs twice (the second pass is a no-op when nothing changed).
+    # A tree CMake configured for another version of the launcher (a build that stopped, then an
+    # update) is deleted, not resumed; so is one ninja cannot get clean (see compile_pass).
     for attempt in (1, 2):
-        rep.status("Compiling" + (" (second pass)" if attempt == 2 else ": this takes a long time"))
-        last = {"n": 0}
+        reset_stale_build_tree(bdir, stamp, rep)
+        fixed = clamp_future_times([src, sdk, build_dir(root) / "toolchain"])
+        if fixed:
+            rep.log(f"{fixed} files had a modification time in the future (the clock of this computer is "
+                    "behind, or an installer stamped them): set to now.")
+        rep.status("Configuring")
+        run([tools.cmake, "-S", src, "-B", bdir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+             f"-DCMAKE_PREFIX_PATH={sdk.as_posix()}", f"-Drexglue_DIR={(sdk / 'lib/cmake/rexglue').as_posix()}",
+             f"-DFORZA_REXGLUE={rexglue.as_posix()}",
+             f"-DCMAKE_MAKE_PROGRAM={Path(tools.ninja).as_posix()}"] +
+            ([f"-DFORZA_XENOS_PLUGIN={(sdk / 'lib/librexgpu-xenos.so').as_posix()}"] if not IS_WIN else []) +
+            cmake_extra, src, env, rep, low_priority=opts.low_priority)
+        write_configure_stamp(bdir, stamp)
+        rep.progress(0.24)
+        try:
+            compile_passes(opts, rep, tools, src, bdir, env, monitor)
+            break
+        except BuildError as e:
+            if not getattr(e, "dirty_manifest", False):
+                raise
+            if attempt == 2:
+                raise BuildError(
+                    "ninja keeps finding build.ninja out of date after configuring again from scratch "
+                    "(\"still dirty after 100 tries\"): a file CMake reads has a modification time newer than "
+                    "this computer's clock. Check the date, time and time zone in Windows settings, then press "
+                    f"Resume build; if it comes back, delete the folder {build_dir(root)} and build again, and "
+                    "attach launcher.log to the issue.") from None
+            rep.log("ninja says build.ninja is still dirty: deleting the CMake build folder and configuring "
+                    "again (once).")
+            _rmtree(bdir)
 
-        def on_line(line):
-            m = NINJA_RE.match(line)
-            if m:
-                n, total = int(m.group(1)), int(m.group(2))
-                last["n"] = n
-                if total:
-                    rep.progress(0.24 + 0.70 * n / total, f"compiling {n} of {total}")
-        run([tools.ninja, "-C", bdir, f"-j{opts.jobs}"], src, env, rep, on_line=on_line,
-            low_priority=opts.low_priority, monitor=monitor)
     rep.progress(0.95)
 
     rep.status("Installing")

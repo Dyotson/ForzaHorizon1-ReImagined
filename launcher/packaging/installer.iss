@@ -30,6 +30,10 @@ SetupIconFile=logo.ico
 UninstallDisplayIcon={app}\forza-launcher.exe
 LicenseFile={#Stage}\licenses\ForzaHorizon1-ReImagined.txt
 DisableProgramGroupPage=yes
+; Installed files keep the build's real (UTC) file times. By default Inno Setup stores the build machine's
+; local time (UTC on CI) and sets it as the player's local time: hours in the future west of UTC, which
+; keeps ninja re-running CMake (issue #35).
+TimeStampsInUTC=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"

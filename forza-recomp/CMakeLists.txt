@@ -70,7 +70,16 @@ if((CMAKE_CROSSCOMPILING OR FORZA_SKIP_CODEGEN) AND TARGET rex::rexglue)
     # A no-op that takes any arguments; Windows has no /usr/bin/true.
     if(CMAKE_HOST_WIN32)
         set(_codegen_noop "${CMAKE_CURRENT_BINARY_DIR}/codegen_skipped.cmd")
-        file(WRITE "${_codegen_noop}" "@exit /b 0\r\n")
+        # Written only when it differs: a rewrite is a new file time, and the custom commands
+        # that run the tool depend on it.
+        set(_codegen_noop_text "@exit /b 0\r\n")
+        set(_codegen_noop_old "")
+        if(EXISTS "${_codegen_noop}")
+            file(READ "${_codegen_noop}" _codegen_noop_old)
+        endif()
+        if(NOT _codegen_noop_old STREQUAL _codegen_noop_text)
+            file(WRITE "${_codegen_noop}" "${_codegen_noop_text}")
+        endif()
     else()
         set(_codegen_noop /usr/bin/true)
     endif()
