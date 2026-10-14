@@ -258,3 +258,51 @@ installed; the Sdk runtime is 1.8 GB installed, the llvm22 extension 0.5 GB).
 NOT done: the PySide6 size trim (the app is 259 MB installed, 63 MB bundled) and publishing to Flathub.
 Flathub lint: the app id fails `appid-url-not-reachable` (the repo is `ForzaHorizon1-ReImagined`) and
 `home:ro` needs a justification.
+
+## Windows: real-VM test (2026-10-14, Windows 11 Pro 10.0.26200, 4 cores, 8 GB, no GPU)
+
+VM: `dockurr/windows` in podman (KVM). To reach sshd from the host the container needs
+`-e NETWORK=user -e USER_PORTS=22` (the default tap mode did not forward port 22: "connection reset");
+the disk survives re-creating the container. Host memory matters: the container was OOM-killed once
+when another process grew to 14 GB.
+
+Results, release v0.1.1 `ForzaHorizon1-ReImagined-Setup-0.1.1.exe`:
+
+* Silent install (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER /LOG=...`): exit 0 in about
+  10 s; `%LOCALAPPDATA%\Programs\ForzaHorizon1-ReImagined\forza-launcher.exe`, `project\`, `sdk-overlay\`
+  present; Start menu and desktop shortcuts `Forza Horizon 1 - ReImagined.lnk`; uninstall registry entry; the
+  VC++ redistributable step ran (v14.44 afterwards). The desktop-icon task is checked by default, so silent
+  installs get it too. Silent uninstall (`unins000.exe /VERYSILENT`) removed files, shortcuts and the entry.
+* Interactive install through the wizard (license, folder, tasks, install, finish "Start the launcher"):
+  all pages fine, no abort (the colon fix of 0.1.1 holds on real Windows).
+* Launcher: starts from the installer's Finish page; the window renders (Play, Setup); `--version` prints
+  0.1.1; `--dry-run` without game files prints the readable "not set up" message and exits 1. In a window
+  of the default 1040 px width the Setup page's content is clipped on the right on Windows (Segoe UI is
+  wider than the Linux font, something in that page forces a minimum width); maximized it is fine. Not
+  fixed yet.
+* `launcher/packaging/test_installer.ps1 -Setup <exe> [-ExpectVersion X]` automates the above (install,
+  assert files/shortcuts/registry, `--version`, `--dry-run`, uninstall, assert removed); it passed on the VM.
+
+Not done (stopped early): game files extraction and the build in the VM (xwin path, toolchain download,
+SDK overlay, codegen, ninja, wall time/peak memory), Play without Vulkan (note: `vulkan-1.dll` is present
+in System32 of the VM, the GPU is a VirtIO display), and the CI job. Next steps: fix the Setup page width,
+then `--extract` and `--build --title-update <zip> --jobs 4 --accept-microsoft-license` in the VM (watch
+Windows path/quoting issues in `builder.msvc_environment`, the xwin splat and the overlay tar).
+`ResourceMonitor` reports no peak memory on Windows (it reads /proc); sample the process tree with
+PowerShell if the number is wanted.
+
+CI job to add to `release.yml` (not yet validated in Actions; the script itself ran on the VM):
+
+```yaml
+  installer-test:
+    needs: launcher-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: launcher-windows, path: installer }
+      - shell: pwsh
+        run: |
+          $exe = (Get-ChildItem installer\*Setup*.exe | Select-Object -First 1).FullName
+          launcher\packaging\test_installer.ps1 -Setup $exe
+```
