@@ -204,3 +204,22 @@ render target updates 7%.
 Installed 2026-10-12 13:39 (`tools/build_rexglue_sdk.sh`: the overlay `~/rexglue-sdk-patched-forza`
 and `forza-recomp/out/build/linux`). `--vulkan_hoist_shared_memory_uploads=false`,
 `--vulkan_threaded_submission=false` and `--clear_memory_page_state=true` switch each change off.
+
+## Resolve readback (2026-10-14)
+
+`readback_resolve = "fast"` became the default (car thumbnails, `docs/framerate.md`). Its
+cost, race scenario at 144 (base build, Xenia save), runs back to back, one game at a time;
+CONTENDED: a VM ran the whole time (load 4-5), so only the differences within a pair count:
+
+| Pair | readback_resolve | Race intro fps | Race fps (p50 / p95 / p99 ms) |
+| --- | --- | --- | --- |
+| 1 | none | 104.2 | 91.0 (10.6 / 14.0 / 14.9) |
+| 1 | fast | 98.4 | 80.6 (13.3 / 15.0 / 16.8) |
+| 2 | none | 103.1 | 88.9 (11.1 / 14.9 / 16.3) |
+| 2 | fast | 95.2 | 68.8 (14.2 / 19.4 / 29.2) |
+
+So `fast` costs 6-8% in the intro and 11-23% in the race at 144: it copies every resolve
+back every frame, while the game only needs the thumbnail renders. Not measured at 30 and
+60. Next: read back only while a thumbnail is being made (the hooks can set the setting at
+run time: it is read at each resolve), or `some` (copy on cache miss) if it gets the
+thumbnails right. `readback_resolve = "none"` in `forza.toml` restores the old speed.
