@@ -94,6 +94,7 @@ class Tools:
     source: dict = field(default_factory=dict)      # tool -> "system" | "downloaded"
     missing: list = field(default_factory=list)     # download names still needed
     problems: list = field(default_factory=list)    # things only the user can fix
+    hints: list = field(default_factory=list)       # optional improvements (shown as warnings)
 
 
 def _version_of(cmd, pattern):
@@ -166,6 +167,12 @@ def detect_tools(root: Path, prefer_downloaded=False, max_age=5.0) -> Tools:
     return tools
 
 
+FLATPAK_LLVM_CMD = "flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08"
+FLATPAK_LLVM_HINT = ("The compiler extension of this Flatpak is not installed (a .flatpak bundle does not bring it). "
+                     "Run this once, then restart the launcher: " + FLATPAK_LLVM_CMD +
+                     " (about 0.5 GB, instead of the 2 GB LLVM download below).")
+
+
 def _flatpak_path():
     """Inside the Flatpak the compiler comes with the SDK's LLVM extension (not on PATH by itself)."""
     if paths.IN_FLATPAK:
@@ -196,6 +203,8 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         t.source["clang"] = f"downloaded (LLVM {pins.LLVM_VERSION})"
     else:
         t.missing.append(f"llvm-{p}")
+        if paths.IN_FLATPAK:
+            t.hints.append(FLATPAK_LLVM_HINT)
     # cmake
     sys_cmake = None if prefer_downloaded else shutil.which("cmake")
     cv = _version_of([sys_cmake, "--version"], r"version (\d+\.\d+)") if sys_cmake else None

@@ -305,6 +305,8 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
         for k, v in tools.source.items():
             rep.log(f"{k}: {v}")
         return tools
+    for h in tools.hints:
+        rep.log(h)
     cache = opts.root / "downloads"
     tdir = build_env.toolchain_dir(opts.root)
     n = len(tools.missing)

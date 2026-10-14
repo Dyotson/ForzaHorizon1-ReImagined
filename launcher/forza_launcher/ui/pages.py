@@ -425,6 +425,11 @@ class SetupPage(QWidget):
             r.title.hide()
             r.set(False, tools.problems[0])
             self.checks.addWidget(r)
+        for h in tools.hints:
+            r = StatusRow("")
+            r.title.hide()
+            r.set(None, h)
+            self.checks.addWidget(r)
         if tools.missing:
             mb = sum(pins.SIZES_MB.get(m, 0) for m in tools.missing)
             self.tools_msg.setText(f"Missing tools ({', '.join(tools.missing)}) will be downloaded: about {mb} MB, "
