@@ -1,0 +1,5 @@
+[functions]
+# Title Update 4 only. sub_827611D8 runs on into the code at 0x827613E8 (its own .pdata
+# entry, also called with bl); the scanner ended it at 0x82761614 although it branches
+# to 0x82761618, 0x8276161C and 0x827616FC, which then have no labels.
+0x827611D8 = { name = "sub_827611D8", end = 0x827618F8 }

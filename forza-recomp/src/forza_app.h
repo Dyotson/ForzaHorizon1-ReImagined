@@ -109,8 +109,7 @@ class ForzaApp : public rex::ReXApp {
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
   // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
-  // update_data_root setting; default: tu4 next to the game folder). The executable loads
-  // from there, and the facades with it (the game names them relative to it).
+  // update_data_root setting; default: tu4 next to the game folder).
   void OnConfigurePaths(rex::PathConfig& paths) override {
     if (paths.update_data_root.empty()) {
       auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
@@ -123,7 +122,16 @@ class ForzaApp : public rex::ReXApp {
                    paths.update_data_root.string());
     }
   }
-  void OnLoadXexImage(std::string& xex_image) override { xex_image = "update:\\default.xex"; }
+  // game:\default.xex and the facades resolve to the update's: symbolic links from their
+  // game: device paths, which ResolvePath follows after game: itself.
+  void OnLoadXexImage(std::string& /*xex_image*/) override {
+    auto* vfs = runtime()->file_system();
+    for (const char* name : {"default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex"}) {
+      vfs->RegisterSymbolicLink(std::string("\\Device\\Harddisk0\\Partition1\\") + name,
+                                std::string("\\Device\\Harddisk0\\PartitionUpdate\\") + name);
+    }
+    REXLOG_INFO("Title Update 4 build: executable and facades from update:");
+  }
 #endif
 
  private:

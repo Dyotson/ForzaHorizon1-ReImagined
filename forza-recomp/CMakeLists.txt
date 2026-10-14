@@ -117,6 +117,7 @@ set(FORZA_SOURCES
     src/kernel/live_xmsg.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
+    src/kernel/proc_address_cache.cpp
     src/kernel/xam_enumerate.cpp
     src/kernel/xam_nui.cpp
     src/kernel/xam_signin.cpp
