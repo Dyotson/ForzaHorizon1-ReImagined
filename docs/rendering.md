@@ -1,44 +1,54 @@
 # Rendering issues
 
-## Open: hard-edged rectangle in the speed blur
+## Fixed: hard-edged rectangle in the speed blur (2026-10-14)
 
 **Symptom.** At speed the game blurs the edges of the screen. A rectangle around the
-player's car is never blurred, and its edge is sharp; on the console the blur fades in
+player's car was never blurred, and its edge was sharp; on the console the blur fades in
 smoothly toward the car.
 
-**State (2026-10-14).** Not fixed; the pass that makes the rectangle is found. New
-captures in the Millennia Masters race (TU4 build, 60 fps, full throttle, about 14 s after
-GO), analysed with qrenderdoc Python scripts (draw list with shader hashes, targets,
-viewports; texture saves; stencil state of every draw; pixel history).
+**Cause.** A shader constant set for the console's texture fetch, compared against the
+host's exact value. Found with RenderDoc captures in the Millennia Masters race (TU4 build,
+60 fps, full throttle, about 14 s after GO), analysed with qrenderdoc Python scripts (draw
+list with shader hashes, targets and viewports; texture saves; the stencil state of every
+draw; raw constant buffers).
 
-- The scene is drawn 4x MSAA in three EDRAM tiles (rows 0-255, 256-511, 512-719); the
-  post-processing runs once at the end of the frame.
-- Velocity pass (`PPMotionBlurDepthHorizonVel`): one full-screen rectangle into a 640x360
-  8888 target. It reads the scene depth resolved to an 8888 texture (byte 0 = stencil,
-  bytes 1-3 = 24-bit depth) with point sampling, and picks the reprojection matrix by the
-  stencil value (relative constant addressing, `c[32+a0]`). Pixels with stencil 15 (the
-  player's car) or 128 get zero velocity (stored as 127,127 with alpha 255).
-- A second 640x360 pass (two taps) barely changes it (1,659 of 230,400 pixels differ).
-- Combine (`BloomTonemap_MotionBlur_Vignette`, drawn as two 1280x360 halves): reads the
-  velocity linearly, takes five scene taps along it and rejects a tap whose scene alpha
-  differs from the centre's, then bloom, a 3D colour LUT and gamma. No scissor, mask
-  texture or rectangle of its own: the sharp edge is the edge of the zero-velocity area.
-- The zero-velocity area is the car (stencil 15) plus a trapezoid on the ground around it
-  with stencil 128: a ground-plane rectangle seen in perspective. Its only writer is one
-  rectangle-list draw per tile (pixel shader `39ed63c1`, depth test and write on, stencil
-  always/replace 128, blend src-alpha/inv-src-alpha, colour mask RGB, cull none). Alpha
-  test is off for it (system flags 0x0007cc00: alpha function "always"), and the translated
-  shader has no kill, so it marks its whole area.
-- Ruled out: a scissor or viewport on the blur draws, point filtering of the velocity, a
-  mask texture, the resolve region of the velocity target.
-- Open question: what limits that stencil-128 area on the console (the guest pixel
-  shader's ucode, a kill or alpha test the SDK drops, or the rectangle's 4th vertex
-  computed differently for a perspective rectangle list). Xenia was not compared: it only
-  takes pad input on Linux, and a global virtual pad is not allowed.
-- Screenshots (`FORZA_SCREENSHOT_TRIGGER`) still come out empty under RenderDoc; run a
-  second pass without it for pictures.
+- The scene is drawn 4x MSAA in three EDRAM tiles; the post-processing runs once at the end
+  of the frame. Before the scene, in each tile, one rectangle-list draw marks a ground
+  rectangle around the player's car with stencil 128 (depth test and write on, stencil
+  always/replace, alpha test off). The scene's draws then replace the stencil with their
+  object's value where they pass (0 for the world, 15 for the player's car, 3-24 for the
+  other cars), so the rectangle keeps 128 on the ground around the car.
+- Velocity pass (`PPMotionBlurDepthHorizonVel`, ucode `E68FE55ECD482EC5`): one full-screen
+  rectangle into a 640x360 target. It reads the resolved depth and stencil as an 8888 texture
+  (stencil in the low byte, float24 depth above it) and picks the reprojection matrix by
+  the stencil: `stencil >= c253.w` means world (matrix c32-c35); otherwise object
+  `stencil / 3`, matrix `c[32 + 4 * id]` (the player's car, 15, gets c52-c55, which
+  follows the camera: zero velocity).
+- `c253.w` is a literal of that pixel shader: 0x3F008100, 128.0019 / 255. The host fetch
+  returns exactly 128 / 255 (0x3F008081) for a stencil of 128, which is below it. So 128
+  counted as object 43, whose constants (c204-c207) happened to hold an identity matrix:
+  the whole rectangle got zero velocity and stayed sharp, and the combine
+  (`BloomTonemap_MotionBlur_Vignette`, five scene taps along the velocity) blurred
+  everything around it. 0x3F008100 is (0x8080 + 1) / 65536: the value an 8-bit 128 gives
+  if the fetch widens it to 16 bits and rounds up. That suggests the console's fetch
+  returns a few ulps more than 128 / 255 and the rectangle counts as world there. An
+  object index of 43 means nothing in this table either way.
+- The other passes were checked and ruled out: no scissor, viewport, mask texture or
+  rectangle on the blur draws; the velocity is filtered linearly; the 2-tap pass after the
+  velocity (`ECE830AC0333767F`) only copies the pixel below at depth edges.
 
-**What the code shows.**
+**Fix.** `src/platform/motion_blur_fix.cpp` finds the shader's literal block (c252-c255)
+in the executable's image before the game starts and sets the threshold to 0.5 (between
+127 and 128). It is found the same way in the disc's executable and Title Update 4's
+(0x821C30F0 in TU4). `FORZA_BLUR_THRESHOLD=0` leaves the image alone, for comparisons.
+The blur now fades toward the car, and the fence and the road beside it blur as on the
+console. GPU work is unchanged (one constant), so the frame rate is unchanged.
+
+**Not done.** Xenia was not compared: on Linux it only takes pad input, and a global
+virtual pad is not allowed. Other shaders that compare 8-bit values against exact
+thresholds may show the same off-by-ulps difference; none is known.
+
+**What the code shows (sub_ addresses of the disc executable).**
 - `sub_82461108` draws the technique `PPMotionBlurDepthHorizonVel` (a velocity pass from
   depth): a full-screen quad given as normalized shorts (-32767..32767).
 - `sub_82402678` uses `BloomTonemap_MotionBlur_Vignette`, probably the final combine that
@@ -46,14 +56,3 @@ viewports; texture saves; stencil state of every draw; pixel history).
 - The camera definitions set a `MotionBlurAmount` per shot (`media/camera.zip`, for
   example `321Cams.xml`).
 
-**Next steps.**
-1. Capture again at speed. List the draws (RecompiledHaloReach `tools/renderdoc/draws.py`)
-   and find the combine draw that samples the velocity target.
-2. Save its inputs (`savetex.py`), and read the blend state, scissor, stencil and viewport
-   of the blur draws. Look for what cuts the rectangle: a mask texture, a scissor or
-   stencil rectangle, a resolve region, a sampler (point instead of linear filtering), a
-   format, or the 4th vertex of a rectangle-list primitive.
-3. Compare with Xenia. Its input must stay inside a nested display: never a global
-   uinput pad, which Steam could map onto the desktop.
-4. Fix it in a game hook, or as SDK patch 0040 or later, in both projects'
-   `patches/rexglue-sdk/`.

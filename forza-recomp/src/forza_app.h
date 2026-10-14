@@ -24,6 +24,7 @@
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
+void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
 }  // namespace forza
 
 // SDK settings with this game's defaults (src/main.cpp).
@@ -95,6 +96,8 @@ class ForzaApp : public rex::ReXApp {
     // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
     // nothing else takes.
     forza::InstallFaultGuard();
+    // The executable's image is loaded: fix the speed blur's stencil threshold.
+    forza::PatchMotionBlurStencilThreshold();
     auto* vfs = runtime()->file_system();
     const std::filesystem::path host = cache_root() / "cache";
     std::error_code ec;

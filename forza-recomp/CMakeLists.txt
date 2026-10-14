@@ -120,6 +120,7 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/hud_overlay.cpp
+    src/platform/motion_blur_fix.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/vulkan_hooks.cpp
