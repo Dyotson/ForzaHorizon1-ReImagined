@@ -151,9 +151,9 @@ Verified on Linux:
 * Workflows: `actionlint` clean, YAML loads. Landing page: Chromium at 1440x900 and 390x844
   (no console errors, no horizontal scroll, lightbox works).
 
-Windows run time: see "Windows" below (installer, extraction, a whole build, Play without a GPU were run in a VM; not on Visual Studio or Windows 10; was never run before 2026-10-14:
-build path, xwin, Visual Studio detection), the `publish` job (tags only), the TU4 step in the
-frozen app (PyInstaller bundles `apply_title_update.py` and `lzx_delta.py`; only the source tree ran it).
+Windows run time: see "Windows" below (installer, extraction, a whole build with xwin and Play without a GPU were run
+in a VM on 2026-10-14). Not verified: a Visual Studio Build Tools machine, Windows 10, the `publish` job (tags
+only), the TU4 step on Linux in the frozen app.
 
 ## Open
 
