@@ -27,7 +27,7 @@ body {
 }
 a { color: var(--orange); }
 a:hover { color: var(--cream); }
-code { background: rgba(255,255,255,.08); padding: .1em .4em; border-radius: 6px; font-size: .9em; }
+code { background: rgba(255,255,255,.08); padding: .1em .4em; border-radius: 6px; font-size: .9em; overflow-wrap: anywhere; }
 .skip { position: absolute; left: -999px; top: 8px; background: var(--cream); color: #140d2e; padding: 8px 14px; border-radius: 8px; z-index: 100; }
 .skip:focus { left: 8px; }
 
@@ -73,6 +73,8 @@ nav a { color: var(--muted); text-decoration: none; font-weight: 600; font-size:
 nav a:hover { color: var(--cream); }
 nav .nav-cta { color: #1a0f33; background: linear-gradient(90deg, var(--orange), var(--pink)); padding: 6px 14px; border-radius: 999px; }
 nav .nav-cta:hover { color: #1a0f33; filter: brightness(1.1); }
+nav .nav-discord { color: var(--cream); border: 2px solid var(--orange); padding: 4px 12px; border-radius: 999px; }
+nav .nav-discord:hover { background: rgba(255, 157, 60, .15); }
 
 /* ---- sections along the road ---- */
 main { position: relative; z-index: 1; }
@@ -155,7 +157,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 /* phones: the road runs down the left edge */
 @media (max-width: 820px) {
   :root { --road-w: 26px; }
-  nav a:not(.nav-cta) { display: none; }
+  nav a:not(.nav-cta):not(.nav-discord) { display: none; }
   .stop { padding-left: 52px; padding-right: 14px; min-height: 0; padding-top: 90px; }
   .stop.left > *, .stop.right > * { align-self: stretch; }
   .panel, .shots { width: 100%; }
