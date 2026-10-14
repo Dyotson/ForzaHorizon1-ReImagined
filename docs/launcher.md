@@ -393,6 +393,55 @@ click (`SetCursorPos` + `mouse_event`, `SendKeys`) and take screenshots (`Graphi
   installer: every check passed, but the step exited 1 (the last native command, `--dry-run`, returned 1);
   `exit 0` added. `release.yml` run 38641731120 validates it (artifacts only).
 
+### Round 4: #35 (`manifest 'build.ninja' still dirty after 100 tries`), found and fixed
+
+Players on v0.1.2: `[0/100] Re-running CMake...` repeating, then ninja gives up. Mechanism (reproduced on Linux with
+cmake 4.4.3 / ninja 1.13.2: `touch -d '+2 hours' inc.cmake` on a file the project includes): build.ninja's
+regeneration rule depends on every CMake file the configure read; if one has a modification time newer than the
+clock, CMake regenerates build.ninja (its mtime is "now", still older than that file), ninja checks again, and
+after 100 rounds reports "perhaps system time is not set". Which file, on Windows:
+**the installer stamped the installed files with the future.** Inno Setup stores the build machine's *local* time
+by default (CI runners are UTC) and applies it as the installing machine's local time (no `TimeStampsInUTC`): a
+file built at 21:40 UTC is installed "at 21:40 local", 3 h ahead for UTC-3, 7 h ahead for PDT. The toolchain file
+`<install>\project\tools\cmake\windows-native-clang-cl.cmake` is passed to CMake straight from the install
+folder (`-DCMAKE_TOOLCHAIN_FILE`) and is a regeneration input, so for the first hours after a release (until the
+player's clock passes the stamp) every build on every machine west of UTC looped. Confirmed in the VM with the
+correct clock (VM is PDT; it had been running 7 h fast, which also showed that an old clock era leaves future
+times behind: `ninja -d explain -n` named, in turn, `rexglue_project.cmake`, `generated/default/dll_targets.cmake`
+and CMake's own `Platform/WindowsPaths.cmake`, all stamped while the clock was wrong): with the v0.1.3 code and the
+installed project, `ninja explain: output build.ninja older than most recent input
+...\project\tools\cmake\windows-native-clang-cl.cmake (+6.5 h)`, both on a fresh tree and on one left by a
+v0.1.1 build that stopped at 24% (#28). A stale state from an older launcher is not by itself a cause, but it
+keeps whatever stamps it had.
+
+Fixes (ad12ef1, c3078f6):
+
+* `builder.sync_toolchain_file`: the Windows toolchain file is copied into `build/toolchain/` (a new file, so the
+  installer's time never reaches CMake); `clamp_future_times` sets every file or folder with a modification time
+  in the future to now, under the project copy, the SDK, the downloaded toolchain, xwin and that copy, before each
+  configure (a wrong clock, an archive, an installer; it logs "N files had a modification time in the future").
+* `configure_stamp`: the CMake build tree (`out/build/<os>`) records the launcher version, platform, SDK pin and
+  overlay, compilers (path and source), and title-update choice in `.forza-configure-stamp`; a tree with another
+  stamp, or none (made by an older launcher), is deleted and configured from scratch, not resumed.
+* If ninja still prints "still dirty after 100 tries", `run_build` deletes the CMake build tree, clamps again and
+  configures once more; if that fails too the message says to check the date, time and time zone, to press
+  Resume build, and to delete the build folder if it comes back.
+* `installer.iss`: `TimeStampsInUTC=yes`, so installed files keep real times.
+* `forza-recomp/CMakeLists.txt`: `codegen_skipped.cmd` is written only when its content differs (a `file(WRITE)`
+  every configure is a new time on a file the custom commands depend on; it is not a regeneration input and was not
+  the cause).
+* `launcher/test_build_tree.py` (clamp, stamp/reset), `python3 -m unittest launcher/test_build_tree.py`.
+
+Verified in the Windows 11 VM (source tree of the launcher, `--build --base --jobs 4`, the installed project with its
+installer times, correct clock unless noted; each ends with `forza.exe` linked and staged, 4.2-4.4 min, 1.7 GB peak):
+(c) current code, fresh tree: no loop (control with the v0.1.3 code: loop, explained above); (b) clock set 5 h back
+(downloaded toolchain, SDK, xwin all in the future): the control loops, the new code logs "14754 files had a
+modification time in the future" and builds; (a) a v0.1.1 build stopped at 24% (the `\usr\bin\true` failure), then the new
+code: "The earlier build was made by another version ... configuring from scratch", builds; the retry: with the
+clamp disabled and a future-stamped toolchain copy, ninja loops, the launcher deletes the build tree, clamps and the
+second attempt finishes; with the clamp disabled for good the message above is the result of the second failure.
+Linux headless build: see the line below. The CI installer's file times (`TimeStampsInUTC`): see below.
+
 Still not tested: a Visual Studio Build Tools machine (the `vswhere`/`vcvars64.bat` path), Windows 10, a real GPU,
 long user names or a data folder with spaces/non-ASCII characters, antivirus interfering.
 
