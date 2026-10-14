@@ -440,7 +440,11 @@ modification time in the future" and builds; (a) a v0.1.1 build stopped at 24% (
 code: "The earlier build was made by another version ... configuring from scratch", builds; the retry: with the
 clamp disabled and a future-stamped toolchain copy, ninja loops, the launcher deletes the build tree, clamps and the
 second attempt finishes; with the clamp disabled for good the message above is the result of the second failure.
-Linux headless build: see the line below. The CI installer's file times (`TimeStampsInUTC`): see below.
+Linux headless build (`--build --base --jobs 4`, scratch root, system clang 23.1.2 / cmake 4.4.3 / ninja 1.13.2): 350
+steps, 5.6 min, 1.8 GB peak; a second run resumes the same tree (no "configuring from scratch"). The CI installer of
+`release.yml` run 38654797202 (all jobs green, artifacts only): installed in the VM (PDT) at 23:39 UTC, the toolchain
+file's modification time is 23:33:54 UTC, the build's own time (v0.1.3's installer gave +6.5 h); `TimeStampsInUTC`
+works.
 
 Still not tested: a Visual Studio Build Tools machine (the `vswhere`/`vcvars64.bat` path), Windows 10, a real GPU,
 long user names or a data folder with spaces/non-ASCII characters, antivirus interfering.
