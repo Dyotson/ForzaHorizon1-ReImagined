@@ -52,6 +52,7 @@ class Options:
     accept_ms_license: bool = False
     prefer_downloaded: bool = False
     clean: bool = False
+    title_update: str = ""   # the player's TU4 package (optional)
 
     def __post_init__(self):
         self.root = Path(self.root)
@@ -128,11 +129,14 @@ def sources_hash(proj: Path) -> str:
     return h.hexdigest()
 
 
-def current_build_id(root: Path) -> str | None:
+def current_build_id(root: Path, title_update: str = "") -> str | None:
     proj = project_dir()
     if proj is None:
         return None
-    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}".encode()).hexdigest()[:16]
+    tu = ""
+    if title_update and Path(title_update).is_file():
+        tu = str(Path(title_update).stat().st_size)
+    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}|{tu}".encode()).hexdigest()[:16]
 
 
 def read_state(root: Path) -> dict:
@@ -147,9 +151,9 @@ def write_state(root: Path, state: dict):
     (build_dir(root) / "state.json").write_text(json.dumps(state, indent=2))
 
 
-def build_status(root: Path):
+def build_status(root: Path, title_update: str = ""):
     """('built' | 'stale' | 'none' | 'nosource', detail)"""
-    cid = current_build_id(root)
+    cid = current_build_id(root, title_update)
     if cid is None:
         return "nosource", "The project sources are not installed next to the launcher."
     st = read_state(root)
@@ -342,7 +346,39 @@ def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
     return prefix
 
 
-def sync_sources(opts: Options, rep: Reporter, game_files: Path) -> Path:
+def title_update_script() -> Path | None:
+    for d in (paths.LAUNCHER_ROOT / "tools", paths.app_dir() / "project" / "tools", paths.REPO_ROOT / "tools"):
+        if (d / "apply_title_update.py").is_file():
+            return d / "apply_title_update.py"
+    return None
+
+
+def apply_title_update(opts: Options, rep: Reporter, game_files: Path) -> Path | None:
+    """STUB until tools/apply_title_update.py lands (it is written by the DLC work, see
+    docs/dlc.md): base default.xex + the player's title update package -> a patched
+    default.xex that codegen then uses. Assumed interface:
+        apply_title_update.py BASE_XEX TU_PACKAGE OUT_XEX
+    Returns the patched xex, or None when no title update is used."""
+    if not opts.title_update:
+        return None
+    script = title_update_script()
+    if script is None:
+        rep.log("WARNING: a title update was chosen, but this launcher has no tools/apply_title_update.py "
+                "yet: building from the base default.xex without it.")
+        rep.status("Title update step not available yet: using the base game")
+        return None
+    out = build_dir(opts.root) / "tu" / "default.xex"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    rep.status("Applying your title update")
+    cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
+        script, game_files / "default.xex", opts.title_update, out]
+    run(cmd, opts.root, os.environ.copy(), rep, low_priority=opts.low_priority)
+    if not out.is_file():
+        raise BuildError("The title update step did not produce a patched default.xex.")
+    return out
+
+
+def sync_sources(opts: Options, rep: Reporter, game_files: Path, xex: Path | None = None) -> Path:
     proj = project_dir()
     if proj is None:
         raise BuildError("The project sources (project/forza-recomp) are not installed next to the launcher.")
@@ -355,6 +391,8 @@ def sync_sources(opts: Options, rep: Reporter, game_files: Path) -> Path:
         wanted.add(rel)
         data = src.read_bytes()
         if rel.as_posix() == "forza_manifest.toml":
+            if xex is not None:  # the title-updated executable replaces the base default.xex
+                data = data.replace(b"../extracted/game/default.xex", xex.resolve().as_posix().encode())
             data = data.replace(b"../extracted/game", game_files.resolve().as_posix().encode())
         if not dst.is_file() or dst.read_bytes() != data:
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -417,7 +455,7 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     if not (game_files / "default.xex").is_file():
         raise BuildError(f"No default.xex in {game_files}: extract your game files first.")
-    cid = current_build_id(root)
+    cid = current_build_id(root, opts.title_update)
     state = read_state(root)
     if opts.clean:
         shutil.rmtree(build_dir(root), ignore_errors=True)
@@ -429,8 +467,9 @@ def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     tools = ensure_toolchain(opts, rep, 0.0, 0.14)
     rep.status("Preparing the SDK")
     sdk = ensure_sdk(opts, rep, 0.14, 0.17)
+    patched = apply_title_update(opts, rep, game_files)
     rep.status("Preparing the project sources")
-    src = sync_sources(opts, rep, game_files)
+    src = sync_sources(opts, rep, game_files, patched)
     env = build_env.tool_env(tools)
     cmake_extra = []
     if IS_WIN:

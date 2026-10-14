@@ -109,7 +109,7 @@ class PlayPage(QWidget):
                 files_msg = f"{root}"
         self.r_files.set(files_ok if files_ok else False, files_msg if files_ok else
                          (files_msg if (root / "default.xex").is_file() else "Not set up yet: open Setup."))
-        state, detail = builder.build_status(cfg.data_home())
+        state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
         if install is not None and (state in ("built", "stale") or install.source != "built by the launcher"):
             self.r_build.set(True if state != "stale" else None,
@@ -240,14 +240,29 @@ class SetupPage(QWidget):
         self.c1.lay.addWidget(self.msg1)
         lay.addWidget(self.c1.frame)
 
-        # 2. DLC ------------------------------------------------------------------------
-        self.c2 = StepCard(2, "DLC (optional)",
+        # 2. title update -----------------------------------------------------------------
+        self.ctu = StepCard(2, "Title update (optional)",
+                            "Your Title Update 4 package (the file in 4D5309C9/000B0000, update 4000D145 version 4). "
+                            "It is applied to your default.xex before the game is built. The DLC is likely to need it: "
+                            "without it, DLC cars and events may be missing or not work.")
+        row, self.tu, _ = path_row("Title update package", self._pick_tu, None)
+        self.tu.setText(cfg["tu_package"])
+        self.tu.editingFinished.connect(self._tu_changed)
+        self.ctu.lay.addLayout(row)
+        self.msgtu = label("", "muted")
+        self.ctu.lay.addWidget(self.msgtu)
+        lay.addWidget(self.ctu.frame)
+
+        # 3. DLC ------------------------------------------------------------------------
+        self.c2 = StepCard(3, "DLC (optional)",
                            "The folder with your DLC packages (4D5309C9/00000002). They are installed for the game "
-                           "to find; you can add more later.")
+                           "to find; you can add more later. Without DLC the extra cars and events are missing.")
         row, self.dlc, _ = path_row("Folder of DLC packages", None, self._pick_dlc)
         self.dlc.setText(cfg["dlc_dir"])
         self.dlc.editingFinished.connect(self._dlc_changed)
         self.c2.lay.addLayout(row)
+        self.dlclist = label("", "help")
+        self.c2.lay.addWidget(self.dlclist)
         self.go2 = QPushButton("Install DLC")
         self.go2.clicked.connect(self._install_dlc)
         brow = QHBoxLayout()
@@ -262,7 +277,7 @@ class SetupPage(QWidget):
         lay.addWidget(self.c2.frame)
 
         # 3. build ----------------------------------------------------------------------
-        self.c3 = StepCard(3, "Build the game",
+        self.c3 = StepCard(4, "Build the game",
                            "The launcher compiles the game on this computer: it generates C++ from your "
                            "default.xex and builds it with a C++ compiler. It takes a while (see below), uses a lot "
                            "of memory, and is only repeated when the project's version changes.")
@@ -278,7 +293,7 @@ class SetupPage(QWidget):
         self.jobs.setValue(cfg.advanced.get("build_jobs") or build_env.default_jobs())
         self.jobs.valueChanged.connect(lambda v: (cfg.advanced.__setitem__("build_jobs", v), cfg.save()))
         jrow.addWidget(self.jobs)
-        jrow.addWidget(label("Each job uses about 2.5 GB of memory. More jobs are faster; too many run out of "
+        jrow.addWidget(label("Each job uses about 1.5 GB of memory. More jobs are faster; too many run out of "
                              "memory.", "help"), 1)
         self.c3.lay.addLayout(jrow)
         self.lowprio = QCheckBox("Run at low priority (the computer stays usable)")
@@ -349,9 +364,30 @@ class SetupPage(QWidget):
             self.c1.set_badge("Needed", None)
             self.msg1.setText("")
         self.msg1.setStyleSheet(f"color: {theme.MUTED if not have or ok else theme.ERR};")
+        tu = cfg["tu_package"].strip()
+        if tu:
+            ok_tu, msg_tu = installer.inspect_title_update(tu)
+            self.ctu.set_badge("Ready" if ok_tu else "Problem", ok_tu)
+            self.msgtu.setText(msg_tu + ("  The title update step of the build is not available yet in this "
+                                         "launcher version." if ok_tu and builder.title_update_script() is None else ""))
+            self.msgtu.setStyleSheet(f"color: {theme.MUTED if ok_tu else theme.ERR};")
+        else:
+            self.ctu.set_badge("Optional", None)
+            self.msgtu.setText("")
+        d = self.dlc.text().strip()
+        if d:
+            try:
+                found = installer.describe_dlc_folder(d)
+                self.dlclist.setText(f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
+                                     (" ..." if len(found) > 12 else "")) if found else self.dlclist.setText(
+                    "No DLC packages found in this folder.")
+            except installer.InstallError as e:
+                self.dlclist.setText(str(e))
+        else:
+            self.dlclist.setText("")
         n = game.installed_dlc(cfg)
         self.c2.set_badge(f"{n} installed" if n else "Optional", True if n else None)
-        state, detail = builder.build_status(cfg.data_home())
+        state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         label_for = {"built": ("Built", True), "stale": ("Rebuild needed", None), "partial": ("Unfinished", None),
                      "none": ("Not built", None), "nosource": ("Missing sources", False)}[state]
         self.c3.set_badge(*label_for)
@@ -458,6 +494,18 @@ class SetupPage(QWidget):
         self.cfg.save()
         self._start(workers.extract_task(str(p), dest), self.bar1, self.cancel1, self.msg1)
 
+    # ---- title update ----------------------------------------------------------------------
+    def _pick_tu(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Title update package", self.tu.text() or str(Path.home()))
+        if f:
+            self.tu.setText(f)
+            self._tu_changed()
+
+    def _tu_changed(self):
+        self.cfg["tu_package"] = self.tu.text().strip()
+        self.cfg.save()
+        self.refresh()
+
     # ---- step 2 ------------------------------------------------------------------------
     def _pick_dlc(self):
         d = QFileDialog.getExistingDirectory(self, "Folder of DLC packages", self.dlc.text() or str(Path.home()))
@@ -498,7 +546,7 @@ class SetupPage(QWidget):
                                            "\n".join(errors) + "\n\nTry anyway?") != QMessageBox.Yes:
             return
         opts = builder.Options(cfg.data_home(), self.jobs.value(), self.lowprio.isChecked(),
-                               bool(self.ms and self.ms.isChecked()))
+                               bool(self.ms and self.ms.isChecked()), title_update=cfg["tu_package"].strip())
         self.logview.clear()
         self.bar3.setRange(0, 1000)
         t = workers.build_task(opts, str(root))

@@ -4,6 +4,7 @@
   forza-launcher --dry-run       print the forza.toml and command line Play would use (nothing is written)
   forza-launcher --live-server SCRIPT [args]   run the Forza Live server (the frozen app does this
                                  for the local server, so the player needs no Python)
+  forza-launcher --run-script SCRIPT [args]   run a bundled Python tool (the frozen app has no Python)
   forza-launcher --build [--root DIR] [--jobs N] [--clean]   build the game without the window
   forza-launcher --version
 """
@@ -56,6 +57,7 @@ def headless_build(argv):
     ap.add_argument("--jobs", type=int, default=0)
     ap.add_argument("--clean", action="store_true")
     ap.add_argument("--accept-microsoft-license", action="store_true")
+    ap.add_argument("--title-update", default="", help="your TU4 package")
     a = ap.parse_args(argv)
     cfg = Config()
     root = Path(a.root) if a.root else cfg.data_home()
@@ -67,7 +69,8 @@ def headless_build(argv):
         def status(self, text):
             print(f"== {text}", flush=True)
 
-    opts = builder.Options(root, a.jobs, accept_ms_license=a.accept_microsoft_license, clean=a.clean)
+    opts = builder.Options(root, a.jobs, accept_ms_license=a.accept_microsoft_license, clean=a.clean,
+                           title_update=a.title_update)
     try:
         rt = builder.run_build(opts, Console(), root / "game")
     except builder.BuildError as e:
@@ -81,6 +84,9 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["--live-server"]:
         run_live_server(argv[1:])
+        return 0
+    if argv[:1] == ["--run-script"]:
+        run_live_server(argv[1:])  # the same runner: a script with its folder on sys.path
         return 0
     if argv[:1] == ["--version"]:
         print(__version__)

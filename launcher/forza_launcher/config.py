@@ -17,6 +17,7 @@ def _default():
     return {
         "version": 1,
         "game_package": "",       # the Games on Demand package (file)
+        "tu_package": "",         # the player's title update package (TU4)
         "dlc_dir": "",            # folder of DLC packages (4D5309C9/00000002)
         "game_root": "",          # an already extracted folder to use instead of data/game
         "dlc_installed": 0,

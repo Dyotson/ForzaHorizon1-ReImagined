@@ -1,0 +1,201 @@
+# Builds the launcher installers and attaches them to the release.
+#
+# The installers hold the launcher, the project's own sources, the Forza Live server and the
+# patched ReXGlue SDK pieces. They hold NO game code, NO game data and NO built game: the
+# launcher builds the game on the player's computer from their own copy of Forza Horizon.
+#
+# Runs on tags v* (and creates the release) and by hand (artifacts only).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
+  # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
+  sdk-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: rexglue-overlay-linux-amd64.tar.gz
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'launcher/forza_launcher/pins.py') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build python3 git patchelf \
+            libx11-dev libxcb1-dev libxext-dev libxfixes-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev libxkbcommon-dev \
+            libdrm-dev libgl1-mesa-dev libvulkan-dev
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: LLVM and the pinned SDK nightly
+        run: |
+          python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
+          python3 launcher/packaging/ci_fetch.py sdk-linux "$HOME/rexglue-sdk-nightly/0.10.0.24"
+          echo "$HOME/llvm/bin" >> "$GITHUB_PATH"
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build the patched SDK pieces
+        run: |
+          REXSDK_JOBS="$(nproc)" tools/build_rexglue_sdk.sh
+          tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-overlay-linux
+          path: rexglue-overlay-linux-amd64.tar.gz
+
+  # The SDK for Windows (runtime, Vulkan-enabled Xenos plugin, codegen tool), built with clang-cl
+  # against the runner's MSVC. The Microsoft headers and libraries are used to build only and are
+  # not part of the result.
+  sdk-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: rexglue-overlay-windows-amd64.tar.gz
+          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: LLVM, SDK source and patches
+        shell: bash
+        run: |
+          python launcher/packaging/ci_fetch.py llvm-windows "$RUNNER_TEMP/llvm" --strip 1
+          export REXSDK_SRC="$RUNNER_TEMP/sdk-src/sdk"
+          tools/build_rexglue_sdk.sh --source-only
+          python launcher/packaging/ci_patch_simde.py "$REXSDK_SRC/thirdparty/simde/simde/x86/sse.h"
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build and install the SDK
+        shell: bash
+        run: |
+          export FORZA_LLVM_BIN="$RUNNER_TEMP/llvm/bin"
+          export PATH="$FORZA_LLVM_BIN:$PATH"
+          SRC="$RUNNER_TEMP/sdk-src/sdk"
+          PREFIX="$RUNNER_TEMP/sdk-prefix"
+          cmake -S "$SRC" -B "$SRC/out/build/win" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=23 -DREXGLUE_USE_VULKAN=ON -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/cmake/windows-native-clang-cl.cmake"
+          cmake --build "$SRC/out/build/win"
+          cmake --install "$SRC/out/build/win"
+          cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
+          tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-overlay-windows
+          path: rexglue-overlay-windows-amd64.tar.gz
+
+  launcher-linux:
+    needs: sdk-linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-overlay-linux
+          path: overlay
+      - name: Version
+        run: |
+          v="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev.${GITHUB_SHA::7}"
+          printf '"""Launcher version."""\n__version__ = "%s"\n' "$v" > launcher/forza_launcher/_version.py
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build the launcher
+        run: |
+          pip install -r launcher/requirements.txt -r launcher/requirements-build.txt
+          cd launcher
+          pyinstaller --noconfirm forza-launcher.spec
+          dist/forza-launcher/forza-launcher --version
+      - name: Smoke test the window
+        run: |
+          sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3
+          QT_QPA_PLATFORM=offscreen timeout 10 launcher/dist/forza-launcher/forza-launcher || [ $? -eq 124 ]
+      - name: Package
+        run: |
+          python launcher/packaging/make_package.py --platform linux \
+            --pyinstaller-dist launcher/dist/forza-launcher \
+            --overlay overlay/rexglue-overlay-linux-amd64.tar.gz --out out --tar --version "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-linux
+          path: out/*.tar.gz
+
+  launcher-windows:
+    needs: sdk-windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-overlay-windows
+          path: overlay
+      - name: Version
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev.${GITHUB_SHA::7}"
+          printf '"""Launcher version."""\n__version__ = "%s"\n' "$v" > launcher/forza_launcher/_version.py
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build the launcher
+        shell: bash
+        run: |
+          pip install -r launcher/requirements.txt -r launcher/requirements-build.txt pillow
+          cd launcher
+          pyinstaller --noconfirm forza-launcher.spec
+          dist/forza-launcher/forza-launcher.exe --version
+      - name: Package
+        shell: bash
+        run: |
+          python launcher/packaging/make_package.py --platform windows \
+            --pyinstaller-dist launcher/dist/forza-launcher \
+            --overlay overlay/rexglue-overlay-windows-amd64.tar.gz --out out --version "$VERSION"
+      - name: Installer (Inno Setup, with the Visual C++ 2015-2022 x64 redistributable)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
+          python -c "from PIL import Image; Image.open('docs/images/logo.png').save('launcher/packaging/logo.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$env:VERSION" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-windows
+          path: installer/*.exe
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [launcher-linux, launcher-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
+          gh release upload "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --clobber

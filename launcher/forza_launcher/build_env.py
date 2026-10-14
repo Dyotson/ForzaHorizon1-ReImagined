@@ -51,8 +51,8 @@ def free_disk(path: Path) -> int:
 # 4 GB, the SDK 1.5 GB, and a downloaded toolchain 6 GB more.
 NEED_DISK_GB = 20
 NEED_DISK_TOOLCHAIN_GB = 7
-NEED_RAM_GB = 10
-RAM_PER_JOB_GB = 2.5
+NEED_RAM_GB = 8
+RAM_PER_JOB_GB = 1.5
 
 
 def default_jobs():
@@ -70,9 +70,9 @@ def preflight(root: Path, game_files_ready: bool, need_toolchain: bool):
         text = f"Memory: {total / GB:.0f} GB installed, {avail / GB:.0f} GB free"
         lvl = "ok"
         if total < NEED_RAM_GB * GB:
-            lvl, text = "error", text + f" (the build needs about {NEED_RAM_GB} GB)"
+            lvl, text = "error", text + f" (the build and the game need about {NEED_RAM_GB} GB)"
         elif avail < NEED_RAM_GB * GB:
-            lvl, text = "warn", text + f" (close other programs; the build uses about {NEED_RAM_GB} GB)"
+            lvl, text = "warn", text + f" (close other programs; the build and the game need about {NEED_RAM_GB} GB)"
         out.append((lvl, text))
     need = NEED_DISK_GB + (NEED_DISK_TOOLCHAIN_GB if need_toolchain else 0) - (8 if game_files_ready else 0)
     free = free_disk(root) / GB

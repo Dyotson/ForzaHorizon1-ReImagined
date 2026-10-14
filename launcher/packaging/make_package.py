@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Assemble the release folder around the PyInstaller output:
+
+  ForzaHorizon1-ReImagined/
+    forza-launcher(.exe) + _internal/      the launcher
+    project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
+    server/                                the Forza Live server
+    sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
+    licenses/, README.txt
+  (Linux also: install.sh, uninstall.sh, forza-reimagined.desktop, forza-reimagined.png)
+
+It never contains game code or data, and no built game: the player's machine builds that.
+
+  make_package.py --platform linux --pyinstaller-dist DIST --overlay FILE --out OUTDIR [--sdk-license FILE] [--tar]
+"""
+import argparse
+import shutil
+import sys
+import tarfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
+sys.path.insert(0, str(HERE.parent))
+from forza_launcher import builder  # noqa: E402
+
+README = """Forza Horizon 1: ReImagined - launcher
+https://github.com/Dyotson/ForzaHorizon1-ReImagined
+
+This package contains the launcher, the project's source code and the patched ReXGlue SDK
+pieces. It contains NO game code and NO game data. Open the launcher, point it at your own copy
+of Forza Horizon (Xbox 360, Games on Demand package), and it builds the game on your computer.
+
+Forza Horizon is (c) Microsoft. This project is not affiliated with, endorsed by or sponsored
+by Microsoft, Playground Games or Turn 10 Studios.
+"""
+
+
+def copy(src: Path, dst: Path):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--platform", choices=["linux", "windows"], required=True)
+    ap.add_argument("--pyinstaller-dist", required=True, help="the forza-launcher folder PyInstaller made")
+    ap.add_argument("--overlay", help="rexglue-overlay-<os>-amd64.tar.gz (omit for a development package)")
+    ap.add_argument("--sdk-license")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--tar", action="store_true", help="also write OUT/<name>.tar.gz (Linux)")
+    ap.add_argument("--version", default="dev")
+    a = ap.parse_args()
+
+    name = "ForzaHorizon1-ReImagined"
+    stage = Path(a.out) / name
+    shutil.rmtree(stage, ignore_errors=True)
+    shutil.copytree(a.pyinstaller_dist, stage, symlinks=True)
+
+    for rel in builder.source_files(REPO):
+        copy(REPO / "forza-recomp" / rel, stage / "project" / "forza-recomp" / rel)
+    for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
+        copy(f, stage / "project" / "tools" / "cmake" / f.name)
+    for f in sorted((REPO / "server").glob("*.py")):
+        if not f.name.startswith("test_"):
+            copy(f, stage / "server" / f.name)
+    if (REPO / "server" / "playground_rounds.xml").is_file():
+        copy(REPO / "server" / "playground_rounds.xml", stage / "server" / "playground_rounds.xml")
+    if a.overlay:
+        copy(Path(a.overlay), stage / "sdk-overlay" / f"rexglue-overlay-{a.platform}-amd64.tar.gz")
+    copy(REPO / "LICENSE", stage / "licenses" / "ForzaHorizon1-ReImagined.txt")
+    if a.sdk_license:
+        copy(Path(a.sdk_license), stage / "licenses" / "rexglue-sdk.txt")
+    (stage / "README.txt").write_text(README + f"\nVersion {a.version}\n", encoding="utf-8")
+
+    if a.platform == "linux":
+        for f in ("install.sh", "uninstall.sh", "forza-reimagined.desktop"):
+            copy(HERE / f, stage / f)
+        (stage / "install.sh").chmod(0o755)
+        (stage / "uninstall.sh").chmod(0o755)
+        copy(REPO / "docs" / "images" / "logo.png", stage / "forza-reimagined.png")
+        if a.tar:
+            out = Path(a.out) / f"{name}-linux-x86_64.tar.gz"
+            with tarfile.open(out, "w:gz") as t:
+                t.add(stage, arcname=name)
+            print(out)
+    print(stage)
+
+
+if __name__ == "__main__":
+    main()

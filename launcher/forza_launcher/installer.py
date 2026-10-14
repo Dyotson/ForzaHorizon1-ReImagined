@@ -114,6 +114,11 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False):
     return total
 
 
+def describe_dlc_folder(folder: str):
+    """[(file name, display name)] of the DLC packages in a folder, or raises InstallError."""
+    return [(f.name, name) for f, name, _ in list_dlc_packages(Path(folder).expanduser())]
+
+
 def list_dlc_packages(folder: Path):
     """The files of a DLC folder that are STFS marketplace packages: [(path, display name, size)]."""
     out = []
@@ -225,3 +230,27 @@ def check_game_folder(folder: Path):
     if missing:
         return False, f"{folder} is missing {', '.join(missing)}."
     return inspect_xex(folder / "default.xex")
+
+
+TITLE_UPDATE = 0xB0000
+
+
+def inspect_title_update(path: str):
+    """(ok, message) for the player's title update package (TU4: the package of the 4000D145
+    update, version 4)."""
+    try:
+        p = Path(path).expanduser()
+        if p.is_dir():
+            files = [f for f in p.iterdir() if f.is_file()]
+            if len(files) != 1:
+                return False, "Choose the title update package file itself."
+            p = files[0]
+        pkg, hdr = inspect_package(p)
+    except InstallError as e:
+        return False, str(e)
+    if f"{hdr.title_id:08X}" != TITLE_ID:
+        return False, f"This package is for title {hdr.title_id:08X}, not Forza Horizon."
+    if hdr.content_type != TITLE_UPDATE:
+        return False, (f"This is not a title update (content type {hdr.content_type:#x}); the title update is "
+                       "the package under 4D5309C9/000B0000.")
+    return True, f"Title update {hdr.display_name or p.name} (version {hdr.version >> 16}.{hdr.version & 0xFFFF})."

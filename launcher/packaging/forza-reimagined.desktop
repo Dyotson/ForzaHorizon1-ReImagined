@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Forza Horizon 1: ReImagined
+Comment=Launcher for Forza Horizon 1: ReImagined
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=Game;
+StartupWMClass=forza-reimagined
