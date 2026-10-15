@@ -60,7 +60,7 @@ body:
     id: log
     attributes:
       label: Log
-      description: "Drag the log file here (Linux: ~/.local/share/forza/, Windows: Documents\\forza). For a crash, the last 100 lines matter most."
+      description: "Drag the log file here (Linux: ~/.local/share/forza/, Windows launcher: %LOCALAPPDATA%\\ForzaReImagined, or Documents\\forza on older installs; launcher errors: %APPDATA%\\ForzaReImagined\\launcher.log). For a crash, the last 100 lines matter most."
   - type: checkboxes
     id: legal
     attributes:
