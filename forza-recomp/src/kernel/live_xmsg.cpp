@@ -620,6 +620,8 @@ std::mutex match_mutex;
 std::condition_variable match_answered;
 uint32_t match_request = 0, match_answer = 0;
 std::vector<FoundSession> match_results;                    // of the last answer
+uint32_t match_partial_request = 0;     // an answer in several datagrams, so far
+std::vector<FoundSession> match_partial;
 std::unordered_map<uint64_t, std::vector<uint8_t>> found_qos;  // by session id
 
 // XUserSetProperty {user index, unused, XUID, property id, size, value pointer}: the
@@ -798,6 +800,10 @@ uint32_t SearchSessions(uint8_t* base, uint32_t procedure, uint32_t max_results,
       PublishMatchLocked();
     }
   }
+  // The request and the answer are single UDP datagrams to and from the server: either
+  // can be lost, so the request goes out up to three times (0.4 s apart) before the game
+  // gets no sessions; an answer cut short (a datagram of several lost) still counts.
+  // Not signed in to the server: nobody to ask, no sessions at once.
   std::vector<FoundSession> found;
   {
     std::unique_lock<std::mutex> lock(match_mutex);
@@ -805,11 +811,15 @@ uint32_t SearchSessions(uint8_t* base, uint32_t procedure, uint32_t max_results,
     std::vector<uint8_t> body(8);
     Store32(body.data(), playlist);
     Store32(body.data() + 4, request);
-    forza::LiveSendMatch(true, body);
-    if (match_answered.wait_for(lock, std::chrono::milliseconds(500),
-                                [&] { return match_answer == request; })) {
-      found = match_results;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      if (!forza::LiveSendMatch(true, body)) break;
+      if (match_answered.wait_for(lock, std::chrono::milliseconds(400),
+                                  [&] { return match_answer == request; })) {
+        found = match_results;
+        break;
+      }
     }
+    if (match_answer != request && match_partial_request == request) found = match_partial;
   }
   std::memset(GuestPtr(base, results), 0, results_size);
   const uint32_t count = std::min<uint32_t>(
@@ -1318,12 +1328,14 @@ void LiveInviteReceived(const LiveInvite& invite) {
 }
 
 // The server's answer to a matchmaking search: request u32, count u16, then per session
-// the host's id u32, XUID u64 and record (u16 length + bytes).
+// the host's id u32, XUID u64 and record (u16 length + bytes). Bit 15 of the count: more
+// datagrams of this answer follow (the sessions are gathered until the last one).
 void LiveMatchResults(const uint8_t* p, size_t n) {
   if (n < 6) return;
   std::vector<FoundSession> found;
   size_t pos = 6;
-  for (uint32_t i = 0, count = uint32_t(p[4]) << 8 | p[5]; i < count; ++i) {
+  const bool more = p[4] & 0x80;
+  for (uint32_t i = 0, count = uint32_t(p[4] & 0x7F) << 8 | p[5]; i < count; ++i) {
     if (pos + 14 > n) break;
     const size_t size = size_t(p[pos + 12]) << 8 | p[pos + 13];
     if (pos + 14 + size > n) break;
@@ -1333,9 +1345,22 @@ void LiveMatchResults(const uint8_t* p, size_t n) {
     pos += 14 + size;
   }
   std::lock_guard<std::mutex> lock(match_mutex);
-  for (const auto& s : found) found_qos[SessionId(s.info)] = s.qos;
-  match_results = std::move(found);
-  match_answer = Load32(p);
+  const uint32_t request = Load32(p);
+  if (request != match_request || match_answer == request) return;  // late, or answered
+  if (match_partial_request != request) {
+    match_partial_request = request;
+    match_partial.clear();
+  }
+  for (auto& s : found) {  // a repeated request is answered again: keep each session once
+    found_qos[SessionId(s.info)] = s.qos;
+    bool known = false;
+    for (const auto& k : match_partial) known |= SessionId(k.info) == SessionId(s.info);
+    if (!known) match_partial.push_back(std::move(s));
+  }
+  if (more) return;
+  match_results = std::move(match_partial);
+  match_partial.clear();
+  match_answer = request;
   match_answered.notify_all();
 }
 

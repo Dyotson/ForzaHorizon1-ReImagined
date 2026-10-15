@@ -656,12 +656,51 @@ class VNet {
     SendLive(server_, kInvite, body);
   }
 
-  void SendMatch(LiveType type, const std::vector<uint8_t>& body) {
+  bool SendMatch(LiveType type, const std::vector<uint8_t>& body) {
+    std::vector<uint8_t> record;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (type == kMatchPublish && !body.empty()) {
+        // op 1 publishes our session, 0 withdraws it; 2 and 4 our standby record, 3
+        // withdraws that (a withdrawal is repeated too: it can be lost as well)
+        std::vector<uint8_t>& kept = body[0] <= 1 ? match_record_ : standby_record_;
+        kept = body;
+        if (!live_id_) return false;
+        PatchHostLocked(kept);
+        record = kept;
+      } else if (!live_id_) {
+        return false;
+      }
+    }
+    SendLive(server_, type, record.empty() ? body : record);
+    return true;
+  }
+
+  // A published record names its host by our XNADDR (the server id we had when the game
+  // made the session): after the server restarted we have another id, and a searcher
+  // joining the old one waited forever. Needs mutex_ and live_id_.
+  void PatchHostLocked(std::vector<uint8_t>& record) {
+    constexpr size_t kHostAddress = 5 + 8;  // op, search key, XSESSION_INFO's session id
+    if (record.empty() || record[0] == 0 || record[0] == 3) return;
+    if (record.size() < kHostAddress + 36) return;
+    WriteLiveXnAddr(record.data() + kHostAddress, live_id_, live_epoch_, public_ep_.ip);
+  }
+
+  // Our last matchmaking publications again (with every keep-alive): the server loses
+  // the records when it restarts or drops us, and one lost datagram would leave a stale
+  // record (Find Custom Game then missed a public lobby, #61).
+  void ResendMatch() {
+    std::vector<std::vector<uint8_t>> records;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (!live_id_) return;
+      for (auto* r : {&match_record_, &standby_record_}) {
+        if (r->empty()) continue;
+        PatchHostLocked(*r);
+        records.push_back(*r);
+      }
     }
-    SendLive(server_, type, body);
+    for (const auto& r : records) SendLive(server_, kMatchPublish, r);
   }
 
   bool TakeInvite(forza::LiveInvite& out) {
@@ -708,6 +747,7 @@ class VNet {
     live_ = forza::LiveMode();
     relay_only_ = EnvFlag("FORZA_SERVER_RELAY");
     room_ = forza::LiveRoom();
+    forza::sock::Startup();  // Windows: before the first socket (LanAddress)
     self_ip_ = INADDR_LOOPBACK;
     if (const char* ip = std::getenv("FORZA_NET_IP"); ip && *ip) {
       in_addr a{};
@@ -715,7 +755,6 @@ class VNet {
     } else if (lan_ || live_) {
       self_ip_ = LanAddress();
     }
-    forza::sock::Startup();
     fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     int one = 1;
     setsockopt(fd_, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&one), sizeof(one));
@@ -924,6 +963,7 @@ class VNet {
       if (resolved && now >= next_hello) {
         SendHello();
         SendPresence();
+        ResendMatch();
         std::lock_guard<std::mutex> lock(mutex_);
         next_hello = now + std::chrono::seconds(live_id_ ? 5 : 1);
         if (live_id_ && now - last_welcome_ > std::chrono::seconds(20)) {
@@ -1257,6 +1297,7 @@ class VNet {
   std::unordered_map<uint32_t, LivePeer> live_peers_;
   std::unordered_map<uint32_t, uint32_t> live_id_by_vip_;
   std::vector<uint8_t> presence_;  // body of our last presence message
+  std::vector<uint8_t> match_record_, standby_record_;  // our last MATCH_PUBLISH bodies
   forza::LiveInvite pending_invite_;
   std::vector<forza::LiveFriend> roster_, roster_parts_;
   uint16_t roster_parts_seen_ = 0;
@@ -1296,8 +1337,8 @@ void LiveSendInvite(uint64_t xuid, const uint8_t* session_info) {
 
 bool LiveTakeInvite(LiveInvite& out) { return NetOn() && VNet::Get().TakeInvite(out); }
 
-void LiveSendMatch(bool search, const std::vector<uint8_t>& body) {
-  if (NetOn()) VNet::Get().SendMatch(search ? kMatchSearch : kMatchPublish, body);
+bool LiveSendMatch(bool search, const std::vector<uint8_t>& body) {
+  return NetOn() && VNet::Get().SendMatch(search ? kMatchSearch : kMatchPublish, body);
 }
 
 void LiveSendChallenge(const std::vector<uint8_t>& body) {

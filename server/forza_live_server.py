@@ -40,6 +40,7 @@ WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an e
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
 STATS, STATS_ROWS = 20, 21  # Xbox LIVE stats written and read, the rows (forza_stats.py)
 MAX_MATCH_RECORD = 1300
+MATCH_RESULTS_MAX = 25  # sessions answered per search (Forza asks for up to 25)
 SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange key
 MAX_PRESENCE_EXTRA = 1024
 
@@ -397,15 +398,20 @@ class ForzaLive(asyncio.DatagramProtocol):
                 record = body[5:5 + MAX_MATCH_RECORD]
                 old = getattr(peer, "match", None)
                 since = old[2] if old and old[1][:8] == record[:8] else time.monotonic()
-                if not old or old[1][:SESSION_INFO_SIZE + 4] != record[:SESSION_INFO_SIZE + 4]:
+                if (not old or old[0] != key
+                        or old[1][:SESSION_INFO_SIZE + 4] != record[:SESSION_INFO_SIZE + 4]):
                     filled, free = self.match_slots(record)
                     log.info("match #%d %r hosts %s for playlist %d (%d/%d)", peer.id, peer.name,
                              record[:8].hex(), key, filled, filled + free)
                 peer.match = (key, record, since)  # since: when this session first appeared
             return
         # search key u32, request number u32. Reply: request number u32, count u16, then
-        # per session the host's id u32, XUID u64 and record (u16 length + bytes), oldest
-        # first, as many as fit a datagram.
+        # per session the host's id u32, XUID u64 and record (u16 length + bytes), in the
+        # order below. A record is about 900 bytes (most of it the lobby's QoS data, which
+        # Find Custom Game shows), so the sessions go in as many datagrams as they need, up
+        # to MATCH_RESULTS_MAX: bit 15 of the count says that another datagram follows
+        # (#61: with one datagram, a second public lobby of a game type was never listed).
+        # The client answers the game once the last datagram is in.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
         found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
@@ -421,15 +427,21 @@ class ForzaLive(asyncio.DatagramProtocol):
                      found[0][0].name, filled, filled + free)
         else:
             log.info("match #%d %r playlist %d: no open session, it hosts", peer.id, peer.name, key)
-        entries, size = [], 6
-        for p, record, _ in found:
+        datagrams, entries, size = [], [], 6
+        for p, record, _ in found[:MATCH_RESULTS_MAX]:
             entry = struct.pack(">IQH", p.id, p.xuid, len(record)) + record
-            if size + len(entry) > 1400:
-                break
+            if entries and size + len(entry) > 1400:
+                datagrams.append(entries)
+                entries, size = [], 6
             entries.append(entry)
             size += len(entry)
-        if self.spend(peer, size):
-            self.send(peer.addr, MATCH_RESULTS, struct.pack(">IH", request, len(entries)) + b"".join(entries))
+        datagrams.append(entries)
+        for i, entries in enumerate(datagrams):
+            more = 0x8000 if i + 1 < len(datagrams) else 0
+            body = struct.pack(">IH", request, more | len(entries)) + b"".join(entries)
+            if not self.spend(peer, len(body)):
+                break
+            self.send(peer.addr, MATCH_RESULTS, body)
 
     def on_stats(self, peer, body):
         """Xbox LIVE stats (forza_stats.py): op 1 a write (for the player or a player in its
