@@ -135,3 +135,75 @@ driver; it needs a capture from an affected machine first to see which draw.
 
 Xenia Canary was not compared: on Linux it takes pad input only, and no global virtual pad is
 allowed on the test machine.
+
+
+## Upscaling (#44, 2026-10-15)
+
+**What the launcher offered did nothing.** `present_effect` listed bilinear, cas, fsr, fsr2 and
+fsr3, but the nightly SDK (and so our runtime) is built without the `REXGLUE_ENABLE_FIDELITYFX`
+option: the cvar allowed only `bilinear` and the other values were rejected with a log warning.
+SDK patch 0043 builds the spatial effects in without the FidelityFX library (their shaders are
+precompiled in the SDK source), on Vulkan and Direct3D 12: `present_effect` = `bilinear`, `cas`
+(sharpen, up to 2x) or `fsr` (AMD FSR 1: EASU upscaling, repeated up to 4 times for scales over
+2x, then RCAS). Not used: `present_cas_additional_sharpness`, `present_fsr_sharpness_reduction`
+(default 0.2 stops) stay at their defaults.
+
+**fsr2 / fsr3 are not available, and would not work as written.** They need the FidelityFX
+runtime (Linux also needs its shaders precompiled by hand), which the SDK does not ship. The
+SDK's temporal path (`vulkan_presenter.cpp`, `DispatchTemporalUpscaler`) passes the colour
+image as the depth buffer and as the motion vectors, a jitter of 0, a fixed camera
+(near 0.1, far 1000, fov 60) and `reset = true` on every frame: no history is ever used, so
+it is a spatial upscaler with wrong inputs. The launcher no longer lists them (a stored value
+becomes `fsr`); the cvar rejects them without the runtime.
+
+**Measurements** (Linux, Vulkan, RADV, RX 9060 XT; free roam at the spawn, car standing,
+`frame_rate = 60`, 4 s windows of the last 30 s; headless gamescope gives the output size;
+screenshots of the final output). CONTENDED: two other game instances ran the whole time
+(GPU 50-60 % busy without ours), so absolute numbers are low-confidence; the ordering is clear.
+
+| Output | Render scale | Filter | fps | p95 ms | Sharpness (banner edge energy) |
+| --- | --- | --- | --- | --- | --- |
+| 1080p | 1 | CAS | 59.9 | 19.1 | 29.8 |
+| 1080p | 1 | FSR 1 | 59.9 | 18.4 | 38.6 |
+| 1080p | 2 | bilinear | 41.9 | 28.9 | 35.4 |
+| 1440p | 1 | bilinear | 60.0 | 18.2 | 15.9 |
+| 1440p | 1 | FSR 1 | 59.9 | 18.4 | 28.5 |
+| 1440p | 2 | bilinear | 42.5 | 29.2 | 35.9 |
+| 1440p | 3 | bilinear | 26.0 | 47.2 (p99 124) | 35.4 |
+| 4K | 1 | bilinear | 59.9 | 17.9 | 8.7 |
+| 4K | 1 | FSR 1 | 60.0 | 18.3 | 16.8 |
+| 4K | 2 | bilinear | 41.9 | 29.2 | 16.5 |
+| 4K | 2 | FSR 1 | 41.9 | 29.6 | n/a |
+| 4K | 3 | bilinear | 28.0 | 42.6 (p99 104) | n/a |
+
+- FSR 1 at scale 1 costs about nothing in fps (GPU busy +0-11 points at 4K, contended) and
+  recovers about two thirds of the edge sharpness that a native 2x render has; text and
+  outlines get crisp. It cannot invent detail: the 2x render shows texture detail (grilles,
+  small print) that FSR 1 does not, and flat textures can look painted.
+- Scale 2 is real detail for about 30 % fewer fps here; scale 3 halves the frame rate and
+  breaks the 60 fps target (p99 above 100 ms). FSR on top of scale 2 changes little.
+- The scene was not identical between runs (the spawn view and the traffic vary), so the
+  sharpness numbers come from the screen-space "Millennia Masters" banner, which is the same
+  in every run; RMS differences between runs are not comparable.
+
+**Defaults and advice.** First-run launcher default: `present_effect = fsr` at render scale 1
+(a stored choice is kept). 1080p and above: FSR 1 at scale 1; a fast GPU can take scale 2 for
+detail (expect about 40 fps at a 60 fps target; 30 fps is fine); stay at or below 2. Not
+tried: guest video modes below 720p for slow GPUs (Steam Deck, #45).
+
+**Temporal upscaling (FSR 2/3, DLSS): feasible, large.** Not started.
+- Depth: the main scene's depth is resolved to a texture for the velocity pass; the Vulkan
+  render target cache could export that image to the presenter (new plugin-to-presenter
+  interface; the scene pass is found by its shader or target).
+- Motion vectors: the game's velocity pass `PPMotionBlurDepthHorizonVel` writes camera and
+  per-object (stencil id) reprojection velocity into a 640x360 target, only while motion blur
+  is on and scaled by `MotionBlurAmount`; it needs decoding to FSR's convention and an upsample.
+  Wheels and the player's car (zero velocity, camera-relative) are fine; transparencies are not.
+- Jitter: the emulator owns the viewport transform (`ndc_offset` in `graphics/util/draw.cpp`),
+  so a sub-pixel jitter can be added to the scene draws without the game, if the scene targets
+  are identified so the post-processing and HUD are not jittered.
+- The catch: a presenter-side upscaler sees the final image (tonemapped, motion-blurred, HUD
+  on top); ghosting of HUD elements needs a reactive mask. Doing it before the post passes
+  means one render scale for scene and post targets, which the SDK does not separate.
+  Also needs the FidelityFX runtime built (shaders on Linux) and 60 fps or more to look good.
+- DLSS needs NVIDIA's SDK and an NVIDIA GPU; not tested here (AMD only).

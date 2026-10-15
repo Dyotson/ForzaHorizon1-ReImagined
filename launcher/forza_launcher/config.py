@@ -10,7 +10,7 @@ from . import PUBLIC_SERVER, paths, schema
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
-FIRST_RUN = {"frame_rate": 60}
+FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
 
 
 def _default():

@@ -28,6 +28,7 @@ class Setting:
     step: float = 1
     platform: str = ""  # "linux" or "windows": shown only there
     restart: bool = False
+    legacy: dict = field(default_factory=dict)  # value an older version offered -> the one it became
 
     def applies(self) -> bool:
         return not self.platform or (self.platform == "windows") == IS_WINDOWS
@@ -73,17 +74,18 @@ add("resolution", "Resolution preset", "Display", "combo", "",
     choices=[("", "Default"), ("720p", "720p"), ("1080p", "1080p"), ("1440p", "1440p"),
              ("4k", "4K")])
 add("resolution_scale", "Render scale", "Display", "int", 1,
-    "Draws at 1x to 8x the guest resolution (2 is 1440p-class from 720p, 3 is 4K). Above 2 is "
-    "experimental: flicker and coloured artifacts were reported on NVIDIA (issue #47).", "Picture",
+    "Draws at 1x to 8x the guest resolution. 1 with FSR 1 is the fast default; 2 is real extra detail "
+    "for about 40% fewer fps; above 2 is experimental (flicker on NVIDIA, issue #47).", "Picture",
     lo=1, hi=8, restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
     choices=[(-1, "Game default"), (0, "Off"), (1, "1x"), (2, "2x"), (3, "4x"), (4, "8x"),
              (5, "16x")])
 add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
-    "How the guest image is scaled to the window.", "Picture",
-    choices=[("bilinear", "Bilinear"), ("cas", "AMD CAS (sharpen)"), ("fsr", "AMD FSR 1"),
-             ("fsr2", "AMD FSR 2"), ("fsr3", "AMD FSR 3")], restart=True)
+    "How the 720p picture is scaled to the window. AMD FSR 1 is the sharp, cheap choice (about the "
+    "cost of bilinear); CAS only sharpens, up to 2x.", "Picture",
+    choices=[("bilinear", "Bilinear"), ("cas", "AMD CAS (sharpen)"), ("fsr", "AMD FSR 1")],
+    restart=True, legacy={"fsr2": "fsr", "fsr3": "fsr"})
 add("swap_post_effect", "Anti-aliasing post effect", "Display", "choice", "none",
     "FXAA on the final image.", "Picture",
     choices=[("none", "None"), ("fxaa", "FXAA"), ("fxaa_extreme", "FXAA extreme")], restart=True)
@@ -248,6 +250,7 @@ def coerce(setting, value):
             hi = 1e9 if setting.hi is None else setting.hi
             return max(lo, min(hi, v))
         if setting.kind == "choice" and setting.choices:
+            value = setting.legacy.get(value, value)
             values = [c[0] for c in setting.choices]
             if value in values:
                 return value

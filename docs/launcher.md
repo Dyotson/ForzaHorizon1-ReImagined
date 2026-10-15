@@ -89,7 +89,7 @@ on port 21201, like `play.sh`), your own, or offline. The Xenia save logic is `p
 ported (copy once, `--user_data_root/--cache_root/--profile_xuid`, DLC folder shared).
 `forza-launcher --dry-run` prints what Play would run; it matches `tools/play.sh`
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
-Defaults differ from the game's in one place: the first run sets `frame_rate = 60`.
+Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` / `fsr3` entries become `fsr`).
 
 ## Release and CI (`.github/workflows/`)
 
