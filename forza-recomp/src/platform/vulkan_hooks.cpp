@@ -13,6 +13,7 @@
 #include <rex/ui/vulkan/provider.h>
 
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <typeinfo>
@@ -82,9 +83,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchain(VkDevice device,
   return g_create_swapchain(device, create_info, allocator, swapchain);
 }
 
-// Only pipelines the GPU plugin creates itself are counted: the guest's shaders and its
-// render-target helpers, i.e. what can stutter while the game runs. The SDK presenter (in the runtime library) rebuilds its output pipeline on every present,
-// since it never records the swapchain format it built it for, which would drown them out.
+// Keep guest pipeline counts separate from the presenter's output and overlay pipelines.
+// The host count also exposes repeated output-pipeline creation regressions (SDK patch 0045).
 bool FromGpuPlugin(void* return_address) {
 #ifdef _WIN32
   HMODULE module = nullptr;
@@ -112,7 +112,16 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(
     VkDevice device, VkPipelineCache cache, uint32_t count,
     const VkGraphicsPipelineCreateInfo* create_infos, const VkAllocationCallbacks* allocator,
     VkPipeline* pipelines) {
-  if (FromGpuPlugin(__builtin_return_address(0))) perf::OnPipelinesCreated(count);
+  if (FromGpuPlugin(__builtin_return_address(0))) {
+    perf::OnPipelinesCreated(count);
+  } else {
+    static std::atomic<uint64_t> host_pipelines{0};
+    const auto previous = host_pipelines.fetch_add(count, std::memory_order_relaxed);
+    const auto total = previous + count;
+    if (total <= 10 || previous / 100 != total / 100) {
+      REXLOG_INFO("PERF: host graphics pipelines created={}", total);
+    }
+  }
   return g_create_graphics_pipelines(device, cache, count, create_infos, allocator, pipelines);
 }
 
