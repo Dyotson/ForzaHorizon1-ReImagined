@@ -83,7 +83,7 @@ World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, l
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
 a free-form "other settings" box for any further `forza.toml` key, a live preview of the
 generated `forza.toml` and command line). Keys that hold their default are not written.
-Online: public (`dyotserver.ddns.net:21200`, written as `live_server` and `FORZA_SERVER`),
+Online: public (`forza-reimagined.playit.plus:56677`, written as `live_server` and `FORZA_SERVER`),
 local (the launcher starts the Forza Live server inside its own executable, or reuses one
 on port 21201, like `play.sh`), your own, or offline. The Xenia save logic is `play.sh --xenia`
 ported (copy once, `--user_data_root/--cache_root/--profile_xuid`, DLC folder shared).

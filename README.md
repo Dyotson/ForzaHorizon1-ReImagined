@@ -246,10 +246,10 @@ saves, the Xenia save import and more are in [`docs/playing.md`](docs/playing.md
 set in `forza.toml` next to the binary:
 
 ```toml
-live_server = "dyotserver.ddns.net:21200"
+live_server = "forza-reimagined.playit.plus:56677"
 ```
 
-(or start with `FORZA_SERVER=dyotserver.ddns.net:21200`). You forward no ports. To run your
+(or start with `FORZA_SERVER=forza-reimagined.playit.plus:56677`). You forward no ports. To run your
 own server, see [`docs/hosting.md`](docs/hosting.md).
 
 ## More documentation

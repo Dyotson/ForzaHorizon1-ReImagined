@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Check a Forza Live server from outside: TCP status page and a UDP HELLO -> WELCOME.
 
-Usage: server_probe.py [host[:port]]   (default dyotserver.ddns.net:21200)
+Usage: server_probe.py [host[:port]]   (default forza-reimagined.playit.plus:56677)
 Registers as a throwaway player in the room "probe" (never shown to players) and says BYE.
 Exit status 0 when both answer.
 """
 import os, socket, struct, sys, time, urllib.request
 
 MAGIC, HELLO, WELCOME, ERROR, BYE = b"RLV1", 1, 2, 3, 10
-host, _, port = (sys.argv[1] if len(sys.argv) > 1 else "dyotserver.ddns.net:21200").partition(":")
+host, _, port = (sys.argv[1] if len(sys.argv) > 1 else "forza-reimagined.playit.plus:56677").partition(":")
 port = int(port or 21200)
 ok = True
 
