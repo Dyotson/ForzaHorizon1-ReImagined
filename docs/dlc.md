@@ -218,8 +218,20 @@ Checked 2026-10-14/15 with the TU4 build, offline, a scratch copy of the Xenia c
 - Saving: the career is written at the end of each championship and when quitting to the
   main menu (QUIT HORIZON RALLY); not between stages. After a restart the hub showed the
   best times, the unlocked championships, the credits and the car.
-- **The co-driver's voice is not heard** (#41): his pace-note icons appear and his bank
-  (`CoDriver_EN.fsb`) is loaded, but the sound is the same with Rally Co-Driver ON or OFF.
+- **The co-driver speaks** (#41, checked 2026-10-15 in the Rally Heats at 30 and 144 fps;
+  `FORZA_CODRIVER_LOG=1`, `src/debug/codriver_log.cpp`, describes the chain). Each pace note
+  is queued (`CoDriver_EN/CoDriver/Distance` / `150Distance`, `.../Turns/Right` /
+  `MedRight`...), FMOD finds every event (result 0), each plays for its 0.6-0.9 s at volume 1
+  and applies the `RallyCoDriverPlaying` snapshot. In the audio the game submits
+  (`FORZA_AUDIOLOG` per channel) the voice is in front left/right only, the cars mostly in
+  the center and surrounds: over the 9 phrase groups of a minute of driving front left rose
+  2.1 dB and the center fell 2.1 dB (the cars ducked to 0.75); with the co-driver's volume
+  at 0 (Rally Co-Driver OFF) neither moved, and no snapshot. With every other volume at 0 or
+  0.01 the voice alone comes out of the game's stream at -18 dB RMS, the level of the whole
+  mix. So the voice is there, about as loud as the engine after the 5.1 to stereo downmix,
+  and in a stereo recording it replaces the 2.5 dB the cars lose: the band level stays flat,
+  which is why the ON/OFF recordings looked alike.
+  - Its volume is the SFX volume (`Main/CoDriver` ON) or 0 (OFF), so SFX 0 silences it too.
 - Logs: one XMA decode error in 3 hours ("ffmpeg: overflow ... in spectral RLE"), and
   ambient banks opened by bare name (`ResolvePath(AMB_Mountains.fsb) failed`, twice, in a
   North Plains stage), which other runs' logs show for the base game's banks too

@@ -107,6 +107,7 @@ set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
     src/debug/cpu_profile.cpp
+    src/debug/codriver_log.cpp
     src/debug/dlc_log.cpp
     src/debug/fault_guard.cpp
     src/debug/fiber_trace.cpp

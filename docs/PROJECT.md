@@ -527,7 +527,9 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
   `tools/live_session.sh`, and keep its window focused: another game window opening takes
   the keys away (a game that ignores the keys is usually that). Screenshots as above.
 - `FORZA_FPSLOG=1` logs the frame rate every 5 s; `FORZA_AUDIOLOG=1` the peak/RMS of the
-  audio the game submits (non-zero means it makes sound).
+  audio the game submits (non-zero means it makes sound), and the RMS of each of its 6
+  channels (front left, front right, center, LFE, back left, back right);
+  `FORZA_AUDIOLOG_MS` sets the window (default 5000).
 - A fault no handler takes aborts with a host stack in the log (`src/debug/fault_guard.cpp`):
   `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET` names the `sub_XXXXXXXX`
   frames. `FORZA_FAULT=wait` parks the thread instead, for `gdb -p`.
