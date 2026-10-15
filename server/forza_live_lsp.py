@@ -42,6 +42,7 @@ import forza_limits as limits
 import forza_market as market
 import forza_notifications as notifications
 import forza_scores as scores
+import forza_stats as stats
 import forza_world as world
 import forza_xtsw as x
 
@@ -157,6 +158,7 @@ def configure(args):
     os.makedirs(DATA_DIR, exist_ok=True)
     limits.configure(DATA_DIR)
     scores.configure(DATA_DIR)
+    stats.configure(DATA_DIR)
     market.configure(DATA_DIR)
     clubs.configure(DATA_DIR, load_player)
     notifications.configure(DATA_DIR)

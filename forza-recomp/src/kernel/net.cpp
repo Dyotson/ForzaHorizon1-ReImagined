@@ -220,6 +220,8 @@ enum LiveType : uint8_t {
   kMatchResults, // server -> client
   kWorldEvent,   // server -> a Horizon World's host: take an event (hooks/world_events.cpp)
   kChallenge,    // client <-> server: head-to-head challenges (hooks/world_challenge.cpp)
+  kStats,        // client -> server: Xbox LIVE stats written or read (live_xmsg.cpp)
+  kStatsRows,    // server -> client: the rows of a read
 };
 // XNADDR.ina of a player on a Forza Live server: 0xF0000000 | the id the server gave
 // it. 240.0.0.0/8 is reserved, so it never collides with a LAN address.
@@ -1082,6 +1084,9 @@ class VNet {
       case kChallenge:
         if (from_server) forza::LiveChallenge(p, n);
         return;
+      case kStatsRows:
+        if (from_server) forza::LiveStatsRows(p, n);
+        return;
       case kPeers: {
         // Part header: total u16, first index u16, count u16; then the entries.
         if (!from_server || n < 6) return;
@@ -1297,6 +1302,10 @@ void LiveSendMatch(bool search, const std::vector<uint8_t>& body) {
 
 void LiveSendChallenge(const std::vector<uint8_t>& body) {
   if (NetOn()) VNet::Get().SendMatch(kChallenge, body);
+}
+
+void LiveSendStats(const std::vector<uint8_t>& body) {
+  if (NetOn()) VNet::Get().SendMatch(kStats, body);
 }
 }  // namespace forza
 

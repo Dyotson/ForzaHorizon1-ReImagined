@@ -31,8 +31,9 @@
 // - XamShowFriendsUI / XamShowGameInviteUI: there is no Guide; opening it invites every
 //   other player in the room (the party lobby's "Invite Friends").
 // - XNetLogonGetTitleID / XNetLogonGetMachineID: the SDK stubs return garbage.
-// - XUserReadStats (0xFB/0xB0021): leaderboard rows with a new player's defaults; the
-//   SDK left the results empty and Forza crashed creating its party session.
+// - XUserReadStats / XSessionWriteStats (0xFB/0xB0021, 0xB0025): Xbox LIVE stats rows
+//   (Forza's only view is TrueSkill) kept and rated by the server (server/forza_stats.py);
+//   the SDK left the results empty and Forza crashed creating its party session.
 //
 // Everything else goes to the SDK. FORZA_NETTRACE=1 logs every XMsg call (as net.cpp
 // did before) and what we answered. Message layouts follow the Xenia netplay fork
@@ -880,12 +881,94 @@ uint32_t XSessionSearchPlain(uint8_t* base, uint32_t buffer) {
                         Load32(b + 24), Load32(b + 28));
 }
 
+// --- Xbox LIVE stats (server/forza_stats.py) ----------------------------------------
+//
+// Forza's SPA defines one stats view, the TrueSkill view 0xFFFF0000 (columns 61 skill, 62
+// games played, 63 mu, 64 sigma). The game writes it at the end of an online game
+// (XSessionWriteStats: each player's relative score and team) and reads it for its party
+// (XUserReadStats). Both go to the Forza Live server, which rates the games and keeps a row
+// per player; its leaderboards proper are title services (Scoreboard, forza_scores.py).
+
+struct StatsColumn {
+  uint16_t id = 0;
+  uint8_t type = 0;
+  uint8_t value[8] = {};
+};
+struct StatsRow {
+  uint64_t xuid = 0;
+  uint32_t rank = 0;
+  uint64_t rating = 0;
+  std::string gamertag;
+  std::vector<StatsColumn> columns;
+};
+struct StatsView {
+  uint32_t id = 0, total = 0;
+  std::vector<StatsRow> rows;
+};
+std::mutex stats_mutex;
+std::condition_variable stats_answered;
+uint32_t stats_request = 0, stats_answer = 0;
+std::vector<StatsView> stats_views;  // of the last answer
+
+uint64_t Load64(const uint8_t* p) { return uint64_t(Load32(p)) << 32 | Load32(p + 4); }
+void Put32(std::vector<uint8_t>& out, uint32_t v) {
+  for (int i = 3; i >= 0; --i) out.push_back(uint8_t(v >> (8 * i)));
+}
+void Put64(std::vector<uint8_t>& out, uint64_t v) {
+  Put32(out, uint32_t(v >> 32));
+  Put32(out, uint32_t(v));
+}
+
+// XSessionWriteStats {session object, pad, XUID u64, view count, views} (0xFB/0xB0025; the
+// XDK's wrapper is sub_83164D60): XSESSION_VIEW_PROPERTIES {view id, property count,
+// properties} (12 bytes), XUSER_PROPERTY {id, pad, XUSER_DATA {type u8, pad, value at +8}}
+// (0x18 bytes). Sent to the server as it is; answered success.
+uint32_t XSessionWriteStats(uint8_t* base, uint32_t buffer) {
+  const uint8_t* b = GuestPtr(base, buffer);
+  const uint32_t object = Load32(b), count = std::min<uint32_t>(Load32(b + 16), 16);
+  const uint32_t views = Load32(b + 20);
+  const uint64_t xuid = Load64(b + 8);
+  uint64_t session = 0;
+  {
+    std::lock_guard<std::mutex> lock(sessions_mutex);
+    if (auto it = hosted_sessions.find(object); it != hosted_sessions.end()) {
+      session = SessionId(it->second.info);
+    } else if (auto g = guest_sessions.find(object); g != guest_sessions.end()) {
+      session = SessionId(g->second.info);
+    }
+  }
+  std::vector<uint8_t> body{1};
+  Put64(body, session);
+  Put64(body, xuid);
+  body.push_back(uint8_t(views ? count : 0));
+  std::string text;
+  for (uint32_t v = 0; v < count && views; ++v) {
+    const uint8_t* view = GuestPtr(base, views + 12 * v);
+    const uint32_t props = Load32(view + 8), n = props ? std::min<uint32_t>(Load32(view + 4), 64) : 0;
+    Put32(body, Load32(view));
+    body.push_back(uint8_t(n));
+    text += fmt::format(" view {:08X}:", Load32(view));
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint8_t* prop = GuestPtr(base, props + 0x18 * i);
+      Put32(body, Load32(prop));
+      body.push_back(prop[8]);
+      body.insert(body.end(), prop + 0x10, prop + 0x18);
+      text += fmt::format(" {:08X}={:X}", Load32(prop), Load32(prop + 0x10));
+    }
+  }
+  forza::LiveSendStats(body);
+  REXLOG_INFO("FORZA_LIVE: XSessionWriteStats session {:016X} XUID {:016X}:{}", session, xuid,
+              text);
+  return kSuccess;
+}
+
 // XUserReadStats {title id, XUID count, XUIDs, spec count, specs, results size, results}
-// (0xFB/0xB0021): leaderboard rows. Every player gets a row in every view, with the
-// defaults of a player who has never played: TrueSkill columns at their starting
-// values, everything else null. The SDK answered success with the results untouched,
-// and Forza dereferenced the empty view list (the skill view, right after it created
-// its party session).
+// (0xFB/0xB0021): the rows of the asked players in the asked views, from the server
+// (waiting up to 500 ms for its answer). A player the server has no row for, or every
+// player when it does not answer, gets a new player's defaults: TrueSkill columns at their
+// starting values, everything else null. (The SDK answered success with the results
+// untouched, and Forza dereferenced the empty view list: the skill view, right after it
+// created its party session.)
 //
 // XUSER_STATS_SPEC: u32 view id, u32 column count, u16 column ids[64] (136 bytes).
 // Results: XUSER_STATS_READ_RESULTS {u32 view count, views*}; XUSER_STATS_VIEW {u32 view
@@ -907,6 +990,29 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
     REXLOG_WARN("FORZA_LIVE: XUserReadStats needs {} bytes, the game gave {}", needed, results_size);
     return kNotOurs;
   }
+  // Ask the server: op 2, request, XUIDs, then each spec's view and column ids.
+  std::vector<StatsView> answer;
+  bool answered = false;
+  {
+    std::unique_lock<std::mutex> lock(stats_mutex);
+    const uint32_t request = ++stats_request;
+    std::vector<uint8_t> body{2};
+    Put32(body, request);
+    body.push_back(uint8_t(xuid_count));
+    for (uint32_t r = 0; r < xuid_count; ++r) Put64(body, Load64(GuestPtr(base, xuids + 8 * r)));
+    body.push_back(uint8_t(spec_count));
+    for (uint32_t v = 0; v < spec_count; ++v) {
+      const uint8_t* spec = GuestPtr(base, specs + 136 * v);
+      const uint32_t columns = std::min<uint32_t>(Load32(spec + 4), 64);
+      Put32(body, Load32(spec));
+      body.push_back(uint8_t(columns));
+      body.insert(body.end(), spec + 8, spec + 8 + 2 * columns);
+    }
+    forza::LiveSendStats(body);
+    answered = stats_answered.wait_for(lock, std::chrono::milliseconds(500),
+                                       [&] { return stats_answer == request; });
+    if (answered) answer = stats_views;
+  }
   constexpr uint8_t kTypeInt64 = 2, kTypeDouble = 3, kTypeNull = 0xFF;
   // X_STATS_COLUMN_SKILL_*: skill (1..50), games played, mu, sigma.
   constexpr uint16_t kSkill = 61, kGamesPlayed = 62, kMu = 63, kSigma = 64;
@@ -917,24 +1023,41 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
   uint32_t view = results + 8, next = view + 16 * spec_count;
   Store32(GuestPtr(base, results), spec_count);
   Store32(GuestPtr(base, results + 4), spec_count ? view : 0);
+  uint32_t from_server = 0;
+  std::string text;
   for (uint32_t v = 0; v < spec_count; ++v, view += 16) {
     const uint8_t* spec = GuestPtr(base, specs + 136 * v);
     const uint32_t columns = std::min<uint32_t>(Load32(spec + 4), 64);
+    const StatsView* known = nullptr;
+    for (const auto& a : answer) {
+      if (a.id == Load32(spec)) known = &a;
+    }
     uint8_t* out = GuestPtr(base, view);
     Store32(out, Load32(spec));
-    Store32(out + 4, xuid_count);
+    Store32(out + 4, known ? std::max<uint32_t>(known->total, xuid_count) : xuid_count);
     Store32(out + 8, xuid_count);
     Store32(out + 12, xuid_count ? next : 0);
+    text += fmt::format(" {:08X}", Load32(spec));
     const uint32_t rows = next;
     next += 48 * xuid_count;
     for (uint32_t r = 0; r < xuid_count; ++r) {
       uint8_t* row = GuestPtr(base, rows + 48 * r);
-      const uint64_t xuid = uint64_t(Load32(GuestPtr(base, xuids + 8 * r))) << 32 |
-                            Load32(GuestPtr(base, xuids + 8 * r + 4));
+      const uint64_t xuid = Load64(GuestPtr(base, xuids + 8 * r));
+      const StatsRow* got = nullptr;
+      for (size_t i = 0; known && i < known->rows.size(); ++i) {
+        if (known->rows[i].xuid == xuid) got = &known->rows[i];
+      }
       Store64(row, xuid);
-      auto tag = tags.find(xuid);
-      if (tag != tags.end()) {
-        std::memcpy(row + 24, tag->second.data(), std::min<size_t>(tag->second.size(), 15));
+      std::string tag = got && !got->gamertag.empty() ? got->gamertag : "";
+      if (tag.empty()) {
+        if (auto t = tags.find(xuid); t != tags.end()) tag = t->second;
+      }
+      std::memcpy(row + 24, tag.data(), std::min<size_t>(tag.size(), 15));
+      if (got) {
+        ++from_server;
+        Store32(row + 8, got->rank);
+        Store64(row + 16, got->rating);
+        text += fmt::format(" ({} rank {} rating {})", tag, got->rank, got->rating);
       }
       Store32(row + 40, columns);
       Store32(row + 44, columns ? next : 0);
@@ -943,6 +1066,15 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
         const uint16_t id = uint16_t(spec[8 + 2 * c] << 8 | spec[9 + 2 * c]);
         column[0] = uint8_t(id >> 8);
         column[1] = uint8_t(id);
+        const StatsColumn* col = nullptr;
+        for (size_t i = 0; got && i < got->columns.size(); ++i) {
+          if (got->columns[i].id == id) col = &got->columns[i];
+        }
+        if (col) {
+          column[8] = col->type;
+          std::memcpy(column + 16, col->value, 8);
+          continue;
+        }
         const auto set_double = [column](double d) {
           uint64_t bits;
           std::memcpy(&bits, &d, 8);
@@ -970,10 +1102,9 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
       }
     }
   }
-  if (Trace()) {
-    REXLOG_INFO("FORZA_LIVE: XUserReadStats: {} views x {} players, {} bytes", spec_count,
-                xuid_count, needed);
-  }
+  REXLOG_INFO("FORZA_LIVE: XUserReadStats: {} view(s) x {} player(s){}: {} row(s) from the server{}",
+              spec_count, xuid_count, text, from_server,
+              answered ? "" : " (no answer: defaults)");
   return kSuccess;
 }
 
@@ -1039,6 +1170,8 @@ uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, ui
         return XSessionSearchWeighted(base, arg1);
       case 0x000B0021:
         return XUserReadStats(base, arg1);
+      case 0x000B0025:
+        return XSessionWriteStats(base, arg1);
       case 0x000B0016:  // XSessionSearch
       case 0x000B001C:  // XSessionSearchEx: the same, then a user count
         return XSessionSearchPlain(base, arg1);
@@ -1204,6 +1337,51 @@ void LiveMatchResults(const uint8_t* p, size_t n) {
   match_results = std::move(found);
   match_answer = Load32(p);
   match_answered.notify_all();
+}
+
+// The server's rows for a stats read (server/forza_stats.py): request u32, view count u8,
+// per view: id u32, total rows u32, row count u8, per row: XUID u64, rank u32, rating i64,
+// gamertag (u8 length + bytes), column count u8, per column: id u16, type u8, value (8).
+void LiveStatsRows(const uint8_t* p, size_t n) {
+  if (n < 5) return;
+  std::vector<StatsView> views;
+  size_t pos = 5;
+  for (uint32_t v = 0; v < p[4]; ++v) {
+    if (pos + 9 > n) return;
+    StatsView view;
+    view.id = Load32(p + pos);
+    view.total = Load32(p + pos + 4);
+    const uint32_t rows = p[pos + 8];
+    pos += 9;
+    for (uint32_t r = 0; r < rows; ++r) {
+      if (pos + 21 > n) return;
+      StatsRow row;
+      row.xuid = Load64(p + pos);
+      row.rank = Load32(p + pos + 8);
+      row.rating = Load64(p + pos + 12);
+      const size_t tag = std::min<size_t>(p[pos + 20], 15);
+      pos += 21;
+      if (pos + tag + 1 > n) return;
+      row.gamertag.assign(reinterpret_cast<const char*>(p + pos), tag);
+      const uint32_t columns = p[pos + tag];
+      pos += tag + 1;
+      for (uint32_t c = 0; c < columns; ++c) {
+        if (pos + 11 > n) return;
+        StatsColumn col;
+        col.id = uint16_t(p[pos] << 8 | p[pos + 1]);
+        col.type = p[pos + 2];
+        std::memcpy(col.value, p + pos + 3, 8);
+        row.columns.push_back(col);
+        pos += 11;
+      }
+      view.rows.push_back(std::move(row));
+    }
+    views.push_back(std::move(view));
+  }
+  std::lock_guard<std::mutex> lock(stats_mutex);
+  stats_views = std::move(views);
+  stats_answer = Load32(p);
+  stats_answered.notify_all();
 }
 
 // Notifications for the game's friends code (XN_FRIENDS_PRESENCE_CHANGED,

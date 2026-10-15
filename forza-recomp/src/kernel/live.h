@@ -75,6 +75,11 @@ void LiveWorldEvent(const uint8_t* body, size_t size);
 void LiveSendChallenge(const std::vector<uint8_t>& body);
 void LiveChallenge(const uint8_t* body, size_t size);
 
+// Xbox LIVE stats on the server (live_xmsg.cpp, server/forza_stats.py): send a STATS message
+// (a write or a read); the network thread hands the server's rows to LiveStatsRows.
+void LiveSendStats(const std::vector<uint8_t>& body);
+void LiveStatsRows(const uint8_t* body, size_t size);
+
 // The online game's "this console hosts the session" flag: 1, 0, or -1 without an online
 // game (hooks/world_drop_in.cpp).
 int OnlineGameIsHost();

@@ -27,6 +27,7 @@ import urllib.parse
 
 import forza_challenge as challenge
 import forza_live_lsp as lsp
+import forza_stats as stats
 import forza_world as world
 
 MAGIC = b"RLV1"
@@ -37,6 +38,7 @@ VERSION = 1
 MATCH_PUBLISH, MATCH_SEARCH, MATCH_RESULTS = 15, 16, 17  # matchmaking sessions
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
+STATS, STATS_ROWS = 20, 21  # Xbox LIVE stats written and read, the rows (forza_stats.py)
 MAX_MATCH_RECORD = 1300
 SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange key
 MAX_PRESENCE_EXTRA = 1024
@@ -173,6 +175,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.on_match(peer, kind, body)
             elif kind == CHALLENGE and body:
                 self.challenges.on_message(peer.id, body)
+            elif kind == STATS and body:
+                self.on_stats(peer, body)
         except Exception as e:  # a malformed datagram must never end the server
             log.debug("bad packet from %s: %r", addr, e)
 
@@ -427,6 +431,20 @@ class ForzaLive(asyncio.DatagramProtocol):
         if self.spend(peer, size):
             self.send(peer.addr, MATCH_RESULTS, struct.pack(">IH", request, len(entries)) + b"".join(entries))
 
+    def on_stats(self, peer, body):
+        """Xbox LIVE stats (forza_stats.py): op 1 a write (for the player or a player in its
+        room: a game's host writes everyone's result), op 2 a read answered with STATS_ROWS."""
+        if body[0] == 1:
+            room = {p.xuid: p.name for p in self.room_peers(peer)}
+            room[peer.xuid] = peer.name
+            stats.write(peer.xuid, lambda x: room.get(x) or lsp.gamertag_of(x), body[1:],
+                        allowed=set(room))
+        elif body[0] == 2:
+            names = {p.xuid: p.name for p in self.peers.values()}
+            reply = stats.read(peer.xuid, body[1:], lambda x: names.get(x) or lsp.gamertag_of(x))
+            if self.spend(peer, len(reply)):
+                self.send(peer.addr, STATS_ROWS, reply)
+
     # --- Horizon World events (forza_world.py) ---
 
     def world_sessions(self):
@@ -676,6 +694,7 @@ async def main():
             server.challenges.tick()
             if ticks % 2 == 0:
                 server.world_tick()
+                stats.settle()
             if ticks % 5 == 0:
                 server.expire()
     finally:
