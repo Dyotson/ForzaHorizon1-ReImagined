@@ -1,6 +1,6 @@
 diff --git a/cmake/Fh1DlssCapabilities.cmake b/cmake/Fh1DlssCapabilities.cmake
 new file mode 100644
-index 0000000..b83c6f9
+index 0000000..a38ef0c
 --- /dev/null
 +++ b/cmake/Fh1DlssCapabilities.cmake
 @@ -0,0 +1,5 @@
@@ -8,13 +8,13 @@ index 0000000..b83c6f9
 +# from an older SDK overlay without executing the game or loading foreign DLLs.
 +file(SHA256 "${FH1_GPU_DLL}" renderer_hash)
 +file(WRITE "${FH1_CAPABILITIES}"
-+    "{\"api\":1,\"renderer_sha256\":\"${renderer_hash}\"}\n")
++    "{\"api\":2,\"renderer_sha256\":\"${renderer_hash}\"}\n")
 diff --git a/cmake/ForzaDlssSdk.cmake b/cmake/ForzaDlssSdk.cmake
 new file mode 100644
-index 0000000..668419d
+index 0000000..97975be
 --- /dev/null
 +++ b/cmake/ForzaDlssSdk.cmake
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,53 @@
 +# NVIDIA NGX headers and static loader, pinned to the public DLSS SDK.
 +# NVIDIA SDK terms apply; the license is staged beside the linked GPU library.
 +set(_fh1_dlss_revision "374959484e79a640feaba44c93ac8cfb0a03f5b5")
@@ -56,6 +56,7 @@ index 0000000..668419d
 +    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg.h" "6881d21419c40c78ec948b326902ece09fc112b0223144d51c4905f3fced7a1f")
 +    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg_d3d.h" "6335ebcb95de39a361e87fe0257d6ce0723e5d8deaa15db3b35afacf2b3f4220")
 +    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg_vk.h" "b371d90b9f4372b9a415e68a0afbdc2f31b7b552e219a9637d848749bc965316")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers.h" "5bcbadfe7478b802cf6d3aca4dc5ddd7d0889b99726e69c63f9e9bd555f44471")
 +    _fh1_dlss_asset("include/nvsdk_ngx_helpers_vk.h" "c192bff72138f12f770db48e12c1d8f712dfc81ea0e8e055ebb27d8dd1b31623")
 +    _fh1_dlss_asset("include/nvsdk_ngx_loader.h" "abdf5f66a692620538357d29fdf78e3e2a677ee8140b7a638962ecb766585e75")
 +    _fh1_dlss_asset("include/nvsdk_ngx_params.h" "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc")
@@ -67,8 +68,53 @@ index 0000000..668419d
 +    _fh1_dlss_asset("lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" "4b6cecad7f1906571c94010241f650e4a5457e64fad49ddaccb82de79f6c2999")
 +    _fh1_dlss_asset("LICENSE.txt" "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0")
 +endif()
+diff --git a/include/rex/graphics/pipeline/shader/spirv_translator.h b/include/rex/graphics/pipeline/shader/spirv_translator.h
+index eb6b28a..95ee5eb 100644
+--- a/include/rex/graphics/pipeline/shader/spirv_translator.h
++++ b/include/rex/graphics/pipeline/shader/spirv_translator.h
+@@ -405,13 +405,15 @@ class SpirvShaderTranslator : public ShaderTranslator {
+ 
+   SpirvShaderTranslator(const Features& features, bool native_2x_msaa_with_attachments,
+                         bool native_2x_msaa_no_attachments, bool edram_fragment_shader_interlock,
+-                        uint32_t draw_resolution_scale_x = 1, uint32_t draw_resolution_scale_y = 1)
++                        uint32_t draw_resolution_scale_x = 1, uint32_t draw_resolution_scale_y = 1,
++                        float raster_scale_x = 1.0f, float raster_scale_y = 1.0f)
+       : features_(features),
+         native_2x_msaa_with_attachments_(native_2x_msaa_with_attachments),
+         native_2x_msaa_no_attachments_(native_2x_msaa_no_attachments),
+         edram_fragment_shader_interlock_(edram_fragment_shader_interlock),
+         draw_resolution_scale_x_(draw_resolution_scale_x ? draw_resolution_scale_x : 1),
+-        draw_resolution_scale_y_(draw_resolution_scale_y ? draw_resolution_scale_y : 1) {}
++        draw_resolution_scale_y_(draw_resolution_scale_y ? draw_resolution_scale_y : 1),
++        raster_scale_x_(raster_scale_x), raster_scale_y_(raster_scale_y) {}
+ 
+   uint64_t GetDefaultVertexShaderModification(
+       uint32_t dynamic_addressable_register_count,
+@@ -758,6 +760,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
+   // flow of the main function, and that there are no returns before either
+   // (there's a single return from the shader).
+   bool edram_fragment_shader_interlock_;
++  static constexpr uint64_t kFh1FractionalRaster = UINT64_C(1) << 63;
++  float raster_scale_x_, raster_scale_y_;
+   uint32_t draw_resolution_scale_x_;
+   uint32_t draw_resolution_scale_y_;
+ 
+diff --git a/include/rex/graphics/pipeline/texture/cache.h b/include/rex/graphics/pipeline/texture/cache.h
+index 07e201c..d5368c3 100644
+--- a/include/rex/graphics/pipeline/texture/cache.h
++++ b/include/rex/graphics/pipeline/texture/cache.h
+@@ -81,6 +81,9 @@ class TextureCache {
+   virtual void BeginFrame();
+ 
+   void MarkRangeAsResolved(uint32_t start_unscaled, uint32_t length_unscaled);
++  bool HasScaledResolveRange(uint32_t address, uint32_t length) {
++    return IsRangeScaledResolved(address, length);
++  }
+   // Ensures the memory backing the range in the scaled resolve address space is
+   // allocated and returns whether it is.
+   virtual bool EnsureScaledResolveMemoryCommitted(uint32_t /*start_unscaled*/,
 diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
-index e54198f..b826f00 100644
+index e54198f..72aec79 100644
 --- a/include/rex/graphics/vulkan/command_processor.h
 +++ b/include/rex/graphics/vulkan/command_processor.h
 @@ -48,6 +48,7 @@
@@ -94,7 +140,7 @@ index e54198f..b826f00 100644
    uint64_t GetCurrentSubmission() const {
      return submission_completed_ + uint64_t(submissions_in_flight_fences_.size()) + 1;
    }
-@@ -670,6 +679,17 @@ class VulkanCommandProcessor : public CommandProcessor {
+@@ -670,6 +679,20 @@ class VulkanCommandProcessor : public CommandProcessor {
    std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
  
    std::unique_ptr<VulkanTextureCache> texture_cache_;
@@ -108,6 +154,9 @@ index e54198f..b826f00 100644
 +  bool fh1_scene_composited_ = false;
 +  bool fh1_seed_pending_ = false;
 +  uint32_t fh1_scene_base_ = UINT32_MAX;
++  VkPipeline fh1_resolve_pipeline_ = VK_NULL_HANDLE;
++  VkPipelineLayout fh1_resolve_layout_ = VK_NULL_HANDLE;
++  bool Fh1SynchronizeResolve(uint32_t address, uint32_t length);
 +  void Fh1SelectNativeHud(bool native_hud);
  
    VkDescriptorPool shared_memory_and_edram_descriptor_pool_ = VK_NULL_HANDLE;
@@ -174,10 +223,10 @@ index 84012ea..d2db78b 100644
  
 diff --git a/include/rex/graphics/vulkan/fh1_dlss.h b/include/rex/graphics/vulkan/fh1_dlss.h
 new file mode 100644
-index 0000000..f653959
+index 0000000..71a3d57
 --- /dev/null
 +++ b/include/rex/graphics/vulkan/fh1_dlss.h
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,48 @@
 +#pragma once
 +#include <memory>
 +#include <atomic>
@@ -199,9 +248,14 @@ index 0000000..f653959
 +    std::array<float, 136 * 4> constants{};
 +    float jitter_x = 0, jitter_y = 0;
 +  };
-+  explicit Fh1Dlss(const ui::vulkan::VulkanDevice* device, bool dlaa = false);
++  explicit Fh1Dlss(const ui::vulkan::VulkanDevice* device, uint32_t output_width, uint32_t output_height, std::string_view mode);
 +  ~Fh1Dlss();
 +  bool Initialize();
++  uint32_t width() const;
++  uint32_t height() const;
++  uint32_t output_width() const;
++  uint32_t output_height() const;
++  void SetSceneBacking(uint32_t scale);
 +  static void ReportStatus(std::string_view message);
 +  void Execute(VkCommandBuffer command_buffer, VkImage scene, VkImage destination, const FrameInput& input);
 +  bool Evaluating() const { return evaluating_.load(std::memory_order_acquire); }
@@ -235,13 +289,25 @@ index 7b938b9..c676a27 100644
    void AnalyzeShaderUcode(Shader& shader) { shader.AnalyzeUcode(ucode_disasm_buffer_); }
  
 diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
-index 34f7033..c4d9175 100644
+index 34f7033..33d48e4 100644
 --- a/include/rex/graphics/vulkan/render_target_cache.h
 +++ b/include/rex/graphics/vulkan/render_target_cache.h
-@@ -97,6 +97,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+@@ -97,6 +97,22 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
  
    void CompletedSubmissionUpdated();
    void EndSubmission();
++  bool UsesFractionalRaster() const {
++    const auto pitch = register_file().Get<reg::RB_SURFACE_INFO>().surface_pitch;
++    return (pitch == 1280 || pitch == 640 || pitch == 320 || pitch == 160 || pitch == 80) &&
++        (raster_scale_x_ != 1.0f || raster_scale_y_ != 1.0f);
++  }
++  void SetRasterSize(uint32_t width, uint32_t height) {
++    raster_scale_x_ = float(width) / float(1280 * draw_resolution_scale_x());
++    raster_scale_y_ = float(height) / float(720 * draw_resolution_scale_y());
++  }
++  float raster_scale_x() const { return raster_scale_x_; }
++  float raster_scale_y() const { return raster_scale_y_; }
++  float raster_scale_x_ = 1.0f, raster_scale_y_ = 1.0f;
 +  bool SeedNativeHud(VulkanRenderTargetCache& scene, uint32_t width, uint32_t height);
 +  bool HasNativeHudColorTarget() const {
 +    return last_update_accumulated_render_targets()[1] != nullptr;
@@ -249,6 +315,26 @@ index 34f7033..c4d9175 100644
  
    Path GetPath() const override { return path_; }
  
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+index 04856ee..c073fff 100644
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -86,6 +86,7 @@ class VulkanTextureCache final : public TextureCache {
+   // preceding host GPU work.
+   void RequestTextures(uint32_t used_texture_mask) override;
+ 
++
+   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
+                                               xenos::FetchOpDimension dimension, bool is_signed);
+ 
+@@ -362,6 +363,7 @@ class VulkanTextureCache final : public TextureCache {
+ 
+   std::array<VulkanTextureBinding, xenos::kTextureFetchConstantCount> vulkan_texture_bindings_;
+ 
++
+   // Unsupported texture formats used during this frame (for research and
+   // testing).
+   enum : uint8_t {
 diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
 index da7ae1a..137c42a 100644
 --- a/src/graphics/CMakeLists.txt
@@ -288,8 +374,126 @@ index da7ae1a..137c42a 100644
  set_target_properties(rexgpu-xenos PROPERTIES
      EXPORT_NAME gpu-xenos
      CXX_VISIBILITY_PRESET hidden
+diff --git a/src/graphics/pipeline/shader/spirv_translator.cpp b/src/graphics/pipeline/shader/spirv_translator.cpp
+index 0b91a47..6479ce9 100644
+--- a/src/graphics/pipeline/shader/spirv_translator.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator.cpp
+@@ -3152,14 +3152,28 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
+             builder_->createAccessChain(spv::StorageClassInput, input_fragment_coordinates_,
+                                         id_vector_temp_),
+             spv::NoPrecision);
++        spv::Id position_is_center;
++        const float raster_scale = i ? raster_scale_y_ : raster_scale_x_;
++        if (raster_scale != 1.0f && (GetSpirvShaderModification().value & kFh1FractionalRaster)) {
++          const float scale = float(i ? draw_resolution_scale_y_ : draw_resolution_scale_x_) * raster_scale;
++          auto floor = [&](spv::Id v) { return builder_->createUnaryBuiltinCall(
++              type_float_, ext_inst_glsl_std_450_, GLSLstd450Floor, v); };
++          const spv::Id guest = floor(builder_->createBinOp(spv::OpFDiv, type_float_, position,
++              builder_->makeFloatConstant(scale)));
++          const spv::Id center = floor(builder_->createBinOp(spv::OpFMul, type_float_,
++              builder_->createBinOp(spv::OpFAdd, type_float_, guest, builder_->makeFloatConstant(0.5f)),
++              builder_->makeFloatConstant(scale)));
++          position_is_center = builder_->createBinOp(spv::OpFOrdEqual, type_bool_, floor(position), center);
++        } else {
+         spv::Id position_mod = builder_->createBinOp(
+             spv::OpUMod, type_uint_,
+             builder_->createUnaryOp(spv::OpConvertFToU, type_uint_, position),
+             builder_->makeUintConstant(i ? draw_resolution_scale_y_ : draw_resolution_scale_x_));
+-        spv::Id position_is_center =
++        position_is_center =
+             builder_->createBinOp(spv::OpIEqual, type_bool_, position_mod,
+                                   builder_->makeUintConstant(i ? (draw_resolution_scale_y_ >> 1)
+                                                                : (draw_resolution_scale_x_ >> 1)));
++        }
+         memexport_allowed = memexport_allowed != spv::NoResult
+                                 ? builder_->createBinOp(spv::OpLogicalAnd, type_bool_,
+                                                         memexport_allowed, position_is_center)
+@@ -3253,7 +3267,7 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
+     if (draw_resolution_scale_x_ > 1) {
+       param_gen_x = builder_->createNoContractionBinOp(
+           spv::OpFMul, type_float_, param_gen_x,
+-          builder_->makeFloatConstant(1.0f / float(draw_resolution_scale_x_)));
++          builder_->makeFloatConstant(1.0f / (float(draw_resolution_scale_x_) * ((GetSpirvShaderModification().value & kFh1FractionalRaster) ? raster_scale_x_ : 1.0f))));
+     }
+     param_gen_x = builder_->createUnaryBuiltinCall(type_float_, ext_inst_glsl_std_450_,
+                                                    GLSLstd450FAbs, param_gen_x);
+@@ -3289,7 +3303,7 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
+     if (draw_resolution_scale_y_ > 1) {
+       param_gen_y = builder_->createNoContractionBinOp(
+           spv::OpFMul, type_float_, param_gen_y,
+-          builder_->makeFloatConstant(1.0f / float(draw_resolution_scale_y_)));
++          builder_->makeFloatConstant(1.0f / (float(draw_resolution_scale_y_) * ((GetSpirvShaderModification().value & kFh1FractionalRaster) ? raster_scale_y_ : 1.0f))));
+     }
+     param_gen_y = builder_->createUnaryBuiltinCall(type_float_, ext_inst_glsl_std_450_,
+                                                    GLSLstd450FAbs, param_gen_y);
+diff --git a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp b/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
+index f1ee43b..b1fab1d 100644
+--- a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
+@@ -818,6 +818,8 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+           break;
+       }
+     }
++    if ((raster_scale_x_ != 1.0f || raster_scale_y_ != 1.0f) &&
++        instr.dimension == xenos::FetchOpDimension::k2D) size_needed_components |= 0b11;
+     if (instr.dimension == xenos::FetchOpDimension::k3DOrStacked && size_needed_components) {
+       // Stacked and 3D textures have different size packing - need to get
+       // whether the texture is 3D unconditionally.
+@@ -994,13 +996,34 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+         const_texture_resolution_scale[0] =
+             builder_->makeFloatConstant(float(draw_resolution_scale_x_));
+         const_texture_resolution_scale_reciprocal[0] =
+-            builder_->makeFloatConstant(1.0f / float(draw_resolution_scale_x_));
++            builder_->makeFloatConstant(1.0f / (float(draw_resolution_scale_x_) * (instr.dimension == xenos::FetchOpDimension::k2D ? raster_scale_x_ : 1.0f)));
+       }
+       if (revert_resolution_scale_axes & 0b010) {
+         const_texture_resolution_scale[1] =
+             builder_->makeFloatConstant(float(draw_resolution_scale_y_));
+         const_texture_resolution_scale_reciprocal[1] =
+-            builder_->makeFloatConstant(1.0f / float(draw_resolution_scale_y_));
++            builder_->makeFloatConstant(1.0f / (float(draw_resolution_scale_y_) * (instr.dimension == xenos::FetchOpDimension::k2D ? raster_scale_y_ : 1.0f)));
++      }
++    }
++
++    spv::Id fractional_texture = spv::NoResult;
++    if (texture_resolution_scaled != spv::NoResult && instr.dimension == xenos::FetchOpDimension::k2D &&
++        (raster_scale_x_ != 1.0f || raster_scale_y_ != 1.0f)) {
++      // Match the screen resolve pitches, including height padding (for
++      // example 1280x736). Testing aspect ratio would miss those textures.
++      spv::Id screen_width = builder_->makeBoolConstant(false);
++      for (float width : {1280.0f, 640.0f, 320.0f, 160.0f, 80.0f}) {
++        const spv::Id equal = builder_->createBinOp(spv::OpFOrdEqual, type_bool_, size[0],
++            builder_->makeFloatConstant(width));
++        screen_width = builder_->createBinOp(spv::OpLogicalOr, type_bool_, screen_width, equal);
++      }
++      fractional_texture = builder_->createBinOp(spv::OpLogicalAnd, type_bool_,
++          texture_resolution_scaled, screen_width);
++      for (unsigned i = 0; i < 2; ++i) {
++        const float backing = float(i ? draw_resolution_scale_y_ : draw_resolution_scale_x_);
++        const_texture_resolution_scale_reciprocal[i] = builder_->createTriOp(spv::OpSelect,
++            type_float_, fractional_texture, const_texture_resolution_scale_reciprocal[i],
++            builder_->makeFloatConstant(1.0f / backing));
+       }
+     }
+ 
+@@ -1094,6 +1117,15 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+           }
+         }
+       }
++      if (fractional_texture != spv::NoResult) {
++        for (unsigned i = 0; i < 2; ++i) {
++          const float scale = i ? raster_scale_y_ : raster_scale_x_;
++          if (scale != 1.0f) coordinates[i] = builder_->createTriOp(spv::OpSelect,
++              type_float_, fractional_texture,
++              builder_->createBinOp(spv::OpFMul, type_float_, coordinates[i],
++                  builder_->makeFloatConstant(scale)), coordinates[i]);
++        }
++      }
+       if (instr.dimension == xenos::FetchOpDimension::k3DOrStacked) {
+         spv::Id& z_coordinate_ref = coordinates[2];
+         spv::Id z_offset =
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 24abe85..02ab6c9 100644
+index 24abe85..03eaaff 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
 @@ -14,6 +14,8 @@
@@ -309,19 +513,21 @@ index 24abe85..02ab6c9 100644
  #include <rex/graphics/vulkan/pipeline_cache.h>
  #include <rex/graphics/vulkan/render_target_cache.h>
  #include <rex/graphics/vulkan/shader.h>
-@@ -49,6 +52,11 @@
+@@ -49,6 +52,13 @@
  #include <rex/ui/vulkan/util.h>
  
  // Legacy backend compatibility aliases for shared readback controls.
 +REXCVAR_DEFINE_BOOL(fh1_scene_720p_native_hud, false, "GPU/Vulkan",
 +                    "Experimental FH1: 720p world with a separate native 1440p HUD")
 +    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
-+REXCVAR_DEFINE_STRING(fh1_upscaler, "off", "GPU/Vulkan", "FH1 scene reconstruction: off, dlss or dlaa")
++REXCVAR_DEFINE_STRING(fh1_upscaler, "off", "GPU/Vulkan", "FH1 scene reconstruction: off, quality, balanced, performance (dlss), dlaa").lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_UINT32(fh1_output_width, 2560, "GPU/Vulkan", "FH1 reconstruction output width").lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_UINT32(fh1_output_height, 1440, "GPU/Vulkan", "FH1 reconstruction output height")
 +    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
  REXCVAR_DEFINE_BOOL(vulkan_readback_resolve, false, "GPU/Vulkan",
                      "Read render-to-texture results on the CPU")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
-@@ -562,6 +570,10 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
+@@ -562,6 +572,10 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
  
  }  // namespace
  
@@ -332,32 +538,72 @@ index 24abe85..02ab6c9 100644
  // Generated with `xb buildshaders`.
  namespace shaders {
  #include "../shaders/vulkan_spirv/apply_gamma_pwl_cs.h"
-@@ -657,6 +669,8 @@ void VulkanCommandProcessor::InitializeShaderStorage(const std::filesystem::path
+@@ -656,7 +670,12 @@ void VulkanCommandProcessor::InvalidateVertexBufferResidencyRange(uint32_t first
+ void VulkanCommandProcessor::InitializeShaderStorage(const std::filesystem::path& cache_root,
                                                       uint32_t title_id, bool blocking) {
    CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
-   pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
+-  pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
++  const auto storage_root = fh1_dlss_ ? cache_root / ("fh1-output-v6-" +
++      std::to_string(fh1_dlss_->output_width()) + "x" + std::to_string(fh1_dlss_->output_height()) +
++      "-" + std::to_string(fh1_dlss_->width()) + "x" + std::to_string(fh1_dlss_->height())) : cache_root;
++  pipeline_cache_->InitializeShaderStorage(fh1_dlss_ ? storage_root / "ui" : storage_root, title_id, blocking);
 +  if (fh1_other_pipelines_) fh1_other_pipelines_->InitializeShaderStorage(
-+      cache_root / (REXCVAR_GET(fh1_upscaler) == "dlaa" ? "fh1-scene-2x" : "fh1-scene-1x"), title_id, blocking);
++      storage_root / "scene", title_id, blocking);
  }
  
  // Occlusion queries (EVENT_WRITE_ZPD), as Xenia's default "fast" mode does them.
-@@ -1133,6 +1147,46 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1117,12 +1136,6 @@ bool VulkanCommandProcessor::SetupContext() {
+     return false;
+   }
+ 
+-  pipeline_cache_ = std::make_unique<VulkanPipelineCache>(
+-      *this, *register_file_, *render_target_cache_, guest_shader_vertex_stages_);
+-  if (!pipeline_cache_->Initialize()) {
+-    REXGPU_ERROR("Failed to initialize the graphics pipeline cache");
+-    return false;
+-  }
+ 
+   // Requires the transient descriptor set layouts.
+   texture_cache_ =
+@@ -1133,6 +1146,73 @@ bool VulkanCommandProcessor::SetupContext() {
      return false;
    }
  
 +  if (REXCVAR_GET(fh1_scene_720p_native_hud) || REXCVAR_GET(fh1_upscaler) != "off") {
-+    const bool compatible = draw_resolution_scale_x == 2 && draw_resolution_scale_y == 2 &&
++    const uint32_t output_width = REXCVAR_GET(fh1_output_width);
++    const uint32_t output_height = REXCVAR_GET(fh1_output_height);
++    const uint32_t output_scale = (output_height + 719) / 720;
++    const bool supported_output = (output_width == 1920 && output_height == 1080) ||
++        (output_width == 2560 && output_height == 1440) || (output_width == 3840 && output_height == 2160);
++    const bool compatible = supported_output && draw_resolution_scale_x == output_scale &&
++        draw_resolution_scale_y == output_scale &&
 +        render_target_cache_->GetPath() == RenderTargetCache::Path::kHostRenderTargets;
 +    if (!compatible) {
-+      Fh1Dlss::ReportStatus("error: DLSS requires 2x scale and host render targets; continuing with native rendering at the configured scale.");
-+      REXGPU_WARN("FH1 reconstruction disabled: incompatible scale or render-target path; using native rendering");
++      Fh1Dlss::ReportStatus("error: DLSS output/scale or render-target path is incompatible; continuing with native rendering.");
++      REXGPU_WARN("FH1 reconstruction disabled: incompatible output, scale or render-target path; using native rendering");
 +    } else {
-+      const uint32_t scene_scale = REXCVAR_GET(fh1_upscaler) == "dlaa" ? 2 : 1;
-+      fh1_split_enabled_ = true;
-+      fh1_other_render_targets_ = std::make_unique<VulkanRenderTargetCache>(
-+          *register_file_, *memory_, scene_scale, scene_scale, *this);
-+      bool ready = fh1_other_render_targets_->Initialize(shared_memory_binding_count);
-+      if (ready && scene_scale == 1) {
++      bool ready = true;
++      uint32_t scene_width = 1280, scene_height = 720;
++      if (REXCVAR_GET(fh1_upscaler) != "off") {
++        fh1_dlss_ = std::make_unique<Fh1Dlss>(GetVulkanDevice(), output_width, output_height,
++            REXCVAR_GET(fh1_upscaler));
++        ready = fh1_dlss_->Initialize();
++        if (ready) { scene_width = fh1_dlss_->width(); scene_height = fh1_dlss_->height(); }
++      }
++      // Guest EDRAM resolves require an integer scene scale. Use a ceiling
++      // raster and resample into NGX's exact recommended input dimensions.
++      // Do not claim that fractional modes shade only the NGX input pixels.
++      const uint32_t scene_scale = std::max((scene_width + 1279) / 1280, (scene_height + 719) / 720);
++      if (ready) {
++        fh1_split_enabled_ = true;
++        render_target_cache_->SetRasterSize(output_width, output_height);
++        fh1_other_render_targets_ = std::make_unique<VulkanRenderTargetCache>(
++            *register_file_, *memory_, scene_scale, scene_scale, *this);
++        fh1_other_render_targets_->SetRasterSize(1280 * scene_scale, 720 * scene_scale);
++        ready = fh1_other_render_targets_->Initialize(shared_memory_binding_count);
++        if (fh1_dlss_) fh1_dlss_->SetSceneBacking(scene_scale);
++      }
++      if (ready && scene_scale != output_scale) {
 +        fh1_other_textures_ = VulkanTextureCache::Create(*register_file_, *shared_memory_,
 +            scene_scale, scene_scale, *this, guest_shader_pipeline_stages_);
 +        ready = bool(fh1_other_textures_);
@@ -367,10 +613,6 @@ index 24abe85..02ab6c9 100644
 +            *this, *register_file_, *fh1_other_render_targets_, guest_shader_vertex_stages_);
 +        ready = fh1_other_pipelines_->Initialize();
 +      }
-+      if (ready && REXCVAR_GET(fh1_upscaler) != "off") {
-+        fh1_dlss_ = std::make_unique<Fh1Dlss>(GetVulkanDevice(), scene_scale == 2);
-+        ready = fh1_dlss_->Initialize();
-+      }
 +      if (!ready) {
 +        Fh1Dlss::ReportStatus("error: NVIDIA DLSS initialization failed; continuing with native rendering. See the game log.");
 +        REXGPU_WARN("DLSS unavailable: retaining native rendering");
@@ -379,20 +621,33 @@ index 24abe85..02ab6c9 100644
 +        fh1_other_render_targets_.reset();
 +        fh1_other_textures_.reset();
 +        fh1_split_enabled_ = false;
++        render_target_cache_->SetRasterSize(1280 * draw_resolution_scale_x, 720 * draw_resolution_scale_y);
 +      } else {
-+        REXGPU_INFO("FH1 split rendering initialized: scene={}x{}, UI=2560x1440; independent pipeline caches/translators", 1280*scene_scale, 720*scene_scale);
++        REXGPU_INFO("FH1 split rendering initialized: scene={}x{}, UI={}x{}; independent pipeline caches/translators", 1280 * scene_scale, 720 * scene_scale, output_width, output_height);
++        REXGPU_INFO("FH1 reconstruction input={}x{}; raster={}x{}", scene_width, scene_height, 1280 * scene_scale, 720 * scene_scale);
 +      }
 +    }
++  }
++
++  pipeline_cache_ = std::make_unique<VulkanPipelineCache>(
++      *this, *register_file_, *render_target_cache_, guest_shader_vertex_stages_);
++  if (!pipeline_cache_->Initialize()) {
++    REXGPU_ERROR("Failed to initialize the graphics pipeline cache");
++    return false;
 +  }
 +
    // Shared memory and EDRAM common bindings.
    VkDescriptorPoolSize descriptor_pool_sizes[1];
    descriptor_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-@@ -2248,10 +2302,14 @@ void VulkanCommandProcessor::ShutdownContext() {
+@@ -2248,10 +2328,18 @@ void VulkanCommandProcessor::ShutdownContext() {
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
                                           shared_memory_and_edram_descriptor_pool_);
  
 +  fh1_dlss_.reset();
++  if (fh1_resolve_pipeline_) dfn.vkDestroyPipeline(device, fh1_resolve_pipeline_, nullptr);
++  if (fh1_resolve_layout_) dfn.vkDestroyPipelineLayout(device, fh1_resolve_layout_, nullptr);
++  fh1_resolve_pipeline_ = VK_NULL_HANDLE;
++  fh1_resolve_layout_ = VK_NULL_HANDLE;
 +  fh1_other_textures_.reset();
    texture_cache_.reset();
  
@@ -403,7 +658,7 @@ index 24abe85..02ab6c9 100644
    render_target_cache_.reset();
  
    primitive_processor_.reset();
-@@ -2387,6 +2445,8 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+@@ -2387,6 +2475,8 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
      if (texture_cache_) {
        texture_cache_->TextureFetchConstantWritten((index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) /
                                                    6);
@@ -412,7 +667,7 @@ index 24abe85..02ab6c9 100644
      }
      InvalidateVertexBufferResidency((index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 2);
    }
-@@ -2489,6 +2549,8 @@ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_
+@@ -2489,6 +2579,8 @@ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_
      uint32_t last_fetch_dword = start_index + last_changed - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
      if (texture_cache_) {
        texture_cache_->TextureFetchConstantsWritten(first_fetch_dword / 6, last_fetch_dword / 6);
@@ -421,7 +676,29 @@ index 24abe85..02ab6c9 100644
      }
      InvalidateVertexBufferResidencyRange(first_fetch_dword / 2, last_fetch_dword / 2);
      return;
-@@ -3947,6 +4009,23 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
+@@ -2644,6 +2736,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+             ? frontbuffer_height_scaled
+             : (frontbuffer_height ? frontbuffer_height : frontbuffer_height_unscaled);
+   }
++  if (fh1_dlss_) {
++    guest_output_width = fh1_dlss_->output_width();
++    guest_output_height = fh1_dlss_->output_height();
++  }
+   bool swap_source_scaled = frontbuffer_width_unscaled && frontbuffer_height_unscaled &&
+                             (frontbuffer_width_scaled != frontbuffer_width_unscaled ||
+                              frontbuffer_height_scaled != frontbuffer_height_unscaled);
+@@ -2802,6 +2898,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+           }
+         }
+         bool use_compute_gamma = swap_apply_gamma_compute_pipeline != VK_NULL_HANDLE;
++        if (fh1_dlss_ && !use_compute_gamma) {
++          REXGPU_ERROR("DLSS: native output requires the texel-addressed compute presentation path");
++          return false;
++        }
+ 
+         // TODO(Triang3l): FXAA can result in more than 8 bits of precision.
+         context.SetIs8bpc(!use_pwl_gamma_ramp && !use_fxaa);
+@@ -3947,6 +4047,23 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
    return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
  }
  
@@ -445,7 +722,7 @@ index 24abe85..02ab6c9 100644
  bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                                         IndexBufferInfo* index_buffer_info,
                                         bool major_mode_explicit) {
-@@ -4067,6 +4146,38 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4067,6 +4184,38 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        return draw_fail("begin_submission");
      }
  
@@ -484,10 +761,11 @@ index 24abe85..02ab6c9 100644
      // Process primitives.
      if (!primitive_processor_->Process(primitive_processing_result)) {
        return draw_fail("primitive_processing");
-@@ -4197,12 +4308,46 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4197,12 +4346,48 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        (pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation() : 0);
    texture_cache_->RequestTextures(used_texture_mask);
  
++
 +  if (fh1_dlss_ && pixel_shader && pixel_shader->ucode_data_hash() == 0xE68FE55ECD482EC5ull) {
 +    std::array<float, 136 * 4> constants;
 +    std::memcpy(constants.data(), &regs[XE_GPU_REG_SHADER_CONSTANT_256_X], sizeof(constants));
@@ -525,13 +803,14 @@ index 24abe85..02ab6c9 100644
 +    if (!render_target_cache_->SeedNativeHud(*fh1_other_render_targets_, 1280, 720))
 +      return draw_fail("native_hud_seed");
 +    if (frame_current_ % 120 == 0)
-+      REXGPU_INFO("FH1 frame {}: world={}x{}, HUD=2560x1440, scene transferred before UI", frame_current_,
-+          1280*fh1_other_render_targets_->draw_resolution_scale_x(), 720*fh1_other_render_targets_->draw_resolution_scale_y());
++      REXGPU_INFO("FH1 frame {}: world={}x{}, HUD={}x{}, scene transferred before UI", frame_current_,
++          1280 * fh1_other_render_targets_->draw_resolution_scale_x(), 720 * fh1_other_render_targets_->draw_resolution_scale_y(),
++          fh1_dlss_ ? fh1_dlss_->output_width() : 2560, fh1_dlss_ ? fh1_dlss_->output_height() : 1440);
 +  }
  
    // Create the pipeline (for this, need the render pass from the render target
    // cache), translating the shaders - doing this now to obtain the used
-@@ -4292,6 +4437,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4292,6 +4477,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        host_render_targets_used && render_target_cache_->depth_float24_convert_in_pixel_shader(),
        host_render_targets_used, pixel_shader && pixel_shader->writes_depth(), viewport_info);
  
@@ -539,15 +818,132 @@ index 24abe85..02ab6c9 100644
 +      regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 1280) {
 +    const auto& input = fh1_dlss_->input();
 +    if (viewport_info.xy_extent[0] && viewport_info.xy_extent[1]) {
-+      viewport_info.ndc_offset[0] += 2.0f * input.jitter_x / float(viewport_info.xy_extent[0]);
-+      viewport_info.ndc_offset[1] += 2.0f * input.jitter_y / float(viewport_info.xy_extent[1]);
++      viewport_info.ndc_offset[0] += 2.0f * input.jitter_x / float(fh1_dlss_->width());
++      viewport_info.ndc_offset[1] += 2.0f * input.jitter_y / float(fh1_dlss_->height());
 +    }
 +  }
 +
    // Update dynamic graphics pipeline state.
    UpdateDynamicState(viewport_info, primitive_polygonal, normalized_depth_control);
  
-@@ -5451,8 +5605,10 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -4782,13 +4976,106 @@ bool VulkanCommandProcessor::IssueCopy() {
+   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
+   if (readback_mode == ReadbackResolveMode::kDisabled) {
+     uint32_t written_address, written_length;
+-    return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
++    const bool resolved = render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
+                                          written_address, written_length);
++    if (resolved && written_length && !Fh1SynchronizeResolve(written_address, written_length))
++      REXGPU_ERROR("FH1 cross-scale resolve synchronization failed");
++    return resolved;
+   }
+ 
+   return IssueCopy_ReadbackResolvePath();
+ }
+ 
++// Scaled resolves are stored per guest pixel, with a scale_x*scale_y block
++// of host samples. Mirror these blocks on the GPU when the scene/UI caches
++// have different integer scales. This keeps minimap and other render-to-texture
++// HUD inputs coherent without a CPU readback or borrowing foreign image views.
++bool VulkanCommandProcessor::Fh1SynchronizeResolve(uint32_t address, uint32_t length) {
++  if (!fh1_split_enabled_ || !fh1_other_textures_ || !texture_cache_->IsDrawResolutionScaled() ||
++      !fh1_other_textures_->IsDrawResolutionScaled() || !length ||
++      !texture_cache_->HasScaledResolveRange(address, length)) return true;
++  auto& source = *texture_cache_;
++  auto& destination = *fh1_other_textures_;
++  const auto* vulkan_device = GetVulkanDevice();
++  const auto& f = vulkan_device->functions(); const auto device = vulkan_device->device();
++  const auto dest_info = register_file_->Get<reg::RB_COPY_DEST_INFO>();
++  const auto bpp = FormatInfo::Get(uint32_t(dest_info.copy_dest_format))->bits_per_pixel;
++  if (bpp != 8 && bpp != 16 && bpp != 32 && bpp != 64 && bpp != 128) return false;
++  const uint32_t pixel_bytes = bpp / 8;
++  const uint32_t source_scale = source.draw_resolution_scale_x();
++  const uint32_t destination_scale = destination.draw_resolution_scale_x();
++  if (source.draw_resolution_scale_y() != source_scale ||
++      destination.draw_resolution_scale_y() != destination_scale ||
++      length > UINT32_MAX / (destination_scale * destination_scale)) return false;
++  uint64_t source_start, source_length, dest_start, dest_length;
++  if (!source.GetScaledResolveRange(address, length, 0, source_start, source_length) ||
++      !destination.CommitScaledResolveRange(address, length) ||
++      !destination.GetScaledResolveRange(address, length, 0, dest_start, dest_length)) return false;
++  if (!fh1_resolve_pipeline_) {
++    VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof(uint32_t)};
++    const auto set_layout = GetSingleTransientDescriptorLayout(SingleTransientDescriptorLayout::kStorageBufferPairCompute);
++    VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++    layout.setLayoutCount = 1; layout.pSetLayouts = &set_layout;
++    layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
++    if (f.vkCreatePipelineLayout(device, &layout, nullptr, &fh1_resolve_layout_) != VK_SUCCESS) return false;
++    static constexpr char shader[] = R"glsl(#version 450
++layout(local_size_x=256) in;
++layout(binding=0,std430) readonly buffer Source { uint src[]; };
++layout(binding=1,std430) writeonly buffer Destination { uint dst[]; };
++layout(push_constant) uniform Parameters { uint sourceScale; uint destScale; uint pixelBytes;
++  uint byteCount; uint sourceOffset; uint destOffset; };
++uint loadByte(uint offset) {
++  uint pixel = offset / pixelBytes;
++  uint component = offset % pixelBytes;
++  uint subpixel = pixel % (destScale*destScale);
++  uint guestPixel = pixel / (destScale*destScale);
++  uint x = ((subpixel%destScale)*2u+1u)*sourceScale/(destScale*2u);
++  uint y = ((subpixel/destScale)*2u+1u)*sourceScale/(destScale*2u);
++  uint sourceByte = sourceOffset + (guestPixel*sourceScale*sourceScale+y*sourceScale+x)*pixelBytes+component;
++  return (src[sourceByte>>2u]>>((sourceByte&3u)*8u))&255u;
++}
++void main() {
++  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*65535u*256u;
++  uint offset=i*4u;
++  if(offset>=byteCount) return;
++  uint value=0u;
++  for(uint b=0u;b<4u;++b) value|=loadByte(offset+b)<<(8u*b);
++  dst[(destOffset+offset)>>2u]=value;
++})glsl";
++    std::vector<uint32_t> code; std::string error;
++    if (!CompileFh1Compute(shader, code, error)) { REXGPU_ERROR("FH1 resolve shader: {}", error); return false; }
++    fh1_resolve_pipeline_ = ui::vulkan::util::CreateComputePipeline(vulkan_device, fh1_resolve_layout_,
++        code.data(), code.size()*sizeof(uint32_t));
++    if (!fh1_resolve_pipeline_) return false;
++  }
++  const auto set = AllocateSingleTransientDescriptor(SingleTransientDescriptorLayout::kStorageBufferPairCompute);
++  if (!set) return false;
++  const uint64_t alignment = vulkan_device->properties().minStorageBufferOffsetAlignment;
++  const uint64_t source_base = source_start & ~(alignment-1), dest_base = dest_start & ~(alignment-1);
++  const VkDescriptorBufferInfo buffers[] = {
++      {source.scaled_resolve_buffer(), source_base, source_length+source_start-source_base},
++      {destination.scaled_resolve_buffer(), dest_base, dest_length+dest_start-dest_base}};
++  VkWriteDescriptorSet writes[2]{};
++  for (unsigned i=0;i<2;++i) {
++    writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[i].dstSet=set;
++    writes[i].dstBinding=i; writes[i].descriptorCount=1;
++    writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[i].pBufferInfo=&buffers[i];
++  }
++  f.vkUpdateDescriptorSets(device,2,writes,0,nullptr);
++  source.UseScaledResolveBufferForRead();
++  destination.UseScaledResolveBufferForWrite(dest_start,dest_length);
++  SubmitBarriers(true);
++  BindExternalComputePipeline(fh1_resolve_pipeline_);
++  const uint32_t constants[] = {source_scale,destination_scale,pixel_bytes,uint32_t(dest_length),
++      uint32_t(source_start-source_base),uint32_t(dest_start-dest_base)};
++  deferred_command_buffer_.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,fh1_resolve_layout_,0,1,&set,0,nullptr);
++  deferred_command_buffer_.CmdVkPushConstants(fh1_resolve_layout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(constants),constants);
++  const uint32_t groups = uint32_t((dest_length+1023)/1024);
++  deferred_command_buffer_.CmdVkDispatch(std::min(groups,65535u),(groups+65534)/65535,1);
++  destination.MarkRangeAsResolved(address,length);
++  return true;
++}
++
+ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+@@ -4800,6 +5087,8 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+     return false;
+   }
+ 
++  if (written_length && !Fh1SynchronizeResolve(written_address, written_length))
++    REXGPU_ERROR("FH1 cross-scale resolve synchronization failed");
+   if (!written_length) {
+     return true;
+   }
+@@ -5451,8 +5740,10 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
    primitive_processor_->CompletedSubmissionUpdated();
  
    render_target_cache_->CompletedSubmissionUpdated();
@@ -558,7 +954,7 @@ index 24abe85..02ab6c9 100644
  
    // Destroy objects scheduled for destruction.
    while (!destroy_framebuffers_.empty()) {
-@@ -5498,7 +5654,8 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -5498,7 +5789,8 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
  }
  
  bool VulkanCommandProcessor::CanEndSubmissionImmediately() const {
@@ -568,7 +964,7 @@ index 24abe85..02ab6c9 100644
  }
  
  bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
-@@ -5571,10 +5728,16 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5571,10 +5863,16 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
      primitive_processor_->BeginSubmission();
  
      texture_cache_->BeginSubmission(GetCurrentSubmission());
@@ -585,7 +981,7 @@ index 24abe85..02ab6c9 100644
      frame_used_async_placeholder_pipeline_ = false;
  
      // Reset bindings that depend on transient data.
-@@ -5635,6 +5798,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5635,6 +5933,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
      primitive_processor_->BeginFrame();
  
      texture_cache_->BeginFrame();
@@ -593,7 +989,7 @@ index 24abe85..02ab6c9 100644
    }
  
    return true;
-@@ -5706,6 +5870,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5706,6 +6005,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
  
    if (is_closing_frame) {
      texture_cache_->EndFrame();
@@ -601,7 +997,7 @@ index 24abe85..02ab6c9 100644
  
      primitive_processor_->EndFrame();
    }
-@@ -5722,8 +5887,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5722,8 +6022,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
      EndRenderPass();
  
      pipeline_cache_->EndSubmission();
@@ -612,7 +1008,7 @@ index 24abe85..02ab6c9 100644
  
      primitive_processor_->EndSubmission();
  
-@@ -5911,8 +6078,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5911,8 +6213,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
        uniform_buffer_pool_->ClearCache();
  
        texture_cache_->ClearCache();
@@ -623,6 +1019,32 @@ index 24abe85..02ab6c9 100644
  
        // Not clearing the pipeline layouts and the descriptor set layouts as
        // they're referenced by pipelines, which are not destroyed.
+@@ -6123,6 +6427,12 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
+     viewport.width = 1.0f;
+     viewport.height = 1.0f;
+   }
++  if (render_target_cache_->UsesFractionalRaster()) {
++  viewport.x *= render_target_cache_->raster_scale_x();
++  viewport.y *= render_target_cache_->raster_scale_y();
++  viewport.width *= render_target_cache_->raster_scale_x();
++  viewport.height *= render_target_cache_->raster_scale_y();
++  }
+   viewport.minDepth = viewport_info.z_min;
+   viewport.maxDepth = viewport_info.z_max;
+   SetViewport(viewport);
+@@ -6134,6 +6444,12 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
+   scissor.offset[1] *= draw_resolution_scale_y;
+   scissor.extent[0] *= draw_resolution_scale_x;
+   scissor.extent[1] *= draw_resolution_scale_y;
++  if (render_target_cache_->UsesFractionalRaster()) {
++  scissor.offset[0] = uint32_t(float(scissor.offset[0]) * render_target_cache_->raster_scale_x());
++  scissor.offset[1] = uint32_t(float(scissor.offset[1]) * render_target_cache_->raster_scale_y());
++  scissor.extent[0] = uint32_t(std::ceil(float(scissor.extent[0]) * render_target_cache_->raster_scale_x()));
++  scissor.extent[1] = uint32_t(std::ceil(float(scissor.extent[1]) * render_target_cache_->raster_scale_y()));
++  }
+   VkRect2D scissor_rect;
+   scissor_rect.offset.x = int32_t(scissor.offset[0]);
+   scissor_rect.offset.y = int32_t(scissor.offset[1]);
 diff --git a/src/graphics/vulkan/deferred_command_buffer.cpp b/src/graphics/vulkan/deferred_command_buffer.cpp
 index a344032..bd489ff 100644
 --- a/src/graphics/vulkan/deferred_command_buffer.cpp
@@ -656,10 +1078,10 @@ index a344032..bd489ff 100644
          size_t offset_bytes = sizeof(ArgsVkBeginRenderPass);
 diff --git a/src/graphics/vulkan/fh1_dlss.cpp b/src/graphics/vulkan/fh1_dlss.cpp
 new file mode 100644
-index 0000000..3f14ab6
+index 0000000..bf22bc3
 --- /dev/null
 +++ b/src/graphics/vulkan/fh1_dlss.cpp
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,398 @@
 +#include <rex/graphics/vulkan/fh1_dlss.h>
 +#include <rex/ui/vulkan/device.h>
 +#include <rex/ui/vulkan/instance.h>
@@ -671,12 +1093,18 @@ index 0000000..3f14ab6
 +#include <array>
 +#if defined(REX_FH1_NGX)
 +#include <nvsdk_ngx_helpers_vk.h>
++#include <nvsdk_ngx_helpers.h>
 +#endif
 +
 +namespace rex::graphics::vulkan {
 +struct Fh1Dlss::State {
 +  const ui::vulkan::VulkanDevice* device;
-+  uint32_t width = 1280, height = 720;
++  uint32_t width = 0, height = 0, output_width = 0, output_height = 0;
++  uint32_t backing_scale = 1;
++  std::string mode;
++#if defined(REX_FH1_NGX)
++  NVSDK_NGX_PerfQuality_Value quality = NVSDK_NGX_PerfQuality_Value_MaxPerf;
++#endif
 +  bool dlaa = false;
 +  const char* test_failure = std::getenv("FORZA_DLSS_TEST_FAILURE");
 +#if defined(REX_FH1_NGX)
@@ -833,11 +1261,19 @@ index 0000000..3f14ab6
 +  }
 +#endif
 +};
-+Fh1Dlss::Fh1Dlss(const ui::vulkan::VulkanDevice* device, bool dlaa) : state_(std::make_unique<State>()) {
++Fh1Dlss::Fh1Dlss(const ui::vulkan::VulkanDevice* device, uint32_t output_width,
++                   uint32_t output_height, std::string_view mode) : state_(std::make_unique<State>()) {
 +  state_->device = device;
-+  state_->dlaa = dlaa;
-+  if (dlaa) { state_->width = 2560; state_->height = 1440; }
++  state_->mode = mode;
++  state_->dlaa = mode == "dlaa";
++  state_->output_width = output_width;
++  state_->output_height = output_height;
 +}
++uint32_t Fh1Dlss::width() const { return state_->width; }
++uint32_t Fh1Dlss::height() const { return state_->height; }
++uint32_t Fh1Dlss::output_width() const { return state_->output_width; }
++uint32_t Fh1Dlss::output_height() const { return state_->output_height; }
++void Fh1Dlss::SetSceneBacking(uint32_t scale) { state_->backing_scale = scale; }
 +Fh1Dlss::~Fh1Dlss() {
 +#if defined(REX_FH1_NGX)
 +  auto& s = *state_;
@@ -923,10 +1359,24 @@ index 0000000..3f14ab6
 +    REXGPU_ERROR("DLSS: unavailable (capabilities={:08X}, feature={:08X}, needs_driver={})",
 +        uint32_t(result), uint32_t(feature_result), updated_driver); return false;
 +  }
++  if (s.mode == "quality") s.quality = NVSDK_NGX_PerfQuality_Value_MaxQuality;
++  else if (s.mode == "balanced") s.quality = NVSDK_NGX_PerfQuality_Value_Balanced;
++  else if (s.mode == "dlaa") s.quality = NVSDK_NGX_PerfQuality_Value_DLAA;
++  else if (s.mode != "dlss" && s.mode != "performance") return false;
++  unsigned max_w = 0, max_h = 0, min_w = 0, min_h = 0; float sharpness = 0;
++  result = NGX_DLSS_GET_OPTIMAL_SETTINGS(s.parameters, s.output_width, s.output_height,
++      s.quality, &s.width, &s.height, &max_w, &max_h, &min_w, &min_h, &sharpness);
++  if (NVSDK_NGX_FAILED(result) || !s.width || !s.height || s.width > s.output_width ||
++      s.height > s.output_height || (s.dlaa && (s.width != s.output_width || s.height != s.output_height))) {
++    REXGPU_ERROR("DLSS: unsupported output/mode or invalid optimal settings: {:08X}", uint32_t(result));
++    return false;
++  }
++  REXGPU_INFO("DLSS: optimal {} input={}x{}, output={}x{}", s.mode, s.width, s.height,
++      s.output_width, s.output_height);
 +  s.blit = reinterpret_cast<PFN_vkCmdBlitImage>(functions.vkGetDeviceProcAddr(s.device->device(), "vkCmdBlitImage"));
 +  s.update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(functions.vkGetDeviceProcAddr(s.device->device(), "vkCmdUpdateBuffer"));
 +  if (!s.blit || !s.Create(s.images[0], s.width, s.height, VK_FORMAT_R16G16B16A16_SFLOAT) ||
-+      !s.Create(s.images[1], 2560, 1440, VK_FORMAT_R16G16B16A16_SFLOAT) ||
++      !s.Create(s.images[1], s.output_width, s.output_height, VK_FORMAT_R16G16B16A16_SFLOAT) ||
 +      !s.Create(s.images[2], s.width, s.height, VK_FORMAT_R32_SFLOAT) ||
 +      !s.Create(s.images[3], s.width, s.height, VK_FORMAT_R16G16_SFLOAT)) return false;
 +  if (!s.update_buffer || !s.CreateTemporalPipeline()) return false;
@@ -943,7 +1393,7 @@ index 0000000..3f14ab6
 +  ++s.submissions;
 +  if (s.failed) {
 +    s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
-+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, s.width, s.height, 2560, 1440);
++        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1280 * s.backing_scale, 720 * s.backing_scale, s.output_width, s.output_height);
 +    return;
 +  }
 +  const auto& f = s.device->functions();
@@ -960,11 +1410,12 @@ index 0000000..3f14ab6
 +  s.Barrier(command, input.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 +      VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 +  s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, input.image,
-+      VK_IMAGE_LAYOUT_GENERAL, s.width, s.height, s.width, s.height);
++      VK_IMAGE_LAYOUT_GENERAL, 1280 * s.backing_scale, 720 * s.backing_scale, s.width, s.height);
 +  for (auto& image : s.images)
 +    s.Barrier(command, image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 +        VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-+  const bool temporal = frame_input.depth_view != VK_NULL_HANDLE;
++  const bool temporal = frame_input.depth_view != VK_NULL_HANDLE &&
++      !(s.test_failure && std::string_view(s.test_failure) == "temporal");
 +  if (temporal) {
 +    s.Temporal(command, frame_input);
 +    if (!s.logged_temporal) {
@@ -974,8 +1425,8 @@ index 0000000..3f14ab6
 +  }
 +  if (!s.feature && !s.failed) {
 +    NVSDK_NGX_DLSS_Create_Params create{};
-+    create.Feature = {s.width, s.height, 2560, 1440,
-+        s.dlaa ? NVSDK_NGX_PerfQuality_Value_DLAA : NVSDK_NGX_PerfQuality_Value_MaxPerf};
++    create.Feature = {s.width, s.height, s.output_width, s.output_height,
++        s.quality};
 +    // This is the game's tonemapped scene, before the HUD. A float Vulkan
 +    // resource does not make those display-referred colors HDR input.
 +    create.InFeatureCreateFlags =
@@ -985,8 +1436,8 @@ index 0000000..3f14ab6
 +    if (s.test_failure && std::string_view(s.test_failure) == "create") result = NVSDK_NGX_Result_FAIL_PlatformError;
 +    if (NVSDK_NGX_FAILED(result)) {
 +      REXGPU_ERROR("DLSS: Vulkan feature creation failed: {:08X}", uint32_t(result)); s.failed = true;
-+      ReportStatus("error: NVIDIA feature creation failed. This session uses bilinear scaling; turn DLSS off and restart for native 1440p. See the game log.");
-+    } else REXGPU_INFO("DLSS: created {} feature {}x{} -> 2560x1440", s.dlaa ? "DLAA" : "Super Resolution", s.width, s.height);
++      ReportStatus("error: NVIDIA feature creation failed. This session uses bilinear scaling; turn DLSS off and restart for native rendering. See the game log.");
++    } else REXGPU_INFO("DLSS: created {} feature {}x{} -> {}x{}", s.mode, s.width, s.height, s.output_width, s.output_height);
 +  }
 +  bool rendered = false;
 +  if (s.feature && !s.failed) {
@@ -1008,10 +1459,12 @@ index 0000000..3f14ab6
 +    rendered = NVSDK_NGX_SUCCEED(result);
 +    if (!rendered) {
 +      REXGPU_ERROR("DLSS: evaluation failed: {:08X}", uint32_t(result)); s.failed = true;
-+      ReportStatus("error: NVIDIA reconstruction stopped. This session uses bilinear scaling; turn DLSS off and restart for native 1440p. See the game log.");
++      ReportStatus("error: NVIDIA reconstruction stopped. This session uses bilinear scaling; turn DLSS off and restart for native rendering. See the game log.");
 +    } else {
-+      if (++s.frames == 1) ReportStatus(s.dlaa ? "ready: DLAA is active at native 1440p." :
-+          "ready: DLSS is active: 720p scene to 1440p, with native 1440p UI.");
++      if (++s.frames == 1) ReportStatus("ready: " + s.mode + " active: " +
++          std::to_string(s.width) + "x" + std::to_string(s.height) + " NGX input to " +
++          std::to_string(s.output_width) + "x" + std::to_string(s.output_height) + ", native UI. Scene raster " +
++          std::to_string(1280 * s.backing_scale) + "x" + std::to_string(720 * s.backing_scale) + ".");
 +      if (s.frames % 120 == 0) REXGPU_DEBUG("DLSS: processed {} native Vulkan frames (game reprojection={})", s.frames, temporal);
 +    }
 +    s.previous_temporal = temporal;
@@ -1021,17 +1474,27 @@ index 0000000..3f14ab6
 +    s.Barrier(command, output.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 +        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
 +    s.Blit(command, output.image, VK_IMAGE_LAYOUT_GENERAL, destination,
-+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2560, 1440, 2560, 1440);
++        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, s.output_width, s.output_height, s.output_width, s.output_height);
 +  } else s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
-+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, s.width, s.height, 2560, 1440);
++      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1280 * s.backing_scale, 720 * s.backing_scale, s.output_width, s.output_height);
 +#endif
 +}
 +}
 diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
-index 315ea89..566579e 100644
+index 315ea89..9059c9c 100644
 --- a/src/graphics/vulkan/pipeline_cache.cpp
 +++ b/src/graphics/vulkan/pipeline_cache.cpp
-@@ -921,6 +921,16 @@ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
+@@ -314,7 +314,8 @@ bool VulkanPipelineCache::Initialize() {
+       render_target_cache_.msaa_2x_attachments_supported(),
+       render_target_cache_.msaa_2x_no_attachments_supported(), edram_fragment_shader_interlock,
+       render_target_cache_.draw_resolution_scale_x(),
+-      render_target_cache_.draw_resolution_scale_y());
++      render_target_cache_.draw_resolution_scale_y(),
++      render_target_cache_.raster_scale_x(), render_target_cache_.raster_scale_y());
+ 
+   if (edram_fragment_shader_interlock) {
+     std::vector<uint8_t> depth_only_fragment_shader_code =
+@@ -921,6 +922,16 @@ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
    return shader;
  }
  
@@ -1048,6 +1511,24 @@ index 315ea89..566579e 100644
  SpirvShaderTranslator::Modification VulkanPipelineCache::GetCurrentVertexShaderModification(
      const Shader& shader, Shader::HostVertexShaderType host_vertex_shader_type,
      uint32_t interpolator_mask, bool ps_param_gen_used) const {
+@@ -973,6 +984,8 @@ SpirvShaderTranslator::Modification VulkanPipelineCache::GetCurrentVertexShaderM
+       device_properties.shaderCullDistance &&
+       (shader.writes_point_size_edge_flag_kill_vertex() & 0b100) && !pa_cl_clip_cntl.vtx_kill_or);
+ 
++  // Bit 63 is reserved for the FH1 screen-raster variant in both stage layouts.
++  if (render_target_cache_.UsesFractionalRaster()) modification.value |= UINT64_C(1) << 63;
+   return modification;
+ }
+ 
+@@ -1025,6 +1038,8 @@ SpirvShaderTranslator::Modification VulkanPipelineCache::GetCurrentPixelShaderMo
+     }
+   }
+ 
++  // Bit 63 is reserved for the FH1 screen-raster variant in both stage layouts.
++  if (render_target_cache_.UsesFractionalRaster()) modification.value |= UINT64_C(1) << 63;
+   return modification;
+ }
+ 
 diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
 index 65aa134..9ffb126 100644
 --- a/src/graphics/vulkan/render_target_cache.cpp
@@ -1118,16 +1599,17 @@ index 65aa134..9ffb126 100644
 +
  }  // namespace rex::graphics::vulkan
 diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
-index 8197bb4..1cc9cd9 100644
+index 8197bb4..de7cfa2 100644
 --- a/src/ui/vulkan/vulkan_device.cpp
 +++ b/src/ui/vulkan/vulkan_device.cpp
-@@ -170,6 +170,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -170,6 +170,15 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
    request_promoted_extension("VK_" #name, major, minor, &ext_##major##_##minor##_##name);
  
    bool ext_KHR_portability_subset = false;
 +  const auto reconstruction = rex::cvar::GetFlagByName("fh1_upscaler");
 +  const bool dlss_requested = with_gpu_emulation && properties.vendorID == 0x10DE &&
-+      (reconstruction == "dlss" || reconstruction == "dlaa");
++      (reconstruction == "dlss" || reconstruction == "dlaa" || reconstruction == "quality" ||
++       reconstruction == "balanced" || reconstruction == "performance");
 +  bool ext_KHR_push_descriptor = false;
 +  if (dlss_requested) requested_extensions.emplace("VK_KHR_push_descriptor", &ext_KHR_push_descriptor);
 +  bool ext_NVX_binary_import = false, ext_NVX_image_view_handle = false;
@@ -1136,7 +1618,7 @@ index 8197bb4..1cc9cd9 100644
    bool ext_1_2_KHR_driver_properties = false;
    if (get_physical_device_properties2_supported) {
      // #164. Must be enabled according to the specification if the physical
-@@ -650,6 +658,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -650,6 +659,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
        XE_UI_VULKAN_FEATURE_2(features_1_2, samplerMirrorClampToEdge);
        XE_UI_VULKAN_FEATURE_2(features_1_2, uniformBufferStandardLayout);
        XE_UI_VULKAN_FEATURE_2(features_1_2, scalarBlockLayout);
@@ -1145,21 +1627,22 @@ index 8197bb4..1cc9cd9 100644
    } else {
      if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
 diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
-index 914b311..f58fe03 100644
+index 914b311..0d5f7fb 100644
 --- a/src/ui/vulkan/vulkan_instance.cpp
 +++ b/src/ui/vulkan/vulkan_instance.cpp
-@@ -124,7 +124,9 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+@@ -124,7 +124,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
    // extensions vector.
    std::unordered_map<std::string, bool*> requested_extensions;
    if (vulkan_instance->api_version_ >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
 -    vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
 +    const auto reconstruction = rex::cvar::GetFlagByName("fh1_upscaler");
-+    if (reconstruction == "dlss" || reconstruction == "dlaa")
++    if (reconstruction == "dlss" || reconstruction == "dlaa" || reconstruction == "quality" ||
++       reconstruction == "balanced" || reconstruction == "performance")
 +      vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
    } else {
      // #60.
      requested_extensions.emplace(
-@@ -135,8 +137,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+@@ -135,8 +138,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
    requested_extensions.emplace("VK_EXT_debug_utils",
                                 &vulkan_instance->extensions_.ext_EXT_debug_utils);
    // #395.

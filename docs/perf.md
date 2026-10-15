@@ -1,5 +1,17 @@
 # Performance
 
+## Multi-resolution reconstruction cost
+
+The launcher supports 1080p, 1440p and 4K output with Quality, Balanced,
+Performance and DLAA. NGX receives its recommended input dimensions; the scene
+still renders at an integer emulator scale rounded up to contain that input.
+Between-scale inputs therefore pay for extra scene pixels and an input resample.
+For example, 4K Performance currently renders a 1440p scene, samples it to 1080p,
+and reconstructs to 4K. 1080p Quality renders 720p directly and reconstructs to
+1080p. The HUD raster stays at output resolution in both cases. See
+[Native DLSS](native_dlss.md) for the dimension table and validation limits.
+These launch checks are not a matched performance benchmark.
+
 ## Native NVIDIA reconstruction, 2026-10-15 (before review fixes)
 
 These measurements predate the scene/HUD shader-cache correction. They are
@@ -9,7 +21,7 @@ A new matched performance comparison is still needed.
 Windows, RTX 5060 Ti, Vulkan, 2560x1440 output, 120 FPS cap and 16x anisotropic
 filtering. Each isolated run loaded a fresh copy of the same profile at the opening
 spawn, with the car stationary. The table uses guest-frame CSV samples from seconds
-55–70 after startup. No FH2 process was running in this set. These are one-scene
+55â€“70 after startup. No FH2 process was running in this set. These are one-scene
 measurements, not a race benchmark or a guarantee of 120 FPS.
 
 | Mode | Scene input | HUD | Guest FPS | Guest p99 (ms) |

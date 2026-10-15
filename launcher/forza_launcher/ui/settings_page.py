@@ -200,8 +200,10 @@ class SettingsPage(QWidget):
     # --- plumbing -------------------------------------------------------------------
     def set_value(self, key, value):
         self.cfg.settings[key] = schema.coerce(schema.BY_KEY[key], value)
-        if key == "fh1_upscaler" and value != "off":
-            for dep, fixed in (("gpu_backend", "vulkan"), ("resolution", "1440p"), ("resolution_scale", 2)):
+        if key in ("fh1_upscaler", "fh1_output_resolution") and self.cfg.settings.get("fh1_upscaler", "off") != "off":
+            from .. import dlss
+            resolution, _, _, scale = dlss.output_settings(self.cfg)
+            for dep, fixed in (("gpu_backend", "vulkan"), ("resolution", resolution), ("resolution_scale", scale)):
                 self.cfg.settings[dep] = fixed
                 row = self.rows.get(dep)
                 if row:
@@ -230,6 +232,8 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        if "fh1_output_resolution" in self.rows:
+            self.rows["fh1_output_resolution"].control.setEnabled(self.cfg.settings.get("fh1_upscaler", "off") != "off")
         for key in ("gpu_backend", "resolution", "resolution_scale", "present_effect"):
             if key in self.rows:
                 self.rows[key].control.setEnabled(self.cfg.settings.get("fh1_upscaler", "off") == "off")
@@ -365,7 +369,13 @@ class SettingsPage(QWidget):
     def _refresh_gpu_warnings(self):
         vendor = self.cfg.gpu_vendor()
         found = {}
-        for key, text, issue in gpu.warnings(vendor, self.cfg.settings):
+        warning_settings = dict(self.cfg.settings)
+        if (warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
+                warning_settings.get("fh1_output_resolution") == "4k"):
+            # The 3x allocation belongs to the native UI; these modes render
+            # the scene at 2x, so the ordinary 3x-scene warning does not apply.
+            warning_settings["resolution_scale"] = 2
+        for key, text, issue in gpu.warnings(vendor, warning_settings):
             found.setdefault(key, []).append(text + gpu.issue_text(issue))
         for key, row in self.rows.items():
             row.set_warning(" ".join(found.get(key, [])))

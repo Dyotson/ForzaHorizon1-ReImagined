@@ -60,7 +60,7 @@ def check_renderer(folder):
     try:
         folder = Path(folder)
         capabilities = json.loads((folder / "fh1-native-dlss.json").read_text(encoding="utf-8"))
-        valid = (isinstance(capabilities, dict) and capabilities.get("api") == 1 and
+        valid = (isinstance(capabilities, dict) and capabilities.get("api") == 2 and
                  capabilities.get("renderer_sha256") == _sha256(folder / "rexgpu-xenos.dll"))
     except (OSError, ValueError):
         valid = False
@@ -73,10 +73,11 @@ def configure(cfg, env, args, notes, write=True):
     if not enabled(cfg):
         return
     mode = cfg.settings.get("fh1_upscaler")
-    if mode not in ("dlss", "dlaa"):
+    if mode not in ("quality", "balanced", "dlss", "dlaa"):
         raise RuntimeError(f"Unknown NVIDIA reconstruction mode: {mode}")
     if not paths.IS_WINDOWS:
         raise RuntimeError("Native DLSS currently supports Windows only.")
+    resolution, width, height, scale = output_settings(cfg)
     if write:
         prepare(cfg)
     env["FORZA_DLSS_RUNTIME"] = str(runtime_dir(cfg))
@@ -84,9 +85,22 @@ def configure(cfg, env, args, notes, write=True):
     if write:
         status.parent.mkdir(parents=True, exist_ok=True)
     env["FORZA_DLSS_STATUS_FILE"] = str(status)
-    args += ["--gpu_backend=vulkan", "--resolution=1440p", "--resolution_scale=2"]
-    notes.append("DLAA: native 1440p world and UI." if mode == "dlaa" else
-                 "DLSS: 720p world → 1440p, native 1440p UI.")
+    args += ["--gpu_backend=vulkan", f"--resolution={resolution}", f"--resolution_scale={scale}",
+             f"--fh1_output_width={width}", f"--fh1_output_height={height}"]
+    label = {"quality": "DLSS Quality", "balanced": "DLSS Balanced", "dlss": "DLSS Performance",
+             "dlaa": "DLAA"}[mode]
+    notes.append(f"{label}: {resolution} output and native {resolution} UI. " +
+                 ("Output-sized NGX input." if mode == "dlaa" else
+                  "NVIDIA selects the DLSS input; the scene raster rounds up to an integer scale."))
+
+
+def output_settings(cfg):
+    resolution = cfg.settings.get("fh1_output_resolution", "1440p")
+    sizes = {"1080p": (1920, 1080, 2), "1440p": (2560, 1440, 2), "4k": (3840, 2160, 3)}
+    if resolution not in sizes:
+        raise RuntimeError(f"Unsupported NVIDIA output resolution: {resolution}")
+    return (resolution, *sizes[resolution])
+
 
 
 def session_status(plan):

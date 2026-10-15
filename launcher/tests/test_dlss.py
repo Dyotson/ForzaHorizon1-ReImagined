@@ -81,7 +81,7 @@ class RuntimeSetup(unittest.TestCase):
         self.assertEqual(env["FORZA_DLSS_RUNTIME"], str(dlss.runtime_dir(self.cfg)))
         self.assertIn("--resolution=1440p", args)
         self.assertIn("--resolution_scale=2", args)
-        self.assertIn("720p", notes[0])
+        self.assertIn("DLSS Performance", notes[0])
         self.assertFalse(dlss.runtime_dir(self.cfg).exists())
 
     def test_dlaa_launch_prepares_runtime_and_describes_native_input(self):
@@ -90,7 +90,42 @@ class RuntimeSetup(unittest.TestCase):
         with patch.object(dlss, "prepare") as prepare:
             dlss.configure(self.cfg, {}, [], notes)
             prepare.assert_called_once_with(self.cfg)
-        self.assertEqual(notes, ["DLAA: native 1440p world and UI."])
+        self.assertIn("Output-sized NGX input", notes[0])
+
+    def test_output_and_quality_matrix_uses_independent_dimensions(self):
+        for output, width, height, scale in (("1080p", 1920, 1080, 2),
+                                             ("1440p", 2560, 1440, 2), ("4k", 3840, 2160, 3)):
+            for mode in ("quality", "balanced", "dlss", "dlaa"):
+                with self.subTest(output=output, mode=mode):
+                    self.cfg.settings = {"fh1_upscaler": mode, "fh1_output_resolution": output}
+                    args, notes = [], []
+                    dlss.configure(self.cfg, {}, args, notes, write=False)
+                    self.assertIn(f"--resolution={output}", args)
+                    self.assertIn(f"--resolution_scale={scale}", args)
+                    self.assertIn(f"--fh1_output_width={width}", args)
+                    self.assertIn(f"--fh1_output_height={height}", args)
+                    self.assertIn(f"native {output} UI", notes[0])
+
+    def test_output_selector_is_launcher_only(self):
+        from forza_launcher.config import Config, render_toml
+        cfg = Config(self.root / "launcher.json")
+        cfg.settings["fh1_output_resolution"] = "4k"
+        self.assertNotIn("fh1_output_resolution", render_toml(cfg))
+
+    def test_old_renderer_api_is_rejected_even_with_a_matching_hash(self):
+        binary = self.root / "rexgpu-xenos.dll"
+        binary.write_bytes(b"1440p-only renderer")
+        metadata = {"api": 1, "renderer_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+        (self.root / "fh1-native-dlss.json").write_text(json.dumps(metadata))
+        with self.assertRaisesRegex(RuntimeError, "updated SDK"):
+            dlss.check_renderer(self.root)
+
+    def test_invalid_output_is_rejected_before_preparing_runtime(self):
+        self.cfg.settings = {"fh1_upscaler": "quality", "fh1_output_resolution": "720p"}
+        with patch.object(dlss, "prepare") as prepare:
+            with self.assertRaisesRegex(RuntimeError, "Unsupported NVIDIA output"):
+                dlss.configure(self.cfg, {}, [], [])
+            prepare.assert_not_called()
 
     def test_off_leaves_launch_unchanged(self):
         self.cfg.settings = {"fh1_upscaler": "off"}
@@ -123,7 +158,7 @@ class RuntimeSetup(unittest.TestCase):
             dlss.check_renderer(self.root)
         binary = self.root / "rexgpu-xenos.dll"
         binary.write_bytes(b"native renderer")
-        metadata = {"api": 1, "renderer_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+        metadata = {"api": 2, "renderer_sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
         (self.root / "fh1-native-dlss.json").write_text(json.dumps(metadata))
         dlss.check_renderer(self.root)
         binary.write_bytes(b"older SDK overlay")

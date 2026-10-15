@@ -88,12 +88,18 @@ add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
     restart=True, legacy={"fsr2": "fsr", "fsr3": "fsr"})
 if IS_WINDOWS:
     add("fh1_upscaler", "NVIDIA DLSS", "Display", "choice", "off",
-        "Performance reconstructs the 720p world at 1440p; DLAA anti-aliases native 1440p. "
-        "Menus, HUD and car labels stay at 1440p. "
+        "Reconstruct the scene with NVIDIA's recommended input size for the selected mode, "
+        "or use output-sized input with DLAA. Menus, HUD and car labels stay at output resolution. "
+        "The scene uses an integer emulator scale, then resamples between scales; these modes may cost extra. "
         "Requires an RTX GPU; the NVIDIA runtime downloads automatically on first use.",
-        "NVIDIA DLSS", choices=[("off", "Off"), ("dlss", "Performance · 720p → 1440p"),
-                                ("dlaa", "DLAA · native 1440p")],
+        "NVIDIA DLSS", choices=[("off", "Off"), ("quality", "Quality"), ("balanced", "Balanced"),
+                                ("dlss", "Performance"), ("dlaa", "DLAA (native input)")],
         platform="windows", restart=True)
+    add("fh1_output_resolution", "Output resolution", "Display", "choice", "1440p",
+        "The reconstructed picture and native UI resolution. Restart the game after changing it.",
+        "NVIDIA DLSS", choices=[("1080p", "1920 x 1080"), ("1440p", "2560 x 1440"),
+                                ("4k", "3840 x 2160 (4K)")], platform="windows", restart=True)
+
 add("swap_post_effect", "Anti-aliasing post effect", "Display", "choice", "none",
     "FXAA on the final image.", "Picture",
     choices=[("none", "None"), ("fxaa", "FXAA"), ("fxaa_extreme", "FXAA extreme")], restart=True)

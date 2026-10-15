@@ -1,30 +1,56 @@
 # Native NVIDIA reconstruction (Windows development branch)
 
-Settings > Display > NVIDIA DLSS offers Off, Performance (720p to 1440p), and
-DLAA (native 1440p). These modes use NVIDIA's NGX Vulkan implementation on a
-supported RTX GPU and driver. They are separate from the presenter's spatial
-upscaling filter.
+Settings > Display > NVIDIA DLSS offers Off, Quality, Balanced, Performance, and
+DLAA, with a separate 1080p, 1440p or 4K output choice. These use NVIDIA's NGX
+Vulkan runtime on a supported RTX GPU and driver. They are separate from the
+presenter's spatial upscaling filter. Changes require restarting the game.
 
 On first Play, the launcher downloads the runtime and its license directly from
 NVIDIA's public DLSS SDK, verifies pinned SHA-256 hashes, and stores them under
 `<data folder>/graphics/nvidia-dlss/<SDK revision>`. Later launches reuse verified
-files offline; changed or incomplete files are downloaded again. The download
-runs in the background and can be cancelled. No manual DLL copying or system
-installation is needed. Completed downloads are moved atomically into the private
-runtime directory, rather than retained as a second DLL copy. Verification runs
-on the background preparation task; unchanged files reuse a hash cached by path,
-mtime, size and file identity. Settings previews do not verify binaries. The
-launcher removes its own status file when the game session ends.
+files offline; changed or incomplete files are downloaded again. Preparation runs
+in the background and can be cancelled. No manual DLL copying or system
+installation is needed. Completed downloads are moved into the private runtime
+folder instead of retaining a second copy. Unchanged-file verification is cached;
+settings previews do not hash binaries. Session-owned status files are removed
+when the game ends.
 
-Both modes select Vulkan, a 1440p output, and render scale 2 for the UI. Performance
-uses separate 1x scene render-target, texture and graphics-pipeline caches, then reconstructs the
-1280x720 scene into the native 2560x1440 target before HUD draws. DLAA keeps the
-scene at 2560x1440 and uses NGX's DLAA mode. The existing 2x texture cache is shared
-in DLAA so scaled resolves remain coherent. Small title-screen intermediate
-targets do not trigger the scene/UI split; a depth-only HUD draw defers the transfer
-until its color attachment exists. Each pipeline cache keeps its matching render-
-target cache and shader translator, including scale-dependent VPOS and memexport
-code. Shader storage for the scene is separate from the native-HUD pipeline store.
+The output selector sets the native HUD/menu/label resolution independently of
+the scene. `NGX_DLSS_GET_OPTIMAL_SETTINGS` supplies the scene dimensions for the
+chosen quality mode and output. DLAA requests full output-resolution input. For
+example, 1080p Quality normally selects 1280x720 input; 4K Performance normally
+selects 1920x1080 input. The runtime's reported dimensions, not a fixed ratio,
+control feature creation, input images, motion vectors, jitter and evaluation.
+
+Guest EDRAM resolves still require an integer scene raster scale. The scene is
+rendered at the smallest integer multiple of 1280x720 that contains NGX's input,
+then sampled into the exact recommended input image. For example:
+
+| Mode | Scene raster | NGX input | Output / native UI |
+| --- | --- | --- | --- |
+| 1080p Quality | 1280x720 | 1280x720 | 1920x1080 |
+| 1080p Performance | 1280x720 | 960x540 | 1920x1080 |
+| 1440p Performance | 1280x720 | 1280x720 | 2560x1440 |
+| 4K Quality | 2560x1440 | 2560x1440 | 3840x2160 |
+| 4K Performance | 2560x1440 | 1920x1080 | 3840x2160 |
+
+The runtime may recommend other exact input dimensions. Between-scale modes do
+**not** yet shade only the NGX input pixel count: they pay for the ceiling raster
+and an input resample. 1080p DLAA likewise receives a native 1080p input sampled
+from a 1440p scene raster. This keeps the integration functional without claiming
+the performance of a renderer that supports arbitrary scene dimensions. A true
+fractional scene raster remains separate renderer work; the attempted padded
+scene implementation corrupted reflection/post-processing resolves and is not
+used here.
+
+The output selector independently controls the HUD/menu/label raster. The 1080p
+UI occupies an exact 1920x1080 rectangle inside the integer-tiled UI allocation;
+its viewport, scissor and VPOS match that rectangle. NGX writes its output before
+HUD draws. Texel-addressed compute presentation excludes padded texels without
+resizing the HUD. Pipeline caches keep matching render-target caches/translators
+and separate shader storage by scene input/output dimensions and scene/UI role.
+Renderer capability API 2 prevents an older 1440p-only SDK from silently ignoring
+the new output controls.
 
 Depth and camera/object reprojection come from the game's resolved depth/stencil
 texture and the constants of its `PPMotionBlurDepthHorizonVel` pass. A compute pass
@@ -60,7 +86,7 @@ revision is `374959484e79a640feaba44c93ac8cfb0a03f5b5`; its
 applies to those components. Both launcher staging and `tools/build_windows.sh`
 include the renderer capability metadata and NVIDIA SDK notice in packaged builds.
 
-This remains a development integration limited to 16:9 1440p output. Gameplay,
+This remains a development integration limited to 16:9 1080p, 1440p and 4K output. Gameplay,
 title-screen startup and native HUD composition have been exercised locally;
 camera cuts, transparency and all race/menu transitions need broader testing.
 The separate NVIDIA traffic-car blowout was reproduced with DLSS disabled and
@@ -88,3 +114,25 @@ session through the launcher's plan/session path reached active DLSS with native
 1440p HUD and game reprojection, including driving, and cleaned up its status file.
 The 16 runtime/packaging tests and offscreen success/cancel/failure worker checks
 passed. These checks do not establish that the remaining edge artifact is fixed.
+
+
+Multi-resolution validation (2026-10-15, Windows / RTX 5060 Ti): the updated SDK
+was rebuilt, and the complete ordered patch series applies cleanly. The launcher
+output/mode matrix covers all twelve combinations; 20 runtime/packaging tests,
+54 upstream launcher tests (10 skipped), and offscreen settings/worker checks
+passed. Isolated TU4 driving runs exercised 1080p Quality/Performance/DLAA,
+1440p Balanced, and 4K Quality/Performance/DLAA. Native output captures are
+1920x1080 and 3840x2160 respectively. The renderer logs both actual scene raster
+and NGX input dimensions rather than conflating the two.
+
+When scene and UI use different scaled-resolve buffers, a GPU compute pass
+resamples the per-guest-pixel sample blocks into the other cache and invalidates
+its texture data through the normal resolve notifications. This preserves
+scene-produced minimap/HUD textures without borrowing image views or reading
+back to the CPU. The live 4K Performance test caught a missing minimap before
+this synchronization; the corrected capture includes it.
+
+The earlier edge artifact remains visible in some captures. 4K DLAA also shows
+scene seams consistent with the existing warning for 3x scene rendering (#47).
+These modes remain experimental; this work does not establish artifact-free
+rendering or a matched performance improvement.
