@@ -443,7 +443,8 @@ class SettingsPage(QWidget):
         items = [
             line("Game program folder", "Where the game's executable is. Empty: the game the launcher built (the runtime folder in the game data folder).",
                  "game_dir", "automatic", True),
-            line("Game data folder", "Saves, DLC, shader cache, extracted game files and the log. "
+            line("Game data folder", "Saves, DLC, shader cache, extracted game files, the build and the log. "
+                 "Change it in Setup (Where the game is built), which checks the folder and can copy your saves. "
                  "Empty: " + str(game.paths.data_home()), "data_root", "automatic", True),
             line("Extra command-line flags", "Added to the game's command line, for example "
                  "--resolution_scale=2.", "extra_args", "--flag=value"),

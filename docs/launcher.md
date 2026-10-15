@@ -45,8 +45,8 @@ machine from their own copy:
    `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
-Data lives in the game's user folder (`~/.local/share/forza`, `Documents\forza` on Windows,
-changeable under Settings > Advanced): `game/` (extracted files), `toolchain/`, `downloads/`,
+Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
+`Documents\forza` for an install that already lives there; changeable under Setup > "Where the game is built", see "Round 5"): `game/` (extracted files), `toolchain/`, `downloads/`,
 `sdk/`, `build/`, `runtime/` (what Play runs, with `forza.toml`), saves, `forza.log`.
 The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 (`%APPDATA%\ForzaReImagined\launcher.json`).
@@ -66,8 +66,8 @@ The launcher's own config is `~/.config/forza-reimagined/launcher.json`
   form must reproduce the notice, which `licenses/rexglue-sdk.txt` in every package does.
   The overlay holds SDK code only, no game code.
 * Windows (built once in the VM, see "Windows"): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
-  way. The MSVC CRT and Windows SDK come from an installed Visual Studio / Build Tools
-  (`vswhere`, `vcvars64.bat`) if there is one, else **xwin** on the player's machine after the
+  way. The MSVC CRT and Windows SDK come from an installed Visual Studio 2022 (17.3+) / Build Tools
+  (`vswhere`, `vcvars64.bat`; older ones are skipped, see "Round 5") if there is one, else **xwin** on the player's machine after the
   player ticks "I accept Microsoft's license" (the launcher links the license; nothing of
   Microsoft's is redistributed). The toolchain file is `tools/cmake/windows-native-clang-cl.cmake`.
   The Windows overlay is the whole SDK prefix (the SDK's prebuilt Windows plugin has no
@@ -464,3 +464,70 @@ The `installer-test` job in `release.yml` (it runs the script on the CI-built in
           $exe = (Get-ChildItem installer\*Setup*.exe | Select-Object -First 1).FullName
           launcher\packaging\test_installer.ps1 -Setup $exe
 ```
+
+### Round 5: #37 (Visual Studio 2017 picked) and #38 (access denied under Documents, Discussion #31)
+
+**#37.** A player's log said `MSVC: Visual Studio at ...\2017\Professional`; every file then failed (`struct char8_t;` in
+`<experimental/filesystem>`, `'bit' file not found`, `'span' file not found`): clang-cl compiles against the MSVC STL of
+that install, 14.16, which has none of the C++23 the SDK headers and the project use. `vswhere -latest` had returned it
+because no version was required. What the code needs (grep of the SDK's `include/` and `src/`): `<expected>` with
+`std::expected`/`std::unexpected` (SDK headers, 5 + 3 uses), `std::byteswap`, `std::unreachable`, `std::popcount`,
+`std::rotl`, `<span>`, `<bit>`, `std::jthread`/`stop_token`, `std::endian`; the project itself uses no further library
+feature. The newest of these is `<expected>`: MSVC STL of Visual Studio 2022 **17.3 = toolset 14.33**. Rule
+(`build_env.find_msvc`, constants `MIN_VS = (17, 3)`, `MIN_TOOLSET = (14, 33)`):
+
+* `vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json -utf8` (without `-latest`)
+  lists every installation, newest first; one older than 17.3 is skipped by its version without running anything;
+* for the others `vcvars64.bat` is run and its environment checked by what is really installed, not by a number:
+  `VCToolsVersion` >= 14.33, `<expected>`, `<span>`, `<bit>` and `windows.h` found on `INCLUDE` (a Visual Studio 2022
+  can hold only the 2019 toolset 14.29, or no Windows SDK);
+* the first that passes is used; otherwise the downloaded runtime (xwin, the license tick) is used as before.
+
+The log says it, for example `MSVC: found ... 2022 ... ; ... 2017 ...`, `MSVC: skipping Visual Studio Professional 2017
+15.9.36 at ...: too old: its C++ standard library (MSVC 14.1x) lacks <expected> ...`, `MSVC: using Visual Studio Build Tools
+2022 17.14.5 at ... (toolset 14.44.35207)` or `MSVC: no installed Visual Studio is new enough; the Microsoft C++ runtime
+and Windows SDK are downloaded instead`. The Setup page asks for the license unless this same selection finds a usable
+install. Untested: a real Visual Studio 2022 (the VM has none; an old STL under clang 23 may have its own problems below
+17.8, the version floor is the library's, not a tested one).
+Tests: `python3 -m unittest launcher/test_msvc.py` (fake vswhere JSON: 2017/2019 skipped, newest compatible chosen, a
+2022 with only toolset 14.29 skipped, missing header/SDK reasons, nothing installed). In the VM (a fake `vswhere.exe` from
+C# printing JSON, fake `vcvars64.bat` files, real `cmd` run): 2017 alone, 2017 + 2022 with toolset 14.44, 2017 + 2022 with
+14.29 give the logs above and the right choice; the real `vswhere.exe` 3.1.7 accepts the flags (`[]` without Visual Studio).
+
+**#38.** `ninja: error: rebuilding 'build.ninja': GetFileAttributesEx(C:/Users/<name>/Documents/forza/sdk/.../SDL3Config.cmake):
+GetLastError() = 5`: Windows denied access to the data folder, `Documents\forza` (v0.1.x default). Documents is synced by
+OneDrive (Known Folder Move) on many machines and is a Controlled folder access / antivirus-guarded folder; a file ninja
+cannot even stat keeps `build.ninja` dirty. Changes (`forza_launcher/datafolder.py`, `paths.py`, `builder.py`, Setup page):
+
+* **Default.** Windows: `%LOCALAPPDATA%\ForzaReImagined` (not synced, not a protected folder). An install that already
+  lives in `Documents\forza` (it has content and the new folder does not exist) keeps using it, so nothing changes under
+  a working player. Linux and Flatpak are untouched (`~/.local/share/forza`, the Flatpak data dir).
+* **Choose the folder (Discussion #31).** Setup has a card "Where the game is built" (path, Change folder, Open; also in
+  Settings > Advanced as before). A chosen folder that is not empty and is not one of ours gets a `ForzaReImagined`
+  subfolder. It is checked: writable (a file is created, read and deleted), free space (about 15 GB, 18 with a toolchain
+  download, less when the game is already extracted), OneDrive. Errors block, warnings ask.
+* **Move, never delete.** Changing the folder offers to copy saves, profiles, DLC, shader cache, log and the built game
+  (`runtime/`, `build/state.json`) and, separately, the extracted game files (7 GB; or leave them in the old folder, then
+  `game_root` points there). The toolchain, SDK, downloads, xwin and build tree are not copied: they are made again (a
+  blocked folder is exactly where they fail). The old folder is left as it is and the message says so. Copy is resumable
+  (same-size files skipped) and cancellable.
+* **Offer at start (Windows).** Once, when the folder in use is the v0.1.x `Documents\forza` and it is risky (inside OneDrive,
+  not writable, or the last build was refused): a dialog proposes the new default; "Keep this folder" is remembered
+  (`advanced.data_root_asked`).
+* **OneDrive detection** (`datafolder.in_onedrive`): the folder is under a path in `OneDrive*` environment variables
+  (OneDrive, OneDriveConsumer, OneDriveCommercial), a path component is named `OneDrive...`, or a folder on the way has the
+  cloud attributes (recall on data access/open, offline, pinned, unpinned). Shown under the folder, logged at the start of a
+  build ("Warning: ...").
+* **Access denied.** Before a Windows build the folder is probed; during it, a failing command whose output has
+  `GetLastError() = 5`, `Access is denied` or `Permission denied`, or a Python `PermissionError`, ends in `FolderBlocked` with
+  a message naming OneDrive, antivirus and Controlled folder access, the folder, Windows' own words, and "choose another folder";
+  the window offers to open the folder chooser, and remembers the folder as blocked (`advanced.blocked_root`, shown red on
+  the card and used by the start offer).
+* Bug met on the way: `accept_ms_license` and `build_jobs` were not keys of the config defaults, so `_merge` dropped them
+  when the file was loaded (the license tick and job count did not survive a restart); they are keys now.
+* Not changed (not the launcher's files): `tools/dist/play.bat`, README and the bug-report template still say
+  `Documents\forza` for the zip's `play.bat`.
+
+Tests: `python3 -m unittest launcher/test_datafolder.py` (OneDrive by environment, name and attribute; the access-denied
+patterns; the message; probe; free space; defaults for a fresh and an existing install; folder choice; copy keeps the old
+folder, skips rebuildable parts, resumes, cancels).
