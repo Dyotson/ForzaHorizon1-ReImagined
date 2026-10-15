@@ -246,3 +246,140 @@ def tool_env(tools: Tools):
     if tools.path_dirs:
         env["PATH"] = os.pathsep.join(tools.path_dirs + [env.get("PATH", "")])
     return env
+
+
+# ---- Windows: the MSVC C++ runtime and Windows SDK ----------------------------------------------
+#
+# clang-cl compiles with the MSVC standard library, so the library must be new enough for the
+# project's C++23: <expected> (std::expected/std::unexpected in the SDK headers, MSVC STL of
+# Visual Studio 2022 17.3 = toolset 14.33), std::byteswap and std::unreachable (17.1/17.2),
+# <span>, <bit>, std::jthread (2019). Visual Studio 2017 (14.1x) has none of that and fails on the
+# first file (issue #37: "struct char8_t;" in <experimental/filesystem>, '<bit>' not found).
+MIN_VS = (17, 3)                # Visual Studio 2022 17.3 ...
+MIN_TOOLSET = (14, 33)          # ... which ships MSVC 14.33
+VS_COMPONENT = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+STL_HEADERS = ("expected", "span", "bit")    # present in the installed toolset, whatever its version says
+
+
+@dataclass
+class VSInstall:
+    path: str
+    version: tuple          # (17, 14, ...) from installationVersion
+    name: str = ""
+
+
+def vswhere_path() -> Path:
+    pf = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    return Path(pf) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+
+
+def parse_vswhere(text: str) -> list:
+    """The Visual Studio installations in vswhere's `-format json` output, newest first."""
+    import json
+    try:
+        data = json.loads(text or "[]")
+    except ValueError:
+        return []
+    out = []
+    for d in data if isinstance(data, list) else []:
+        path = d.get("installationPath")
+        if not path:
+            continue
+        ver = tuple(int(x) for x in re.findall(r"\d+", str(d.get("installationVersion", ""))))
+        name = d.get("displayName") or d.get("productId") or "Visual Studio"
+        shown = (d.get("catalog") or {}).get("productDisplayVersion") or d.get("installationVersion", "")
+        out.append(VSInstall(path, ver, f"{name} {shown}".strip()))
+    out.sort(key=lambda v: v.version, reverse=True)
+    return out
+
+
+def list_vs_installs(run=subprocess.run) -> list:
+    """Every Visual Studio / Build Tools installation with the C++ tools, newest first."""
+    vw = vswhere_path()
+    if not vw.is_file():
+        return []
+    for extra in (["-utf8"], []):
+        try:
+            r = run([str(vw), "-products", "*", "-requires", VS_COMPONENT, "-format", "json"] + extra,
+                    capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if r.returncode == 0:
+            return parse_vswhere(r.stdout)
+    return []
+
+
+def vs_too_old(v: VSInstall) -> str | None:
+    """Why the installation cannot be used (by version, from vswhere), else None."""
+    if v.version[:2] < MIN_VS:
+        return (f"too old: its C++ standard library (MSVC {_msvc_for_vs(v.version)}) lacks <expected> and other C++23 "
+                f"parts the game's code needs; Visual Studio {MIN_VS[0]}.{MIN_VS[1]} (2022) or newer is required")
+    return None
+
+
+def _msvc_for_vs(version: tuple) -> str:
+    return {15: "14.1x (Visual Studio 2017)", 16: "14.2x (Visual Studio 2019)"}.get(
+        version[0] if version else 0, "older than 14.33")
+
+
+def msvc_env_problem(env: dict) -> str | None:
+    """Why an environment from vcvars64.bat cannot compile and link the game, else None. Checks what is
+    really installed (the headers), not only a version: a Visual Studio 2022 may hold just an old toolset."""
+    inc = [d for d in env.get("INCLUDE", "").split(os.pathsep) if d]
+    if not inc or not env.get("LIB"):
+        return "vcvars64.bat gave no INCLUDE/LIB (the C++ tools or the Windows SDK are not installed)"
+    ver = env.get("VCToolsVersion", "")
+    m = re.match(r"(\d+)\.(\d+)", ver)
+    if m and (int(m.group(1)), int(m.group(2))) < MIN_TOOLSET:
+        return (f"its C++ toolset is MSVC {ver}, older than {MIN_TOOLSET[0]}.{MIN_TOOLSET[1]} "
+                "(install the latest MSVC v143 build tools in the Visual Studio Installer)")
+    for h in STL_HEADERS:
+        if not any(os.path.isfile(os.path.join(d, h)) for d in inc):
+            return f"its C++ standard library has no <{h}> (MSVC {ver or 'unknown version'})"
+    if not any(os.path.isfile(os.path.join(d, "windows.h")) for d in inc):
+        return "no Windows SDK installed (windows.h not found)"
+    return None
+
+
+def load_vcvars(vs_path: str, run=subprocess.run) -> dict:
+    """The environment after vcvars64.bat of the installation (empty when it fails)."""
+    vcvars = Path(vs_path) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+    if not vcvars.is_file():
+        return {}
+    res = run(f'cmd /c ""{vcvars}" >nul && set"', capture_output=True, text=True, shell=True, timeout=120)
+    env = {}
+    for line in res.stdout.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            env[k] = v
+    return env
+
+
+def find_msvc(log=lambda s: None, installs=None, load=load_vcvars):
+    """(environment, path) of the newest installed Visual Studio / Build Tools whose C++ toolset can
+    build the game, else (None, ""). Says in `log` which were found and why each other was skipped,
+    so a player's log shows why the downloaded runtime is used instead."""
+    installs = list_vs_installs() if installs is None else installs
+    if not installs:
+        log("MSVC: no Visual Studio with the C++ tools found")
+        return None, ""
+    log("MSVC: found " + "; ".join(f"{v.name} at {v.path}" for v in installs))
+    for v in installs:
+        why = vs_too_old(v)
+        if why:
+            log(f"MSVC: skipping {v.name} at {v.path}: {why}")
+            continue
+        env = load(v.path)
+        why = msvc_env_problem(env)
+        if why:
+            log(f"MSVC: skipping {v.name} at {v.path}: {why}")
+            continue
+        log(f"MSVC: using {v.name} at {v.path} (toolset {env.get('VCToolsVersion', '?')})")
+        return env, v.path
+    log("MSVC: no installed Visual Studio is new enough; the Microsoft C++ runtime and Windows SDK are downloaded instead")
+    return None, ""
+
+
+def usable_vs_installed() -> bool:
+    """Cheap check by version (no vcvars run): is a Visual Studio 2022 17.3+ with C++ tools installed?"""
+    return any(vs_too_old(v) is None for v in list_vs_installs())

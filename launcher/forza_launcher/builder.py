@@ -624,29 +624,15 @@ def sync_toolchain_file(root: Path) -> Path:
 def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     """Windows: the environment (INCLUDE, LIB, PATH) of the MSVC CRT and Windows SDK, from an
     installed Visual Studio, else from xwin, which needs the player to accept Microsoft's license."""
-    pf = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    vswhere = Path(pf) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-    if vswhere.is_file():
-        out = subprocess.run([str(vswhere), "-latest", "-products", "*", "-requires",
-                              "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property",
-                              "installationPath"], capture_output=True, text=True).stdout.strip()
-        vcvars = Path(out) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat" if out else None
-        if vcvars and vcvars.is_file():
-            res = subprocess.run(f'cmd /c ""{vcvars}" >nul && set"', capture_output=True, text=True, shell=True)
-            env = {}
-            for line in res.stdout.splitlines():
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    env[k] = v
-            if env.get("INCLUDE") and env.get("LIB"):
-                rep.log(f"MSVC: Visual Studio at {out}")
-                return env
+    env, _path = build_env.find_msvc(rep.log)
+    if env:
+        return env
     xdir = opts.root / "xwin"
     if not (xdir / "crt" / "include").is_dir():
         if not opts.accept_ms_license:
             raise BuildError("The Microsoft C++ runtime and Windows SDK are needed and are not installed. "
                              "Accept Microsoft's license in the setup page to download them, or install "
-                             "Visual Studio Build Tools with the C++ and Windows SDK workloads.")
+                             "Visual Studio 2022 (or its Build Tools) with the C++ and Windows SDK workloads.")
         arc = fetch.download("xwin-windows", opts.root / "downloads", cancelled=rep.cancelled)
         tooldir = build_env.toolchain_dir(opts.root) / f"xwin-{pins.XWIN_VERSION}"
         fetch.unpack("xwin-windows", arc, tooldir, strip=1)

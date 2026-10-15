@@ -343,7 +343,7 @@ class SetupPage(QWidget):
         self.ms = None
         if sys.platform == "win32":
             self.ms = WrappedCheck("I accept Microsoft's license terms for the C++ runtime and Windows SDK "
-                                "(downloaded to this PC only if Visual Studio Build Tools are not installed)")
+                                "(downloaded to this PC only if no Visual Studio 2022 with the C++ tools is installed)")
             self.ms.setChecked(bool(cfg.advanced.get("accept_ms_license")))
             self.ms.toggled.connect(lambda v: (cfg.advanced.__setitem__("accept_ms_license", v), cfg.save()))
             self.c3.lay.addWidget(self.ms)
@@ -591,11 +591,10 @@ class SetupPage(QWidget):
                                     "the base game.")
                 return
         if self.ms is not None and not self.ms.isChecked():
-            have_vs = Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-            if not have_vs.is_file() and not (cfg.data_home() / "xwin" / "crt" / "include").is_dir():
+            if not build_env.usable_vs_installed() and not (cfg.data_home() / "xwin" / "crt" / "include").is_dir():
                 QMessageBox.information(self, "Microsoft license",
                                         "Accept Microsoft's license for the C++ runtime and Windows SDK to continue "
-                                        "(or install Visual Studio Build Tools).")
+                                        "(or install Visual Studio 2022 Build Tools).")
                 return
         tools = build_env.detect_tools(cfg.data_home())
         if tools.problems:
