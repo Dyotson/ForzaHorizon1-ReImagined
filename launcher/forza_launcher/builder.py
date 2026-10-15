@@ -846,6 +846,14 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
         for dll in sorted((sdk / "bin").glob("*.dll")):
             if not dll.name.endswith(("d.dll", "rd.dll")):
                 shutil.copy2(dll, rt / dll.name)
+        ngx_license = sdk / "share" / "licenses" / "nvidia-dlss" / "LICENSE.txt"
+        if ngx_license.is_file():
+            shutil.copy2(ngx_license, rt / "NVIDIA-DLSS-LICENSE.txt")
+        capabilities = sdk / "bin" / "fh1-native-dlss.json"
+        if capabilities.is_file():
+            shutil.copy2(capabilities, rt / capabilities.name)
+        else:
+            (rt / "fh1-native-dlss.json").unlink(missing_ok=True)
         return rt
     modules = ["forza_XMediaFacade_default", "forza_SpeechFacade_default"]
     for name in ["forza"] + modules:

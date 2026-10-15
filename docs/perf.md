@@ -1,5 +1,37 @@
 # Performance
 
+## Native NVIDIA reconstruction, 2026-10-15
+
+Windows, RTX 5060 Ti, Vulkan, 2560x1440 output, 120 FPS cap and 16x anisotropic
+filtering. Each isolated run loaded a fresh copy of the same profile at the opening
+spawn, with the car stationary. The table uses guest-frame CSV samples from seconds
+55–70 after startup. No FH2 process was running in this set. These are one-scene
+measurements, not a race benchmark or a guarantee of 120 FPS.
+
+| Mode | Scene input | HUD | Guest FPS | Guest p99 (ms) |
+| --- | --- | --- | ---: | ---: |
+| Native | 2560x1440 | 2560x1440 | 53.9 | 20.0 |
+| DLSS Performance | 1280x720 | 2560x1440 | 88.1 | 12.6 |
+| DLAA | 2560x1440 | 2560x1440 | 50.0 | 21.7 |
+
+The earlier proxy rendered the scene at full resolution and downsampled it before
+DLSS. The native path instead uses a separate 1x scene cache, game depth/object
+reprojection, and viewport jitter, and reconstructs before the native HUD draws.
+These measurements use the corrected tonemapped-input flag and include the public
+main changes through `cc638e7` and the NVIDIA reflection-sampling correction
+(SDK patch 0047). All three runs have zero scene-transfer failures;
+the NVIDIA runs also have zero feature/evaluation failures. See [Native DLSS](native_dlss.md) for scope and known issues.
+
+## Vulkan presentation pipeline cache, 2026-10-14
+
+SDK patch 0045 records the output format when the presenter creates its pipeline.
+Previously it waited for the prior submission, destroyed the pipeline and created
+it again on every paint. The unfixed 75-second run created over 3,100 host graphics
+pipelines; the corrected run stopped repeatedly creating that pipeline. This fixes
+frame delivery overhead, without promising a particular rendering frame rate.
+
+## Frame statistics
+
 Frame statistics use the same definitions as RecompiledHaloReach so the two projects
 compare (`src/debug/frame_stats.cpp`, enabled with `RECOMP_PERF=1`):
 

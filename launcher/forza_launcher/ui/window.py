@@ -7,7 +7,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, game, paths
+from .. import APP_NAME, __version__, builder, game, paths, dlss
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
@@ -26,7 +26,11 @@ class MainWindow(QMainWindow):
                 pass
         self.session = None
         self.session_plan = None
+        self._dlss_session_status = None
         self._busy = False
+        self._dlss_task = None
+        self._dlss_result = (False, "")
+        self._close_after_dlss = False
         self.setWindowTitle(APP_NAME)
         icon = paths.asset("logo.png")
         if icon.is_file():
@@ -137,6 +141,12 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self._dlss_task is not None and self._dlss_task.isRunning():
+            self._close_after_dlss = True
+            self._dlss_task.cancel()
+            self.status("Cancelling the DLSS download…")
+            e.ignore()
+            return
         if self.setup.busy():
             if QMessageBox.question(self, "Quit", "A task is still running. Stop it and quit? "
                                     "A build resumes where it stopped.") != QMessageBox.Yes:
@@ -210,7 +220,7 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
-        if self.running():
+        if self.running() or self._dlss_task is not None:
             return
         install, looked = game.find_game(self.cfg)
         if install is None:
@@ -221,6 +231,15 @@ class MainWindow(QMainWindow):
             self.play.show_message(msg, True)
             return
         self.settings.flush()
+        if dlss.enabled(self.cfg):
+            try:
+                dlss.check_renderer(install.dir)
+            except RuntimeError as error:
+                self.play.show_message(str(error), True, keep=True)
+                return
+            if not dlss.ready(self.cfg):
+                self._prepare_dlss()
+                return
         try:
             plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t))
             session = game.Session(plan)
@@ -231,12 +250,66 @@ class MainWindow(QMainWindow):
             return
         self.session = session
         self.session_plan = plan
+        self._dlss_session_status = None
         self.play.clear_message()
         self.play.show_message("The game is running. " + " ".join(plan.notes))
         self.poll.start()
         self.play.refresh()
 
+    def _prepare_dlss(self):
+        from .workers import Task
+        from types import SimpleNamespace
+        from ..installer import InstallError
+
+        # Settings remain editable while the worker runs. Pin this download to
+        # the data folder selected when Play was pressed.
+        home = self.cfg.data_home()
+        download_cfg = SimpleNamespace(data_home=lambda: home)
+
+        def run(task):
+            try:
+                dlss.prepare(download_cfg,
+                             lambda done, total: task.progress.emit(done / total if total else 0,
+                                                                   "Downloading NVIDIA DLSS"),
+                             task.cancelled)
+            except (OSError, RuntimeError) as error:
+                raise InstallError(str(error)) from error
+            return "NVIDIA DLSS is ready."
+
+        task = Task(run, "set up NVIDIA DLSS")
+        self._dlss_task = task
+        self._dlss_result = (False, "DLSS setup did not finish.")
+        self.play.play.setEnabled(False)
+        self.play.show_message("Setting up NVIDIA DLSS. This first download is about 56 MB.")
+        task.progress.connect(lambda fraction, _detail: self.status(
+            f"Downloading NVIDIA DLSS… {fraction:.0%}"))
+        task.done.connect(self._dlss_download_done)
+        task.finished.connect(self._dlss_download_finished)
+        task.start()
+        self.play.refresh()
+
+    def _dlss_download_done(self, ok, message):
+        self._dlss_result = (ok, message)
+
+    def _dlss_download_finished(self):
+        task, self._dlss_task = self._dlss_task, None
+        task.deleteLater()
+        self.play.play.setEnabled(True)
+        if self._close_after_dlss:
+            self.close()
+            return
+        ok, message = self._dlss_result
+        self.status(message, not ok)
+        if ok:
+            self.start_game()
+        else:
+            self.play.show_message(f"Could not set up NVIDIA DLSS: {message}", True, keep=True)
+
     def stop_game(self):
+        if self._dlss_task is not None:
+            self._dlss_task.cancel()
+            self.status("Cancelling the DLSS download…")
+            return
         if self.session is not None:
             self.session.stop()
 
@@ -246,6 +319,11 @@ class MainWindow(QMainWindow):
             return
         code = self.session.poll()
         if code is None:
+            status = dlss.session_status(self.session_plan)
+            if status and status != self._dlss_session_status:
+                self._dlss_session_status = status
+                error, message = status
+                self.play.show_message(message, error, keep=error)
             return
         self.poll.stop()
         self.session.cleanup()

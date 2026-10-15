@@ -129,11 +129,18 @@ class PlayPage(QWidget):
             "offline": "Offline",
         }[mode] + "   (Settings > Online)")
         ready = files_ok and install is not None
-        if self.window.running():
+        if self.window._dlss_task is not None:
+            self.play.setText("Preparing DLSS…")
+            self.play.setEnabled(False)
+            self.stop.setText("Cancel")
+            self.stop.show()
+        elif self.window.running():
+            self.stop.setText("Stop")
             self.play.setText("Playing...")
             self.play.setEnabled(False)
             self.stop.show()
         else:
+            self.stop.setText("Stop")
             self.stop.hide()
             self.play.setEnabled(True)
             if ready:

@@ -86,6 +86,14 @@ add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
     "cost of bilinear); CAS only sharpens, up to 2x.", "Picture",
     choices=[("bilinear", "Bilinear"), ("cas", "AMD CAS (sharpen)"), ("fsr", "AMD FSR 1")],
     restart=True, legacy={"fsr2": "fsr", "fsr3": "fsr"})
+if IS_WINDOWS:
+    add("fh1_upscaler", "NVIDIA DLSS", "Display", "choice", "off",
+        "Performance reconstructs the 720p world at 1440p; DLAA anti-aliases native 1440p. "
+        "Menus, HUD and car labels stay at 1440p. "
+        "Requires an RTX GPU; the NVIDIA runtime downloads automatically on first use.",
+        "NVIDIA DLSS", choices=[("off", "Off"), ("dlss", "Performance · 720p → 1440p"),
+                                ("dlaa", "DLAA · native 1440p")],
+        platform="windows", restart=True)
 add("swap_post_effect", "Anti-aliasing post effect", "Display", "choice", "none",
     "FXAA on the final image.", "Picture",
     choices=[("none", "None"), ("fxaa", "FXAA"), ("fxaa_extreme", "FXAA extreme")], restart=True)

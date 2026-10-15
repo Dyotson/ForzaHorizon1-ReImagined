@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, paths
+from . import TITLE_ID, paths, dlss
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -288,6 +288,10 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         args.append(f"--update_data_root={game.dir / 'update'}")  # the title update's files
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
+
+    if dlss.enabled(cfg):
+        dlss.check_renderer(game.dir)
+    dlss.configure(cfg, env, args, notes, write)
 
     extra = split_args(cfg.advanced.get("extra_args", ""))
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
