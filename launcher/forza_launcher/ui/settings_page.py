@@ -5,10 +5,10 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
                                QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
-                               QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
+                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, game, schema
+from .. import PUBLIC_SERVER, game, gpu, schema
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .widgets import Switch, card, label
@@ -44,8 +44,9 @@ DEPENDS = {  # key -> the bool setting that must be on for it to matter
 }
 
 
-def make_control(s: schema.Setting, value, on_change):
-    """A widget for the setting, calling on_change(value) when the player changes it."""
+def make_control(s: schema.Setting, value, on_change, note=None):
+    """A widget for the setting, calling on_change(value) when the player changes it. note(value)
+    may return a reason that is appended to a choice's label (a GPU's known problem, #52)."""
     if s.kind == "bool":
         w = Switch()
         w.setChecked(bool(value))
@@ -71,7 +72,8 @@ def make_control(s: schema.Setting, value, on_change):
     if s.kind == "choice":
         w = Combo()
         for v, text in s.choices:
-            w.addItem(str(text), v)
+            extra = note(v) if note else ""
+            w.addItem(f"{text} ({extra})" if extra else str(text), v)
         i = w.findData(value)
         w.setCurrentIndex(max(i, 0))
         w.setMinimumWidth(190)
@@ -133,13 +135,23 @@ class SettingRow(QWidget):
         col.addWidget(title)
         if s.help:
             col.addWidget(label(s.help, "help"))
+        self.warning = label("", "")
+        self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
+        self.warning.hide()
+        col.addWidget(self.warning)
         lay.addLayout(col, 1)
+        vendor = cfg.gpu_vendor()
         self.control = make_control(s, cfg.settings.get(s.key, s.default),
-                                    lambda v, s=s: changed(s.key, v))
+                                    lambda v, s=s: changed(s.key, v),
+                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v))
         tip = f"{s.key}" + (f" (default {s.default!r})" if s.default != "" else "")
         self.control.setToolTip(tip)
         title.setToolTip(tip)
         lay.addWidget(self.control, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+    def set_warning(self, text):
+        self.warning.setText(text)
+        self.warning.setVisible(bool(text))
 
 
 def heading(text):
@@ -206,6 +218,7 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        self._refresh_gpu_warnings()
         for key, dep in DEPENDS.items():
             row = self.rows.get(key)
             if row:
@@ -254,6 +267,8 @@ class SettingsPage(QWidget):
             "Advanced": "For testing and troubleshooting. Everything here is also a forza.toml key or a command-line flag.",
         }
         scroll, lay = self._page(g, leads[g])
+        if g == "Display":
+            self._gpu_block(lay)
         if g == "Online":
             self._online_block(lay)
         if g == "Profile":
@@ -268,6 +283,75 @@ class SettingsPage(QWidget):
             self._advanced_block(lay)
         lay.addStretch(1)
         return scroll
+
+    # --- graphics card (#52) --------------------------------------------------------
+    def _gpu_block(self, lay):
+        lay.addWidget(heading("Graphics card"))
+        vendor = self.cfg.gpu_vendor()
+        self.gpu_combo = Combo()
+        for v in gpu.VENDORS:
+            self.gpu_combo.addItem(gpu.label(v), v)
+        self.gpu_combo.addItem(gpu.label(""), "")
+        self.gpu_combo.setCurrentIndex(max(self.gpu_combo.findData(vendor), 0))
+        self.gpu_combo.setMinimumWidth(190)
+        row = QHBoxLayout()
+        row.setSpacing(24)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        t = QLabel("Your graphics card")
+        t.setStyleSheet("font-weight: 600;")
+        col.addWidget(t)
+        self.gpu_summary = label("", "help")
+        col.addWidget(self.gpu_summary)
+        row.addLayout(col, 1)
+        row.addWidget(self.gpu_combo, 0, Qt.AlignRight | Qt.AlignVCenter)
+        w = QWidget()
+        w.setLayout(row)
+        row.setContentsMargins(0, 6, 0, 6)
+        lay.addWidget(w)
+        self.gpu_notes = label("", "help")
+        lay.addWidget(self.gpu_notes)
+        self.gpu_apply = QPushButton("Use the recommended settings for this card")
+        self.gpu_apply.clicked.connect(lambda: self._gpu_chosen(self.gpu_combo.currentData(), True))
+        lay.addWidget(self.gpu_apply, 0, Qt.AlignLeft)
+        self.gpu_combo.activated.connect(lambda _i: self._gpu_chosen(self.gpu_combo.currentData(), False))
+        self._gpu_texts()
+
+    def _gpu_texts(self):
+        vendor = self.cfg.gpu_vendor()
+        p = gpu.preset(vendor)
+        detected = self.cfg.gpu.get("detected", "")
+        found = (f"Detected: {self.cfg.gpu.get('name') or gpu.label(detected)}. " if detected else "Not detected. ")
+        self.gpu_summary.setText(found + "Known problems of a card are marked on the options below; "
+                                 "your own choices are never changed behind your back.")
+        lines = ([f"Recommended: {p.summary}"] if p else
+                 ["No recommendation for this card: the launcher's general defaults apply."])
+        for text, issue in (p.notes if p else []):
+            lines.append(f"{text}{gpu.issue_text(issue)}")
+        self.gpu_notes.setText("\n".join(lines))
+        self.gpu_apply.setEnabled(p is not None)
+
+    def _gpu_chosen(self, vendor, force_apply):
+        p = gpu.preset(vendor)
+        apply_ = force_apply
+        if not force_apply and p is not None:
+            apply_ = QMessageBox.question(
+                self, "Graphics card", f"Use the recommended settings for {p.label} now?\n\n{p.summary}\n\n"
+                "This changes the backend, render scale, upscaling filter and frame rate; every other "
+                "setting stays as it is.") == QMessageBox.Yes
+        self.cfg.set_gpu_vendor(vendor, apply_)
+        self.touched()
+        self.rebuild()
+        self.window.status(f"Graphics card: {gpu.label(vendor)}" +
+                           (" (recommended settings applied)" if apply_ else ""), False)
+
+    def _refresh_gpu_warnings(self):
+        vendor = self.cfg.gpu_vendor()
+        found = {}
+        for key, text, issue in gpu.warnings(vendor, self.cfg.settings):
+            found.setdefault(key, []).append(text + gpu.issue_text(issue))
+        for key, row in self.rows.items():
+            row.set_warning(" ".join(found.get(key, [])))
 
     def _pad_block(self, lay):
         lay.insertWidget(2, heading("Players"))

@@ -91,6 +91,36 @@ ported (copy once, `--user_data_root/--cache_root/--profile_xuid`, DLC folder sh
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` / `fsr3` entries become `fsr`).
 
+### GPU choice (#52)
+
+Many glitches depend on the graphics card, so Settings > Display starts with **Graphics card**: NVIDIA, AMD, Intel,
+Steam Deck, or "Other / not sure". The launcher detects the card once (first start; the answer is kept in
+`launcher.json` under `gpu`) and preselects it; the player can change it at any time.
+
+* **Detection** (`launcher/forza_launcher/gpu.py`, no Qt): Linux reads `/sys/class/drm/card*/device/vendor`
+  (0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel); the Steam Deck is the DMI board name `Jupiter` (LCD) or `Galileo`
+  (OLED) from Valve and wins over its AMD APU. Windows asks PowerShell (`Get-CimInstance Win32_VideoController`
+  and `Win32_BaseBoard`), falling back to `wmic`; the vendor comes from the adapter name or the `VEN_xxxx` of its
+  PNP id; Microsoft Basic, remote and virtual adapters are ignored. With several cards (laptop iGPU + dGPU) the
+  discrete one wins (NVIDIA, then AMD, then Intel). `FORZA_GPU=nvidia|amd|intel|deck` overrides.
+* **Defaults**: a new launcher gets the vendor's preset as its first-run values (backend, render scale, upscaling
+  filter, frame rate, shader switches). A launcher that already holds settings keeps every one: it only learns the
+  vendor. Changing the vendor asks "Use the recommended settings for X now?" (No changes only the markings);
+  the button "Use the recommended settings for this card" applies them again. Reset settings restores the preset.
+* **Known problems** are never forbidden: the option keeps working, with an orange line under it giving the reason
+  and the issue number while it holds the problem value, and the choice is marked ("Direct3D 12 (flickers on
+  NVIDIA, #46)"). The explicit choice of the player always wins.
+
+| Card | Preset | Marked as a known problem |
+|---|---|---|
+| NVIDIA | Vulkan, render scale 1, AMD FSR 1, 60 fps, shader cache and background shader compilation on (scale 2 is the most you should need) | Direct3D 12 (Windows): flicker, green reflections on glass and paint (#46). Render scale 3 and above: flicker and coloured artifacts across the map (#47). Background compilation or the shader cache off: Vulkan stutter (#49, open: warm-cache stutter unmeasured). Traffic car glow in the distance (#48): no setting avoids it |
+| AMD (Linux and Windows) | Vulkan, render scale 1, AMD FSR 1, 60 fps | none; render scale 3 and 4 are clean on Radeon (Vulkan/RADV, and Direct3D 12 under vkd3d-proton at 3) |
+| Intel | Vulkan, render scale 1, AMD FSR 1, 30 fps | nothing reported yet; Direct3D 12 (a different render target path on Intel) and render scale 2 and up are marked as untested / slow |
+| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
+
+Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
+valid for the schema, warnings, the first-run / existing-settings / player-choice flows).
+
 ## Release and CI (`.github/workflows/`)
 
 * `release.yml` (tags `v*`, manual): `sdk-linux` (`tools/build_rexglue_sdk.sh` +

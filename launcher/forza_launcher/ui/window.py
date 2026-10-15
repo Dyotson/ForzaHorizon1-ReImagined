@@ -18,6 +18,12 @@ class MainWindow(QMainWindow):
     def __init__(self, cfg: Config):
         super().__init__()
         self.cfg = cfg
+        if not cfg.gpu.get("vendor") and not cfg.gpu.get("checked"):
+            cfg.detect_gpu()   # once: preselects the GPU's choice in Settings > Display (#52)
+            try:
+                cfg.save()
+            except OSError:
+                pass
         self.session = None
         self.session_plan = None
         self._busy = False
@@ -189,8 +195,9 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Reset settings", "Reset every setting on the Settings page to its default?") \
                 != QMessageBox.Yes:
             return
-        from .. import config, schema
+        from .. import config, gpu, schema
         self.cfg.d["settings"] = {**schema.defaults(), **config.FIRST_RUN}
+        gpu.apply_preset(self.cfg.settings, self.cfg.gpu_vendor())
         self.cfg.d["online"] = {"mode": "public", "custom_server": ""}
         self.cfg.d["profile"] = {"mode": "own", "xenia_content": "", "xenia_xuid": ""}
         for k in ("extra_args", "extra_env", "extras_toml"):

@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import PUBLIC_SERVER, paths, schema
+from . import PUBLIC_SERVER, gpu, paths, schema
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
@@ -29,6 +29,8 @@ def _default():
                      "blocked_root": "",       # a data folder the last build could not use (access denied, #38)
                      "data_root_asked": False},  # the player answered the offer to leave Documents\\forza
         "settings": {**schema.defaults(), **FIRST_RUN},
+        # The graphics card the player has (#52): '' until detected; the player can change it.
+        "gpu": {"vendor": "", "detected": "", "name": "", "checked": False},
     }
 
 
@@ -77,6 +79,35 @@ class Config:
 
     def save(self):
         _atomic_write(self.path, json.dumps(self.d, indent=2) + "\n")
+
+    # --- GPU (#52) ---
+    @property
+    def gpu(self):
+        return self.d["gpu"]
+
+    def gpu_vendor(self) -> str:
+        v = self.gpu.get("vendor", "")
+        return v if v in gpu.VENDORS else ""
+
+    def detect_gpu(self, detected=None):
+        """Detect the graphics card once and preselect it. A new launcher.json gets the vendor's
+        preset (the first-run defaults); one that already holds the player's settings keeps them
+        and only learns the vendor, so warnings can show. Returns the vendor."""
+        if self.gpu.get("vendor") or self.gpu.get("checked"):
+            return self.gpu_vendor()
+        found = detected or gpu.detect()
+        self.gpu["detected"], self.gpu["name"] = found.vendor, found.name
+        self.gpu["vendor"] = found.vendor
+        self.gpu["checked"] = True
+        if found.vendor and not self.loaded:
+            gpu.apply_preset(self.settings, found.vendor)
+        return found.vendor
+
+    def set_gpu_vendor(self, vendor: str, apply_defaults: bool) -> list:
+        """The player's choice ('' = other / not sure). Returns the settings the preset changed."""
+        self.gpu["vendor"] = vendor if vendor in gpu.VENDORS else ""
+        self.gpu["checked"] = True
+        return gpu.apply_preset(self.settings, vendor) if apply_defaults else []
 
     # --- accessors ---
     def __getitem__(self, key):
