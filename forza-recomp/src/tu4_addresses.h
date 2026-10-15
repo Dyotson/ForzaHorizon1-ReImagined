@@ -84,6 +84,8 @@
 #define __imp__sub_82880A88 __imp__sub_82931F10
 #define sub_82880A90 sub_82931F18
 #define __imp__sub_82880A90 __imp__sub_82931F18
+#define sub_82895018 sub_82946618
+#define __imp__sub_82895018 __imp__sub_82946618
 #define sub_8299FB40 sub_82A54068
 #define __imp__sub_8299FB40 __imp__sub_82A54068
 #define sub_82CDC5A0 sub_82D9E548

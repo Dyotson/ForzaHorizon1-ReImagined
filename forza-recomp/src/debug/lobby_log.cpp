@@ -39,6 +39,7 @@ extern "C" REX_FUNC(__imp__sub_82876D90);
 extern "C" REX_FUNC(__imp__sub_828754A0);
 extern "C" REX_FUNC(__imp__sub_82865560);
 extern "C" REX_FUNC(__imp__sub_8287E098);
+extern "C" REX_FUNC(__imp__sub_82895018);
 
 namespace {
 
@@ -91,6 +92,8 @@ double Now() {
 // Each player's state bytes, collected while LogCheck counts them.
 thread_local std::string* collect = nullptr;
 
+uint32_t last_game = 0;  // the online game, as the lobby update last saw it
+
 }  // namespace
 
 namespace forza {
@@ -103,6 +106,7 @@ void LobbyLogTick(uint8_t* base, uint32_t game) {
   const uint32_t mode = Load32(base, game + kMode), state = Load32(base, game + kState);
   const uint32_t key = mode << 24 | state << 8 | (g[kHost] ? 2 : 0) | (Load32(base, game + kInGame) == 1);
   static uint32_t last = ~0u;
+  last_game = game;
   if (key == last) return;
   last = key;
   REXLOG_INFO("LOBBY: t {:.1f} mode {} state {} host {} in game {} players {} preset {} next {}{} round {}",
@@ -154,8 +158,9 @@ extern "C" REX_FUNC(sub_82876D90) {
 extern "C" REX_FUNC(sub_82865560) {
   if (collect) {
     const uint8_t* p = forza::GuestPtr(base, ctx.r3.u32);
-    *collect += fmt::format(" [{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}]", p[0], p[1], p[2],
-                            p[3], p[4], p[5], p[6], p[7]);
+    *collect += " [";
+    for (int i = 0; i < 32; ++i) *collect += fmt::format("{}{:02X}", i ? (i % 8 ? " " : "  ") : "", p[i]);
+    *collect += "]";
   }
   __imp__sub_82865560(ctx, base);
 }
@@ -175,4 +180,25 @@ extern "C" REX_FUNC(sub_8287E098) {
     }
   }
   __imp__sub_8287E098(ctx, base);
+}
+
+// The bucket check (r3 the table at game+2052 (base): per player 5 words, the first the bucket
+// it was put in; returns 0 a bucket outside its MinPlayers/MaxPlayers or a player without
+// one, 1 teams 2 apart, 2 fine). Called by sub_82875FB8 (the host's check) and sub_8289B618.
+extern "C" REX_FUNC(sub_82895018) {
+  if (!Enabled()) return __imp__sub_82895018(ctx, base);
+  const uint32_t table = ctx.r3.u32, lr = uint32_t(ctx.lr);
+  __imp__sub_82895018(ctx, base);
+  std::string words;
+  for (uint32_t i = 0; i < 20; ++i) words += fmt::format(" {}", int32_t(Load32(base, table + i * 4)));
+  const uint32_t game = last_game, result = ctx.r3.u32;
+  std::string players;
+  if (game) {
+    collect = &players;
+    CallGuest(ctx, base, __imp__sub_828754A0, game, kIsHumanPresent);
+    collect = nullptr;
+  }
+  REXLOG_INFO("LOBBY: t {:.1f} bucket check -> {} (lr {:08X}) state {} in game {} table{} players{}", Now(),
+              result, lr, game ? Load32(base, game + kState) : ~0u,
+              game ? Load32(base, game + kInGame) : ~0u, words, players);
 }
