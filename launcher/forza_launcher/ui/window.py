@@ -1,5 +1,4 @@
 """The main window: a sidebar and the Play, Setup, Settings and About pages."""
-import os
 import sys
 import threading
 
@@ -118,8 +117,7 @@ class MainWindow(QMainWindow):
         if sys.platform == "win32":
             QTimer.singleShot(600, self.setup.offer_move)
         update_result = self.show_update_result()
-        if (not paths.in_checkout() and cfg.d["check_updates"] and not update_result
-                and not os.environ.get("FORZA_UPDATE_READY")):
+        if not paths.in_checkout() and cfg.d["check_updates"] and not update_result:
             QTimer.singleShot(1500, self.about.updates.check)
 
     def show_update_result(self):
@@ -319,19 +317,4 @@ def run(argv):
     threading.excepthook = lambda a: report(a.exc_type, a.exc_value, a.exc_traceback)
     win = MainWindow(Config())
     win.show()
-    from .. import linux_update
-    def acknowledge():
-        if linux_update.acknowledge_gui_ready():
-            # The old sandbox records success after seeing our acknowledgement.
-            # Wait briefly for that result instead of missing it during startup.
-            win.result_poll = QTimer(win)
-            win.result_poll.setInterval(250)
-            attempts = [0]
-            def read_result():
-                attempts[0] += 1
-                if win.show_update_result() or attempts[0] >= 24:
-                    win.result_poll.stop()
-            win.result_poll.timeout.connect(read_result)
-            win.result_poll.start()
-    QTimer.singleShot(0, acknowledge)
     return app.exec()

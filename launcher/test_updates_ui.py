@@ -162,22 +162,53 @@ class UpdateUITests(unittest.TestCase):
             self.assertFalse(self.card.installing)
             self.assertFalse(self.win.setup.isEnabled())  # stays disabled while handing off
 
-    def test_flatpak_install_failure_keeps_launcher_open_and_usable(self):
-        from forza_launcher import paths, updater, linux_update
-        self.card.downloaded = Path(self.temp.name) / "update.flatpak"
-        self.card.asset = self.asset
-        self.card.release = self.release
+    def test_flatpak_download_has_manual_instructions_without_host_execution(self):
+        import shlex
+        from forza_launcher import paths, updater
+        from forza_launcher.ui.updates import QDesktopServices, QStandardPaths
+        downloads = Path(self.temp.name) / "Player's Downloads"
+        asset = updater.Asset("ForzaHorizon1-ReImagined-x86_64.flatpak", "https://example.test", "0" * 64, 6)
+        dest = downloads / "ForzaHorizon1-ReImagined" / self.release.tag / asset.name
         with patch("forza_launcher.ui.updates.sys.platform", "linux"), \
                 patch.object(paths, "IN_FLATPAK", True), \
-                patch.object(linux_update, "install_flatpak", side_effect=updater.UpdateError("Host permission denied")), \
-                patch.object(self.win, "close") as close:
-            self.card.install()
-            self.assertFalse(self.win.setup.isEnabled())
+                patch.object(paths, "FROZEN", True), \
+                patch.object(updater.Release, "asset_for", return_value=asset), \
+                patch.object(QStandardPaths, "writableLocation", return_value=str(downloads)), \
+                patch.object(updater, "download", return_value=dest) as download, \
+                patch("subprocess.Popen") as spawn, patch("subprocess.run") as run, \
+                patch.object(self.win, "close") as close, \
+                patch.object(QDesktopServices, "openUrl", return_value=False) as open_url:
+            self.card._checked(self.release)
+            self.assertEqual(self.card.action.text(), "Download update")
+            self.card.action.click()
             self.wait_done()
-            self.assertIn("permission denied", self.card.message.text())
+            self.assertEqual(download.call_args.args[1], dest.parent)
+            self.assertEqual(self.card.action.text(), "Open download folder")
+            command = self.card.message.text().splitlines()[1]
+            self.assertEqual(shlex.split(command), ["flatpak", "install", "--user", str(dest)])
             self.assertTrue(self.win.setup.isEnabled())
-            self.assertTrue(self.card.action.isEnabled())
+            self.assertFalse(self.card.install_requested)
+            self.card.action.click()
+            open_url.assert_called_once()
+            self.assertEqual(open_url.call_args.args[0].toLocalFile(), str(dest.parent))
+            self.assertIn(command, self.card.message.text())  # folder errors retain installation instructions
+            spawn.assert_not_called()
+            run.assert_not_called()
             close.assert_not_called()
+
+    def test_flatpak_download_failure_never_offers_installation(self):
+        from forza_launcher import paths, updater
+        with patch.object(paths, "IN_FLATPAK", True), \
+                patch.object(updater, "download", side_effect=updater.UpdateError("Integrity check failed")), \
+                patch("subprocess.run") as run:
+            self.card._checked(self.release)
+            self.card.action.click()
+            self.wait_done()
+            self.assertIsNone(self.card.downloaded)
+            self.assertIn("Integrity check failed", self.card.message.text())
+            self.assertNotIn("flatpak install", self.card.message.text())
+            self.assertFalse(self.card.installing)
+            run.assert_not_called()
 
     def test_close_during_install_waits_for_install_completion(self):
         import threading
@@ -194,15 +225,15 @@ class UpdateUITests(unittest.TestCase):
             release.set()
             self.wait_done()
 
-    def test_long_install_error_reserves_its_full_wrapped_height(self):
+    def test_long_manual_command_reserves_its_full_wrapped_height(self):
         self.win.resize(900, 620)
         self.win.show_page(3)
         self.win.show()
         self.app.processEvents()
-        self.card.message.setText("Update installed, but the new launcher could not restart. "
-                                  "This window remains open. Retry or open the launcher from your application menu. "
-                                  "Log: /home/player/.var/app/io.github.dyotson.ForzaHorizon1ReImagined/"
-                                  "config/forza-reimagined/update-install.log")
+        from forza_launcher import paths
+        with patch.object(paths, "IN_FLATPAK", True):
+            self.card._downloaded(Path("/home/player/Very long Downloads folder/ForzaHorizon1-ReImagined/"
+                                       "v99.0.0/ForzaHorizon1-ReImagined-x86_64.flatpak"))
         for _ in range(3):
             self.app.processEvents()
         self.assertGreaterEqual(self.card.message.height(),

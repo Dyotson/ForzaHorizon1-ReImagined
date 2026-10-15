@@ -85,25 +85,19 @@ Installation behavior:
   a recovery backup; old backups may be removed once the new launcher works. The directory
   containing the launcher must be writable by the player. If the configured game, data or
   configuration folder is inside the launcher folder, move it using Setup before updating.
-* **Flatpak:** the verified bundle is installed through `flatpak-spawn --host` and
-  `flatpak install --bundle --or-update --noninteractive --assumeyes`, preserving a user or
-  default system installation. Flatpak manages the deployment while the existing sandbox
-  stays open; the launcher restarts after installation succeeds. The host restart forwards
-  the current display connection and waits about a minute for the replacement Qt window
-  to acknowledge that it has opened. Only then does the old window close. A failed restart
-  keeps the old window usable and reports that installation succeeded but restart failed.
-  A timed-out replacement is stopped by its Flatpak instance ID, preserving the old instance.
-  Retry also works when the same bundle is already installed or the old sandbox still
-  references the previous deployment. The manifest grants
-  `--talk-name=org.freedesktop.Flatpak` for this host handoff. This permits host command
-  execution; bundles built with an older manifest or with that permission removed report
-  the missing permission and keep the launcher open. A system installation may require
-  authorization allowed by the host's policy; a denied noninteractive operation leaves an
-  error in the launcher. Named custom Flatpak installations are not supported.
+* **Flatpak:** **Download update** saves a size- and SHA-256-verified bundle under the system's
+  Downloads folder, in `ForzaHorizon1-ReImagined/<tag>/`. The card shows the exact quoted
+  command to install it for the current user: `flatpak install --user <bundle>`. Close the
+  launcher, run that command in a host terminal, then reopen the launcher. **Open download
+  folder** opens the folder through the desktop portal; the command remains visible if that
+  fails. The manifest grants `xdg-download` write access for these bundles, while home and
+  game media remain read-only. It grants no host-command permission, and the launcher never
+  starts the Flatpak installer or restarts the sandbox itself. System installations can be
+  managed manually through the host's software tools or terminal.
 
 During installation, Play, Setup and Settings are disabled, and closing waits for the
 installation to finish. Preparation/installation errors keep the existing window usable.
-Archive helper logs and Flatpak installer output go to `update-install.log` in the configuration
+Archive helper logs go to `update-install.log` in the configuration
 folder. On restart, About displays the installation result from `update-result.txt`; this
 message is consumed once and is not overwritten by an immediate automatic release check.
 An archive helper that cannot observe the old launcher exiting within 60 seconds aborts
@@ -117,25 +111,22 @@ checks and can open a downloaded package, but never replace the checkout or run 
 Validation: `python3 -m unittest discover -s launcher -p 'test_*.py'` covers release selection,
 version comparison, download integrity, cancellation/retries, real archive replacement and
 rollback with fixture launchers, and the detached helper waiting for its parent to exit.
-Flatpak host transactions are mocked, including scope selection, permission failures and
-restart arguments, GUI acknowledgement and timeout cleanup. With PySide6 installed, offscreen UI tests cover automatic download/install,
-restart, install failure recovery, shutdown during a request or installation, and the Windows
-installer invocation. Native Windows installation still requires platform testing.
+With PySide6 installed, offscreen UI tests cover automatic archive download/install,
+restart, install failure recovery, shutdown during a request or installation, and Windows
+installer invocation. Flatpak UI tests cover the Downloads destination, shell quoting,
+manual instructions, failed integrity checks, and preservation of the instructions when
+opening the folder fails. They assert that downloading and opening the folder never invokes
+host commands, installs the bundle, or closes the launcher. The suite passes 72 tests with
+9 game-fixture tests skipped. Native Windows installation still requires platform testing.
 
-Linux platform validation uses an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb, real
-PyInstaller packages and Flatpak 1.14.6 with Freedesktop SDK 26.08. Test releases use
-versions 0.1.0 and 0.1.1 and a local HTTP fixture for release metadata and package downloads;
-normal integrity checks, UI actions and installation code run unchanged. The game itself
-is not included in these fixtures. Archive tests verify a custom installation path with
-spaces, the visible replacement GUI, retained settings/save data, and restoration of the
-previous working GUI after a deliberately broken replacement. Real user-scoped Flatpak
-checks verify bundle deployment, a visible replacement GUI, preserved settings/save data,
-permission denial, failed GUI startup with the old window retained, same-bundle retry, and
-instance-specific timeout cleanup. Full bundles exercise native installation; a small native
-delta bundle is used for the final timing correction rerun. The host restart call allows
-extra time for the readiness loop and cleanup under scheduling load. The suite passes
-83 tests on both Linux and macOS, with 9 game-fixture tests skipped. System-wide Flatpak
-authorization and Wayland require separate platform checks.
+Linux archive platform validation used an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb and
+real PyInstaller packages. Test releases used versions 0.1.0 and 0.1.1 with local HTTP release
+metadata/downloads and normal integrity checks. The game itself was not included. Tests
+verified a custom installation path with spaces, a visible replacement GUI, retained
+settings/save data, and restoration of the previous working GUI after a deliberately broken
+replacement. The current Flatpak manual-download flow is also exercised with local HTTP
+fixtures and rendered Qt UI; no native Flatpak sandbox rerun has been performed since
+removing host execution.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
@@ -343,7 +334,7 @@ server, the CI-built SDK overlay, licenses; no game code, data or generated code
 `flatpak/stage/` (git-ignored). `paths.IN_FLATPAK` (FLATPAK_ID) adds the extension's `bin` to PATH and
 switches Qt to its own file dialogs (the portal would hand out the one picked file, losing a Games on
 Demand package's `<name>.data`). Permissions: wayland, fallback-x11, pulseaudio, network, `--device=all`,
-read-only `home`, `/media`, `/run/media`, `/mnt` (other disks: `flatpak override --user --filesystem=PATH:ro`).
+read-only `home`, `/media`, `/run/media`, `/mnt`, plus writable `xdg-download` for verified launcher bundles (other disks: `flatpak override --user --filesystem=PATH:ro`).
 Saves, config, extracted game and build live in `~/.var/app/<id>/`. New CLI: `forza-launcher --extract PACKAGE`.
 
 Tested (this host, Fedora Atomic, user installation): the app builds and installs; `--extract` of the

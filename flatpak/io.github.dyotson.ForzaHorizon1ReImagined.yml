@@ -25,11 +25,11 @@ finish-args:
   # The player's own game files (a Games on Demand package is a file plus a <name>.data folder,
   # which the file chooser portal would not hand over together), title update and DLC. Read only.
   - --filesystem=home:ro
+  - --filesystem=xdg-download      # verified launcher bundles for manual installation
   - --filesystem=/media:ro
   - --filesystem=/run/media:ro
   - --filesystem=/mnt:ro
   - --talk-name=org.freedesktop.ScreenSaver
-  - --talk-name=org.freedesktop.Flatpak # flatpak-spawn --host installs verified launcher updates
 
 add-extensions:
   org.freedesktop.Sdk.Extension.llvm22:

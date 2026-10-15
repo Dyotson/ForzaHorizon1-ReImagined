@@ -1,9 +1,11 @@
 """Non-blocking release checks and an explicit download/install handoff."""
 import platform
+from pathlib import Path
+import shlex
 import subprocess
 import sys
 
-from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Qt
+from PySide6.QtCore import QThread, QTimer, QUrl, QStandardPaths, Signal, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QProgressBar, QPushButton, QWidget
 
@@ -112,7 +114,7 @@ class UpdateCard(QWidget):
         return self.task is not None
 
     def automatic_install_supported(self):
-        return sys.platform.startswith("linux") and (paths.FROZEN or paths.IN_FLATPAK)
+        return sys.platform.startswith("linux") and paths.FROZEN and not paths.IN_FLATPAK
 
     def cancel_task(self):
         if self.task:
@@ -206,13 +208,21 @@ class UpdateCard(QWidget):
         self.bar.show()
         self.cancel.setEnabled(True)
         self.cancel.show()
-        directory = paths.config_dir() / "updates" / self.release.tag
+        if paths.IN_FLATPAK:
+            downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
+            directory = Path(downloads or Path.home() / "Downloads") / "ForzaHorizon1-ReImagined" / self.release.tag
+        else:
+            directory = paths.config_dir() / "updates" / self.release.tag
         self._start(lambda t: updater.download(
             self.asset, directory, lambda d, total: t.progress.emit(int(d * 100 / total)),
             t.isInterruptionRequested), self._downloaded)
 
     def _downloaded(self, path):
         self.downloaded = path
+        if paths.IN_FLATPAK:
+            self.action.setText("Open download folder")
+            self.message.setText(self.flatpak_instructions())
+            return
         self.action.setText("Open installer" if sys.platform == "win32" else
                             "Install and restart" if self.automatic_install_supported() else "Open download")
         self.message.setText("Download verified. " + ("Open the installer to update the launcher."
@@ -227,8 +237,18 @@ class UpdateCard(QWidget):
         self.restart_ready = True
         self.message.setText("Update ready. Restarting the launcher…")
 
+    def flatpak_instructions(self):
+        command = shlex.join(["flatpak", "install", "--user", str(self.downloaded)])
+        return ("Download verified. To install for your user, close this launcher, then run in a terminal:\n"
+                + command + "\nOpen the launcher again after installation finishes.")
+
     def install(self):
         if self.busy() or self.downloaded is None:
+            return
+        if paths.IN_FLATPAK:
+            self.message.setText(self.flatpak_instructions())
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.downloaded.parent))):
+                self.message.setText(self.flatpak_instructions() + "\nDownload folder: " + str(self.downloaded.parent))
             return
         if self.window.setup.busy() or self.window.running():
             self.message.setText("Finish the current task and close the game before installing the update.")
@@ -255,15 +275,12 @@ class UpdateCard(QWidget):
             self.bar.setRange(0, 0)
             self.bar.show()
             self.cancel.hide()
-            if paths.IN_FLATPAK:
-                fn = lambda t: linux_update.install_flatpak(self.downloaded, self.asset)
-            else:
-                protected = [self.cfg.data_home(), self.cfg.game_files()]
-                if self.cfg.advanced.get("game_dir"):
-                    protected.append(self.cfg.advanced["game_dir"])
-                fn = lambda t: linux_update.install_archive(
-                    self.downloaded, self.asset, self.release.tag, paths.app_dir(), paths.config_dir(), protected,
-                    t.isInterruptionRequested)
+            protected = [self.cfg.data_home(), self.cfg.game_files()]
+            if self.cfg.advanced.get("game_dir"):
+                protected.append(self.cfg.advanced["game_dir"])
+            fn = lambda t: linux_update.install_archive(
+                self.downloaded, self.asset, self.release.tag, paths.app_dir(), paths.config_dir(), protected,
+                t.isInterruptionRequested)
             self._start(fn, self._installed)
         else:
             if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.downloaded.parent))):
