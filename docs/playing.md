@@ -90,11 +90,11 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   runtime's profile folder and start with `--profile_xuid=<XUID>`.)
 - **Car pictures:** the game renders each car's picture (Car Select, the garage tiles) once
   and saves it in the profile (`ForzaProfile/Thumbnails/`). Builds before resolve readback
-  was turned on (`readback_resolve = "fast"`, now the default) saved noise there, and so did
+  was turned on (`readback_resolve = "some"`, now the default) saved noise there, and so did
   Xenia without that setting. Those pictures stay broken until the car changes: an upgrade
   or a new paint job in the garage renders it again. Deleting the files only makes them
-  black. `readback_resolve = "none"` in `forza.toml` turns readback off (a few percent
-  faster above 60 fps, broken pictures again).
+  black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
+  `some`, broken pictures again).
 
 ## Keyboard and mouse
 

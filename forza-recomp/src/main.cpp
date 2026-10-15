@@ -78,7 +78,9 @@ void ApplyForzaGpuCvarDefaults() {
   // The game renders each car's thumbnail (Car Select, garage, the car panel), reads the
   // resolved image back on the CPU, compresses it and saves it in the profile
   // (ForzaProfile/Thumbnails). Without resolve readback the CPU reads stale guest memory and
-  // the saved thumbnail is noise (docs/framerate.md). "fast" copies resolves back a frame
-  // late, as Xenia does for this game.
-  SetSdkCvarDefault("readback_resolve", "fast");
+  // the saved thumbnail is noise (docs/framerate.md). "some" copies a resolve back only the
+  // first time it is seen (and again after 60 unused frames), which is what the thumbnails
+  // need and costs nothing in a race; "fast" copies every resolve every frame and cost
+  // 16-21% of the frame rate at 144 (docs/perf.md).
+  SetSdkCvarDefault("readback_resolve", "some");
 }

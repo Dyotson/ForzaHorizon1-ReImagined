@@ -310,13 +310,10 @@ thumbnail is rebuilt when the car changes (upgrade, paint); a deleted one shows 
 until then (deleting them and entering and leaving the garage regenerates none). Broken
 ones already in a save stay broken until the car is changed (`docs/playing.md`).
 
-Fix: `readback_resolve` defaults to `fast` (`ApplyForzaGpuCvarDefaults` in
+Fix: `readback_resolve` defaults to `some` (first `fast`; `some` since `fast` cost 16-21% at 144; `ApplyForzaGpuCvarDefaults` in
 `src/main.cpp`, applied once the GPU plugin, which defines the setting, is loaded; a value
 from `forza.toml` or the command line wins). Checked on the TU4 build without the flag: an
-upgrade rebuilt a broken thumbnail as a correct render. Cost (race at 144, contended runs:
-a VM and a browser were busy, so only indicative): none 91.0 guest fps (intro 104.2),
-fast 80.6 (intro 98.4); a second none run under heavier load 80.9. Not measured at 30
-and 60 yet; redo on an idle machine.
+upgrade rebuilt a broken thumbnail as a correct render. Cost of each mode: docs/perf.md > "Resolve readback".
 
 **Crowd at the race start (#7) moves faster above 30.** Screenshot bursts
 (`FORZA_SCREENSHOT_BURST=N:K`, every frame) of the Millennia Masters intro, 4 s after START

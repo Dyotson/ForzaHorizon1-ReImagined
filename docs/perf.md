@@ -223,8 +223,9 @@ back every frame, while the game only needs the thumbnail renders. Not measured 
 60. Next: read back only while a thumbnail is being made (the hooks can set the setting at
 run time: it is read at each resolve), or `some` (copy on cache miss) if it gets the
 thumbnails right. `readback_resolve = "none"` in `forza.toml` restores the old speed.
+Superseded: the default is `some` now (next section).
 
-### readback_resolve cost (#27, 2026-10-14, unfinished)
+### readback_resolve cost (#27, 2026-10-14/15)
 
 `readback_resolve` (SDK `IssueCopy_ReadbackResolvePath`): in every mode but `none`, each
 resolve (EDRAM to memory) also copies its written range into a host readback buffer
@@ -236,14 +237,48 @@ and reads the new data. `some` does the same but only copies on a cache miss (bu
 are evicted after 60 unused frames, so a car picture rendered rarely is mostly a miss).
 `full` waits for the GPU on every resolve. `none` skips all of it.
 
-Race at 144 (TU4 build, scratch copy of the Xenia save, `tools/perf_scenario.sh race`,
-guest fps of the race scene; the shader cache was still compiling 9-25 pipelines per
-window, load average 2.5-4.5 from the previous run, so CONTENDED and only indicative):
-`none` 88.3 fps (p50 11.0, p95 14.6 ms), `some` 91.1 (p50 10.9, p95 14.6). The `fast`
-run and free roam at 60/144 were stopped before they finished: no conclusion yet on
-whether `some` makes correct pictures or what `fast` costs on a quiet machine.
+Measured on the TU4 build, scratch copy of the Xenia save (pristine copy for every run),
+warm shader cache, one game at a time and no other game running (the BENCH lock held;
+the status line says CONTENDED only because the 1-minute load average was still 1.5-4 from
+the previous run, nothing else ran). Guest fps of the race scene / free roam (p50 / p99 ms),
+and the race intro:
 
-Findings for the next try:
+| Scenario | none | some | fast | full on resolves of 200,000-884,736 bytes (tried) |
+| --- | --- | --- | --- | --- |
+| Race at 144 | 93.5 / 93.0 (10.7 / 15.2) | 93.5 / 91.2 (10.6 / 15.0) | 77.8 / 78.1 (13.5 / 17.4) | 79.2 / 62.1 (13.3 / 16.3) |
+| Race intro at 144 | 102.4 / 102.5 | 102.6 / 102.3 | 96.7 / 97.9 | 82.8 / 75.7 |
+| Race at 60 | 60.0 (16.8 / 18.2) | not run | 59.9 (16.8 / 18.5) | 58.1 (16.9 / 24.3) |
+| Free roam at 144 | 137.3 (7.2 / 11.0) | see below | 108.1 (9.6 / 12.1) | 85.0 (11.0 / 15.8) |
+
+(Two numbers = two runs.) `fast` costs 16% in the race and 21% in free roam at 144 and
+nothing at 60; `some` costs nothing measurable. The extra GPU copy `some` still does per
+resolve is cheap; the cost of `fast` is the invalidate and `memcpy` of every resolve
+(frame-sized ones, 1-4 MB, several a frame) into guest memory, and `full` (a GPU wait per
+resolve) is worse still.
+
+Thumbnails (scratch profile, Dak's Garage, Auto Upgrade of a car whose picture was noise;
+new `Thumbnail_N.xdc` decoded with `tools/xdc_decode.py`):
+
+- `fast`: a correct BMW M1 render (91,135 bytes).
+- `some`: correct renders of the BMW M1 (89,165 bytes) and, 75 s later in the same session,
+  a Toyota Trueno (86,605 bytes). This is the default now.
+- `none`: noise (the bug of #3).
+- The picture is three kinds of resolves: the car rendered into two 640x448 targets
+  (1,146,880 bytes) and composed into the 768x288 picture by two resolves (864,256 and
+  806,912 bytes, overlapping inside the 884,736 byte texture, so a filter on that size
+  reads back nothing), and one resolve of 262,144 bytes (an extra render target the car
+  shader probably samples; without its readback the car comes out darker and the side view dim, 51 KB).
+  Hence the targeted ideas in the old notes (an SDK length filter, a guest hook) were not
+  needed: SDK patch 0041 (copy back only resolves in a length window) was written and
+  tested, then dropped because `some` is already free.
+- `some` copies a resolve back only the first time its (address, length) is seen or after
+  60 frames unused, so two pictures made less than 60 frames apart could come out stale;
+  the game makes one every few seconds at most.
+
+The Paint Shop's `Design Creator` crashed the game once (guest read of address 0x1A4, with
+readback on); not looked at here.
+
+Notes from the first try:
 - Pictures are 768x288 `k_8_8_8_8` tiled textures (docs/framerate.md);
   `tools/xdc_decode.py FILE.xdc OUT.png` decodes them (Thumbnail_38/44 of the Xenia save
   are correct renders: a 3/4 view and a side view of the car; Thumbnail_9 is a different,
