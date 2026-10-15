@@ -1,3 +1,9 @@
+# The CRT setjmp/longjmp: libjpeg's error_exit (the car picture loader) unwinds to its
+# caller with them. The codegen turns calls to them into host setjmp/longjmp; as plain
+# guest code the longjmp returned into the wrong frame (issue #42).
+setjmp_address = 0x82B3F830
+longjmp_address = 0x82B3F300
+
 # Statically linked XAPI routines replaced by native SDK implementations.
 [rexcrt]
 # Fibers. The guest versions save/restore GPRs and return into another fiber's

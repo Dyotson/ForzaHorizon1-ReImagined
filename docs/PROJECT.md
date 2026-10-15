@@ -532,6 +532,16 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
     20 ms ahead), the 144 player sends up to twice the datagrams (about 50 KB/s per peer).
     Rivals ghosts play back the same at 60 and 144, and one recorded at 144 is the size of
     a 30 fps one and plays back at 60 in step with the lap that made it.
+- 2026-10-15: **Paint Shop / outpost garage / Autoshow crash (#42, #55, #57)**: a guest read
+  of 0x1A4 on guest thread F8001188 (start `sub_82F0CF00`) as the screen opens. A libjpeg
+  decode (`sub_82AC4728`, TU4) calls the CRT `setjmp` (`sub_82B3F830`); libjpeg's
+  `error_exit` calls `longjmp` (`sub_82B3F300`) when the data does not decode. Both were
+  plain recompiled guest code, so the longjmp returned into the host frame that called it
+  with the saved registers (r31 = 0) and `read_markers` (`sub_82ADA2A0`, cinfo+420 =
+  `unread_marker`) read 0x1A4. Fix: `setjmp_address` / `longjmp_address` in
+  `hints_tu4/rexcrt.toml` (base: `hints/rexcrt.toml`) make the codegen emit host
+  setjmp/longjmp (a codegen run, 28 files change). Needs no readback setting. Why the
+  decode fails is open: the game now takes its error path instead of crashing.
 
 ## Debugging recipes
 
