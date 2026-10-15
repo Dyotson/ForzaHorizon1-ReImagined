@@ -79,8 +79,8 @@ class StatsTest(unittest.TestCase):
         stats.write(writer, TAGS.get, write_body(xuid, score, team, **kw), allowed=self.room,
                     now=now)
 
-    def read(self, xuids, specs=((SKILL_VIEW, SKILL_COLS),)):
-        return parse_rows(stats.read(A, read_body(xuids, specs), TAGS.get))
+    def read(self, xuids, specs=((SKILL_VIEW, SKILL_COLS),), now=None):
+        return parse_rows(stats.read(A, read_body(xuids, specs), TAGS.get, now=now))
 
     def test_new_players_get_defaults(self):
         total, rows = self.read([A, B])[SKILL_VIEW]
@@ -111,13 +111,16 @@ class StatsTest(unittest.TestCase):
         # The host writes both rows and both consoles read theirs within milliseconds.
         self.write(A, A, 1, team=1, now=50.0)
         self.write(A, B, 0, team=0, now=50.0)
-        rows = self.read([B])[SKILL_VIEW][1]
-        self.assertEqual(rows[0][4][62], 1)
+        self.assertEqual(self.read([B], now=50.0)[SKILL_VIEW][1][0][4][62], 1)
         # a repeat of the same session's writes (another console) is not a second game
-        self.write(B, A, 1, team=1, now=60.0)
-        self.write(B, B, 0, team=0, now=60.0)
+        self.write(B, A, 1, team=1, now=55.0)
+        self.write(B, B, 0, team=0, now=55.0)
         stats.settle(now=100)
-        self.assertEqual([r[4][62] for r in self.read([A, B])[SKILL_VIEW][1]], [1, 1])
+        self.assertEqual([r[4][62] for r in self.read([A, B], now=100)[SKILL_VIEW][1]], [1, 1])
+        # the lobby's next game (same session, minutes later) counts
+        self.write(A, A, 0, team=0, now=400.0)
+        self.write(A, B, 1, team=1, now=400.0)
+        self.assertEqual([r[4][62] for r in self.read([A, B], now=500)[SKILL_VIEW][1]], [2, 2])
 
     def test_every_console_writes_the_same_game(self):
         for writer in (A, B):
