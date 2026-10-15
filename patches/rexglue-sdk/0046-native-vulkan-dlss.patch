@@ -1,0 +1,1172 @@
+diff --git a/cmake/Fh1DlssCapabilities.cmake b/cmake/Fh1DlssCapabilities.cmake
+new file mode 100644
+index 0000000..b83c6f9
+--- /dev/null
++++ b/cmake/Fh1DlssCapabilities.cmake
+@@ -0,0 +1,5 @@
++# Run after linking, so the launcher can distinguish a native-NGX GPU library
++# from an older SDK overlay without executing the game or loading foreign DLLs.
++file(SHA256 "${FH1_GPU_DLL}" renderer_hash)
++file(WRITE "${FH1_CAPABILITIES}"
++    "{\"api\":1,\"renderer_sha256\":\"${renderer_hash}\"}\n")
+diff --git a/cmake/ForzaDlssSdk.cmake b/cmake/ForzaDlssSdk.cmake
+new file mode 100644
+index 0000000..668419d
+--- /dev/null
++++ b/cmake/ForzaDlssSdk.cmake
+@@ -0,0 +1,52 @@
++# NVIDIA NGX headers and static loader, pinned to the public DLSS SDK.
++# NVIDIA SDK terms apply; the license is staged beside the linked GPU library.
++set(_fh1_dlss_revision "374959484e79a640feaba44c93ac8cfb0a03f5b5")
++set(_fh1_dlss_base "https://raw.githubusercontent.com/NVIDIA/DLSS/${_fh1_dlss_revision}")
++if(NOT REXGLUE_DLSS_SDK)
++    set(REXGLUE_DLSS_SDK "${CMAKE_BINARY_DIR}/_deps/nvidia-dlss-${_fh1_dlss_revision}")
++    function(_fh1_dlss_asset relative expected_hash)
++        set(destination "${REXGLUE_DLSS_SDK}/${relative}")
++        if(EXISTS "${destination}")
++            file(SHA256 "${destination}" actual_hash)
++            if(actual_hash STREQUAL expected_hash)
++                return()
++            endif()
++        endif()
++        get_filename_component(parent "${destination}" DIRECTORY)
++        file(MAKE_DIRECTORY "${parent}")
++        message(STATUS "Fetching pinned NVIDIA DLSS SDK: ${relative}")
++        file(DOWNLOAD "${_fh1_dlss_base}/${relative}" "${destination}.download"
++             EXPECTED_HASH "SHA256=${expected_hash}" TLS_VERIFY ON
++             TIMEOUT 180 STATUS download_status)
++        list(GET download_status 0 download_code)
++        if(NOT download_code EQUAL 0)
++            message(FATAL_ERROR "NVIDIA DLSS SDK download failed: ${download_status}. Retry with network access, set REXGLUE_DLSS_SDK to a local SDK, or disable REXGLUE_USE_DLSS.")
++        endif()
++        file(RENAME "${destination}.download" "${destination}")
++    endfunction()
++    _fh1_dlss_asset("include/nvsdk_ngx.h" "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848")
++    _fh1_dlss_asset("include/nvsdk_ngx_defs.h" "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e")
++    _fh1_dlss_asset("include/nvsdk_ngx_defs_dlssd.h" "2e97fe1595b1334f71b51724f2cb67496e8c296a7a2eec5606da53055882e716")
++    _fh1_dlss_asset("include/nvsdk_ngx_defs_dlssg.h" "98ec3a6faa5aa250828c174bf8f3491aafac693dfe57cc798049c8918597fc60")
++    _fh1_dlss_asset("include/nvsdk_ngx_defs_vk.h" "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers.h" "5bcbadfe7478b802cf6d3aca4dc5ddd7d0889b99726e69c63f9e9bd555f44471")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_cuda.h" "f2851a76107bdf4fbcb7b261f3c35573c312d8ecb4bc18fb02d9e2cec7705042")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_d3d.h" "ec75224f36ed6580baaf250fa83620405ad81a1d98c2c436654a0c9cf6a6b8ba")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssd.h" "a25fdda925b479dfe869593aeba311ef08793da54e0391f2fe2fe756cbef5532")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssd_cuda.h" "7e35cde214d905346a487b9a28c05d35e1c55b480e237fe3de69580a7e332730")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssd_d3d.h" "6df9d02c6f47feee3afc8d12340a9f554a7ddce4ddacb1b6a13a42b26c2c6293")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssd_vk.h" "11df8fbda532a97fe867c8ef2b40058b49b7898183710f3468e55b1eedb8f40b")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg.h" "6881d21419c40c78ec948b326902ece09fc112b0223144d51c4905f3fced7a1f")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg_d3d.h" "6335ebcb95de39a361e87fe0257d6ce0723e5d8deaa15db3b35afacf2b3f4220")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_dlssg_vk.h" "b371d90b9f4372b9a415e68a0afbdc2f31b7b552e219a9637d848749bc965316")
++    _fh1_dlss_asset("include/nvsdk_ngx_helpers_vk.h" "c192bff72138f12f770db48e12c1d8f712dfc81ea0e8e055ebb27d8dd1b31623")
++    _fh1_dlss_asset("include/nvsdk_ngx_loader.h" "abdf5f66a692620538357d29fdf78e3e2a677ee8140b7a638962ecb766585e75")
++    _fh1_dlss_asset("include/nvsdk_ngx_params.h" "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc")
++    _fh1_dlss_asset("include/nvsdk_ngx_params_dlssd.h" "d41e3ba8f1d72583b55273092c99bf426dc4a0d46de827229e25d5b1325a370e")
++    _fh1_dlss_asset("include/nvsdk_ngx_params_dlssg.h" "c24fa5aa68ffa2808c828b75cfa32843f1606f80a145f84055ac450d7e6c74ad")
++    _fh1_dlss_asset("include/nvsdk_ngx_standalone_common.h" "38413c3338b0aea0202c07da95d426bfee7080a42913823fa2d9dd585b087b53")
++    _fh1_dlss_asset("include/nvsdk_ngx_standalone_cuda.h" "b23436ed5040051ac8e81554c9af080f2463c941435bbc3b82222e5431a09499")
++    _fh1_dlss_asset("include/nvsdk_ngx_vk.h" "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d")
++    _fh1_dlss_asset("lib/Windows_x86_64/x64/nvsdk_ngx_d.lib" "4b6cecad7f1906571c94010241f650e4a5457e64fad49ddaccb82de79f6c2999")
++    _fh1_dlss_asset("LICENSE.txt" "d4216e39ebef5f9b50a6712ebb37beeb5379862a67733a9999c651f21592aaf0")
++endif()
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index e54198f..b826f00 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -48,6 +48,7 @@
+ #include <rex/ui/vulkan/upload_buffer_pool.h>
+ 
+ namespace rex::graphics::vulkan {
++class Fh1Dlss;
+ 
+ class VulkanCommandProcessor : public CommandProcessor {
+  public:
+@@ -155,6 +156,14 @@ class VulkanCommandProcessor : public CommandProcessor {
+   }
+ 
+   bool submission_open() const { return submission_open_; }
++  Fh1Dlss* fh1_dlss() const { return fh1_dlss_.get(); }
++  bool fh1_split_enabled() const { return fh1_split_enabled_; }
++  void Fh1InvalidateBindings() {
++    current_external_compute_pipeline_ = VK_NULL_HANDLE;
++    current_external_graphics_pipeline_ = VK_NULL_HANDLE;
++    current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
++    current_graphics_descriptor_sets_bound_up_to_date_ = 0;
++  }
+   uint64_t GetCurrentSubmission() const {
+     return submission_completed_ + uint64_t(submissions_in_flight_fences_.size()) + 1;
+   }
+@@ -670,6 +679,17 @@ class VulkanCommandProcessor : public CommandProcessor {
+   std::unique_ptr<VulkanPipelineCache> pipeline_cache_;
+ 
+   std::unique_ptr<VulkanTextureCache> texture_cache_;
++  // Experimental FH1 scene/UI split. The inactive pair stays alive across frames.
++  std::unique_ptr<VulkanRenderTargetCache> fh1_other_render_targets_;
++  std::unique_ptr<VulkanTextureCache> fh1_other_textures_;
++  std::unique_ptr<VulkanPipelineCache> fh1_other_pipelines_;
++  std::unique_ptr<Fh1Dlss> fh1_dlss_;
++  bool fh1_split_enabled_ = false;
++  bool fh1_native_hud_active_ = true;
++  bool fh1_scene_composited_ = false;
++  bool fh1_seed_pending_ = false;
++  uint32_t fh1_scene_base_ = UINT32_MAX;
++  void Fh1SelectNativeHud(bool native_hud);
+ 
+   VkDescriptorPool shared_memory_and_edram_descriptor_pool_ = VK_NULL_HANDLE;
+   VkDescriptorSet shared_memory_and_edram_descriptor_set_;
+diff --git a/include/rex/graphics/vulkan/deferred_command_buffer.h b/include/rex/graphics/vulkan/deferred_command_buffer.h
+index 84012ea..d2db78b 100644
+--- a/include/rex/graphics/vulkan/deferred_command_buffer.h
++++ b/include/rex/graphics/vulkan/deferred_command_buffer.h
+@@ -18,10 +18,12 @@
+ #include <rex/assert.h>
+ #include <rex/math.h>
+ #include <rex/ui/vulkan/api.h>
++#include <rex/graphics/vulkan/fh1_dlss.h>
+ 
+ namespace rex::graphics::vulkan {
+ 
+ class VulkanCommandProcessor;
++class Fh1Dlss;
+ 
+ class DeferredCommandBuffer {
+  public:
+@@ -29,6 +31,17 @@ class DeferredCommandBuffer {
+                         size_t initial_size_bytes = 1024 * 1024);
+ 
+   void Reset();
++  void CmdFh1Dlss(Fh1Dlss* effect, VkImage src, VkImage dst) {
++    auto& args = *reinterpret_cast<ArgsFh1Dlss*>(
++        WriteCommand(Command::kFh1Dlss, sizeof(ArgsFh1Dlss)));
++    args.effect = effect; args.src = src; args.dst = dst; args.input = effect->input();
++  }
++  mutable PFN_vkCmdBlitImage blit_image_ = nullptr;
++  void CmdVkBlitImage(VkImage src, VkImage dst, const VkImageBlit& region) {
++    auto& args = *reinterpret_cast<ArgsVkBlitImage*>(
++        WriteCommand(Command::kVkBlitImage, sizeof(ArgsVkBlitImage)));
++    args.src = src; args.dst = dst; args.region = region;
++  }
+   void Execute(VkCommandBuffer command_buffer);
+ 
+   // The recorded commands, taken out for another thread to execute (threaded submission).
+@@ -392,6 +405,8 @@ class DeferredCommandBuffer {
+ 
+  private:
+   enum class Command {
++    kFh1Dlss,
++    kVkBlitImage,
+     kVkBeginRenderPass,
+     kVkBeginQuery,
+     kVkBindDescriptorSets,
+@@ -427,6 +442,15 @@ class DeferredCommandBuffer {
+     Command command;
+     uint32_t arguments_size_elements;
+   };
++  struct ArgsFh1Dlss {
++    Fh1Dlss* effect;
++    VkImage src, dst;
++    Fh1Dlss::FrameInput input;
++  };
++  struct ArgsVkBlitImage {
++    VkImage src, dst;
++    VkImageBlit region;
++  };
+   static constexpr size_t kCommandHeaderSizeElements =
+       (sizeof(CommandHeader) + sizeof(uintmax_t) - 1) / sizeof(uintmax_t);
+ 
+diff --git a/include/rex/graphics/vulkan/fh1_dlss.h b/include/rex/graphics/vulkan/fh1_dlss.h
+new file mode 100644
+index 0000000..f653959
+--- /dev/null
++++ b/include/rex/graphics/vulkan/fh1_dlss.h
+@@ -0,0 +1,43 @@
++#pragma once
++#include <memory>
++#include <atomic>
++#include <algorithm>
++#include <array>
++#include <string>
++#include <string_view>
++#include <vector>
++#include <rex/ui/vulkan/api.h>
++
++namespace rex::ui::vulkan { class VulkanDevice; }
++namespace rex::graphics::vulkan {
++bool CompileFh1Compute(std::string_view source, std::vector<uint32_t>& spirv, std::string& error);
++// Owns NGX and its intermediate images. Calls execute on the submission thread.
++class Fh1Dlss {
++ public:
++  struct FrameInput {
++    VkImageView depth_view = VK_NULL_HANDLE;
++    std::array<float, 136 * 4> constants{};
++    float jitter_x = 0, jitter_y = 0;
++  };
++  explicit Fh1Dlss(const ui::vulkan::VulkanDevice* device, bool dlaa = false);
++  ~Fh1Dlss();
++  bool Initialize();
++  static void ReportStatus(std::string_view message);
++  void Execute(VkCommandBuffer command_buffer, VkImage scene, VkImage destination, const FrameInput& input);
++  bool Evaluating() const { return evaluating_.load(std::memory_order_acquire); }
++  void BeginFrame(uint64_t frame);
++  void Observe(VkImageView depth_view, const float* constants) {
++    input_.depth_view = depth_view;
++    std::copy_n(constants, input_.constants.size(), input_.constants.begin());
++    input_.constants[134 * 4] = input_.jitter_x;
++    input_.constants[134 * 4 + 1] = input_.jitter_y;
++  }
++  const FrameInput& input() const { return input_; }
++ private:
++  std::atomic<bool> evaluating_{false};
++  FrameInput input_;
++  bool jitter_was_active_ = false;
++  struct State;
++  std::unique_ptr<State> state_;
++};
++}
+diff --git a/include/rex/graphics/vulkan/pipeline_cache.h b/include/rex/graphics/vulkan/pipeline_cache.h
+index 7b938b9..c676a27 100644
+--- a/include/rex/graphics/vulkan/pipeline_cache.h
++++ b/include/rex/graphics/vulkan/pipeline_cache.h
+@@ -72,6 +72,8 @@ class VulkanPipelineCache {
+ 
+   VulkanShader* LoadShader(xenos::ShaderType shader_type, const uint32_t* host_address,
+                            uint32_t dword_count);
++  // Own a separate translation for this render scale, preserving native-endian ucode.
++  VulkanShader* LoadShaderForDraw(const Shader& shader);
+   // Analyze shader microcode on the translator thread.
+   void AnalyzeShaderUcode(Shader& shader) { shader.AnalyzeUcode(ucode_disasm_buffer_); }
+ 
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+index 34f7033..c4d9175 100644
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -97,6 +97,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+ 
+   void CompletedSubmissionUpdated();
+   void EndSubmission();
++  bool SeedNativeHud(VulkanRenderTargetCache& scene, uint32_t width, uint32_t height);
++  bool HasNativeHudColorTarget() const {
++    return last_update_accumulated_render_targets()[1] != nullptr;
++  }
+ 
+   Path GetPath() const override { return path_; }
+ 
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index da7ae1a..137c42a 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -45,6 +45,7 @@ set(REXGPU_XENOS_SPIRV_SOURCES
+ set(REXGPU_XENOS_VULKAN_SOURCES
+     vulkan/graphics_system.cpp
+     vulkan/deferred_command_buffer.cpp
++    vulkan/fh1_dlss.cpp
+     vulkan/command_processor.cpp
+     vulkan/pipeline_cache.cpp
+     vulkan/primitive_processor.cpp
+@@ -99,6 +100,26 @@ endif()
+ add_library(rexgpu-xenos SHARED ${REXGPU_XENOS_SOURCES})
+ add_library(rex::gpu-xenos ALIAS rexgpu-xenos)
+ 
++option(REXGLUE_USE_DLSS "Build native FH1 DLSS support (NVIDIA SDK terms apply)" ${WIN32})
++set(REXGLUE_DLSS_SDK "" CACHE PATH "Optional local NVIDIA DLSS SDK; otherwise fetch pinned SDK files")
++if(WIN32 AND REXGLUE_USE_VULKAN AND REXGLUE_USE_DLSS)
++    include(${REXGLUE_ROOT}/cmake/ForzaDlssSdk.cmake)
++    target_compile_definitions(rexgpu-xenos PRIVATE REX_FH1_NGX=1)
++    target_include_directories(rexgpu-xenos SYSTEM PRIVATE "${REXGLUE_DLSS_SDK}/include")
++    target_link_libraries(rexgpu-xenos PRIVATE
++        "${REXGLUE_DLSS_SDK}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
++    add_custom_command(TARGET rexgpu-xenos POST_BUILD
++        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${REXGLUE_DLSS_SDK}/LICENSE.txt"
++            "$<TARGET_FILE_DIR:rexgpu-xenos>/NVIDIA-DLSS-LICENSE.txt"
++        COMMAND ${CMAKE_COMMAND}
++            "-DFH1_GPU_DLL=$<TARGET_FILE:rexgpu-xenos>"
++            "-DFH1_CAPABILITIES=$<TARGET_FILE_DIR:rexgpu-xenos>/fh1-native-dlss.json"
++            -P "${REXGLUE_ROOT}/cmake/Fh1DlssCapabilities.cmake")
++    install(FILES "$<TARGET_FILE_DIR:rexgpu-xenos>/fh1-native-dlss.json" DESTINATION bin)
++    install(FILES "${REXGLUE_DLSS_SDK}/LICENSE.txt"
++        DESTINATION share/licenses/nvidia-dlss)
++endif()
++
+ set_target_properties(rexgpu-xenos PROPERTIES
+     EXPORT_NAME gpu-xenos
+     CXX_VISIBILITY_PRESET hidden
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 24abe85..02ab6c9 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -14,6 +14,8 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <iterator>
++#include <fstream>
++#include <filesystem>
+ #include <deque>
+ #include <unordered_map>
+ #include <mutex>
+@@ -36,6 +38,7 @@
+ #include <rex/graphics/pipeline/shader/spirv_translator.h>
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/vulkan/command_processor.h>
++#include <rex/graphics/vulkan/fh1_dlss.h>
+ #include <rex/graphics/vulkan/pipeline_cache.h>
+ #include <rex/graphics/vulkan/render_target_cache.h>
+ #include <rex/graphics/vulkan/shader.h>
+@@ -49,6 +52,11 @@
+ #include <rex/ui/vulkan/util.h>
+ 
+ // Legacy backend compatibility aliases for shared readback controls.
++REXCVAR_DEFINE_BOOL(fh1_scene_720p_native_hud, false, "GPU/Vulkan",
++                    "Experimental FH1: 720p world with a separate native 1440p HUD")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_STRING(fh1_upscaler, "off", "GPU/Vulkan", "FH1 scene reconstruction: off, dlss or dlaa")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ REXCVAR_DEFINE_BOOL(vulkan_readback_resolve, false, "GPU/Vulkan",
+                     "Read render-to-texture results on the CPU")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+@@ -562,6 +570,10 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
+ 
+ }  // namespace
+ 
++bool CompileFh1Compute(std::string_view source, std::vector<uint32_t>& spirv, std::string& error) {
++  return CompileGlslToSpirvInternal(EShLangCompute, source, spirv, error);
++}
++
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "../shaders/vulkan_spirv/apply_gamma_pwl_cs.h"
+@@ -657,6 +669,8 @@ void VulkanCommandProcessor::InitializeShaderStorage(const std::filesystem::path
+                                                      uint32_t title_id, bool blocking) {
+   CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
+   pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
++  if (fh1_other_pipelines_) fh1_other_pipelines_->InitializeShaderStorage(
++      cache_root / (REXCVAR_GET(fh1_upscaler) == "dlaa" ? "fh1-scene-2x" : "fh1-scene-1x"), title_id, blocking);
+ }
+ 
+ // Occlusion queries (EVENT_WRITE_ZPD), as Xenia's default "fast" mode does them.
+@@ -1133,6 +1147,46 @@ bool VulkanCommandProcessor::SetupContext() {
+     return false;
+   }
+ 
++  if (REXCVAR_GET(fh1_scene_720p_native_hud) || REXCVAR_GET(fh1_upscaler) != "off") {
++    const bool compatible = draw_resolution_scale_x == 2 && draw_resolution_scale_y == 2 &&
++        render_target_cache_->GetPath() == RenderTargetCache::Path::kHostRenderTargets;
++    if (!compatible) {
++      Fh1Dlss::ReportStatus("error: DLSS requires 2x scale and host render targets; continuing with native rendering at the configured scale.");
++      REXGPU_WARN("FH1 reconstruction disabled: incompatible scale or render-target path; using native rendering");
++    } else {
++      const uint32_t scene_scale = REXCVAR_GET(fh1_upscaler) == "dlaa" ? 2 : 1;
++      fh1_split_enabled_ = true;
++      fh1_other_render_targets_ = std::make_unique<VulkanRenderTargetCache>(
++          *register_file_, *memory_, scene_scale, scene_scale, *this);
++      bool ready = fh1_other_render_targets_->Initialize(shared_memory_binding_count);
++      if (ready && scene_scale == 1) {
++        fh1_other_textures_ = VulkanTextureCache::Create(*register_file_, *shared_memory_,
++            scene_scale, scene_scale, *this, guest_shader_pipeline_stages_);
++        ready = bool(fh1_other_textures_);
++      }
++      if (ready) {
++        fh1_other_pipelines_ = std::make_unique<VulkanPipelineCache>(
++            *this, *register_file_, *fh1_other_render_targets_, guest_shader_vertex_stages_);
++        ready = fh1_other_pipelines_->Initialize();
++      }
++      if (ready && REXCVAR_GET(fh1_upscaler) != "off") {
++        fh1_dlss_ = std::make_unique<Fh1Dlss>(GetVulkanDevice(), scene_scale == 2);
++        ready = fh1_dlss_->Initialize();
++      }
++      if (!ready) {
++        Fh1Dlss::ReportStatus("error: NVIDIA DLSS initialization failed; continuing with native rendering. See the game log.");
++        REXGPU_WARN("DLSS unavailable: retaining native rendering");
++        fh1_dlss_.reset();
++        fh1_other_pipelines_.reset();
++        fh1_other_render_targets_.reset();
++        fh1_other_textures_.reset();
++        fh1_split_enabled_ = false;
++      } else {
++        REXGPU_INFO("FH1 split rendering initialized: scene={}x{}, UI=2560x1440; independent pipeline caches/translators", 1280*scene_scale, 720*scene_scale);
++      }
++    }
++  }
++
+   // Shared memory and EDRAM common bindings.
+   VkDescriptorPoolSize descriptor_pool_sizes[1];
+   descriptor_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+@@ -2248,10 +2302,14 @@ void VulkanCommandProcessor::ShutdownContext() {
+   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device,
+                                          shared_memory_and_edram_descriptor_pool_);
+ 
++  fh1_dlss_.reset();
++  fh1_other_textures_.reset();
+   texture_cache_.reset();
+ 
++  fh1_other_pipelines_.reset();
+   pipeline_cache_.reset();
+ 
++  fh1_other_render_targets_.reset();
+   render_target_cache_.reset();
+ 
+   primitive_processor_.reset();
+@@ -2387,6 +2445,8 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+     if (texture_cache_) {
+       texture_cache_->TextureFetchConstantWritten((index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) /
+                                                   6);
++      if (fh1_other_textures_) fh1_other_textures_->TextureFetchConstantWritten(
++          (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6);
+     }
+     InvalidateVertexBufferResidency((index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 2);
+   }
+@@ -2489,6 +2549,8 @@ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_
+     uint32_t last_fetch_dword = start_index + last_changed - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
+     if (texture_cache_) {
+       texture_cache_->TextureFetchConstantsWritten(first_fetch_dword / 6, last_fetch_dword / 6);
++      if (fh1_other_textures_) fh1_other_textures_->TextureFetchConstantsWritten(
++          first_fetch_dword / 6, last_fetch_dword / 6);
+     }
+     InvalidateVertexBufferResidencyRange(first_fetch_dword / 2, last_fetch_dword / 2);
+     return;
+@@ -3947,6 +4009,23 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
+   return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
+ }
+ 
++void VulkanCommandProcessor::Fh1SelectNativeHud(bool native_hud) {
++  if (!fh1_other_render_targets_ || native_hud == fh1_native_hud_active_) return;
++  EndRenderPass();
++  if (fh1_other_textures_) std::swap(texture_cache_, fh1_other_textures_);
++  std::swap(render_target_cache_, fh1_other_render_targets_);
++  std::swap(pipeline_cache_, fh1_other_pipelines_);
++  Fh1InvalidateBindings();
++  fh1_native_hud_active_ = native_hud;
++  dynamic_viewport_update_needed_ = true;
++  dynamic_scissor_update_needed_ = true;
++  dynamic_depth_bias_update_needed_ = true;
++  current_constant_buffers_up_to_date_ = 0;
++  current_graphics_descriptor_set_values_up_to_date_ =
++      UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetSharedMemoryAndEdram;
++  current_graphics_descriptor_sets_bound_up_to_date_ = 0;
++}
++
+ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
+                                        IndexBufferInfo* index_buffer_info,
+                                        bool major_mode_explicit) {
+@@ -4067,6 +4146,38 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+       return draw_fail("begin_submission");
+     }
+ 
++    if (fh1_other_render_targets_ && is_rasterization_done && pixel_shader) {
++      const auto color = regs.Get<reg::RB_COLOR_INFO>();
++      const auto surface = regs.Get<reg::RB_SURFACE_INFO>();
++      // The same packed formats also occur in small intermediate targets in
++      // the title sequence. Only the full front buffer marks the scene/UI split.
++      const bool front_buffer = surface.surface_pitch == 1280 &&
++          surface.msaa_samples == xenos::MsaaSamples::k1X;
++      if (front_buffer &&
++          color.color_format == xenos::ColorRenderTargetFormat::k_2_10_10_10 &&
++          !fh1_native_hud_active_) {
++        fh1_scene_composited_ = true;
++        fh1_scene_base_ = color.color_base;
++      } else if (front_buffer && color.color_format ==
++                 xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10 &&
++                 !fh1_native_hud_active_ &&
++                 (!fh1_scene_composited_ || color.color_base == fh1_scene_base_)) {
++        fh1_seed_pending_ = fh1_scene_composited_;
++        Fh1SelectNativeHud(true);
++      }
++    }
++
++    // Shader translations and render passes belong to the active render scale.
++    // Never share a 2x VPOS/memexport translation with the 1x scene.
++    if (fh1_other_pipelines_) {
++      vertex_shader = pipeline_cache_->LoadShaderForDraw(*vertex_shader);
++      pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
++      if (pixel_shader) {
++        pixel_shader = pipeline_cache_->LoadShaderForDraw(*pixel_shader);
++        pipeline_cache_->AnalyzeShaderUcode(*pixel_shader);
++      }
++    }
++
+     // Process primitives.
+     if (!primitive_processor_->Process(primitive_processing_result)) {
+       return draw_fail("primitive_processing");
+@@ -4197,12 +4308,46 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+       (pixel_shader != nullptr ? pixel_shader->GetUsedTextureMaskAfterTranslation() : 0);
+   texture_cache_->RequestTextures(used_texture_mask);
+ 
++  if (fh1_dlss_ && pixel_shader && pixel_shader->ucode_data_hash() == 0xE68FE55ECD482EC5ull) {
++    std::array<float, 136 * 4> constants;
++    std::memcpy(constants.data(), &regs[XE_GPU_REG_SHADER_CONSTANT_256_X], sizeof(constants));
++    fh1_dlss_->Observe(texture_cache_->GetActiveBindingOrNullImageView(
++        2, xenos::FetchOpDimension::k2D, false), constants.data());
++    static bool dumped = false;
++    static const char* folder = std::getenv("FORZA_DLSS_DIAGNOSTICS");
++    if (!dumped && folder && *folder) {
++      {
++        std::ofstream(std::filesystem::u8path(folder) / "velocity-shader.txt") << pixel_shader->ucode_disassembly();
++        std::ofstream(std::filesystem::u8path(folder) / "velocity-vertex-shader.txt") << vertex_shader->ucode_disassembly();
++        std::ofstream constants(std::filesystem::u8path(folder) / "velocity-constants.txt");
++        constants << "texture-mask=" << used_texture_mask << '\n';
++        for (unsigned i = 0; i < 256; ++i) {
++          constants << i;
++          for (unsigned c = 0; c < 4; ++c)
++            constants << ',' << regs.Get<float>(XE_GPU_REG_SHADER_CONSTANT_256_X + 4 * i + c);
++          constants << '\n';
++        }
++        dumped = true;
++      }
++    }
++  }
++
+   const VulkanPipelineCache::PipelineLayoutProvider* pipeline_layout_provider;
+   // Set up the render targets - this may perform dispatches and draws.
+   if (!render_target_cache_->Update(is_rasterization_done, normalized_depth_control,
+                                     normalized_color_mask, *vertex_shader)) {
+     return draw_fail("render_target_update");
+   }
++  // A depth-only draw can precede the first HUD color export. Keep the scene
++  // transfer pending until there is a native color attachment to seed.
++  if (fh1_seed_pending_ && render_target_cache_->HasNativeHudColorTarget()) {
++    fh1_seed_pending_ = false;
++    if (!render_target_cache_->SeedNativeHud(*fh1_other_render_targets_, 1280, 720))
++      return draw_fail("native_hud_seed");
++    if (frame_current_ % 120 == 0)
++      REXGPU_INFO("FH1 frame {}: world={}x{}, HUD=2560x1440, scene transferred before UI", frame_current_,
++          1280*fh1_other_render_targets_->draw_resolution_scale_x(), 720*fh1_other_render_targets_->draw_resolution_scale_y());
++  }
+ 
+   // Create the pipeline (for this, need the render pass from the render target
+   // cache), translating the shaders - doing this now to obtain the used
+@@ -4292,6 +4437,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+       host_render_targets_used && render_target_cache_->depth_float24_convert_in_pixel_shader(),
+       host_render_targets_used, pixel_shader && pixel_shader->writes_depth(), viewport_info);
+ 
++  if (fh1_dlss_ && fh1_dlss_->Evaluating() && !fh1_native_hud_active_ && normalized_depth_control.z_enable &&
++      regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 1280) {
++    const auto& input = fh1_dlss_->input();
++    if (viewport_info.xy_extent[0] && viewport_info.xy_extent[1]) {
++      viewport_info.ndc_offset[0] += 2.0f * input.jitter_x / float(viewport_info.xy_extent[0]);
++      viewport_info.ndc_offset[1] += 2.0f * input.jitter_y / float(viewport_info.xy_extent[1]);
++    }
++  }
++
+   // Update dynamic graphics pipeline state.
+   UpdateDynamicState(viewport_info, primitive_polygonal, normalized_depth_control);
+ 
+@@ -5451,8 +5605,10 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+   primitive_processor_->CompletedSubmissionUpdated();
+ 
+   render_target_cache_->CompletedSubmissionUpdated();
++  if (fh1_other_render_targets_) fh1_other_render_targets_->CompletedSubmissionUpdated();
+ 
+   texture_cache_->CompletedSubmissionUpdated(submission_completed_);
++  if (fh1_other_textures_) fh1_other_textures_->CompletedSubmissionUpdated(submission_completed_);
+ 
+   // Destroy objects scheduled for destruction.
+   while (!destroy_framebuffers_.empty()) {
+@@ -5498,7 +5654,8 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+ }
+ 
+ bool VulkanCommandProcessor::CanEndSubmissionImmediately() const {
+-  return !submission_open_ || (!scratch_buffer_used_ && !pipeline_cache_->IsCreatingPipelines());
++  return !submission_open_ || (!scratch_buffer_used_ && !pipeline_cache_->IsCreatingPipelines() &&
++      (!fh1_other_pipelines_ || !fh1_other_pipelines_->IsCreatingPipelines()));
+ }
+ 
+ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5571,10 +5728,16 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+     primitive_processor_->BeginSubmission();
+ 
+     texture_cache_->BeginSubmission(GetCurrentSubmission());
++    if (fh1_other_textures_) fh1_other_textures_->BeginSubmission(GetCurrentSubmission());
+   }
+ 
+   if (is_opening_frame) {
+     frame_open_ = true;
++    if (fh1_other_render_targets_) Fh1SelectNativeHud(false);
++    if (fh1_dlss_) fh1_dlss_->BeginFrame(frame_current_);
++    fh1_scene_composited_ = false;
++    fh1_seed_pending_ = false;
++    fh1_scene_base_ = UINT32_MAX;
+     frame_used_async_placeholder_pipeline_ = false;
+ 
+     // Reset bindings that depend on transient data.
+@@ -5635,6 +5798,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+     primitive_processor_->BeginFrame();
+ 
+     texture_cache_->BeginFrame();
++    if (fh1_other_textures_) fh1_other_textures_->BeginFrame();
+   }
+ 
+   return true;
+@@ -5706,6 +5870,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+ 
+   if (is_closing_frame) {
+     texture_cache_->EndFrame();
++    if (fh1_other_textures_) fh1_other_textures_->EndFrame();
+ 
+     primitive_processor_->EndFrame();
+   }
+@@ -5722,8 +5887,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+     EndRenderPass();
+ 
+     pipeline_cache_->EndSubmission();
++    if (fh1_other_pipelines_) fh1_other_pipelines_->EndSubmission();
+ 
+     render_target_cache_->EndSubmission();
++    if (fh1_other_render_targets_) fh1_other_render_targets_->EndSubmission();
+ 
+     primitive_processor_->EndSubmission();
+ 
+@@ -5911,8 +6078,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+       uniform_buffer_pool_->ClearCache();
+ 
+       texture_cache_->ClearCache();
++      if (fh1_other_textures_) fh1_other_textures_->ClearCache();
+ 
+       render_target_cache_->ClearCache();
++      if (fh1_other_render_targets_) fh1_other_render_targets_->ClearCache();
+ 
+       // Not clearing the pipeline layouts and the descriptor set layouts as
+       // they're referenced by pipelines, which are not destroyed.
+diff --git a/src/graphics/vulkan/deferred_command_buffer.cpp b/src/graphics/vulkan/deferred_command_buffer.cpp
+index a344032..bd489ff 100644
+--- a/src/graphics/vulkan/deferred_command_buffer.cpp
++++ b/src/graphics/vulkan/deferred_command_buffer.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/vulkan/command_processor.h>
+ #include <rex/graphics/vulkan/deferred_command_buffer.h>
++#include <rex/graphics/vulkan/fh1_dlss.h>
+ #include <rex/math.h>
+ 
+ namespace rex::graphics::vulkan {
+@@ -70,6 +71,18 @@ void DeferredCommandBuffer::ExecuteStream(VkCommandBuffer command_buffer, const
+     stream_remaining -= kCommandHeaderSizeElements;
+ 
+     switch (header.command) {
++      case Command::kFh1Dlss: {
++        const auto& args = *reinterpret_cast<const ArgsFh1Dlss*>(stream);
++        args.effect->Execute(command_buffer, args.src, args.dst, args.input);
++      } break;
++      case Command::kVkBlitImage: {
++        const auto& args = *reinterpret_cast<const ArgsVkBlitImage*>(stream);
++        const auto* device = command_processor_.GetVulkanDevice();
++        if (!blit_image_) blit_image_ = reinterpret_cast<PFN_vkCmdBlitImage>(device->vulkan_instance()->functions()
++            .vkGetDeviceProcAddr(device->device(), "vkCmdBlitImage"));
++        blit_image_(command_buffer, args.src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++            args.dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &args.region, VK_FILTER_LINEAR);
++      } break;
+       case Command::kVkBeginRenderPass: {
+         auto& args = *reinterpret_cast<const ArgsVkBeginRenderPass*>(stream);
+         size_t offset_bytes = sizeof(ArgsVkBeginRenderPass);
+diff --git a/src/graphics/vulkan/fh1_dlss.cpp b/src/graphics/vulkan/fh1_dlss.cpp
+new file mode 100644
+index 0000000..3f14ab6
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_dlss.cpp
+@@ -0,0 +1,367 @@
++#include <rex/graphics/vulkan/fh1_dlss.h>
++#include <rex/ui/vulkan/device.h>
++#include <rex/ui/vulkan/instance.h>
++#include <rex/ui/vulkan/util.h>
++#include <rex/logging.h>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <array>
++#if defined(REX_FH1_NGX)
++#include <nvsdk_ngx_helpers_vk.h>
++#endif
++
++namespace rex::graphics::vulkan {
++struct Fh1Dlss::State {
++  const ui::vulkan::VulkanDevice* device;
++  uint32_t width = 1280, height = 720;
++  bool dlaa = false;
++  const char* test_failure = std::getenv("FORZA_DLSS_TEST_FAILURE");
++#if defined(REX_FH1_NGX)
++  NVSDK_NGX_Parameter* parameters = nullptr;
++  NVSDK_NGX_Handle* feature = nullptr;
++  bool initialized = false, images_ready = false, failed = false;
++  uint64_t frames = 0;
++  uint64_t submissions = 0;
++  struct Image { VkImage image{}; VkDeviceMemory memory{}; VkImageView view{}; VkFormat format{}; uint32_t w{}, h{}; };
++  std::array<Image, 4> images; // color, output, depth, motion
++  PFN_vkCmdBlitImage blit = nullptr;
++  PFN_vkCmdUpdateBuffer update_buffer = nullptr;
++  VkDescriptorSetLayout temporal_set_layout{};
++  VkDescriptorPool temporal_pool{};
++  std::array<VkDescriptorSet, 8> temporal_sets{};
++  VkPipelineLayout temporal_layout{};
++  VkPipeline temporal_pipeline{};
++  VkSampler temporal_sampler{};
++  VkBuffer temporal_constants{};
++  VkDeviceMemory temporal_memory{};
++  bool previous_temporal = false, logged_temporal = false;
++  bool CreateTemporalPipeline() {
++    const auto& f = device->functions(); const auto d = device->device();
++    const VkDescriptorSetLayoutBinding bindings[] = {
++        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
++        {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
++        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
++        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
++    VkDescriptorSetLayoutCreateInfo set_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
++    set_info.bindingCount = 4; set_info.pBindings = bindings;
++    if (f.vkCreateDescriptorSetLayout(d, &set_info, nullptr, &temporal_set_layout) != VK_SUCCESS) return false;
++    VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++    layout.setLayoutCount = 1; layout.pSetLayouts = &temporal_set_layout;
++    if (f.vkCreatePipelineLayout(d, &layout, nullptr, &temporal_layout) != VK_SUCCESS) return false;
++    const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
++        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16}, {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8}};
++    VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
++    pool.maxSets = 8; pool.poolSizeCount = 3; pool.pPoolSizes = sizes;
++    if (f.vkCreateDescriptorPool(d, &pool, nullptr, &temporal_pool) != VK_SUCCESS) return false;
++    std::array<VkDescriptorSetLayout, 8> layouts; layouts.fill(temporal_set_layout);
++    VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
++    alloc.descriptorPool = temporal_pool; alloc.descriptorSetCount = 8; alloc.pSetLayouts = layouts.data();
++    if (f.vkAllocateDescriptorSets(d, &alloc, temporal_sets.data()) != VK_SUCCESS) return false;
++    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
++    sampler.magFilter = sampler.minFilter = VK_FILTER_NEAREST;
++    sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
++    if (f.vkCreateSampler(d, &sampler, nullptr, &temporal_sampler) != VK_SUCCESS) return false;
++    if (!ui::vulkan::util::CreateDedicatedAllocationBuffer(device, sizeof(FrameInput::constants),
++        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++        ui::vulkan::util::MemoryPurpose::kDeviceLocal, temporal_constants, temporal_memory)) return false;
++    // Reproduce the game's depth/stencil decode and unclamped per-object
++    // reprojection (PPMotionBlurDepthHorizonVel, E68FE55ECD482EC5). The later
++    // speed-blur shaping and clamping in that shader must not affect DLSS MVs.
++    static constexpr char source[] = R"glsl(#version 450
++layout(local_size_x=8,local_size_y=8) in;
++layout(binding=0) uniform sampler2DArray packedDepth;
++layout(binding=1,r32f) uniform writeonly image2D depthOut;
++layout(binding=2,rg16f) uniform writeonly image2D motionOut;
++layout(binding=3,std140) uniform Constants { vec4 c[136]; };
++void main() {
++  ivec2 p=ivec2(gl_GlobalInvocationID.xy), size=imageSize(depthOut);
++  if(any(greaterThanEqual(p,size))) return;
++  vec2 uv=(vec2(p)+0.5)/vec2(size);
++  uvec4 b=uvec4(round(textureLod(packedDepth,vec3(uv,0),0).wxyz*255.0));
++  float depth=exp2(float(int(b.x>>4)-15))*(1.0+float(((b.x&15u)<<16)|(b.y<<8)|b.z)/1048576.0);
++  depth=clamp(depth,0.0,1.0);
++  uint objectId=b.w>=128u?0u:min((b.w+1u)/3u,24u);
++  uint row=32u+4u*objectId;
++  vec2 current=(uv-c[134].xy/vec2(size))*vec2(2.0,-2.0)+vec2(-1.0,1.0);
++  float denominator=1.0-c[132].x-depth;
++  float z=c[132].y/(abs(denominator)>1e-20?denominator:-1e-20);
++  // Match the original shader's r3.xyzz products exactly: its homogeneous
++  // component (1-depth) is multiplied by reconstructed z as well.
++  vec4 position=vec4(current.x*z,current.y*z,z*(1.0-depth),z);
++  vec4 a=c[row], y=c[row+1u], w=c[row+3u];
++  float previousW=dot(position,w);
++  vec2 previous=vec2(dot(position,a),dot(position,y))/previousW;
++  vec2 motion=(previous-current)*vec2(size)*vec2(0.5,-0.5);
++  if(any(isnan(motion))||any(isinf(motion))||abs(previousW)<1e-20) motion=vec2(0);
++  motion=clamp(motion,-vec2(size),vec2(size));
++  imageStore(depthOut,p,vec4(depth));
++  imageStore(motionOut,p,vec4(motion,0,0));
++})glsl";
++    std::vector<uint32_t> spirv; std::string error;
++    if (!CompileFh1Compute(source, spirv, error)) { REXGPU_ERROR("DLSS temporal shader: {}", error); return false; }
++    temporal_pipeline = ui::vulkan::util::CreateComputePipeline(device, temporal_layout,
++        spirv.data(), spirv.size() * sizeof(uint32_t));
++    return temporal_pipeline != VK_NULL_HANDLE;
++  }
++  void Temporal(VkCommandBuffer command, const FrameInput& input) {
++    const auto& f = device->functions();
++    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
++    barrier.srcAccessMask = VK_ACCESS_UNIFORM_READ_BIT; barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    barrier.buffer = temporal_constants; barrier.size = VK_WHOLE_SIZE;
++    f.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
++        0, 0, nullptr, 1, &barrier, 0, nullptr);
++    update_buffer(command, temporal_constants, 0, sizeof(input.constants), input.constants.data());
++    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_UNIFORM_READ_BIT;
++    f.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
++        0, 0, nullptr, 1, &barrier, 0, nullptr);
++    const auto set = temporal_sets[submissions % temporal_sets.size()];
++    VkDescriptorImageInfo info[] = {{temporal_sampler, input.depth_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
++        {VK_NULL_HANDLE, images[2].view, VK_IMAGE_LAYOUT_GENERAL},
++        {VK_NULL_HANDLE, images[3].view, VK_IMAGE_LAYOUT_GENERAL}};
++    VkDescriptorBufferInfo buffer{temporal_constants, 0, sizeof(input.constants)};
++    VkWriteDescriptorSet writes[4]{};
++    for (unsigned i = 0; i < 4; ++i) {
++      writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
++      writes[i].dstSet = set; writes[i].dstBinding = i; writes[i].descriptorCount = 1;
++      writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
++          i == 3 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
++      if (i < 3) writes[i].pImageInfo = &info[i]; else writes[i].pBufferInfo = &buffer;
++    }
++    f.vkUpdateDescriptorSets(device->device(), 4, writes, 0, nullptr);
++    f.vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_pipeline);
++    f.vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_layout, 0, 1, &set, 0, nullptr);
++    f.vkCmdDispatch(command, (images[2].w+7)/8, (images[2].h+7)/8, 1);
++    for (unsigned i : {2u,3u}) Barrier(command, images[i].image, VK_IMAGE_LAYOUT_GENERAL,
++        VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
++  }
++  bool Create(Image& image, uint32_t w, uint32_t h, VkFormat format) {
++    image.w = w; image.h = h; image.format = format;
++    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
++    info.imageType = VK_IMAGE_TYPE_2D; info.format = format; info.extent = {w, h, 1};
++    info.mipLevels = info.arrayLayers = 1; info.samples = VK_SAMPLE_COUNT_1_BIT;
++    info.tiling = VK_IMAGE_TILING_OPTIMAL;
++    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
++        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    if (!ui::vulkan::util::CreateDedicatedAllocationImage(device, info,
++        ui::vulkan::util::MemoryPurpose::kDeviceLocal, image.image, image.memory)) return false;
++    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
++    view.image = image.image; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = format;
++    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++    return device->functions().vkCreateImageView(device->device(), &view, nullptr, &image.view) == VK_SUCCESS;
++  }
++  void Barrier(VkCommandBuffer command, VkImage image, VkImageLayout old_layout,
++               VkImageLayout new_layout, VkAccessFlags src, VkAccessFlags dst) {
++    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
++    barrier.srcAccessMask = src; barrier.dstAccessMask = dst;
++    barrier.oldLayout = old_layout; barrier.newLayout = new_layout;
++    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    barrier.image = image; barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++    device->functions().vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
++  }
++  void Blit(VkCommandBuffer command, VkImage src, VkImageLayout src_layout,
++            VkImage dst, VkImageLayout dst_layout, uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh) {
++    VkImageBlit region{};
++    region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
++    region.srcOffsets[1] = {int32_t(sw), int32_t(sh), 1};
++    region.dstOffsets[1] = {int32_t(dw), int32_t(dh), 1};
++    blit(command, src, src_layout, dst, dst_layout, 1, &region, VK_FILTER_LINEAR);
++  }
++#endif
++};
++Fh1Dlss::Fh1Dlss(const ui::vulkan::VulkanDevice* device, bool dlaa) : state_(std::make_unique<State>()) {
++  state_->device = device;
++  state_->dlaa = dlaa;
++  if (dlaa) { state_->width = 2560; state_->height = 1440; }
++}
++Fh1Dlss::~Fh1Dlss() {
++#if defined(REX_FH1_NGX)
++  auto& s = *state_;
++  if (s.feature) NVSDK_NGX_VULKAN_ReleaseFeature(s.feature);
++  if (s.parameters) NVSDK_NGX_VULKAN_DestroyParameters(s.parameters);
++  if (s.initialized) NVSDK_NGX_VULKAN_Shutdown1(s.device->device());
++  for (auto& image : s.images) {
++    const auto& f = s.device->functions(); const auto d = s.device->device();
++    if (image.view) f.vkDestroyImageView(d, image.view, nullptr);
++    if (image.image) f.vkDestroyImage(d, image.image, nullptr);
++    if (image.memory) f.vkFreeMemory(d, image.memory, nullptr);
++  }
++  const auto& f = s.device->functions(); const auto d = s.device->device();
++  if (s.temporal_pipeline) f.vkDestroyPipeline(d, s.temporal_pipeline, nullptr);
++  if (s.temporal_pool) f.vkDestroyDescriptorPool(d, s.temporal_pool, nullptr);
++  if (s.temporal_layout) f.vkDestroyPipelineLayout(d, s.temporal_layout, nullptr);
++  if (s.temporal_set_layout) f.vkDestroyDescriptorSetLayout(d, s.temporal_set_layout, nullptr);
++  if (s.temporal_sampler) f.vkDestroySampler(d, s.temporal_sampler, nullptr);
++  if (s.temporal_constants) f.vkDestroyBuffer(d, s.temporal_constants, nullptr);
++  if (s.temporal_memory) f.vkFreeMemory(d, s.temporal_memory, nullptr);
++#endif
++}
++void Fh1Dlss::ReportStatus(std::string_view message) {
++#if defined(_WIN32)
++  const wchar_t* path = _wgetenv(L"FORZA_DLSS_STATUS_FILE");
++#else
++  const char* path = std::getenv("FORZA_DLSS_STATUS_FILE");
++#endif
++  if (!path || !*path) return;
++  std::ofstream stream(std::filesystem::path(path), std::ios::trunc);
++  stream << message;
++}
++void Fh1Dlss::BeginFrame(uint64_t frame) {
++    input_ = {};
++    if (!Evaluating()) {
++      if (jitter_was_active_) REXGPU_INFO("DLSS: jitter disabled; offsets={},{}", input_.jitter_x, input_.jitter_y);
++      jitter_was_active_ = false;
++      return;
++    }
++    jitter_was_active_ = true;
++    auto halton = [](uint64_t n, unsigned radix) {
++      float value = 0, factor = 1;
++      while (n) { factor /= float(radix); value += factor * float(n % radix); n /= radix; }
++      return value;
++    };
++    input_.jitter_x = halton(frame % 16 + 1, 2) - 0.5f;
++    input_.jitter_y = halton(frame % 16 + 1, 3) - 0.5f;
++  }
++
++bool Fh1Dlss::Initialize() {
++#if defined(REX_FH1_NGX)
++  auto& s = *state_;
++#if defined(_WIN32)
++  const wchar_t* root = _wgetenv(L"FORZA_DLSS_RUNTIME");
++#else
++  const char* root = std::getenv("FORZA_DLSS_RUNTIME");
++#endif
++  if (!root || !*root) { REXGPU_ERROR("DLSS: launcher did not supply a verified runtime folder"); return false; }
++  const auto folder = std::filesystem::path(root);
++  const std::wstring path = folder.wstring(); const wchar_t* search = path.c_str();
++  NVSDK_NGX_FeatureCommonInfo common{};
++  common.PathListInfo = {&search, 1};
++  common.LoggingInfo.LoggingCallback = [](const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_Feature) {
++    REXGPU_INFO("NGX: {}", message);
++  };
++  common.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_OFF;
++  const auto* instance = s.device->vulkan_instance();
++  const auto& functions = instance->functions();
++  auto result = NVSDK_NGX_VULKAN_Init_with_ProjectID("34a624c1-4bc3-4c46-923e-e986268895f7",
++      NVSDK_NGX_ENGINE_TYPE_CUSTOM, "ReImagined-native", path.c_str(), instance->instance(),
++      s.device->physical_device(), s.device->device(), functions.vkGetInstanceProcAddr,
++      functions.vkGetDeviceProcAddr, &common);
++  if (NVSDK_NGX_FAILED(result)) { REXGPU_ERROR("DLSS: NGX initialization failed: {:08X}", uint32_t(result)); return false; }
++  s.initialized = true;
++  result = NVSDK_NGX_VULKAN_GetCapabilityParameters(&s.parameters);
++  int available = 0;
++  int updated_driver = 0, feature_result = 0;
++  if (s.parameters) {
++    s.parameters->Get(NVSDK_NGX_Parameter_SuperSampling_NeedsUpdatedDriver, &updated_driver);
++    s.parameters->Get(NVSDK_NGX_Parameter_SuperSampling_FeatureInitResult, &feature_result);
++  }
++  if (NVSDK_NGX_FAILED(result) || !s.parameters || NVSDK_NGX_FAILED(s.parameters->Get(NVSDK_NGX_Parameter_SuperSampling_Available, &available)) || !available) {
++    REXGPU_ERROR("DLSS: unavailable (capabilities={:08X}, feature={:08X}, needs_driver={})",
++        uint32_t(result), uint32_t(feature_result), updated_driver); return false;
++  }
++  s.blit = reinterpret_cast<PFN_vkCmdBlitImage>(functions.vkGetDeviceProcAddr(s.device->device(), "vkCmdBlitImage"));
++  s.update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(functions.vkGetDeviceProcAddr(s.device->device(), "vkCmdUpdateBuffer"));
++  if (!s.blit || !s.Create(s.images[0], s.width, s.height, VK_FORMAT_R16G16B16A16_SFLOAT) ||
++      !s.Create(s.images[1], 2560, 1440, VK_FORMAT_R16G16B16A16_SFLOAT) ||
++      !s.Create(s.images[2], s.width, s.height, VK_FORMAT_R32_SFLOAT) ||
++      !s.Create(s.images[3], s.width, s.height, VK_FORMAT_R16G16_SFLOAT)) return false;
++  if (!s.update_buffer || !s.CreateTemporalPipeline()) return false;
++  REXGPU_INFO("DLSS: official NGX Vulkan runtime ready, no ReShade or D3D12 proxy");
++  return true;
++#else
++  REXGPU_ERROR("DLSS: this renderer was built without the optional NGX SDK");
++  return false;
++#endif
++}
++void Fh1Dlss::Execute(VkCommandBuffer command, VkImage scene, VkImage destination, const FrameInput& frame_input) {
++#if defined(REX_FH1_NGX)
++  auto& s = *state_;
++  ++s.submissions;
++  if (s.failed) {
++    s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
++        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, s.width, s.height, 2560, 1440);
++    return;
++  }
++  const auto& f = s.device->functions();
++  if (!s.images_ready) {
++    for (auto& image : s.images) {
++      s.Barrier(command, image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
++      VkClearColorValue clear{};
++      const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++      f.vkCmdClearColorImage(command, image.image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
++    }
++    s.images_ready = true;
++  }
++  auto& input = s.images[0]; auto& output = s.images[1];
++  s.Barrier(command, input.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
++      VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
++  s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, input.image,
++      VK_IMAGE_LAYOUT_GENERAL, s.width, s.height, s.width, s.height);
++  for (auto& image : s.images)
++    s.Barrier(command, image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
++        VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
++  const bool temporal = frame_input.depth_view != VK_NULL_HANDLE;
++  if (temporal) {
++    s.Temporal(command, frame_input);
++    if (!s.logged_temporal) {
++      REXGPU_INFO("DLSS: game reprojection=true");
++      s.logged_temporal = true;
++    }
++  }
++  if (!s.feature && !s.failed) {
++    NVSDK_NGX_DLSS_Create_Params create{};
++    create.Feature = {s.width, s.height, 2560, 1440,
++        s.dlaa ? NVSDK_NGX_PerfQuality_Value_DLAA : NVSDK_NGX_PerfQuality_Value_MaxPerf};
++    // This is the game's tonemapped scene, before the HUD. A float Vulkan
++    // resource does not make those display-referred colors HDR input.
++    create.InFeatureCreateFlags =
++        NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure |
++        NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
++    auto result = NGX_VULKAN_CREATE_DLSS_EXT1(s.device->device(), command, 1, 1, &s.feature, s.parameters, &create);
++    if (s.test_failure && std::string_view(s.test_failure) == "create") result = NVSDK_NGX_Result_FAIL_PlatformError;
++    if (NVSDK_NGX_FAILED(result)) {
++      REXGPU_ERROR("DLSS: Vulkan feature creation failed: {:08X}", uint32_t(result)); s.failed = true;
++      ReportStatus("error: NVIDIA feature creation failed. This session uses bilinear scaling; turn DLSS off and restart for native 1440p. See the game log.");
++    } else REXGPU_INFO("DLSS: created {} feature {}x{} -> 2560x1440", s.dlaa ? "DLAA" : "Super Resolution", s.width, s.height);
++  }
++  bool rendered = false;
++  if (s.feature && !s.failed) {
++    std::array<NVSDK_NGX_Resource_VK, 4> resources;
++    for (unsigned i = 0; i < resources.size(); ++i) {
++      const auto& image = s.images[i];
++      resources[i] = NVSDK_NGX_Create_ImageView_Resource_VK(image.view, image.image,
++          {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, image.format, image.w, image.h, i == 1);
++    }
++    NVSDK_NGX_VK_DLSS_Eval_Params eval{};
++    eval.Feature.pInColor = &resources[0]; eval.Feature.pInOutput = &resources[1];
++    eval.pInDepth = &resources[2]; eval.pInMotionVectors = &resources[3];
++    eval.InRenderSubrectDimensions = {s.width, s.height}; eval.InMVScaleX = eval.InMVScaleY = 1.0f;
++    eval.InJitterOffsetX = frame_input.jitter_x; eval.InJitterOffsetY = frame_input.jitter_y;
++    eval.InReset = !temporal || !s.previous_temporal;
++    eval.InPreExposure = eval.InExposureScale = 1.0f;
++    auto result = NGX_VULKAN_EVALUATE_DLSS_EXT(command, s.feature, s.parameters, &eval);
++    if (s.test_failure && std::string_view(s.test_failure) == "evaluate" && s.frames >= 8) result = NVSDK_NGX_Result_FAIL_PlatformError;
++    rendered = NVSDK_NGX_SUCCEED(result);
++    if (!rendered) {
++      REXGPU_ERROR("DLSS: evaluation failed: {:08X}", uint32_t(result)); s.failed = true;
++      ReportStatus("error: NVIDIA reconstruction stopped. This session uses bilinear scaling; turn DLSS off and restart for native 1440p. See the game log.");
++    } else {
++      if (++s.frames == 1) ReportStatus(s.dlaa ? "ready: DLAA is active at native 1440p." :
++          "ready: DLSS is active: 720p scene to 1440p, with native 1440p UI.");
++      if (s.frames % 120 == 0) REXGPU_DEBUG("DLSS: processed {} native Vulkan frames (game reprojection={})", s.frames, temporal);
++    }
++    s.previous_temporal = temporal;
++  }
++  evaluating_.store(rendered && !s.failed, std::memory_order_release);
++  if (rendered) {
++    s.Barrier(command, output.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
++        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
++    s.Blit(command, output.image, VK_IMAGE_LAYOUT_GENERAL, destination,
++        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2560, 1440, 2560, 1440);
++  } else s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
++      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, s.width, s.height, 2560, 1440);
++#endif
++}
++}
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 315ea89..566579e 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -921,6 +921,16 @@ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
+   return shader;
+ }
+ 
++VulkanShader* VulkanPipelineCache::LoadShaderForDraw(const Shader& source) {
++  const auto hash = source.ucode_data_hash();
++  auto it = shaders_.find(hash);
++  if (it != shaders_.end()) return it->second;
++  auto* shader = new VulkanShader(command_processor_.GetVulkanDevice(), source.type(),
++      hash, source.ucode_dwords(), source.ucode_dword_count(), std::endian::native);
++  shaders_.emplace(hash, shader);
++  return shader;
++}
++
+ SpirvShaderTranslator::Modification VulkanPipelineCache::GetCurrentVertexShaderModification(
+     const Shader& shader, Shader::HostVertexShaderType host_vertex_shader_type,
+     uint32_t interpolator_mask, bool ps_param_gen_used) const {
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 65aa134..9ffb126 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1914,9 +1914,8 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+       image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+     }
+     image_create_info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+-    if (REXCVAR_GET(vulkan_render_target_initial_fill)) {
+-      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+-    }
++    if (command_processor_.fh1_split_enabled())
++      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+   }
+   if (image_create_info.format == VK_FORMAT_UNDEFINED) {
+     REXGPU_ERROR("VulkanRenderTargetCache: Unknown {} render target format {}",
+@@ -6245,4 +6244,52 @@ bool VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base, uint32_t dum
+   return all_pipelines_available;
+ }
+ 
++bool VulkanRenderTargetCache::SeedNativeHud(VulkanRenderTargetCache& scene,
++                                           uint32_t width, uint32_t height) {
++  if (GetPath() != Path::kHostRenderTargets || scene.GetPath() != Path::kHostRenderTargets)
++    return false;
++  auto* src = static_cast<VulkanRenderTarget*>(scene.last_update_accumulated_render_targets()[1]);
++  auto* dst = static_cast<VulkanRenderTarget*>(last_update_accumulated_render_targets()[1]);
++  if (!src || !dst || src->key().msaa_samples != xenos::MsaaSamples::k1X ||
++      dst->key().msaa_samples != xenos::MsaaSamples::k1X ||
++    src->key().GetWidth() < width || dst->key().GetWidth() < width) {
++    REXGPU_WARN("FH1 scene transfer rejected: src={}, dst={}, src samples={}, dst samples={}, src width={}, dst width={}",
++        bool(src), bool(dst), src ? int(src->key().msaa_samples) : -1,
++        dst ? int(dst->key().msaa_samples) : -1,
++        src ? src->key().GetWidth() : 0, dst ? dst->key().GetWidth() : 0);
++    return false;
++  }
++  command_processor_.EndRenderPass();
++  const auto range = ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
++  auto transition = [&](VulkanRenderTarget& rt, VkImageLayout layout, VkAccessFlags access) {
++    command_processor_.PushImageMemoryBarrier(rt.image(), range, rt.current_stage_mask(),
++        VK_PIPELINE_STAGE_TRANSFER_BIT, rt.current_access_mask(), access, rt.current_layout(), layout);
++    rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, access, layout);
++  };
++  transition(*src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
++  transition(*dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT);
++  command_processor_.SubmitBarriers(true);
++  VkImageBlit region{};
++  region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
++  region.srcOffsets[1] = {int32_t(width * scene.draw_resolution_scale_x()),
++                          int32_t(height * scene.draw_resolution_scale_y()), 1};
++  region.dstOffsets[1] = {int32_t(width * draw_resolution_scale_x()),
++                          int32_t(height * draw_resolution_scale_y()), 1};
++  if (command_processor_.fh1_dlss()) {
++    command_processor_.deferred_command_buffer().CmdFh1Dlss(
++        command_processor_.fh1_dlss(), src->image(), dst->image());
++    command_processor_.Fh1InvalidateBindings();
++    // NGX may change pipeline bindings on the real command buffer; subsequent
++    // guest work is rebound by the command processor before rendering the HUD.
++  } else {
++    command_processor_.deferred_command_buffer().CmdVkBlitImage(src->image(), dst->image(), region);
++  }
++  command_processor_.PushImageMemoryBarrier(dst->image(), range, dst->current_stage_mask(),
++      VulkanRenderTarget::kColorDrawStageMask, dst->current_access_mask(),
++      VulkanRenderTarget::kColorDrawAccessMask, dst->current_layout(), VulkanRenderTarget::kColorDrawLayout);
++  dst->SetUsage(VulkanRenderTarget::kColorDrawStageMask, VulkanRenderTarget::kColorDrawAccessMask,
++                VulkanRenderTarget::kColorDrawLayout);
++  return true;
++}
++
+ }  // namespace rex::graphics::vulkan
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 8197bb4..1cc9cd9 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -170,6 +170,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   request_promoted_extension("VK_" #name, major, minor, &ext_##major##_##minor##_##name);
+ 
+   bool ext_KHR_portability_subset = false;
++  const auto reconstruction = rex::cvar::GetFlagByName("fh1_upscaler");
++  const bool dlss_requested = with_gpu_emulation && properties.vendorID == 0x10DE &&
++      (reconstruction == "dlss" || reconstruction == "dlaa");
++  bool ext_KHR_push_descriptor = false;
++  if (dlss_requested) requested_extensions.emplace("VK_KHR_push_descriptor", &ext_KHR_push_descriptor);
++  bool ext_NVX_binary_import = false, ext_NVX_image_view_handle = false;
++  if (dlss_requested) requested_extensions.emplace("VK_NVX_binary_import", &ext_NVX_binary_import);
++  if (dlss_requested) requested_extensions.emplace("VK_NVX_image_view_handle", &ext_NVX_image_view_handle);
+   bool ext_1_2_KHR_driver_properties = false;
+   if (get_physical_device_properties2_supported) {
+     // #164. Must be enabled according to the specification if the physical
+@@ -650,6 +658,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_FEATURE_2(features_1_2, samplerMirrorClampToEdge);
+       XE_UI_VULKAN_FEATURE_2(features_1_2, uniformBufferStandardLayout);
+       XE_UI_VULKAN_FEATURE_2(features_1_2, scalarBlockLayout);
++      if (dlss_requested) features_1_2.enabled.shaderFloat16 = features_1_2.supported.shaderFloat16;
+     }
+   } else {
+     if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
+diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
+index 914b311..f58fe03 100644
+--- a/src/ui/vulkan/vulkan_instance.cpp
++++ b/src/ui/vulkan/vulkan_instance.cpp
+@@ -124,7 +124,9 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+   // extensions vector.
+   std::unordered_map<std::string, bool*> requested_extensions;
+   if (vulkan_instance->api_version_ >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
+-    vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
++    const auto reconstruction = rex::cvar::GetFlagByName("fh1_upscaler");
++    if (reconstruction == "dlss" || reconstruction == "dlaa")
++      vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
+   } else {
+     // #60.
+     requested_extensions.emplace(
+@@ -135,8 +137,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+   requested_extensions.emplace("VK_EXT_debug_utils",
+                                &vulkan_instance->extensions_.ext_EXT_debug_utils);
+   // #395.
++#ifndef _WIN32
+   requested_extensions.emplace("VK_KHR_portability_enumeration",
+                                &vulkan_instance->extensions_.ext_KHR_portability_enumeration);
++#endif
+   if (with_surface) {
+     // #1.
+     requested_extensions.emplace("VK_KHR_surface", &vulkan_instance->extensions_.ext_KHR_surface);

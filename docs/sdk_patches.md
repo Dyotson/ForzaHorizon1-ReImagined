@@ -79,3 +79,6 @@ the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). S
 [Frame rate](framerate.md).
 
 0066 averages supersampled RGBA8 car-thumbnail pixels during readback, keeping other formats and resolves unchanged. Requires the known-thumbnail refresh rule already on main (0053); see [Rendering issues](rendering.md#filter-supersampled-car-thumbnails-50).
+
+0046 adds native Windows Vulkan DLSS/DLAA with separate scene/UI rendering.
+See [Native DLSS](native_dlss.md) for runtime setup, licensing and validation limits.

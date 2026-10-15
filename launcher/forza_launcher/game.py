@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, gpu, paths
+from . import TITLE_ID, cleanenv, gpu, paths, dlss
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -279,6 +279,7 @@ class LaunchPlan:
     server_argv: list | None = None   # a local Forza Live server to start (when not running)
     notes: list = field(default_factory=list)
     log_dir: Path | None = None
+    dlss_status_file: Path | None = None
 
     def command_line(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -437,6 +438,11 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
 
+    if write and dlss.enabled(cfg):
+        dlss.check_renderer(game.dir)
+    dlss.configure(cfg, env, args, notes, write)
+    dlss_status_file = Path(env["FORZA_DLSS_STATUS_FILE"]) if "FORZA_DLSS_STATUS_FILE" in env else None
+
     extra = split_args(cfg.advanced.get("extra_args", ""))
     vendor_arg = gpu_vendor_arg(cfg, extra)
     if vendor_arg:
@@ -455,7 +461,7 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
             libs.append(user_libs)
         env["LD_LIBRARY_PATH"] = ":".join(libs)
     return LaunchPlan(game, game.dir, [str(game.exe)] + args, env, unset, toml_path,
-                      toml_text, server_argv, notes, home)
+                      toml_text, server_argv, notes, home, dlss_status_file)
 
 
 def log_path_of(plan: "LaunchPlan"):
@@ -650,6 +656,7 @@ class Session:
         """After the game ends: stop our server and free guest memory left in /dev/shm."""
         if self.server and self.server.poll() is None:
             self.server.terminate()
+        dlss.cleanup_status(self.plan)
         if not paths.IS_WINDOWS:
             clean_shm()
 
