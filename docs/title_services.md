@@ -210,6 +210,30 @@ next lobby (Cat & Mouse) sat at "WAITING FOR PLAYERS TO JOIN..." for 10 minutes 
 consoles in it and `UserRegister` every 60 s: seen once, not reproduced or explained (the
 first Cat & Mouse lobby of the other runs started within 40 s).
 
+**The lobby stuck after King (#14), reproduced with `FORZA_LOBBY_LOG=1` (2026-10-15).** The
+log tool (`src/debug/lobby_log.cpp`; `LOBBY:` lines in the game log) writes each peer's lobby
+state, for the host the launch check `sub_82876D90` and its inputs each second (humans vs
+minPlayersToLaunch, players still in the last round, the bucket check's result `+2148` (TU4
+`+2172`) and its due flag, CPU drivers vs the session's, every player's state bytes), the
+lobby's events, every player status change and each bucket check (`sub_82895018`: result, the
+caller, the table of per-team bucket counts, the players' records). Two instances on a local
+server with `--playground-games 6,5` (Cat & Mouse made a 90 s timed round so rounds pass
+without driving), each game started with `FORZA_LOBBY_LOG=1`, a script following the host's
+log; every lobby launched 30 s after it opened, except two King -> Cat & Mouse lobbies of
+about 11 (host B after 5 clean ones, host A after 2): the host sat at "WAITING FOR PLAYERS TO
+JOIN..." with both players in it, as in the report. In those the launch check was false only
+because of the bucket result: humans 2 >= 2, nobody in the last round, `+2148` = 0 with the
+due flag already clear, so nothing ever runs the check again (it runs only after a player
+status event). In the clean lobbies the result is 2 when the lobby opens. In the stuck one
+the bucket check, run as the lobby opens, found the players' buckets outside the preset's
+(Mouse MinPlayers 1 MaxPlayers 1 per team: table rows `1 0 1 0 0`, no mouse; a fresh
+assignment gave `1 1 0 0 0` and `1 0 1 0 0`) and returned 0. So the machine load was not
+needed. Not fixed: next step is the bucket assignment after a King round (`sub_8289B0D0`,
+which seeds the players' buckets from the previous round) and a re-check when the result is 0
+(for example set `+2152`, the due flag, once a second while the host is in the lobby with the
+launch otherwise ready). Use: `FORZA_LOBBY_LOG=1`, `grep LOBBY forza.log`; the `check:` line
+shows `bucket result 0` in a stuck lobby.
+
 `GetSearchSettings` returns the session filter (`numStartingMatchmakingQueryResults`,
 QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,
 `maxConnectSecondsBeforeCreating`, `maxWaitingForClientsToConnectSeconds`,
