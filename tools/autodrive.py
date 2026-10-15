@@ -31,8 +31,8 @@ LEAD_KINDS = {int(k) for k in os.environ.get("AD_KINDS", "1,3").split(",") if k}
 PATH_SAVE = os.environ.get("AD_PATH_SAVE")  # write the lap (x z speed per line) when closed
 PATH_LOAD = os.environ.get("AD_PATH_LOAD")  # start with a saved lap (races without CPU cars)
 # AD_OPEN=1: the loaded path is point to point (a rally stage, tools/owt_path.py), not a lap;
-# exit once the car has stood still for 4 s in the path's last quarter (the game stops it at
-# the finish).
+# exit once the car, after it got going, has not moved for 8 s although it was told to back
+# out (the game holds it after the finish; routes can run on past the finish line).
 OPEN = os.environ.get("AD_OPEN") == "1"
 
 
@@ -124,6 +124,7 @@ last = {}          # slot -> (t, x, z)
 own_last = None
 stuck_since = None
 stopped_since = None
+moved = False
 reverse_until = 0
 t_end = time.time() + SECS
 tick = 1.0 / HZ
@@ -225,9 +226,10 @@ while time.time() < t_end:
                 stuck_since = None
         else:
             stuck_since = None
-        if OPEN and idx > 0.75 * N and v < 0.5:
+        moved = moved or v > 5
+        if OPEN and moved and v < 0.5:
             stopped_since = stopped_since or now
-            if now - stopped_since > 4:
+            if now - stopped_since > 8:
                 print(time.strftime("%T"), "stopped at the end of the path (idx %d of %d)" % (idx, N), file=LOG, flush=True)
                 break
         else:
