@@ -1,0 +1,72 @@
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -37,6 +37,13 @@
+ #include <rex/math.h>
+ #include <rex/ui/vulkan/util.h>
+ 
++REXCVAR_DEFINE_INT32(vulkan_render_target_initial_fill, 0, "GPU/Vulkan",
++                     "Fill a host color render target before its first use: 0 leaves the driver's "
++                     "memory (undefined), 1 clears it to zero, 2 to a loud magenta (64, 0, 64, 1) to "
++                     "show where the guest reads render target memory it never wrote")
++    .range(0, 2)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ REXCVAR_DEFINE_STRING(render_target_path_vulkan, "", "GPU/Vulkan",
+                       "Vulkan render target implementation path")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -1907,6 +1914,9 @@
+       image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+     }
+     image_create_info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++    if (REXCVAR_GET(vulkan_render_target_initial_fill)) {
++      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    }
+   }
+   if (image_create_info.format == VK_FORMAT_UNDEFINED) {
+     REXGPU_ERROR("VulkanRenderTargetCache: Unknown {} render target format {}",
+@@ -4619,6 +4629,44 @@
+     resolve_clear_rect.layerCount = 1;
+   }
+ 
++  // A color render target the guest has never drawn to holds whatever the driver's memory
++  // had (VK_IMAGE_LAYOUT_UNDEFINED): zeros on some drivers, old data on others. Fill it
++  // before its first use when asked (vulkan_render_target_initial_fill).
++  if (int32_t initial_fill = REXCVAR_GET(vulkan_render_target_initial_fill)) {
++    for (uint32_t i = 0; i < render_target_count; ++i) {
++      RenderTarget* rt = render_targets[i];
++      if (!rt || rt->key().is_depth) {
++        continue;
++      }
++      auto& vulkan_rt = *static_cast<VulkanRenderTarget*>(rt);
++      if (vulkan_rt.current_layout() != VK_IMAGE_LAYOUT_UNDEFINED) {
++        continue;
++      }
++      VkImageSubresourceRange range =
++          ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
++      command_processor_.PushImageMemoryBarrier(
++          vulkan_rt.image(), range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
++          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
++          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++      command_processor_.SubmitBarriers(true);
++      VkClearColorValue fill = {};
++      if (initial_fill == 2) {
++        fill.float32[0] = 64.0f;
++        fill.float32[2] = 64.0f;
++        fill.float32[3] = 1.0f;
++      }
++      command_buffer.CmdVkClearColorImage(vulkan_rt.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++                                          &fill, 1, &range);
++      vulkan_rt.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
++                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++      static uint32_t fill_count = 0;
++      if (++fill_count <= 64) {
++        REXGPU_INFO("VulkanRenderTargetCache: filled new render target {} ({})",
++                    vulkan_rt.key().GetDebugName(), initial_fill == 2 ? "magenta" : "zero");
++      }
++    }
++  }
++
+   // Do host depth storing for the depth destination (assuming there can be only
+   // one depth destination) where depth destination == host depth source.
+   bool host_depth_store_set_up = false;

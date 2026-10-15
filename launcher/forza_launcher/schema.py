@@ -68,11 +68,13 @@ add("video_driver", "Video driver", "Display", "choice", "",
     restart=True)
 add("resolution", "Resolution preset", "Display", "combo", "",
     "Guest video mode and window size in one: 720p, 1080p, 1440p, 4k or WxH. Empty keeps the "
-    "defaults (1280x720 guest).", "Picture",
+    "defaults (1280x720 guest). The game still draws at 1280x720; Render scale sets the "
+    "drawing resolution.", "Picture",
     choices=[("", "Default"), ("720p", "720p"), ("1080p", "1080p"), ("1440p", "1440p"),
              ("4k", "4K")])
 add("resolution_scale", "Render scale", "Display", "int", 1,
-    "Draws at 1x to 8x the guest resolution (2 is 1440p-class from 720p).", "Picture",
+    "Draws at 1x to 8x the guest resolution (2 is 1440p-class from 720p, 3 is 4K). Above 2 is "
+    "experimental: flicker and coloured artifacts were reported on NVIDIA (issue #47).", "Picture",
     lo=1, hi=8, restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
@@ -95,7 +97,8 @@ add("native_2x_msaa", "Native 2x MSAA", "Display", "bool", True,
     "Use the GPU's own 2x multisampling.", "Picture")
 if IS_WINDOWS:
     add("gpu_backend", "Graphics API", "Display", "choice", "vulkan",
-        "Vulkan includes this project's fixes; Direct3D 12 is the SDK's own.", "Picture",
+        "Vulkan includes this project's fixes and is recommended; Direct3D 12 is the SDK's own and "
+        "flickers on some NVIDIA cards (greenish reflections, issue #46).", "Picture",
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 

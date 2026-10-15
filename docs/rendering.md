@@ -56,3 +56,82 @@ thresholds may show the same off-by-ulps difference; none is known.
 - The camera definitions set a `MotionBlurAmount` per shot (`media/camera.zip`, for
   example `321Cams.xml`).
 
+
+## Screening for driver-dependent bugs (#34, 2026-10-15)
+
+Issue #34 (Windows 11, RTX 3080) reported flicker and greenish reflections on Direct3D 12
+(#46), flicker and coloured artifacts at render scale 3 (#47), and traffic cars that blow
+out into a cyan glow (#48), "mainly on NVIDIA". The test machine has a Radeon (RADV), so
+these checks look for behaviour that depends on the driver: if RADV, lavapipe and
+vkd3d-proton all agree and the validation layers are quiet, the bug is in what one driver
+does with an undefined case.
+
+**What was run (free roam, Xenia save copy, 2-3 min of driving, screenshots every 2 s):**
+
+| Check | Result |
+| --- | --- |
+| Vulkan, RADV, scale 1, 3, 4 | clean |
+| Vulkan, lavapipe (CPU), scale 1 | same picture as RADV |
+| Direct3D 12 (Windows build, vkd3d-proton on RADV), scale 1 and 3 | clean, no green tint |
+| Validation layers + synchronization validation, RADV | one hazard, harmless (below) |
+| Every new color render target filled with magenta first (scale 3) | no magenta anywhere: the game does not read render target memory it never wrote |
+| NaN / Inf / values above 31.875 in the float targets, after every 20th draw of a captured frame | none; the 7e3 targets peak at exactly 31.875 |
+
+The one validation report is `SYNC-HAZARD-WRITE-AFTER-WRITE` between two `vkCmdCopyBuffer`
+into the same readback buffer in consecutive submissions with no barrier
+(`IssueCopy_ReadbackResolvePath` with `readback_resolve = some`: the copy is recorded for every
+resolve, the CPU reads only on a cache miss, after waiting for the GPU). Formally a race, in
+practice the same bytes are written twice; not a cause of the reports. The other report,
+"fragment shader writes Location 0 with no attachment", is a performance warning.
+
+**A likely mechanism, not confirmed.** On the host render target path (the default on every
+vendor but Intel, Vulkan and D3D12), pixel shader colours go to the float16 targets that stand
+in for the console's 7e3 format **unclamped**. The console clamps to [0, 31.875] and turns NaN
+into 0 before blending; the SDK's interlock path does the same, the host path does not. A
+shader that gives Inf, NaN or a huge value on one driver (denormals, `0 * inf`, `log(0)`)
+then feeds the bloom on that driver only. Clamping there would match the console on every
+driver; it needs a capture from an affected machine first to see which draw.
+
+### How to run the checks
+
+- **Validation layers** (user install, no root): `dnf download vulkan-validation-layers`,
+  unpack with `rpm2cpio ... | cpio -idm` into `~/.local/opt/vvl`, and copy
+  `usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json` into
+  `~/.local/opt/vvl/layers/` with `library_path` set to the absolute path of
+  `usr/lib64/libVkLayer_khronos_validation.so`. Then run the game (`tools/live_session.sh`
+  passes the environment through) with
+  `VK_ADD_LAYER_PATH=~/.local/opt/vvl/layers VK_LOADER_LAYERS_ENABLE='*khronos_validation'
+  VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true VK_KHRONOS_VALIDATION_REPORT_FLAGS=error,warn
+  VK_KHRONOS_VALIDATION_DEBUG_ACTION=VK_DBG_LAYER_ACTION_LOG_MSG
+  VK_KHRONOS_VALIDATION_LOG_FILENAME=/path/vvl.txt
+  VK_KHRONOS_VALIDATION_DUPLICATE_MESSAGE_LIMIT=3` and `--vulkan_log_debug_messages=false`
+  (keeps forza.log small). Free roam stays playable with synchronization validation on.
+  GPU-assisted validation (`VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true`) is much slower.
+- **lavapipe:** `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`. The game
+  runs at about 10 guest fps and 2-3 presented fps, so scripted inputs need three times the
+  waits (the title screen takes 60 s, loading into free roam about 4 min), and a screenshot
+  trigger should be touched without waiting for the file. A RenderDoc capture made on RADV
+  does not replay on lavapipe ("tried to allocate memory from index 3, but on replay we only
+  have 1 memory types"), so compare screenshots of the same place instead.
+- **Direct3D 12 without Windows:** `tools/build_windows.sh`, then from the package folder
+  `WINEPREFIX=<scratch prefix> GAMEID=0 PROTONPATH=GE-Proton11-1 umu-run ./forza.exe
+  --gpu_backend=d3d12 --game_data_root=Z:\...` (Windows paths under `Z:`). The input FIFO is
+  POSIX-only: use the `FORZA_AUTOPRESS="8:START,10:START,...,95:RT:40"` schedule. Set
+  `FORZA_FRAMEDUMP_DIR` (a `Z:` path) or screenshots land in `/tmp`.
+- **Uninitialized render targets:** `--vulkan_render_target_initial_fill=2` (SDK patch 0042)
+  fills every new color render target with magenta (64, 0, 64, 1) before its first use; any
+  magenta on screen is render target memory the game reads without writing, which is zero on
+  some drivers and old data on others. `=1` fills with zero. Each fill is logged
+  ("filled new render target", first 64).
+- **NaN / Inf / out of range per draw:** capture a frame (`renderdoccmd capture -w -c DIR/cap
+  ./forza ...` with `VK_ADD_IMPLICIT_LAYER_PATH=~/renderdoc/layer`, so the RenderDoc layer is
+  found, and `FORZA_RDCAPTURE_TRIGGER`), then
+  `RDC_CAP=cap.rdc RDC_OUT=DIR qrenderdoc --python tools/rdc_float_scan.py`: the first draw that
+  leaves NaN, Inf or more than 31.875 in each float target, with texel positions. For a blown-out
+  object, take RenderDoc's pixel history on it from there.
+- **A colour on screen:** a short script over the screenshots (Pillow) that counts saturated
+  pixels of the reported colour (cyan: G and B above 215, R 70 below G) finds the frames to look at;
+  check the hits, the radio HUD's logo is cyan too.
+
+Xenia Canary was not compared: on Linux it takes pad input only, and no global virtual pad is
+allowed on the test machine.
