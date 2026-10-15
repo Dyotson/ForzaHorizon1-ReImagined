@@ -95,6 +95,9 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   or a new paint job in the garage renders it again. Deleting the files only makes them
   black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
   `some`, broken pictures again).
+- **Photos:** photo mode saves the picture in the profile (`photo/<name>/`); SAVE asks for
+  a name in a small window over the game (Enter or OK). Builds before SDK patch 0048 saved
+  a garbled picture (#54); photos saved by them stay garbled, take them again.
 
 ## Recommended picture settings
 

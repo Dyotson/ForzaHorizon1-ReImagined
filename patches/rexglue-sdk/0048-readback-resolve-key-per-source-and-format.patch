@@ -1,0 +1,96 @@
+diff --git a/include/rex/graphics/command_processor.h b/include/rex/graphics/command_processor.h
+--- a/include/rex/graphics/command_processor.h
++++ b/include/rex/graphics/command_processor.h
+@@ -229,6 +229,12 @@
+ 
+   // Shared readback resolve mode with backend legacy-flag alias support.
+   ReadbackResolveMode GetReadbackResolveMode(bool legacy_readback_resolve_enabled) const;
++  // Key of the resolve readback buffers of the current copy: the written range, plus whether
++  // the copy is from depth or color and its destination format. A range that one pass resolves
++  // every frame (a depth buffer) and another pass resolves once for the CPU to read (a color
++  // image) then has a buffer per pass, so the rare copy is a first-seen key: "some" copies it
++  // back, and "fast" does not hand the CPU the other pass's data of the previous resolve.
++  uint64_t GetReadbackResolveKey(uint32_t written_address, uint32_t written_length) const;
+   // Shared memexport readback enable state with backend legacy-flag override support.
+   bool IsReadbackMemexportEnabled(bool legacy_backend_flag) const;
+ 
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -189,6 +189,26 @@
+                                          : ReadbackResolveMode::kDisabled;
+ }
+ 
++uint64_t CommandProcessor::GetReadbackResolveKey(uint32_t written_address,
++                                                 uint32_t written_length) const {
++  const RegisterFile& regs = *register_file_;
++  reg::RB_COPY_CONTROL copy_control = regs.Get<reg::RB_COPY_CONTROL>();
++  reg::RB_COPY_DEST_INFO dest_info = regs.Get<reg::RB_COPY_DEST_INFO>();
++  // Not the exponent bias, the EDRAM base or the size: they may change from frame to frame
++  // in the same pass, and each change would be a GPU wait.
++  uint64_t signature = uint64_t(copy_control.copy_src_select >= 4) |
++                       (uint64_t(dest_info.copy_dest_format) << 1) |
++                       (uint64_t(dest_info.copy_dest_number) << 7) |
++                       (uint64_t(dest_info.copy_dest_endian) << 10) |
++                       (uint64_t(dest_info.copy_dest_swap) << 13) |
++                       (uint64_t(dest_info.copy_dest_array) << 14) |
++                       (uint64_t(dest_info.copy_dest_slice) << 15);
++  // Distinct keys for distinct signatures; signature 0 (a color copy to k_1_REVERSE) keeps
++  // the plain (address, length) key.
++  return ((uint64_t(written_address) << 32) | uint64_t(written_length)) ^
++         (signature * UINT64_C(0x9E3779B97F4A7C15));
++}
++
+ bool CommandProcessor::IsReadbackMemexportEnabled(bool legacy_backend_flag) const {
+   if (legacy_readback_memexport_cvar_name_ &&
+       rex::cvar::HasNonDefaultValue(legacy_readback_memexport_cvar_name_)) {
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -508,9 +508,6 @@
+     }
+     return rex::align(size, kReadbackBufferSizeIncrement);
+   }
+-  static inline uint64_t MakeReadbackResolveKey(uint32_t address, uint32_t length) {
+-    return (uint64_t(address) << 32) | uint64_t(length);
+-  }
+   static inline uint64_t MakeMemexportReadbackKey(uint32_t first_base_address_dwords,
+                                                   uint32_t total_size) {
+     return (uint64_t(first_base_address_dwords) << 32) | uint64_t(total_size);
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -394,9 +394,6 @@
+     }
+     return rex::align(size, kReadbackBufferSizeIncrement);
+   }
+-  static inline uint64_t MakeReadbackResolveKey(uint32_t address, uint32_t length) {
+-    return (uint64_t(address) << 32) | uint64_t(length);
+-  }
+   static inline uint64_t MakeMemexportReadbackKey(uint32_t first_base_address_dwords,
+                                                   uint32_t total_size) {
+     return (uint64_t(first_base_address_dwords) << 32) | uint64_t(total_size);
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4862,7 +4862,7 @@
+   };
+ 
+   bool is_scaled = texture_cache_->IsDrawResolutionScaled();
+-  uint64_t resolve_key = MakeReadbackResolveKey(written_address, written_length);
++  uint64_t resolve_key = GetReadbackResolveKey(written_address, written_length);
+   ReadbackBuffer& readback = readback_buffers_[resolve_key];
+   readback.last_used_frame = frame_current_;
+   uint32_t write_index = readback.current_index;
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -2902,7 +2902,7 @@
+   }
+ 
+   bool is_scaled = texture_cache_->IsDrawResolutionScaled();
+-  uint64_t resolve_key = MakeReadbackResolveKey(written_address, written_length);
++  uint64_t resolve_key = GetReadbackResolveKey(written_address, written_length);
+   ReadbackBuffer& rb = readback_buffers_[resolve_key];
+   rb.last_used_frame = frame_current_;
+ 

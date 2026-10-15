@@ -275,6 +275,35 @@ new `Thumbnail_N.xdc` decoded with `tools/xdc_decode.py`):
   60 frames unused, so two pictures made less than 60 frames apart could come out stale;
   the game makes one every few seconds at most.
 
+**Photo mode (#54, 2026-10-15).** The saved photo was garbage while the screen looked right:
+`some` saved noise with the shapes of an old frame (and a minimap in a corner), `fast`
+(v0.1.4) saved the photographed scene in orange and green contour bands. At SAVE the game
+composes the photo into EDRAM, resolves it (1280x720 `k_8_8_8_8`, 3,768,320 bytes) to
+physical 0x1DAC5000 and encodes it on the CPU (JPEG, `photo/<name>/image@...`; the 416x240
+`thumb` is a separate, new resolve and was always right). The same range takes a depth
+resolve (copy source 4) every frame, so under the old (address, length) key the photo was
+a hot key: `some` never copied it back, `fast` copied the previous resolve of the range,
+the depth buffer (hence the bands). Found by filling the candidate ranges with marker colours
+through `/proc/PID/mem` before taking a photo: the saved photo came out in the colour of
+0x1DAC5000. SDK patch 0048 adds the copy's source (depth or color) and destination format
+to the key, so the photo resolve is a first-seen key and is copied back after a GPU wait.
+Checked on the TU4 build (scratch copy of the Xenia save, photo saved, then loaded from
+VIEW PHOTO): correct at render scale 1 and 2. A key is first-seen whenever its range alone
+was, so every copy `some` made before (car thumbnails) is still made.
+
+Race at 144 with 0048 (same plugin, fresh save copy each run, BENCH lock held; CONTENDED
+only by the load average left by the previous run):
+
+| readback_resolve | Race intro fps | Race fps (p50 / p95 / p99 ms) |
+| --- | --- | --- |
+| some (0048) | 103.3 | 93.7 (10.6 / 14.1 / 15.1) |
+| none | 103.1 | 94.4 (10.6 / 14.0 / 15.0) |
+| some (0048) | 103.3 | 93.1 (10.7 / 14.0 / 15.0) |
+
+Saving a photo needs the name dialog (`XamShowKeyboardUI`), an SDK ImGui window: Enter or
+OK with the keyboard or mouse. With `--headless=true` (no dialog) the save fails ("File
+open failed").
+
 The Paint Shop's `Design Creator` crashed the game once (guest read of address 0x1A4, with
 readback on); not looked at here.
 
