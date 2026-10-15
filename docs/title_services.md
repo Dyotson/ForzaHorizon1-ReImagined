@@ -266,6 +266,39 @@ credits kept), so the server keeps it: from each `UpdateAll` (`onlineXP`, only g
 into `DATA_DIR/players/<XUID>.json`, back in the next `Logon2`. Without the title server
 the game offers only the default "Quick Match" playlist, which awards no multiplayer XP.
 
+### Every leaderboard (inventory, #43)
+
+Every leaderboard a single-player game reaches, the call that writes it and the call that
+reads it. Forza Horizon keeps its leaderboards on Turn 10's title services; its Xbox LIVE
+stats are only TrueSkill. The title's SPA (the XDBF resource in `default.xex`) has one
+stats view in its XVC2 table, `0xFFFF0000` (the ranked skill view of game mode 0) with no
+columns of its own, and the XGI messages the code sends are 0xB0006-8 (user context and
+properties), 0xB0010-15, 0xB0018 (sessions), 0xB001C, 0xB001E, 0xB001F, 0xB0021
+(XUserReadStats), 0xB0025 (XSessionWriteStats) and 0xB0071: no stats enumerators
+(XUserCreateStatsEnumeratorBy*) and no XSessionFlushStats. Score types are the `type` of
+`SubmitScore` / `GetRows`.
+
+| Leaderboard (where) | Written by | Read by | Server |
+| --- | --- | --- | --- |
+| Speed traps (speed cameras: 21 in `gamemodes.zip` `Colorado/speed_camera.xml`, `scoreboard_id` 201-230) | passing one: `SubmitScore(type 1, board, speed in m/s)` (`CAmbientChallengeLeaderboard`, its queue `sub_82992520`, sent at `0x829911CC`); the HUD shows the speed and the save's PB | at the trap `GetRows(type 1, view 5, board, 1, 200)` (`sub_82979C60`: type 2 for a zone, else 1); the map (filter Speed Cameras, X LEADERBOARD on one): `GetRows(1, view 2, board, 1, 50)`, X changes the filter | `forza_scores.py`, best speed per player |
+| Speed zones (average speed: 9 in `Colorado/average_speed.xml`, boards 101-112) | `SubmitScore(type 2, board, average speed)` | as speed traps, type 2 | the same |
+| A friend's speed beaten | `NotifyRival(board, type 1/2, rival)` (`0x82990744`) | the rival's Message Center (RIVAL CHALLENGE) | `notify_rival` ("Speed Trap 30"; the game's names are in `List_SpeedCameras.str`) |
+| Events (festival events, street races, showcases; board = the event's `Events.Id`) | at the finish `SubmitScoreEx(type 3, board, best lap or race time)` (`0x829495CC`, `0x829496F8`) and the ghost (`UploadFile`) | Race Central LEADERBOARDS: an event `GetRows(3, view, board, 1, 50)`; VIEW OVERALL `GetRollupRows(0, view, pivot, eventTypeId 1-3)` | best time per player; rollups over the type-3 boards |
+| Rivals (an event's ticket, X RIVALS) | `SubmitScoreEx(3)`, `NotifyRival(type 3)` | `GetRivalAndPersonalBest(board)` (`0x829BFE68`), `GetRival` (`0x8285F7F8`), `GetBestScores(3, ...)` (`0x82948F1C`), `DownloadFile` (`0x82949404`) | type-3 boards and their ghosts |
+| Monthly Rivals (Race Central, RIVALS) | as Rivals, `isServerTimeTrial` | `GetTimeTrials(7, 150)` | `--time-trials` |
+| Online XP (Race Central) | `OnlineProfile.UpdateAll` (the profile's `onlineXP`); `SubmitScore(4, board -1)` after an online race (`0x82949094`, not kept) | `GetRows(4, view 5, board 1)` (`0x828E19B4`) | every player's profile |
+| 1000 Club (pause menu, Title Update 4) | `Challenge.ChallengeCompleted(car, thumbprint)` | `GetRows(5, view 5, board 1, 1, 200)` (`0x824CE230`), its LEADERBOARDS `GetRows(5, view 2, ...)` | medals per player |
+| Car club boards | - | `GetRows(..., isClubBoard)` | the caller's club's rows |
+| Storefront (Design Storefront creators) | - | `GetStorefrontRows` (`0x828E1964`) | not answered (no Storefront on the server) |
+| TrueSkill (Xbox LIVE stats view `0xFFFF0000`) | at the end of an online game `XSessionWriteStats` (XGI 0xB0025, `sub_83164D60`; the task `0x82D624A8` built at `0x82D63DDC`): per player `X_PROPERTY_RELATIVE_SCORE` (0x1000800A) and `X_PROPERTY_SESSION_TEAM` (0x1000800B) | `XUserReadStats` (0xB0021, `sub_82B2B238`, called at `0x82CC0BFC`) when the party session is created | `forza_stats.py`: rated per game, rows with rank and skill |
+| Skill chains, popularity, MY PROFILE (speed traps and zones triggered, ...) | the save only | the save | no online board |
+
+Two players (A and B, copies of one save, local server): A drove the Rt. 29 speed trap
+(board 230) at 162.32 km/h, B at 144.02 km/h; B's map LEADERBOARDS on that trap listed "1
+DriverA R3 797 LP700-4 162.32 km/h, 2 DriverB 144.02 km/h, YOU ARE IN THE TOP 100% OF 2
+PLAYERS" (A's score had been kept by the server before the restart that split the store by
+type, and came back through the migration).
+
 ### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
 
 The method stubs (`Forza.WebServices.Scoreboard`, all calling `sub_82A92018`) and their
@@ -286,17 +319,21 @@ callers:
 A row is `{position, rank, user (UserData), score, submittedTime, carId, carClassId,
 carPerformanceIndex, 6 assist flags, ghostFileId (-1 none), clanData, bounty}`.
 
-The server keeps each player's best score per scoreboard (`gameScoreboardId` and
-`isServerTimeTrial`; online races submit board -1, not kept) in
-`DATA_DIR/scoreboards.json`. Lower is better except for score types in
-`BIGGER_IS_BETTER` (4, seen with XP-like values after an online race). A new best is
-answered with a fresh `scoreId` and `uploadFiles` true; the ghost the game then uploads
-is kept as it is in `DATA_DIR/ghosts/<id>.bin` (the row's `ghostFileId`) and served by
-`DownloadFile`. Views: 0 the top from `startAt`, 1 around the caller, others (friends are
-everyone here) like 0; `userRow` is the caller's row (position 0 when they have none).
-Rollups rank players by the boards they lead. The rival is the one asked for, or (rival
-0) the score just better than the caller's (without a score of their own, the slowest
-other player); the bounty is 1000 (the game showed 5,000 Cr).
+The server keeps each player's best score per board in `DATA_DIR/scoreboards.json`. A
+board is the score type, `gameScoreboardId` and `isServerTimeTrial`: the ids of different
+types overlap (board 230 is the Rt. 29 speed trap and the event with Id 230), so they are
+kept apart (before 2026-10-15 boards were keyed by id alone; an old store is split by each
+entry's type when loaded). Types 1 and 2 (speeds) and 4 (XP) rank bigger first, 3 (times)
+smaller first; only types 1-3 are kept (online races submit type 4 on board -1), at most
+4096 boards. A new best of an event (type 3) is answered with a fresh `scoreId` and
+`uploadFiles` true; the ghost the game then uploads is kept as it is in
+`DATA_DIR/ghosts/<id>.bin` (the row's `ghostFileId`) and served by `DownloadFile`. Views:
+0 the top from `startAt`, 1 around the caller, others (friends are everyone here) like 0;
+`isClubBoard` keeps the caller's car club's members; `userRow` is the caller's row
+(position 0 when they have none). Rollups rank players by the event boards they lead. The
+rival is the one asked for, or (rival 0) the score just better than the caller's (without
+a score of their own, the slowest other player); the bounty is 1000 (the game showed 5,000
+Cr).
 
 Seen in the game (single player, a copy of a career save, event "GoPro Millennia
 Masters", board 199): X RIVALS on the event's ticket calls `GetRivalAndPersonalBest(199)`.

@@ -130,6 +130,14 @@ class StatsTest(unittest.TestCase):
         mu2 = {r[0]: r[4][63] for r in self.read([A, B])[SKILL_VIEW][1]}
         self.assertAlmostEqual(mu2[A] - mu[A], -(mu2[B] - mu[B]), places=6)  # a draw
 
+    def test_written_ranked_read_standard(self):
+        # The game writes 0xFFFF0000 and reads 0xFFFE0000 for its party.
+        self.write(A, A, 5)
+        self.write(A, B, 1)
+        stats.settle(now=100)
+        total, rows = self.read([A], [(0xFFFE0000, SKILL_COLS)])[0xFFFE0000]
+        self.assertEqual((total, rows[0][4][62]), (2, 1))
+
     def test_one_player_is_not_rated(self):
         self.write(A, A, 5)
         stats.settle(now=100)

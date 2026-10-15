@@ -5,8 +5,9 @@ own: the TrueSkill view 0xFFFF0000 (X_STATS_VIEW_SKILL_RANKED of game mode 0), w
 columns are the system's 61 skill, 62 games played, 63 mu, 64 sigma. At the end of an
 online game it writes each player's X_PROPERTY_RELATIVE_SCORE (0x1000800A) and
 X_PROPERTY_SESSION_TEAM (0x1000800B) to that view (XSessionWriteStats, one view per call),
-and it reads the view for its party (XUserReadStats). Its leaderboards (events, speed
-traps, Rivals, the 1000 Club) are title services instead (forza_scores.py).
+and it reads the standard skill view 0xFFFE0000 for its party (XUserReadStats): both are
+one view here (stored_view). Its leaderboards (events, speed traps, Rivals, the 1000 Club)
+are title services instead (forza_scores.py).
 
 The game sends the writes and reads to the server over UDP (forza_live_server.py, STATS):
 
@@ -55,6 +56,14 @@ SKILL_MIN, SKILL_MAX = 1, 50
 
 def is_skill_view(view):
     return view >> 16 in (0xFFFF, 0xFFFE)  # ranked, standard
+
+
+def stored_view(view):
+    """The view a write or read is kept under. Forza writes the ranked skill view
+    (0xFFFF0000) and reads the standard one (0xFFFE0000, for its party): its sessions are
+    not arbitrated, and LIVE keeps the skill of such a game in the standard view. One skill
+    view per game mode here."""
+    return 0xFFFE0000 | (view & 0xFFFF) if is_skill_view(view) else view
 
 
 def skill_of(mu, sigma):
@@ -198,6 +207,7 @@ def write(xuid, gamertag, body, allowed=None, now=None):
         return
     tag = gamertag(target) if callable(gamertag) else gamertag
     for view, props in views:
+        view = stored_view(view)
         if is_skill_view(view):
             values = {pid: int_value(kind, v) for pid, kind, v in props}
             if RELATIVE_SCORE not in values:
@@ -318,7 +328,8 @@ def read(xuid, body, gamertag_of=None):
     request, xuids, specs = parse_read(body)
     out = [struct.pack(">IB", request, len(specs))]
     size = 5
-    for view, cols in specs:
+    for asked, cols in specs:
+        view = stored_view(asked)
         ranks, total = ranking(view)
         rows = []
         for x in xuids:
@@ -335,15 +346,14 @@ def read(xuid, body, gamertag_of=None):
                 kind, value = column(v, col, view)
                 row += struct.pack(">HB", col, kind) + value
             rows.append(row)
-        head = struct.pack(">IIB", view, total, 0)
-        size += len(head)
+        size += 9
         kept = []
         for row in rows:
             if size + len(row) > MAX_ROWS_BYTES:
                 break
             kept.append(row)
             size += len(row)
-        out.append(struct.pack(">IIB", view, total, len(kept)) + b"".join(kept))
+        out.append(struct.pack(">IIB", asked, total, len(kept)) + b"".join(kept))
     log.info("stats: %016X read %d view(s) of %d player(s): %s", xuid, len(specs), len(xuids),
              ", ".join("%08X" % v for v, _ in specs))
     return b"".join(out)
