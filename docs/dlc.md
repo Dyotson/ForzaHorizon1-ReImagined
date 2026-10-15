@@ -174,6 +174,36 @@ TU4 build signs in to the server's room with "#TU4" added (`LiveRoom()`,
 the same version. Tested: base BaseC and TU4 DriverA each hosted their own world (no
 cross-version join), TU4 DriverB was placed into DriverA's.
 
+### Horizon Rally (#16)
+
+Checked 2026-10-14 with the TU4 build, offline, a scratch copy of the Xenia career save
+(rally progress: the Rally Heats event in progress) and scripted driving.
+
+- The mode's data: `gamedb.slt` (TU4's media.zip) has the 7 championships (`Events`
+  271-277, `MS_RALLY_01`-`07`, B to R class, 10,000-50,000 Cr), each of 4 stages
+  (`MultiStageSeriesEvents` / `MultiStageSeriesRaces`: stages 1-3 are `RALLY_nA`-`nC`,
+  stage 4 `RALLY_nD`, 8-12 km), and `RALLY_HEATS` (event 279, the qualifier with a given
+  Impreza). Each stage is a `ColoradoDirt` track whose `RouteId` names the AI route in the
+  Rally package (`media/AIOpenWorld/coloradodirt/Ribbon_00/route_NNN.owt`).
+- Driving: `tools/owt_path.py` makes an autodrive path from a stage's route,
+  `tools/autodrive.py` with `AD_OPEN=1 AD_PATH_LOAD=<path>` drives it (a TU4 game's car list
+  is at `0x833CAAE4`). The car keeps within 1-4 m of the route at 25-30 m/s, with a few
+  crashes at 34 m/s.
+- **Played:** HORIZON RALLY from the main menu loaded the Rally Heats in progress (26 %);
+  finished it (50th of 50: 45,000 Cr, the mileage and assists bonuses); HORIZON
+  RECOMMENDS: bought the Lancer Evolution VIII MR (20,000 Cr), the rally conversion
+  (8,514 Cr of parts, B 436 -> 497); the rally hub listed **Beaumont** (10,000 Cr). Its 4
+  stages played one after the other (start menu, countdown, HUD with progress, race clock,
+  splits and the rivals around you, pace-note icons from the co-driver, finish gantry,
+  STAGE RESULTS, RALLY STANDINGS): 3:43.312, 2:39.901, 5:08.718, 7:37.371; standings and
+  RALLY RESULTS 19:09.302 (each the sum of the stages). Back at the hub: Beaumont shows
+  that best time, the next championship (Montano Plains, A class, 15,000 Cr) is unlocked,
+  "To Final" went from 310 to 300.
+- Timing: the race clock against the log's screenshot times, 60.335 s of clock in 60.339 s
+  (30 fps).
+- Saving: the career is written at the end of the championship and again when quitting
+  to the main menu (QUIT HORIZON RALLY).
+
 ### The 1000 Club (#17)
 
 Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam
