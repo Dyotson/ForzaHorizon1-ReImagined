@@ -33,17 +33,31 @@ DATA_DIR = "forza_live_data"
 GHOST_MAX = 256000           # the game's download buffer (DownloadFile maxSize)
 RIVAL_BOUNTY = 1000          # credits for beating a rival, shown as BOUNTY BONUS
 
-# Score types (the submission's `type`, GetBestScores' scoreType) whose scores are better
-# when bigger: drift and skill scores, speeds. Race times (3, SubmitScoreEx at the end of
-# an event) are better when smaller. Unknown types are treated as times and logged.
-BIGGER_IS_BETTER = {4}
+# Score types: SubmitScore's `type`, GetRows' `type`, GetBestScores' scoreType, NotifyRival's
+# `type`. A board is a (type, gameScoreboardId, isServerTimeTrial): the ids overlap, e.g. the
+# I-70 speed trap is board 230 and so is the event with Id 230 (docs/title_services.md,
+# "Every leaderboard").
+SPEED_TRAP = 1      # speed cameras (Colorado/speed_camera.xml, boards 201-230): the speed, m/s
+SPEED_ZONE = 2      # average speed zones (Colorado/average_speed.xml, boards 101-112): m/s
+EVENT_TIME = 3      # events and Rivals (SubmitScoreEx): the best lap or race time, s
+ONLINE_XP_TYPE = 4  # Race Central's ONLINE XP: GetRows(type 4, board 1); SubmitScore type 4
+CLUB_TYPE = 5       # the 1000 Club's leaderboard: GetRows(type 5, board 1)
+# Types whose scores are better when bigger (speeds, XP); times are better when smaller.
+BIGGER_IS_BETTER = {SPEED_TRAP, SPEED_ZONE, ONLINE_XP_TYPE}
+KEPT_TYPES = {SPEED_TRAP, SPEED_ZONE, EVENT_TIME}  # submissions kept on a board
+GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap has none)
+MAX_BOARDS = 4096   # boards on the server (the game has about 160)
+
+
+def board_key(kind, sbid, stt):
+    return "%d:%d:%d" % (kind, sbid, 1 if stt else 0)
 
 
 class Store:
     """Best score per player per scoreboard, and the ghosts."""
 
     def __init__(self):
-        self.boards = {}       # "sbid:stt" -> {xuid hex: entry}
+        self.boards = {}       # "type:sbid:stt" -> {xuid hex: entry}
         self.ghosts = {}       # scoreId hex -> (board key, xuid hex): waiting for UploadFile
         self.club = {}         # 1000 Club: xuid hex -> {gamertag, cars: {carId: [thumbprints]}}
         self.next_file = 1
@@ -59,7 +73,7 @@ class Store:
         try:
             with open(self.path()) as f:
                 data = json.load(f)
-            self.boards = data.get("boards", {})
+            self.boards = migrate(data.get("boards", {}))
             self.club = data.get("club1000", {})
             self.next_file = data.get("nextFileId", 1)
         except (OSError, ValueError):
@@ -73,16 +87,39 @@ class Store:
                        "nextFileId": self.next_file}, f, indent=1)
         os.replace(tmp, self.path())
 
-    def board(self, sbid, stt):
+    def board(self, kind, sbid, stt, create=False):
+        """A board's entries by player: {} for a board nobody is on, or with create the
+        stored board (made when missing; None when the server has MAX_BOARDS)."""
         self.load()
-        return self.boards.setdefault("%d:%d" % (sbid, 1 if stt else 0), {})
+        key = board_key(kind, sbid, stt)
+        if create and key not in self.boards:
+            if len(self.boards) >= MAX_BOARDS:
+                return None
+            self.boards[key] = {}
+        return self.boards[key] if create else self.boards.get(key, {})
 
-    def ranked(self, sbid, stt):
+    def ranked(self, kind, sbid, stt):
         """The board's entries, best first."""
-        entries = list(self.board(sbid, stt).values())
-        bigger = any(e.get("type") in BIGGER_IS_BETTER for e in entries)
+        entries = list(self.board(kind, sbid, stt).values())
+        bigger = kind in BIGGER_IS_BETTER
         entries.sort(key=lambda e: (-e["score"] if bigger else e["score"], e["submitted"]))
         return entries, bigger
+
+
+def migrate(boards):
+    """Boards kept before the type was part of the key ("sbid:stt", 2026-10): each entry
+    goes to the board of its type. Where one player had a speed and a time on the same id,
+    only the later submission was kept; it stays."""
+    out = {}
+    for key, board in boards.items():
+        parts = key.split(":")
+        if len(parts) == 3:
+            out.setdefault(key, {}).update(board)
+            continue
+        sbid, stt = int(parts[0]), int(parts[1])
+        for xuid, e in board.items():
+            out.setdefault(board_key(e.get("type", EVENT_TIME), sbid, stt), {})[xuid] = e
+    return out
 
 
 STORE = Store()
@@ -107,13 +144,17 @@ def submit(xuid, gamertag, kind, data, extra=None):
              xuid, gamertag, sbid, " (time trial)" if stt else "", kind, score, data["carId"],
              data["carClassId"], data["carPerformanceIndex"],
              " passed %d" % extra if extra is not None else "")
-    if sbid < 0 or score <= 0:
+    # Online races submit board -1 (type 4, the XP of the game): not kept.
+    board = STORE.board(kind, sbid, stt, create=True) if kind in KEPT_TYPES and sbid >= 0 \
+        and 0 < score < 1e9 else None
+    if board is None:
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
-    board = STORE.board(sbid, stt)
     key = "%016X" % xuid
     old = board.get(key)
     bigger = kind in BIGGER_IS_BETTER
     if old and not better(score, old["score"], bigger):
+        return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
+    if not old and len(board) >= limits.MAX_PLAYERS:
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
     entry = {"xuid": key, "gamertag": gamertag, "type": kind, "score": score,
              "submitted": int(time.time()), "scoreId": score_id.hex(),
@@ -124,10 +165,13 @@ def submit(xuid, gamertag, kind, data, extra=None):
     if old and old.get("ghostFileId", -1) >= 0:
         remove_ghost(old["ghostFileId"])
     board[key] = entry
-    STORE.ghosts[score_id.hex()] = ("%d:%d" % (sbid, 1 if stt else 0), key)
+    ghost = kind in GHOST_TYPES
+    if ghost:
+        STORE.ghosts[score_id.hex()] = (board_key(kind, sbid, stt), key)
     STORE.save()
-    log.info("title: score %016X: new best on board %d, asking for the ghost", xuid, sbid)
-    return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": True})
+    log.info("title: score %016X: new best on board %d type %d%s", xuid, sbid, kind,
+             ", asking for the ghost" if ghost else "")
+    return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": ghost})
 
 
 def ghost_path(file_id):
@@ -219,8 +263,6 @@ def rows_view(entries, xuid, view, start_at, max_results):
     return rows, user_row
 
 
-ONLINE_XP_TYPE = 4  # Race Central's ONLINE XP: GetRows(type 4, board 1); SubmitScore type 4
-CLUB_TYPE = 5       # the 1000 Club's leaderboard: GetRows(type 5, board 1)
 
 # 1000 Club: 218 cars with 5 or 6 challenges each, 1145 in all (Title Update 4's
 # gamedb.slt, CarChallenges). The limits keep a bad client from growing the store.
@@ -276,6 +318,17 @@ def club_entries():
     return out
 
 
+def club_only(entries, xuid):
+    """A club board (isClubBoard): the rows of the caller's car club's members (none when
+    the caller is in no club)."""
+    import forza_clubs
+    club, _ = forza_clubs.membership(xuid)
+    if not club:
+        return []
+    return [e for e in entries
+            if (forza_clubs.membership(int(e["xuid"], 16))[0] or {}).get("id") == club["id"]]
+
+
 def get_rows(xuid, body):
     p, _ = x.decode(x.ScoreboardGetRows_Params, body)
     if p["type"] == ONLINE_XP_TYPE:
@@ -283,11 +336,14 @@ def get_rows(xuid, body):
     elif p["type"] == CLUB_TYPE:
         entries = club_entries()
     else:
-        entries, _ = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
+        entries, _ = STORE.ranked(p["type"], p["gameScoreboardId"], p["isServerTimeTrial"])
+    if p["isClubBoard"]:
+        entries = club_only(entries, xuid)
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
-    log.info("title: GetRows %016X board %d%s type %d view %d from %d max %d: %d of %d", xuid,
+    log.info("title: GetRows %016X board %d%s type %d view %d%s from %d max %d: %d of %d", xuid,
              p["gameScoreboardId"], " (time trial)" if p["isServerTimeTrial"] else "",
-             p["type"], p["view"], p["startAt"], p["maxResults"], len(rows), len(entries))
+             p["type"], p["view"], " (club)" if p["isClubBoard"] else "", p["startAt"],
+             p["maxResults"], len(rows), len(entries))
     return x.reply(x.ScoreboardGetRows_Results, {"rows": rows, "userRow": user_row,
                                                  "available": len(entries),
                                                  "totalRowCount": len(entries)})
@@ -318,9 +374,9 @@ def events():
     return EVENTS
 
 
-def in_rollup(board_key, event_type, pivot):
-    sbid, stt = (int(v) for v in board_key.split(":"))
-    if stt:
+def in_rollup(key, event_type, pivot):
+    kind, sbid, stt = (int(v) for v in key.split(":"))
+    if stt or kind != EVENT_TIME:
         return False
     info = events().get(sbid)
     if info is None:
@@ -336,12 +392,10 @@ def rollup_entries(event_type, pivot):
     they have a time on, then by the total of their best times (the score shown)."""
     STORE.load()
     players = {}
-    for board_key, board in STORE.boards.items():
-        if not in_rollup(board_key, event_type, pivot):
+    for key, board in STORE.boards.items():
+        if not in_rollup(key, event_type, pivot):
             continue
         for e in board.values():
-            if e.get("type") in BIGGER_IS_BETTER:
-                continue
             p = players.setdefault(e["xuid"], dict(e, score=0.0, boards=0))
             p["boards"] += 1
             p["score"] += e["score"]
@@ -402,7 +456,8 @@ def pick_rival(entries, xuid, bigger):
 
 def rival_reply(xuid, body, with_best):
     p, _ = x.decode(x.ScoreboardGetRival_Params, body)
-    entries, bigger = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
+    # Rivals race events and the server's time trials: their boards are times.
+    entries, bigger = STORE.ranked(EVENT_TIME, p["gameScoreboardId"], p["isServerTimeTrial"])
     if p["rivalXuid"]:
         rival = next((e for e in entries if int(e["xuid"], 16) == p["rivalXuid"]), None)
     else:
@@ -424,11 +479,14 @@ def rival_reply(xuid, body, with_best):
 
 def get_best_scores(xuid, body):
     p, _ = x.decode(x.ScoreboardGetBestScores_Params, body)
-    entries, _ = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
+    entries, _ = STORE.ranked(p["scoreType"], p["gameScoreboardId"], p["isServerTimeTrial"])
     best = entries[0]["score"] if entries else 0.0
     log.info("title: GetBestScores %016X board %d type %d car %d class %d: %.3f", xuid,
              p["gameScoreboardId"], p["scoreType"], p["carId"], p["carClassId"], best)
     return x.reply(x.ScoreboardGetBestScores_Results, {"bestScore": {"score": best}})
+
+
+AMBIENT_NAMES = {SPEED_TRAP: "Speed Trap %d", SPEED_ZONE: "Speed Zone %d"}
 
 
 def notify_rival(xuid, body):
@@ -438,18 +496,22 @@ def notify_rival(xuid, body):
     p, _ = x.decode(x.ScoreboardNotifyRival_Params, body)
     log.info("title: %016X beat rival %016X on board %d (type %d)", xuid, p["rivalXuid"],
              p["gameScoreboardId"], p["type"])
-    board = STORE.board(p["gameScoreboardId"], p["isServerTimeTrial"])
+    board = STORE.board(p["type"], p["gameScoreboardId"], p["isServerTimeTrial"])
     mine = board.get("%016X" % xuid)
     if not mine or not p["rivalXuid"] or p["rivalXuid"] == xuid:
         return x.reply()
     me = user_data(mine)
     trial = next((t for t in TIME_TRIALS if t[0] == p["gameScoreboardId"]), None) \
         if p["isServerTimeTrial"] else None
+    # A speed trap or zone beaten: the game sends its board and type (1 or 2).
+    name = trial[2] if trial else ""
+    if not trial and p["type"] in AMBIENT_NAMES:
+        name = AMBIENT_NAMES[p["type"]] % (p["gameScoreboardId"] % 100)
     notifications.send(p["rivalXuid"], notifications.RIVALS_BEATEN, {
         "senderXuid": xuid, "senderGamertag": mine["gamertag"],
         "senderClanTag": me.get("clanTag", ""), "senderClanRole": me.get("roleInClan", 0),
         "sentTime": time.time(), "timeTrialId": p["gameScoreboardId"],
-        "carId": mine["carId"], "localizedTimeTrialName": trial[2] if trial else "",
+        "carId": mine["carId"], "localizedTimeTrialName": name,
         "trackName": trial[5] if trial else "", "trackId": trial[4] if trial else 0,
         "score": mine["score"], "scoreType": p["type"], "category": trial[1] if trial else 0})
     return x.reply()

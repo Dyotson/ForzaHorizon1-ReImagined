@@ -1,8 +1,11 @@
-"""Scoreboard services in-process: the 1000 Club (ChallengeCompleted, its GetRows board).
+"""Scoreboard services in-process: speed traps and zones, event times, the 1000 Club
+(ChallengeCompleted, its GetRows board).
 
 Run: cd server && python3 -m unittest discover -p 'test_*.py'
 """
 
+import json
+import os
 import struct
 import tempfile
 import unittest
@@ -93,6 +96,127 @@ class Club1000Test(unittest.TestCase):
     def test_bad_parameters(self):
         with self.assertRaises(ValueError):
             self.svc[("Challenge", "ChallengeCompleted")](A_XUID, b"\x05")
+
+
+class BoardsTest(unittest.TestCase):
+    """Speed traps (type 1), speed zones (2) and event times (3): one board per type and id
+    (the ids overlap), speeds better when bigger."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        scores.configure(self.dir.name)
+        self.svc = scores.services(lambda xuid: TAGS.get(xuid, "%016X" % xuid))
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def submit(self, xuid, kind, board, score, ex=False):
+        data = {"gameScoreboardId": board, "isServerTimeTrial": False, "score": score,
+                "carId": AVENTADOR, "carClassId": 7, "carPerformanceIndex": 0.864}
+        if ex:
+            body = x.encode(x.ScoreboardSubmitScoreEx_Params,
+                            {"type": kind, "data": {"base": data, "numCarsPassed": 0}})
+            method = "SubmitScoreEx"
+        else:
+            body = x.encode(x.ScoreboardSubmitScore_Params, {"type": kind, "data": data})
+            method = "SubmitScore"
+        return results(self.svc[("Scoreboard", method)](xuid, bytes(body)),
+                       x.ScoreboardSubmitScore_Results)
+
+    def rows(self, xuid, kind, board, view=5, club=False):
+        body = x.encode(x.ScoreboardGetRows_Params, {
+            "type": kind, "view": view, "gameScoreboardId": board, "isServerTimeTrial": False,
+            "isClubBoard": club, "startAt": 1, "maxResults": 200})
+        r = results(self.svc[("Scoreboard", "GetRows")](xuid, bytes(body)),
+                    x.ScoreboardGetRows_Results)
+        return [(row["user"]["wzGamerTag"], round(row["score"], 3)) for row in r["rows"]], r
+
+    def test_speed_trap_keeps_the_fastest(self):
+        # The I-70 speed trap (board 230), as the game sent it: 45.088 m/s, no ghost.
+        self.assertFalse(self.submit(A_XUID, scores.SPEED_TRAP, 230, 45.088)["uploadFiles"])
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 40.0)   # slower: not kept
+        self.submit(B_XUID, scores.SPEED_TRAP, 230, 52.5)
+        self.submit(C_XUID, scores.SPEED_TRAP, 230, 30.25)
+        got, r = self.rows(A_XUID, scores.SPEED_TRAP, 230)
+        self.assertEqual(got, [("DriverB", 52.5), ("DriverA", 45.088), ("DriverC", 30.25)])
+        self.assertEqual((r["userRow"]["position"], round(r["userRow"]["score"], 3)), (2, 45.088))
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 60.0)   # faster: kept
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 230)[0][0], ("DriverA", 60.0))
+
+    def test_types_do_not_share_a_board(self):
+        # Event 230's time and the speed trap on board 230; a speed zone on board 101 and
+        # event 101.
+        self.assertTrue(self.submit(A_XUID, scores.EVENT_TIME, 230, 95.5, ex=True)["uploadFiles"])
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 45.0)
+        self.submit(B_XUID, scores.SPEED_ZONE, 101, 38.0)
+        self.assertEqual(self.rows(B_XUID, scores.EVENT_TIME, 230)[0], [("DriverA", 95.5)])
+        self.assertEqual(self.rows(B_XUID, scores.SPEED_TRAP, 230)[0], [("DriverA", 45.0)])
+        self.assertEqual(self.rows(B_XUID, scores.SPEED_ZONE, 101)[0], [("DriverB", 38.0)])
+        self.assertEqual(self.rows(B_XUID, scores.EVENT_TIME, 101)[0], [])
+
+    def test_event_times_keep_the_fastest(self):
+        self.submit(A_XUID, scores.EVENT_TIME, 199, 115.13, ex=True)
+        self.assertFalse(self.submit(A_XUID, scores.EVENT_TIME, 199, 120.0, ex=True)["uploadFiles"])
+        self.submit(B_XUID, scores.EVENT_TIME, 199, 107.228, ex=True)
+        self.assertEqual(self.rows(A_XUID, scores.EVENT_TIME, 199)[0],
+                         [("DriverB", 107.228), ("DriverA", 115.13)])
+
+    def test_online_race_and_unknown_types_not_kept(self):
+        self.submit(A_XUID, scores.ONLINE_XP_TYPE, -1, 1100.0)
+        self.submit(A_XUID, 9, 5, 10.0)
+        self.submit(A_XUID, scores.SPEED_TRAP, 201, float("nan"))
+        self.assertEqual(scores.STORE.boards, {})
+
+    def test_kept_across_restarts(self):
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 45.088)
+        scores.configure(self.dir.name)
+        self.assertEqual(self.rows(B_XUID, scores.SPEED_TRAP, 230)[0], [("DriverA", 45.088)])
+
+    def test_old_store_migrated(self):
+        # Before: "sbid:stt" boards, the type in each entry, a speed kept as the lowest.
+        old = {"boards": {"230:0": {
+            "%016X" % A_XUID: {"xuid": "%016X" % A_XUID, "gamertag": "DriverA", "type": 1,
+                               "score": 41.0, "submitted": 1, "scoreId": "00", "carId": 1,
+                               "carClassId": 1, "carPerformanceIndex": 0.5, "ghostFileId": -1,
+                               "usedSTM": 0, "usedTCS": 0, "usedABS": 0, "usedAutoBrake": 0,
+                               "usedAutoShifting": 0, "usedClutch": 0},
+            "%016X" % B_XUID: {"xuid": "%016X" % B_XUID, "gamertag": "DriverB", "type": 3,
+                               "score": 99.0, "submitted": 2, "scoreId": "01", "carId": 1,
+                               "carClassId": 1, "carPerformanceIndex": 0.5, "ghostFileId": -1,
+                               "usedSTM": 0, "usedTCS": 0, "usedABS": 0, "usedAutoBrake": 0,
+                               "usedAutoShifting": 0, "usedClutch": 0}}}}
+        with open(os.path.join(self.dir.name, "scoreboards.json"), "w") as f:
+            json.dump(old, f)
+        scores.configure(self.dir.name)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 230)[0], [("DriverA", 41.0)])
+        self.assertEqual(self.rows(C_XUID, scores.EVENT_TIME, 230)[0], [("DriverB", 99.0)])
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 44.0)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 230)[0], [("DriverA", 44.0)])
+
+    def test_board_limit(self):
+        old = scores.MAX_BOARDS
+        scores.MAX_BOARDS = 3
+        try:
+            for board in range(201, 206):
+                self.submit(A_XUID, scores.SPEED_TRAP, board, 40.0)
+            self.assertEqual(len(scores.STORE.boards), 3)
+            self.assertEqual(self.rows(A_XUID, scores.SPEED_TRAP, 205)[0], [])
+        finally:
+            scores.MAX_BOARDS = old
+
+    def test_club_board(self):
+        import forza_clubs
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 45.0)
+        self.submit(B_XUID, scores.SPEED_TRAP, 230, 50.0)
+        self.assertEqual(self.rows(A_XUID, scores.SPEED_TRAP, 230, club=True)[0], [])
+        club = {"id": 7, "tag": "HZN"}
+        orig = forza_clubs.membership
+        forza_clubs.membership = lambda xuid: (club, 1) if xuid == A_XUID else (None, 0)
+        try:
+            self.assertEqual(self.rows(A_XUID, scores.SPEED_TRAP, 230, club=True)[0],
+                             [("DriverA", 45.0)])
+        finally:
+            forza_clubs.membership = orig
 
 
 if __name__ == "__main__":
