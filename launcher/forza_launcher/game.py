@@ -247,7 +247,13 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
             root = home / f"xenia-{xuid}"
         args += [f"--user_data_root={root}", f"--cache_root={home / 'cache'}",
                  f"--profile_xuid={xuid}"]
-    elif cfg.advanced.get("data_root", "").strip():
+    elif cfg.advanced.get("data_root", "").strip() or paths.IS_WINDOWS:
+        # Windows: the game's own default is Documents\forza, not the launcher's folder
+        # (%LOCALAPPDATA%\ForzaReImagined): name it, or saves, DLC and the shader cache go there.
+        if write and paths.IS_WINDOWS:
+            from . import datafolder
+            datafolder.carry_game_written_data(datafolder.game_default_data_home(), home,
+                                               LOCAL_PROFILE, log)
         args.append(f"--user_data_root={home}")
 
     # Xbox LIVE: public/custom through the server named in forza.toml (and FORZA_SERVER, which

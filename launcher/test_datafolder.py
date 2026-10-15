@@ -159,6 +159,27 @@ class Move(unittest.TestCase):
             df.copy_user_data(old, new, False, True)
             self.assertEqual((new / "game" / "default.xex").read_bytes(), b"g" * 7)
 
+    def test_carry_game_written_data_once(self):
+        # v0.1.4-v0.1.5 on Windows: the game wrote to Documents\forza, the launcher used another folder.
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "Documents" / "forza", Path(tmp) / "Local" / "ForzaReImagined"
+            p = "B13EBABEBABEBABE"
+            touch(old / p / "4D5309C9" / "00000001" / "save", b"s" * 3)
+            touch(old / "cache" / "shaders" / "shareable" / "4D5309C9.xsh", b"c" * 5)
+            touch(old / "0000000000000000" / "4D5309C9" / "00000002" / "dlc", b"d")
+            touch(old / "game" / "default.xex")            # a v0.1.x launcher install: not carried
+            touch(old / "runtime" / "forza.exe")
+            touch(new / "game" / "default.xex")
+            self.assertEqual(df.carry_game_written_data(old, new, p), 9)
+            self.assertTrue((new / p / "4D5309C9" / "00000001" / "save").is_file())
+            self.assertTrue((new / "cache" / "shaders" / "shareable" / "4D5309C9.xsh").is_file())
+            self.assertTrue((new / "0000000000000000" / "4D5309C9" / "00000002" / "dlc").is_file())
+            self.assertFalse((new / "runtime").exists())
+            self.assertTrue((old / p / "4D5309C9" / "00000001" / "save").is_file())   # old untouched
+            touch(old / p / "later", b"l")                   # the new folder has a profile now: done
+            self.assertEqual(df.carry_game_written_data(old, new, p), 0)
+            self.assertEqual(df.carry_game_written_data(new, new, p), 0)
+
     def test_cancel(self):
         with tempfile.TemporaryDirectory() as tmp:
             touch(Path(tmp) / "old" / "a")

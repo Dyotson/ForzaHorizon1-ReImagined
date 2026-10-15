@@ -38,6 +38,24 @@ def legacy_data_home() -> Path:
     return Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents" / "forza"
 
 
+def game_default_data_home() -> Path:
+    """Where the game keeps saves, DLC and its shader cache when it is given no --user_data_root:
+    the SDK's user folder, Documents (the known folder, which OneDrive may have moved) + forza."""
+    if IS_WINDOWS:
+        try:
+            buf = ctypes.c_wchar_p()
+            # FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+            fid = (ctypes.c_byte * 16)(*bytes.fromhex("d09ad3fd8f23af46adb46c85480369c7"))
+            if ctypes.windll.shell32.SHGetKnownFolderPath(fid, 0, None, ctypes.byref(buf)) == 0:
+                docs = buf.value
+                ctypes.windll.ole32.CoTaskMemFree(buf)
+                if docs:
+                    return Path(docs) / "forza"
+        except (OSError, AttributeError, ValueError):
+            pass
+    return legacy_data_home()
+
+
 def local_data_home() -> Path:
     """The Windows default: per user, not synced by OneDrive, not one of the folders Controlled
     folder access protects (Documents, Pictures, Desktop ...)."""
@@ -272,6 +290,33 @@ def user_data_files(old: Path, with_user: bool = True, with_game: bool = False):
     if with_game:
         out += _files_under(old / "game", old)
     return out
+
+
+def carry_game_written_data(old: Path, new: Path, profile: str, log=None) -> int:
+    """v0.1.4-v0.1.5 on Windows started the game without --user_data_root, so it kept its saves,
+    DLC and shader cache in Documents\\forza (`old`) while the launcher's folder was `new`. Once,
+    when `new` has no profile folder and `old` has one, copy what the game wrote there (not the
+    launcher's own folders) into `new`. Never moves or deletes. Returns bytes copied."""
+    old, new = Path(old), Path(new)
+    if _samepath(old, new) or (new / profile).exists() or not (old / profile).is_dir():
+        return 0
+    files = _files_under(old, old, set(REBUILDABLE) | set(MARKERS))
+    done = 0
+    for src, rel in files:
+        dst = new / rel
+        try:
+            size = os.path.getsize(src)
+            if not (dst.is_file() and dst.stat().st_size == size):
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+            done += size
+        except OSError as e:
+            if log:
+                log(f"could not copy {src}: {e}")
+    if log:
+        log(f"copied the game's saves, DLC and shader cache ({len(files)} files) from {old} to {new}; "
+            f"the old folder is untouched")
+    return done
 
 
 def _size(files) -> int:
