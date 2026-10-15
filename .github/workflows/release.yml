@@ -4,13 +4,20 @@
 # patched ReXGlue SDK pieces. They hold NO game code, NO game data and NO built game: the
 # launcher builds the game on the player's computer from their own copy of Forza Horizon.
 #
-# Runs on tags v* (and creates the release) and by hand (artifacts only).
+# Runs on tags v* (and creates the release), on pull requests to main (the required checks,
+# artifacts only) and by hand (artifacts only).
 name: release
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
