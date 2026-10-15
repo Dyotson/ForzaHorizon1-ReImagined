@@ -96,6 +96,14 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
   `some`, broken pictures again).
 
+## Recommended picture settings
+
+- Upscaling filter **AMD FSR 1** (the launcher's first-run default) at render scale 1: a sharp
+  image at 1080p, 1440p or 4K for about the cost of bilinear. `forza.toml`: `present_effect = "fsr"`.
+- Render scale 2 adds real detail for about 30 % fewer fps (42 fps at a 60 fps target on an
+  RX 9060 XT); fine at 30 fps. Above 2 is experimental and halves the frame rate (#47).
+- `fsr2` / `fsr3` do not exist (no temporal data); `cas` only sharpens. See `docs/rendering.md`.
+
 ## Keyboard and mouse
 
 `mnk_mode = true` makes the SDK present the keyboard (and mouse) as a controller on player 1.
