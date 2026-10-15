@@ -49,6 +49,18 @@ class ProxyTest(unittest.TestCase):
         self.assertFalse(limits.is_trusted_proxy("11.0.0.1"))
         self.assertFalse(limits.is_trusted_proxy("not an ip"))
 
+    def test_title_server_port_told_to_tunnelled_players(self):
+        self.server.http_port, self.server.proxy_http_port = 21201, 56678
+        for addr, want in (((PROXY, 40000), 56678), (("203.0.113.7", 40001), 21201)):
+            self.net.sent.clear()
+            self.server.datagram_received(hello(addr[1], "P"), addr)
+            welcome = [d for a, d in self.net.sent if a == addr and d[4] == srv.WELCOME][0]
+            self.assertEqual(struct.unpack(">H", welcome[-2:])[0], want)
+        self.server.proxy_http_port = 0  # unset: everyone gets --http-port
+        self.net.sent.clear()
+        self.server.datagram_received(hello(7, "Q"), (PROXY, 40002))
+        self.assertEqual(struct.unpack(">H", self.net.sent[-1][1][-2:])[0], 21201)
+
     def test_many_players_from_one_proxy_address(self):
         peers = [self.join((PROXY, 40000 + i), i + 1) for i in range(40)]
         self.assertTrue(all(p is not None and p.proxied for p in peers))

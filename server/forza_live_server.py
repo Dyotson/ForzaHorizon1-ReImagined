@@ -129,6 +129,9 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.started = time.time()
         self.relayed_packets = 0
         self.http_port = 0  # TCP port of the title servers, told to clients; 0 = none
+        # The same port as a tunnel publishes it (it differs from --http-port): told to
+        # players that arrive through a trusted proxy.
+        self.proxy_http_port = 0
         self.dropped_packets = 0  # over a player's rate limit
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
@@ -233,7 +236,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         # of the player: report none (0.0.0.0:0), as in forward_header.
         public = (0, 0) if peer.proxied else (ip_to_u32(addr[0]), addr[1])
         body = struct.pack(">IHIHH", peer.id, self.epoch, *public, len(self.motd))
-        self.send(addr, WELCOME, body + self.motd + struct.pack(">H", self.http_port))
+        http_port = self.proxy_http_port if peer.proxied and self.proxy_http_port else self.http_port
+        self.send(addr, WELCOME, body + self.motd + struct.pack(">H", http_port))
 
     def forward_header(self, src):
         """Who a forwarded datagram is from, with the addresses other players punch to. A
@@ -711,6 +715,11 @@ async def main():
                              "from the per-address limits, its players use the server relay "
                              "instead of hole punching (repeatable; env FORZA_TRUSTED_PROXIES, "
                              "comma separated)")
+    parser.add_argument("--proxy-http-port", type=int,
+                        default=int(os.environ.get("FORZA_PROXY_HTTP_PORT", 0)),
+                        help="the TCP port a tunnel publishes --http-port on, told to players "
+                             "arriving through a trusted proxy (default: the same port; env "
+                             "FORZA_PROXY_HTTP_PORT)")
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)
@@ -732,6 +741,7 @@ async def main():
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
     if args.http_port:
         server.http_port = args.http_port
+        server.proxy_http_port = args.proxy_http_port
         await asyncio.start_server(lambda r, w: http_handler(server, r, w), args.host, args.http_port,
                                  limit=1 << 15)
         log.info("title servers and status page on http://%s:%d/", args.host, args.http_port)

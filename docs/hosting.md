@@ -37,9 +37,14 @@ proxy:
 
     docker run -d --name forza-live --restart unless-stopped --network host \
         -e FORZA_ADMIN_TOKEN=choose-a-token -v /path/to/data:/data \
-        forza-live --host 0.0.0.0 --http-port 21201 \
+        forza-live --host 0.0.0.0 --http-port 21201 --proxy-http-port 56678 \
         --trusted-proxy 192.168.100.105 --trusted-proxy 127.0.0.1
 
+`--proxy-http-port` is the TCP port the tunnel publishes (56678 for UDP 56677): the server
+tells it to players that arrive through a trusted proxy as their title servers' port (the
+game takes that port from the welcome, so without it a tunnelled game connects to 21201 on
+the tunnel's address, finds nothing and says "The Horizon server is currently unavailable":
+no playlists, no leaderboards, no XP). Players connecting directly still get `--http-port`.
 (`--trusted-proxy` is repeatable and takes IPs or CIDRs; `FORZA_TRUSTED_PROXIES` takes a
 comma separated list.) Add 127.0.0.1 only if the agent forwards to 127.0.0.1; use the host's
 LAN IP as the tunnel target otherwise. Players then set `live_server` to the tunnel's public
