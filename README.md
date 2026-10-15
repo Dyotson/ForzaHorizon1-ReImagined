@@ -71,7 +71,8 @@ Captured from the recompiled game running natively on Linux.
 - **Title Update 4 (the default), Horizon Rally and the 1000 Club:** TU4 is built from your
   own copy of the update (`tools/apply_title_update.py`, about 2 s). It adds the **Horizon
   Rally** expansion (its map loads and resumes the rally progress of a Xenia save) and the
-  **1000 Club** in the pause menu (opens when signed in to the Forza Live server).
+  **1000 Club** in the pause menu (signed in to the Forza Live server: its challenges
+  earn medals that are kept with the career, and the server has the club's leaderboard).
   [`docs/dlc.md`](docs/dlc.md)
 - **All 23 DLC packages:** every DLC car counts as installed, the Rally Expansion's 15 and
   the 1000 Club's cars included (`tools/install_dlc.py`).

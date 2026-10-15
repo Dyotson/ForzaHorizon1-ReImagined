@@ -201,8 +201,13 @@ in the Lamborghini Aventador LP700-4, car 1398) and a local Forza Live server.
   the medal was gone (the tutorial's progress was kept), and doing the challenge again
   sent the same `ChallengeCompleted`. So, as for the rest of the career: quit to the title
   screen before closing the game.
-- The leaderboard: the server keeps every `ChallengeCompleted` and answers the board
-  (docs/title_services.md, scoreboards).
+- **The leaderboard, two players** (two TU4 games, DriverA and DriverB, each with a fresh
+  copy of the save, one server): each did the ONE EIGHTY SKILL (B first); the server kept
+  both `ChallengeCompleted`. 1000 CLUB, LEADERBOARDS showed "1 DriverB 1 (medal)
+  10/15/2026, 2 DriverA 1 (medal) 10/15/2026", "YOU ARE IN THE TOP 100% OF 2 PLAYERS" on
+  A and "TOP 1%" on B; X went through Favorites, Near Me and Global (views 3, 1, 0), same
+  rows. The score column is the medal count, the date the latest medal's (UTC). The
+  server side is in docs/title_services.md (scoreboards).
 
 ## Every package (#18)
 

@@ -372,9 +372,16 @@ A-to-B times, smashables, events). A completed challenge is a medal. The service
 The board (`club_entries`) ranks every player by medals (the number of challenges the
 server saw completed), the first to reach a count first on a tie; a row's car is the car
 of the player's latest medal. Kept in `scoreboards.json` (`club1000`: per player, the
-thumbprints per car). The game sends nothing else for the club: no score submission, and
-it does not send `ChallengeCompleted` again for a medal it already has, so medals earned
-before the server kept them (or on another server) are not on the board.
+thumbprints per car). The game sends nothing else for the club (no score submission), so
+medals earned before the server kept them, or on another server, are not on the board.
+(After the medal was in the save, a few more ONE EIGHTY tries in the Aventador sent
+nothing; they may not all have counted as the skill.)
+
+Seen with two players (`docs/dlc.md`, 1000 Club): "1 DriverB 1 (medal icon) 10/15/2026,
+2 DriverA 1 ...", "YOU ARE IN THE TOP 100% OF 2 PLAYERS"; the score shows as the medal
+count and `submittedTime` as the date; the filters (views 2, 3, 1, 0) all list the board.
+Unit tests: `server/test_forza_scores.py` (`cd server && python3 -m unittest discover -p
+'test_*.py'`).
 
 The thumbprint names the challenge: the Aventador's ONE EIGHTY SKILL sent `carId 1398,
 challengeThumbprint 0xAE6828D3` both times it was completed (the second time after a
