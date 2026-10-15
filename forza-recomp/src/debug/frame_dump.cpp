@@ -37,6 +37,11 @@
 #include <rex/logging.h>
 #include <rex/runtime.h>
 #include <rex/system/interfaces/graphics.h>
+// The SDK's runtime is built with the spatial output effects (SDK patch 0043), which changes
+// the layout of ui::Presenter; this file calls into it, so it sees the same layout.
+#ifndef REX_HAS_FIDELITYFX_SDK
+#define REX_HAS_FIDELITYFX_SDK 1
+#endif
 #include <rex/ui/presenter.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>

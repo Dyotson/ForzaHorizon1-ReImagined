@@ -1,0 +1,57 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -256,6 +256,10 @@
+ 
+ include_directories(${REXGLUE_ROOT}/include)
+ 
++# The spatial output effects (CAS, FSR 1) run precompiled shaders from src/ui/shaders and need
++# no FidelityFX library. The macro changes the layout of ui::Presenter, so every target that
++# includes <rex/ui/presenter.h> (rexui, the Xenos plugin, the games) must see it.
++add_compile_definitions(REX_HAS_FIDELITYFX_SDK=1)
+ add_subdirectory(src/core)
+ add_subdirectory(src/filesystem)
+ add_subdirectory(src/ui)
+diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
+--- a/src/ui/CMakeLists.txt
++++ b/src/ui/CMakeLists.txt
+@@ -116,12 +116,14 @@
+ )
+ target_link_libraries(rexui PRIVATE utf8cpp)
+ 
++# REX_HAS_FIDELITYFX_SDK (the spatial effects, CAS and FSR 1) is defined for the whole SDK in
++# the top-level CMakeLists.txt; only the temporal upscaler (REX_HAS_FIDELITYFX_RUNTIME below)
++# needs the FidelityFX SDK.
+ if(REXGLUE_FIDELITYFX_SOURCE_DIR AND EXISTS "${REXGLUE_FIDELITYFX_SOURCE_DIR}/sdk/include")
+     target_include_directories(rexui PRIVATE
+         "${REXGLUE_FIDELITYFX_SOURCE_DIR}/sdk/include"
+         "${REXGLUE_FIDELITYFX_SOURCE_DIR}/ffx-api/include"
+     )
+-    target_compile_definitions(rexui PRIVATE REX_HAS_FIDELITYFX_SDK=1)
+ endif()
+ 
+ set(REXUI_HAS_FIDELITYFX_RUNTIME OFF)
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -41,10 +41,20 @@
+     .range(0, 100);
+ 
+ #if defined(REX_HAS_FIDELITYFX_SDK)
++#if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter",
+                       "Guest output effect: bilinear, cas, fsr, fsr2, fsr3")
+     .allowed({"bilinear", "cas", "fsr", "fsr2", "fsr3"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++#else
++// Without the FidelityFX runtime there is no temporal upscaler: fsr2 / fsr3 would only run
++// the spatial FSR 1 passes under a name that promises more.
++REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter",
++                      "Guest output effect: bilinear, cas (sharpen, up to 2x), fsr (FSR 1 "
++                      "upscaling and sharpening)")
++    .allowed({"bilinear", "cas", "fsr"})
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++#endif
+ 
+ REXCVAR_DEFINE_DOUBLE(present_cas_additional_sharpness,
+                       rex::ui::Presenter::GuestOutputPaintConfig::kCasAdditionalSharpnessDefault,
