@@ -291,3 +291,40 @@ Notes from the first try:
   on the resolve size (thumbnail texture 884,736 bytes).
 - The race scenario needs the pristine Xenia save (`~/xenia_canary_windows/content`), not a
   profile the game has since changed (a garage screen came up instead of the race).
+
+## Shader cache, cold and warm (#34, 2026-10-15)
+
+Where the pipeline cache lives: the SDK keeps no `VkPipelineCache` blob. It stores the
+guest shaders (`<cache_root>/shaders/shareable/4D5309C9.xsh`) and the descriptions of
+every pipeline it made (`4D5309C9.fbo.vk.xpso`); the next start translates those shaders
+and creates all stored pipelines before the game runs, and the driver's own disk cache
+(Mesa's, NVIDIA's) turns that creation into a lookup. `cache_root` defaults to
+`<user_data_root>/cache`: `~/.local/share/forza/cache` on Linux (play.sh and the
+launcher; under Flatpak, XDG_DATA_HOME is inside `~/.var/app/<id>` and persists too),
+`Documents\forza\cache` on Windows before 0b40b58 and the launcher's folder
+(`%LOCALAPPDATA%\ForzaReImagined\cache`) since. A pipeline not ready in time is drawn with
+a placeholder (async creation, `async_shader_compilation`) and that frame is not shown
+(`vulkan_async_skip_incomplete_frames`, default on): a cold cache shows as dropped frames,
+not as missing objects.
+
+Freeroam scenario, TU4 build, scratch copy of the Xenia save. Cold: empty `--cache_root`
+and empty `MESA_SHADER_CACHE_DIR` (a first start on a new machine); warm: the same two
+folders on the next run. CONTENDED (the other agent's two game instances ran, load 4-10),
+so only the difference counts:
+
+| Cache | Scene | Source | fps | p50 | p95 | p99 | max | low1 | stutters | hitches | pipelines |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| cold | loading into free roam | present | 28.6 | 33.4 | 35.1 | 67.2 | 500.3 | 5.5 | 12 | 6 | 485 |
+| warm | loading into free roam | present | 29.8 | 33.3 | 34.5 | 50.2 | 166.3 | 12.3 | 5 | 2 | 51 |
+| cold | free roam, 90 s | guest | 30.0 | 33.3 | 35.9 | 40.9 | 62.3 | 21.2 | 0 | 0 | 149 |
+| cold | free roam, 90 s | present | 29.4 | 33.4 | 35.5 | 66.5 | 102.4 | 14.0 | 17 | 1 | 149 |
+| warm | free roam, 90 s | guest | 30.0 | 33.3 | 35.4 | 37.7 | 55.5 | 23.6 | 0 | 0 | 14 |
+| warm | free roam, 90 s | present | 29.9 | 33.4 | 34.4 | 35.7 | 67.9 | 22.5 | 2 | 0 | 14 |
+
+The warm start created the 348 stored pipelines in 0.17 s. The game itself never slows
+(guest p99 41 ms cold); what the player sees on a cold cache is the presenter dropping the
+frames that used a placeholder, 17 stutters in 90 s of driving, each one or two frames, and
+a few half-second holds while loading. They go away once the cache is kept, so a cache that
+is not kept (a folder Windows blocks or OneDrive holds, a driver cache that is cleared) means
+stutter every session. `--vulkan_async_skip_incomplete_frames=false` shows those frames
+instead (objects whose pipeline is not ready are missing for a frame or two).
