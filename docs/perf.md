@@ -248,7 +248,7 @@ and the race intro:
 | Race at 144 | 93.5 / 93.0 (10.7 / 15.2) | 93.5 / 91.2 (10.6 / 15.0) | 77.8 / 78.1 (13.5 / 17.4) | 79.2 / 62.1 (13.3 / 16.3) |
 | Race intro at 144 | 102.4 / 102.5 | 102.6 / 102.3 | 96.7 / 97.9 | 82.8 / 75.7 |
 | Race at 60 | 60.0 (16.8 / 18.2) | not run | 59.9 (16.8 / 18.5) | 58.1 (16.9 / 24.3) |
-| Free roam at 144 | 137.3 (7.2 / 11.0) | not run | 108.1 (9.6 / 12.1) | 85.0 (11.0 / 15.8) |
+| Free roam at 144 | 137.3 (7.2 / 11.0) | 139.9 (7.1 / 10.7) | 108.1 (9.6 / 12.1) | 85.0 (11.0 / 15.8) |
 
 (Two numbers = two runs.) `fast` costs 16% in the race and 21% in free roam at 144 and
 nothing at 60; `some` costs nothing measurable. The extra GPU copy `some` still does per
