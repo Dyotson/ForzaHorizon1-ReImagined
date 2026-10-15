@@ -101,6 +101,8 @@ class MainWindow(QMainWindow):
         self._first_run()
         self.show_page(0)
         self.refresh_all()
+        if sys.platform == "win32":
+            QTimer.singleShot(600, self.setup.offer_move)
 
     # ---- navigation -------------------------------------------------------------------
     def show_page(self, i):

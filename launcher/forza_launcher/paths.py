@@ -74,10 +74,13 @@ def log_error(context: str, exc: BaseException | None = None) -> Path:
 
 
 def data_home() -> Path:
-    """The game's user data root: saves, DLC, online identity, shader cache, forza.log.
-    Matches play.sh (~/.local/share/forza) and play.bat (Documents\\forza)."""
+    """The game's user data root: saves, DLC, online identity, shader cache, forza.log, and the
+    build. Linux: ~/.local/share/forza (as play.sh). Windows: %LOCALAPPDATA%\\ForzaReImagined, which
+    OneDrive does not sync and Controlled folder access does not guard (issue #38; v0.1.x used
+    Documents\\forza, which is kept while an install already lives there: datafolder.windows_default)."""
     if IS_WINDOWS:
-        return Path(os.environ.get("USERPROFILE") or Path.home()) / "Documents" / "forza"
+        from . import datafolder
+        return datafolder.windows_default()
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "forza"
 
 

@@ -1,7 +1,7 @@
 """Building the game on the player's machine: toolchain, SDK, codegen from their own
 default.xex, CMake configure and ninja. Nothing built here is ever uploaded or shipped.
 
-Layout under the data root (default ~/.local/share/forza, Documents\\forza on Windows):
+Layout under the data root (default ~/.local/share/forza, %LOCALAPPDATA%\\ForzaReImagined on Windows):
   game/        the extracted game files (default.xex ...)
   toolchain/   downloaded LLVM, CMake, ninja (only when the system has none)
   downloads/   the pinned archives (kept, so a retry needs no download)
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__, paths, pins
-from . import build_env, fetch
+from . import build_env, datafolder, fetch
 from .fetch import Cancelled
 
 IS_WIN = sys.platform == "win32"
@@ -33,6 +33,11 @@ EXE = ".exe" if IS_WIN else ""
 
 class BuildError(Exception):
     pass
+
+
+class FolderBlocked(BuildError):
+    """Windows denied access to the data folder (OneDrive, antivirus, Controlled folder access): the
+    player should choose another folder. Issue #38."""
 
 
 class Reporter:
@@ -296,6 +301,13 @@ class ResourceMonitor(threading.Thread):
             self.peak = max(self.peak, total)
 
 
+CURRENT_ROOT = None     # the data root of the build being run (for messages that name the folder)
+
+
+def root_hint(cwd):
+    return CURRENT_ROOT or cwd
+
+
 def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=None):
     """Run a command, streaming its output to rep.log; raises BuildError on failure and
     Cancelled when the player cancels."""
@@ -313,6 +325,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
                                 encoding="utf-8", errors="replace", bufsize=1, **kw)
     except OSError as e:
         raise BuildError(f"Could not start {cmd[0]}: {e}")
+    denied = []     # lines saying access was denied (Windows: OneDrive, antivirus, Controlled folder access)
     mon = None
     if monitor is not None:
         mon = ResourceMonitor(proc.pid)
@@ -328,6 +341,8 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     try:
         for line in proc.stdout:
             line = line.rstrip("\n")
+            if IS_WIN and len(denied) < 3 and datafolder.ACCESS_DENIED_RE.search(line):
+                denied.append(line)
             if on_line:
                 on_line(line)
             rep.log(line)
@@ -340,6 +355,8 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     if rep.cancelled():
         raise Cancelled()
     if code != 0:
+        if denied:
+            raise FolderBlocked(datafolder.blocked_message(root_hint(cwd), denied[0]))
         raise BuildError(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the log above.")
 
 
@@ -678,7 +695,27 @@ def compile_passes(opts: Options, rep: Reporter, tools, src: Path, bdir: Path, e
 
 
 def run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
-    """The whole pipeline; returns the runtime directory. Safe to cancel and run again."""
+    """The whole pipeline; returns the runtime directory. Safe to cancel and run again.
+    On Windows a folder that cannot be written (OneDrive, antivirus, Controlled folder access) ends in
+    FolderBlocked with a message that says so, before or during the build."""
+    global CURRENT_ROOT
+    CURRENT_ROOT = opts.root
+    if IS_WIN:
+        for lvl, text in datafolder.check_folder(opts.root, need_toolchain=False):
+            if lvl == "error" and text.startswith("Cannot write"):
+                raise FolderBlocked(text)
+            if lvl == "warn":
+                rep.log("Warning: " + text)
+    try:
+        return _run_build(opts, rep, game_files)
+    except OSError as e:
+        if IS_WIN and datafolder.is_access_denied_error(e):
+            paths.log_error("build: access denied", e)
+            raise FolderBlocked(datafolder.blocked_message(opts.root, str(e))) from e
+        raise
+
+
+def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     t0 = time.time()
     root = opts.root
     root.mkdir(parents=True, exist_ok=True)

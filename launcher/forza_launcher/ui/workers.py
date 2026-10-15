@@ -3,7 +3,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from .. import builder, fetch, installer, paths
+from .. import builder, datafolder, fetch, installer, paths
 
 
 class Task(QThread):
@@ -16,6 +16,7 @@ class Task(QThread):
         super().__init__()
         self.fn, self.name = fn, name
         self._cancel = False
+        self.blocked = False    # the data folder was denied (builder.FolderBlocked)
 
     def cancel(self):
         self._cancel = True
@@ -30,6 +31,7 @@ class Task(QThread):
         except (installer.Cancelled, fetch.Cancelled):
             self.done.emit(False, "Cancelled.")
         except (installer.InstallError, builder.BuildError) as e:
+            self.blocked = self.blocked or isinstance(e, builder.FolderBlocked)
             log = paths.log_error(f"{self.name}: {e}")
             self.done.emit(False, f"{e}\n(Details: {log})")
         except BaseException as e:  # never let a thread die silently (SystemExit from a tool included)
@@ -93,3 +95,23 @@ def build_task(opts, game_files):
         rt = builder.run_build(opts, TaskReporter(t), Path(game_files))
         return f"Built: {rt}"
     return Task(fn, "build")
+
+
+def move_task(old, new, with_user, with_game):
+    """Copy the user data of the old data folder into the new one (the old one is left as it is)."""
+    def fn(t: Task):
+        t.status.emit("Copying your saves and files to the new folder")
+
+        def prog(frac, name):
+            t.progress.emit(frac, name)
+        try:
+            n = datafolder.copy_user_data(Path(old), Path(new), with_user, with_game, prog, t.cancelled, t.log.emit)
+        except InterruptedError:
+            raise installer.Cancelled()
+        except OSError as e:
+            if datafolder.is_access_denied_error(e):
+                t.blocked = True
+                raise installer.InstallError(datafolder.blocked_message(new, str(e))) from e
+            raise
+        return f"Copied {n / 2**30:.1f} GB to {new}. The old folder {old} was not changed."
+    return Task(fn, "move data folder")

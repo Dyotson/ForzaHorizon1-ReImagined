@@ -24,7 +24,10 @@ def _default():
         "online": {"mode": "public", "custom_server": ""},
         "profile": {"mode": "own", "xenia_content": "", "xenia_xuid": ""},
         "advanced": {"game_dir": "", "data_root": "", "extra_args": "", "extra_env": "",
-                     "extras_toml": "", "pad_per_user": False},
+                     "extras_toml": "", "pad_per_user": False,
+                     "accept_ms_license": False, "build_jobs": 0,
+                     "blocked_root": "",       # a data folder the last build could not use (access denied, #38)
+                     "data_root_asked": False},  # the player answered the offer to leave Documents\\forza
         "settings": {**schema.defaults(), **FIRST_RUN},
     }
 

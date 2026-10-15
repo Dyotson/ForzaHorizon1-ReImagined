@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
                                QVBoxLayout, QWidget)
 
-from .. import GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, game, installer, paths, pins
+from .. import GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins
 from ..config import Config
 from . import theme, workers
 from .widgets import Hero, StatusRow, card, label
@@ -252,6 +252,32 @@ class SetupPage(QWidget):
                               "with this launcher.")
         outer.addWidget(sc)
 
+        # 0. where --------------------------------------------------------------------
+        f0, l0 = card()
+        t0 = QLabel("Where the game is built")
+        t0.setStyleSheet("font-weight: 700; font-size: 15px;")
+        l0.addWidget(t0)
+        l0.addWidget(label("The extracted game, the compiler downloads, the build and your saves all live in this folder "
+                           "(about 15 GB or more). Pick a folder on another drive to keep them off C:. Avoid Documents, "
+                           "Desktop and OneDrive folders: OneDrive or Windows security can block the build there.", "help"))
+        frow = QHBoxLayout()
+        self.folder = QLineEdit()
+        self.folder.setReadOnly(True)
+        frow.addWidget(self.folder, 1)
+        self.change_btn = QPushButton("Change folder")
+        self.change_btn.clicked.connect(lambda: self.change_folder())
+        frow.addWidget(self.change_btn)
+        ob = QPushButton("Open")
+        ob.clicked.connect(lambda: open_folder(self.cfg.data_home()))
+        frow.addWidget(ob)
+        l0.addLayout(frow)
+        self.bar0 = QProgressBar()
+        self.bar0.hide()
+        l0.addWidget(self.bar0)
+        self.msg0 = label("", "muted")
+        l0.addWidget(self.msg0)
+        lay.addWidget(f0)
+
         # 1. game files ---------------------------------------------------------------
         self.c1 = StepCard(1, "Your game files",
                            "Choose your Games on Demand package (the file in 4D5309C9/00007000, next to its "
@@ -392,8 +418,25 @@ class SetupPage(QWidget):
     def busy(self):
         return self.task is not None and self.task.isRunning()
 
+    def refresh_folder(self):
+        cfg = self.cfg
+        home = cfg.data_home()
+        self.folder.setText(str(home))
+        self.change_btn.setEnabled(not self.busy())
+        notes = []
+        if cfg.advanced.get("blocked_root") == str(home):
+            notes.append((True, "The last build could not use this folder (access denied). "
+                                + datafolder.blocked_message(home)))
+        for lvl, text in datafolder.check_folder(home, cfg.game_files_ready(), writable=False):
+            if lvl != "ok":
+                notes.append((lvl == "error", text))
+        if not self.fail.get("msg0"):
+            self.msg0.setText("\n".join(t for _e, t in notes))
+            self.msg0.setStyleSheet(f"color: {theme.ERR if any(e for e, _t in notes) else theme.ORANGE};")
+
     def refresh(self):
         cfg = self.cfg
+        self.refresh_folder()
         root = cfg.game_files()
         have = (root / "default.xex").is_file()
         if have:
@@ -494,6 +537,122 @@ class SetupPage(QWidget):
             self.go1.setText("Use these files")
         else:
             self.go1.setText("Extract game files")
+
+    # ---- where the game is built ---------------------------------------------------------
+    def change_folder(self, preset=None):
+        """Choose the folder the game is built in (Discussion #31). Checks it (writable, space, OneDrive),
+        offers to copy the saves and files of the current folder, then switches. Nothing is deleted."""
+        if self.busy():
+            return
+        cfg = self.cfg
+        cur = cfg.data_home()
+        if preset is None:
+            d = QFileDialog.getExistingDirectory(self, "Folder to build the game in", str(cur.parent))
+            if not d:
+                return
+            new = datafolder.normalize_choice(d)
+        else:
+            new = Path(preset)
+        if os.path.normcase(os.path.abspath(new)) == os.path.normcase(os.path.abspath(cur)):
+            return
+        game_dir = cur / "game"
+        own_game = (game_dir / "default.xex").is_file() and not cfg.d.get("game_root", "").strip()
+        user_bytes = datafolder.estimate_move(cur, True, False)
+        game_bytes = datafolder.estimate_move(cur, False, True) if own_game else 0
+        copy_user = copy_game = False
+        if user_bytes > 1 << 20:
+            box = QMessageBox(self)
+            box.setWindowTitle("Move to the new folder")
+            box.setText(f"New folder: {new}")
+            box.setInformativeText(f"Copy your saves, DLC and the built game ({user_bytes / 2**30:.1f} GB) from {cur} "
+                                   "to the new folder? The old folder is not changed or deleted.")
+            copy_b = box.addButton("Copy them", QMessageBox.AcceptRole)
+            box.addButton("Start empty", QMessageBox.DestructiveRole)
+            cancel_b = box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() in (cancel_b, None):
+                return
+            copy_user = box.clickedButton() is copy_b
+        if own_game:
+            box2 = QMessageBox(self)
+            box2.setWindowTitle("Game files")
+            box2.setText(f"The extracted game files ({game_bytes / 2**30:.1f} GB) are in {game_dir}.")
+            box2.setInformativeText("Copy them to the new folder too, or leave them there and use them from there?")
+            cg = box2.addButton("Copy them", QMessageBox.AcceptRole)
+            box2.addButton("Leave them there", QMessageBox.RejectRole)
+            cancel2 = box2.addButton(QMessageBox.Cancel)
+            box2.exec()
+            if box2.clickedButton() in (cancel2, None):
+                return
+            copy_game = box2.clickedButton() is cg
+        extra = (user_bytes if copy_user else 0) + (game_bytes if copy_game else 0)
+        checks = datafolder.check_folder(new, game_files_ready=cfg.game_files_ready(), extra_gb=extra / 2**30)
+        errors = [t for lvl, t in checks if lvl == "error"]
+        warns = [t for lvl, t in checks if lvl == "warn"]
+        if errors:
+            QMessageBox.warning(self, "This folder will not do", "\n\n".join(errors) + "\n\nChoose another folder.")
+            return
+        if warns and QMessageBox.question(self, "Use this folder anyway?", "\n\n".join(warns)) != QMessageBox.Yes:
+            return
+
+        def switch():
+            cfg.advanced["data_root"] = str(new)
+            if own_game and not copy_game:
+                cfg["game_root"] = str(game_dir)
+            cfg.advanced["blocked_root"] = ""
+            cfg.advanced["data_root_asked"] = True
+            cfg.save()
+
+        if copy_user or copy_game:
+            t = workers.move_task(cur, new, copy_user, copy_game)
+
+            def done(ok, _msg):
+                if ok:
+                    switch()
+            t.done.connect(done)
+            self._start(t, self.bar0, self.cancel1, self.msg0)
+            return
+        err = datafolder.probe_writable(new)
+        if err:
+            QMessageBox.warning(self, "This folder will not do", datafolder.blocked_message(new, err))
+            return
+        switch()
+        self.msg0.setText(f"The game will be built in {new}.")
+        self.refresh()
+        self.changed.emit()
+
+    def offer_move(self):
+        """Once, at start (Windows): the v0.1.x folder Documents\\forza is still in use and looks risky
+        (OneDrive, not writable, or the last build was denied access): offer the new default."""
+        cfg = self.cfg
+        cur = cfg.data_home()
+        if self.busy() or cfg.advanced.get("data_root") or cfg.advanced.get("data_root_asked") \
+                or not datafolder.is_legacy_default(cur):
+            return
+        why = datafolder.in_onedrive(cur)
+        if not why and cfg.advanced.get("blocked_root") == str(cur):
+            why = "the last build could not use it (access denied)"
+        if not why:
+            err = datafolder.probe_writable(cur)
+            why = f"Windows does not let the launcher write there ({err})" if err else None
+        if not why:
+            return
+        new = datafolder.local_data_home()
+        box = QMessageBox(self)
+        box.setWindowTitle("Move the game's folder?")
+        box.setText(f"The game's data folder is {cur}, and that is a risky place: {why}.")
+        box.setInformativeText(
+            f"OneDrive, antivirus software or Windows Controlled folder access can block a build there (\"access "
+            f"denied\"). The new default is {new}. Your saves and files can be copied; nothing in the old folder "
+            "is changed or deleted.")
+        move = box.addButton("Choose what to move", QMessageBox.AcceptRole)
+        keep = box.addButton("Keep this folder", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is move:
+            self.change_folder(new)
+        elif box.clickedButton() is keep:
+            cfg.advanced["data_root_asked"] = True
+            cfg.save()
 
     # ---- step 1 ------------------------------------------------------------------------
     def _pick_file(self):
@@ -673,9 +832,16 @@ class SetupPage(QWidget):
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
             self._cancel_btn.hide()
-        key = {id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3"}.get(id(self._msg), "msg")
+        key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
-        if not ok and self._bar is self.bar3:
+        blocked = bool(getattr(self.task, "blocked", False))
+        if blocked:
+            self.cfg.advanced["blocked_root"] = str(self.cfg.data_home())
+            self.cfg.save()
+        elif ok and self._bar is self.bar3 and self.cfg.advanced.get("blocked_root"):
+            self.cfg.advanced["blocked_root"] = ""
+            self.cfg.save()
+        if not ok and self._bar is self.bar3 and not blocked:
             message += "  Press Resume build to continue."
         if failed:
             self._show_fail(key, self._msg, message)
@@ -688,7 +854,11 @@ class SetupPage(QWidget):
         self.window.set_busy(False)
         self.refresh()
         self.changed.emit()
-        if failed:
+        if failed and blocked:
+            if QMessageBox.question(self, "The folder is blocked", message + "\n\nChoose another folder now?") \
+                    == QMessageBox.Yes:
+                self.change_folder()
+        elif failed:
             QMessageBox.warning(self, "Something went wrong", message)
 
     def _cancel(self):
