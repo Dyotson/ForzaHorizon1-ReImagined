@@ -357,6 +357,10 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     if code != 0:
         if denied:
             raise FolderBlocked(datafolder.blocked_message(root_hint(cwd), denied[0]))
+        if IS_WIN and CURRENT_ROOT:     # a denied folder can also look like "file not found" to a program
+            why = datafolder.read_problem(CURRENT_ROOT)
+            if why:
+                raise FolderBlocked(datafolder.blocked_message(CURRENT_ROOT, why))
         raise BuildError(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the log above.")
 
 

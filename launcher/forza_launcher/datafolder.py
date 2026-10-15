@@ -141,8 +141,46 @@ def probe_writable(path: Path) -> str | None:
         return f"{type(e).__name__}: {e}"
 
 
+def read_problem(root, max_entries=30000, max_reads=300) -> str | None:
+    """After a failed command: the first folder or file in what the build uses (sdk, toolchain, xwin,
+    build, not the 7 GB of game files) that cannot be listed or read, else None. A denied folder often
+    shows up as a program's "not found". Bounded: folders are only listed, a few hundred files are
+    opened."""
+    root = Path(root)
+    bad = []
+    seen = reads = 0
+    for top in ("sdk", "toolchain", "xwin", "build"):
+        if not (root / top).exists():
+            continue
+        for dirpath, dirs, files in os.walk(root / top, onerror=lambda e: bad.append(f"{e.filename}: {e.strerror}")):
+            seen += len(dirs) + len(files)
+            if bad:
+                return bad[0]
+            for f in files:
+                if reads >= max_reads:
+                    break
+                reads += 1
+                p = os.path.join(dirpath, f)
+                try:
+                    with open(p, "rb") as fh:
+                        fh.read(1)
+                except PermissionError as e:
+                    return f"{p}: {e.strerror}"
+                except OSError:
+                    pass
+            if seen > max_entries:
+                break
+    return bad[0] if bad else None
+
+
 def suggested_folder() -> Path:
     return local_data_home() if IS_WINDOWS else paths.data_home()
+
+
+def _other_than(path) -> str:
+    """A folder to suggest instead of `path`."""
+    s = suggested_folder()
+    return str(s) if _norm(s) != _norm(path) else (r"C:\ForzaReImagined" if IS_WINDOWS else str(Path.home() / "forza-data"))
 
 
 def blocked_message(path, detail: str = "") -> str:
@@ -151,7 +189,7 @@ def blocked_message(path, detail: str = "") -> str:
            "computer: OneDrive (it syncs Documents, Desktop and Pictures), antivirus software, or Windows "
            "Controlled folder access (Windows Security > Virus & threat protection > Ransomware protection). "
            + (f"This folder looks synced because {why}. " if why else "")
-           + f"Choose another folder in Setup (\"Where the game is built\"), for example {suggested_folder()}, "
+           + f"Choose another folder in Setup (\"Where the game is built\"), for example {_other_than(path)}, "
            "then press Build again.")
     if detail:
         msg += f"\n(Windows said: {detail.strip()[:300]})"

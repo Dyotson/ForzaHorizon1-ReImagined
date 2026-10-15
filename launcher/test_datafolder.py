@@ -74,6 +74,23 @@ class Detect(unittest.TestCase):
                 self.assertEqual([l for l, _ in out], ["warn", "ok"])
 
 
+class ReadProblem(unittest.TestCase):
+    def test_unreadable_file_and_folder(self):
+        if os.name == "nt" or os.geteuid() == 0:
+            self.skipTest("needs POSIX permissions and a non-root user")
+        with tempfile.TemporaryDirectory() as tmp:
+            touch(Path(tmp) / "sdk" / "cmake" / "a.cmake")
+            self.assertIsNone(df.read_problem(tmp))
+            os.chmod(Path(tmp) / "sdk" / "cmake" / "a.cmake", 0)
+            self.assertIn("a.cmake", df.read_problem(tmp))
+            os.chmod(Path(tmp) / "sdk" / "cmake" / "a.cmake", 0o600)
+            os.chmod(Path(tmp) / "sdk" / "cmake", 0)
+            try:
+                self.assertIn("cmake", df.read_problem(tmp))
+            finally:
+                os.chmod(Path(tmp) / "sdk" / "cmake", 0o700)
+
+
 class Defaults(unittest.TestCase):
     def env(self, tmp):
         return mock.patch.dict(os.environ, {"USERPROFILE": str(Path(tmp) / "u"), "LOCALAPPDATA": str(Path(tmp) / "u" / "AppData" / "Local")})
