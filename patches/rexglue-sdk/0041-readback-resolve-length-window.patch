@@ -1,0 +1,73 @@
+diff --git a/include/rex/graphics/command_processor.h b/include/rex/graphics/command_processor.h
+--- a/include/rex/graphics/command_processor.h
++++ b/include/rex/graphics/command_processor.h
+@@ -229,6 +229,9 @@
+ 
+   // Shared readback resolve mode with backend legacy-flag alias support.
+   ReadbackResolveMode GetReadbackResolveMode(bool legacy_readback_resolve_enabled) const;
++  // False when the resolve's length is outside readback_resolve_min_length and
++  // readback_resolve_max_length (the readback paths then skip the copy).
++  bool ShouldReadbackResolve(uint32_t written_length) const;
+   // Shared memexport readback enable state with backend legacy-flag override support.
+   bool IsReadbackMemexportEnabled(bool legacy_backend_flag) const;
+ 
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -59,6 +59,18 @@
+     .allowed({"none", "fast", "some", "full"})
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_INT32(readback_resolve_min_length, 0, "GPU",
++                     "Resolve readback (readback_resolve) skips resolves that write fewer bytes "
++                     "than this (0: no minimum)")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
++REXCVAR_DEFINE_INT32(readback_resolve_max_length, 0, "GPU",
++                     "Resolve readback (readback_resolve) skips resolves that write more bytes "
++                     "than this (0: no maximum). With the minimum, a game that needs one render "
++                     "read back by the CPU (Forza Horizon's car pictures: resolves of 786432 to "
++                     "884736 bytes) does not pay for every frame's resolves")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DEFINE_BOOL(readback_resolve_half_pixel_offset, false, "GPU",
+                     "When draw resolution scaling is active, sample from the center of each "
+                     "scaled block during resolve readback downscale")
+@@ -189,6 +201,13 @@
+                                          : ReadbackResolveMode::kDisabled;
+ }
+ 
++bool CommandProcessor::ShouldReadbackResolve(uint32_t written_length) const {
++  int32_t min_length = REXCVAR_GET(readback_resolve_min_length);
++  int32_t max_length = REXCVAR_GET(readback_resolve_max_length);
++  return written_length >= uint32_t(std::max(min_length, 0)) &&
++         (max_length <= 0 || written_length <= uint32_t(max_length));
++}
++
+ bool CommandProcessor::IsReadbackMemexportEnabled(bool legacy_backend_flag) const {
+   if (legacy_readback_memexport_cvar_name_ &&
+       rex::cvar::HasNonDefaultValue(legacy_readback_memexport_cvar_name_)) {
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4800,7 +4800,7 @@
+     return false;
+   }
+ 
+-  if (!written_length) {
++  if (!written_length || !ShouldReadbackResolve(written_length)) {
+     return true;
+   }
+ 
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -2893,7 +2893,7 @@
+     return false;
+   }
+ 
+-  if (!written_length) {
++  if (!written_length || !ShouldReadbackResolve(written_length)) {
+     return true;
+   }
+ 
