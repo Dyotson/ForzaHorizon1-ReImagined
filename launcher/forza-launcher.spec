@@ -25,6 +25,7 @@ hidden = sorted(m for m in hidden if m in stdlib)
 hidden += ["zipfile", "tempfile", "shutil", "subprocess", "io", "sqlite3", "xml.etree.ElementTree", "http.server", "ssl", "hashlib", "hmac", "zlib"]
 
 datas = [
+    (str(root / "forza_launcher" / "update_helper.py"), "forza_launcher"),
     (str(images / "logo.svg"), "assets"),
     (str(images / "logo.png"), "assets"),
     (str(images / "social-preview.png"), "assets"),

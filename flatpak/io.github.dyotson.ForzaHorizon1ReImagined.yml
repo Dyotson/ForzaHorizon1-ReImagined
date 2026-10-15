@@ -29,6 +29,7 @@ finish-args:
   - --filesystem=/run/media:ro
   - --filesystem=/mnt:ro
   - --talk-name=org.freedesktop.ScreenSaver
+  - --talk-name=org.freedesktop.Flatpak # flatpak-spawn --host installs verified launcher updates
 
 add-extensions:
   org.freedesktop.Sdk.Extension.llvm22:

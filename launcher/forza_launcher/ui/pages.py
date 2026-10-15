@@ -897,6 +897,9 @@ class AboutPage(QWidget):
                            "sponsored by Microsoft, Playground Games or Turn 10 Studios. It contains no game code "
                            "or assets; you must own the game.", "muted"))
         lay.addWidget(c)
+        from .updates import UpdateCard
+        self.updates = UpdateCard(cfg, window)
+        lay.addWidget(self.updates)
         for text, url in (("Project page and source", GITHUB_URL),
                           ("Releases", GITHUB_URL + "/releases/latest"),
                           ("Report a problem", GITHUB_URL + "/issues")):

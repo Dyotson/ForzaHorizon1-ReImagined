@@ -1,4 +1,5 @@
 """The main window: a sidebar and the Play, Setup, Settings and About pages."""
+import os
 import sys
 import threading
 
@@ -86,6 +87,13 @@ class MainWindow(QMainWindow):
         self.version.setObjectName("version")
         self.version.setContentsMargins(20, 0, 10, 0)
         self.version.setWordWrap(True)
+        self.update_notice = QPushButton("Update available")
+        self.update_notice.setObjectName("link")
+        self.update_notice.setStyleSheet("margin-left: 20px; margin-right: 10px;")
+        self.update_notice.hide()
+        self.update_notice.clicked.connect(lambda: self.show_page(3))
+        self.about.updates.available.connect(lambda tag: self.update_notice.setVisible(bool(tag)))
+        sl.addWidget(self.update_notice)
         sl.addWidget(self.version)
         h.addWidget(side)
         body = QWidget()
@@ -109,6 +117,18 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         if sys.platform == "win32":
             QTimer.singleShot(600, self.setup.offer_move)
+        update_result = self.show_update_result()
+        if (not paths.in_checkout() and cfg.d["check_updates"] and not update_result
+                and not os.environ.get("FORZA_UPDATE_READY")):
+            QTimer.singleShot(1500, self.about.updates.check)
+
+    def show_update_result(self):
+        from .. import linux_update
+        result = linux_update.consume_result()
+        if result:
+            self.about.updates.message.setText(result.partition(": ")[2] or result)
+            self.show_page(3)
+        return bool(result)
 
     # ---- navigation -------------------------------------------------------------------
     def show_page(self, i):
@@ -137,6 +157,16 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self.about.updates.busy():
+            if self.about.updates.installing:
+                self.status("Installing the update. The launcher will restart when it's ready…")
+                e.ignore()
+                return
+            self.about.updates.closing = True
+            self.about.updates.cancel_task()
+            self.status("Stopping the update request before closing…")
+            e.ignore()
+            return
         if self.setup.busy():
             if QMessageBox.question(self, "Quit", "A task is still running. Stop it and quit? "
                                     "A build resumes where it stopped.") != QMessageBox.Yes:
@@ -144,7 +174,10 @@ class MainWindow(QMainWindow):
                 return
             self.setup.task.cancel()
             self.setup.task.wait(15000)
-        self.settings.flush()
+        # Installation flushed settings before handing off. Avoid writing the old config
+        # over migrations made by a newly started Flatpak launcher.
+        if not self.about.updates.restarting:
+            self.settings.flush()
         self.stop_game()
         super().closeEvent(e)
 
@@ -286,4 +319,19 @@ def run(argv):
     threading.excepthook = lambda a: report(a.exc_type, a.exc_value, a.exc_traceback)
     win = MainWindow(Config())
     win.show()
+    from .. import linux_update
+    def acknowledge():
+        if linux_update.acknowledge_gui_ready():
+            # The old sandbox records success after seeing our acknowledgement.
+            # Wait briefly for that result instead of missing it during startup.
+            win.result_poll = QTimer(win)
+            win.result_poll.setInterval(250)
+            attempts = [0]
+            def read_result():
+                attempts[0] += 1
+                if win.show_update_result() or attempts[0] >= 24:
+                    win.result_poll.stop()
+            win.result_poll.timeout.connect(read_result)
+            win.result_poll.start()
+    QTimer.singleShot(0, acknowledge)
     return app.exec()

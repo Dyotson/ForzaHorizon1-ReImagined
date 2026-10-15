@@ -51,6 +51,92 @@ Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCAL
 The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 (`%APPDATA%\ForzaReImagined\launcher.json`).
 
+## Launcher updates
+
+**About > Launcher updates** checks the project's latest stable GitHub release and offers
+the matching x86-64 Windows installer, Linux archive or Flatpak bundle. Packaged launchers
+check once in the background each time they open; turn this off with **Check for updates
+when the launcher opens**. An available update adds an **Update available** link in the
+sidebar. Offline or rate-limited checks leave Play and Setup usable; retry under About.
+Checking does not start a download. On packaged Linux launchers, **Update and restart**
+downloads, verifies, installs and restarts in one action. Finish any task and close the game first.
+
+Downloads go to `updates/<tag>/` under the launcher's configuration directory. The updater
+requires the release asset's GitHub SHA-256 digest and expected size, writes a partial file,
+and exposes the completed download only after both match. Failed or cancelled partial
+downloads are removed; retry starts fresh. A verified completed download can be reused.
+Assets without a digest, a matching platform, or a URL under this repository's release
+are not offered; **Releases** remains available for manual installation. Only stable
+three-part versions are compared; development versions are reported without recommending
+an automatic upgrade or downgrade.
+
+Installation behavior:
+
+* **Windows:** after downloading, choose **Open installer**, close the launcher and follow
+  the installer. Packaged launchers pass their current install directory, including custom locations.
+* **Linux archive:** **Update and restart** rechecks the downloaded archive's size and digest,
+  extracts it safely into a private sibling of the install folder, and checks the new executable's
+  version. A detached helper waits for the current launcher to exit, keeps the old folder as
+  `.forza-update-<id>/previous` beside the installation, and moves the new folder into the same
+  location. It checks the executable again at that location, then restarts. A failed replacement
+  or startup check restores and restarts the previous copy. The helper is copied outside the
+  installed bundle, so moving that bundle does not remove the helper. It uses a file lock to
+  exclude another updater and refuses a changed installation. The previous copy remains as
+  a recovery backup; old backups may be removed once the new launcher works. The directory
+  containing the launcher must be writable by the player. If the configured game, data or
+  configuration folder is inside the launcher folder, move it using Setup before updating.
+* **Flatpak:** the verified bundle is installed through `flatpak-spawn --host` and
+  `flatpak install --bundle --or-update --noninteractive --assumeyes`, preserving a user or
+  default system installation. Flatpak manages the deployment while the existing sandbox
+  stays open; the launcher restarts after installation succeeds. The host restart forwards
+  the current display connection and waits about a minute for the replacement Qt window
+  to acknowledge that it has opened. Only then does the old window close. A failed restart
+  keeps the old window usable and reports that installation succeeded but restart failed.
+  A timed-out replacement is stopped by its Flatpak instance ID, preserving the old instance.
+  Retry also works when the same bundle is already installed or the old sandbox still
+  references the previous deployment. The manifest grants
+  `--talk-name=org.freedesktop.Flatpak` for this host handoff. This permits host command
+  execution; bundles built with an older manifest or with that permission removed report
+  the missing permission and keep the launcher open. A system installation may require
+  authorization allowed by the host's policy; a denied noninteractive operation leaves an
+  error in the launcher. Named custom Flatpak installations are not supported.
+
+During installation, Play, Setup and Settings are disabled, and closing waits for the
+installation to finish. Preparation/installation errors keep the existing window usable.
+Archive helper logs and Flatpak installer output go to `update-install.log` in the configuration
+folder. On restart, About displays the installation result from `update-result.txt`; this
+message is consumed once and is not overwritten by an immediate automatic release check.
+An archive helper that cannot observe the old launcher exiting within 60 seconds aborts
+without replacing it.
+
+Settings, saves, DLC and the player's game files remain in their existing user folders.
+The existing build ID logic marks the game stale when the launcher/project version changes;
+use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
+checks and can open a downloaded package, but never replace the checkout or run Git commands.
+
+Validation: `python3 -m unittest discover -s launcher -p 'test_*.py'` covers release selection,
+version comparison, download integrity, cancellation/retries, real archive replacement and
+rollback with fixture launchers, and the detached helper waiting for its parent to exit.
+Flatpak host transactions are mocked, including scope selection, permission failures and
+restart arguments, GUI acknowledgement and timeout cleanup. With PySide6 installed, offscreen UI tests cover automatic download/install,
+restart, install failure recovery, shutdown during a request or installation, and the Windows
+installer invocation. Native Windows installation still requires platform testing.
+
+Linux platform validation uses an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb, real
+PyInstaller packages and Flatpak 1.14.6 with Freedesktop SDK 26.08. Test releases use
+versions 0.1.0 and 0.1.1 and a local HTTP fixture for release metadata and package downloads;
+normal integrity checks, UI actions and installation code run unchanged. The game itself
+is not included in these fixtures. Archive tests verify a custom installation path with
+spaces, the visible replacement GUI, retained settings/save data, and restoration of the
+previous working GUI after a deliberately broken replacement. Real user-scoped Flatpak
+checks verify bundle deployment, a visible replacement GUI, preserved settings/save data,
+permission denial, failed GUI startup with the old window retained, same-bundle retry, and
+instance-specific timeout cleanup. Full bundles exercise native installation; a small native
+delta bundle is used for the final timing correction rerun. The host restart call allows
+extra time for the readiness loop and cleanup under scheduling load. The suite passes
+83 tests on both Linux and macOS, with 9 game-fixture tests skipped. System-wide Flatpak
+authorization and Wayland require separate platform checks.
+
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and
