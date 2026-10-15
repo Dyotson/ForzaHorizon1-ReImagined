@@ -90,3 +90,12 @@ Players are not authenticated (the XUID is whatever the client claims).
 
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.
+
+## Players online in Discord (optional)
+
+Set `FORZA_DISCORD_STATUS_WEBHOOK` to a channel webhook URL (Discord: channel settings >
+Integrations > Webhooks). The server posts one message there and edits it when the number
+of players or open Horizon Worlds changes (and every 10 minutes); on shutdown it says the
+server is offline. The message id is kept in the data folder (`discord_status.json`), so a
+restart edits the same message. `FORZA_PUBLIC_ADDRESS` sets the address it shows. With
+Docker, keep the URL in an env file: `--env-file /path/discord.env`.

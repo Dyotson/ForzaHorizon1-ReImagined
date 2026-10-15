@@ -26,6 +26,7 @@ import time
 import urllib.parse
 
 import forza_challenge as challenge
+import forza_discord_status as discord_status
 import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
@@ -756,7 +757,12 @@ async def main():
                 stats.settle()
             if ticks % 5 == 0:
                 server.expire()
+            if ticks % 30 == 0 and discord_status.enabled():
+                # urllib blocks: off the event loop, and never fatal (it catches everything)
+                await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
     finally:
+        if discord_status.enabled():
+            discord_status.offline(args.data_dir)
         transport.close()
 
 
