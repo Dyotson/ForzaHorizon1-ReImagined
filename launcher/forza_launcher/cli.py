@@ -32,6 +32,8 @@ def dry_run():
         print(game.missing_message(looked))
         return 1
     plan = game.build_plan(cfg, install, write=False)
+    from . import gpu
+    print(f"# graphics card: {gpu.label(cfg.gpu_vendor())} (detected: {cfg.gpu.get('name') or 'no'})")
     print(f"# {plan.toml_path}")
     print(plan.toml_text, end="")
     print("# environment")
