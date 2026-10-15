@@ -22,7 +22,10 @@ set(CMAKE_MT "")  # lld-link embeds the manifest itself
 
 # SSE4.1 as on Linux: the generated code rounds with roundevenf, which the MSVC CRT lacks.
 set(CMAKE_C_FLAGS_INIT "--target=x86_64-pc-windows-msvc -fuse-ld=lld-link /clang:-msse4.1")
-set(CMAKE_CXX_FLAGS_INIT "--target=x86_64-pc-windows-msvc -fuse-ld=lld-link /clang:-msse4.1")
+# No calls into the STL's vectorized helpers (__std_find_first_of_trivial_pos_1 and friends):
+# they only exist in recent MSVC runtimes, so an SDK built with the newest MSVC failed to link
+# on a player's older Visual Studio 2022 (#64). The plain templates work with any of them.
+set(CMAKE_CXX_FLAGS_INIT "--target=x86_64-pc-windows-msvc -fuse-ld=lld-link /clang:-msse4.1 /D_USE_STD_VECTOR_ALGORITHMS=0")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "/manifest:embed")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "/manifest:embed")
 set(CMAKE_MODULE_LINKER_FLAGS_INIT "/manifest:embed")
