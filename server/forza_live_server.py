@@ -26,6 +26,7 @@ import time
 import urllib.parse
 
 import forza_challenge as challenge
+import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
 import forza_world as world
@@ -88,6 +89,7 @@ class Peer:
         self.name = name
         self.room = room
         self.local = local  # (ip, port) the client reports for its LAN side
+        self.proxied = False  # connected through a trusted proxy (addr is the proxy's socket)
         self.seen = time.monotonic()
         self.since = time.time()
         self.relayed_bytes = 0
@@ -131,6 +133,12 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
+    @staticmethod
+    def limit_key(addr):
+        """What the per-address limits count: the IP, but for a trusted proxy (one address
+        for all the players behind it) the IP and port, i.e. each tunnelled player."""
+        return addr if limits.is_trusted_proxy(addr[0]) else addr[0]
+
     def connection_made(self, transport):
         self.transport = transport
 
@@ -144,7 +152,7 @@ class ForzaLive(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         if len(data) < 5 or data[:4] != MAGIC or len(data) > 2048:
             return
-        if not take(self.packet_buckets, addr[0], PACKETS_PER_IP):
+        if not take(self.packet_buckets, self.limit_key(addr), PACKETS_PER_IP):
             self.dropped_packets += 1
             return
         kind, body = data[4], data[5:]
@@ -156,7 +164,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             if peer is None:
                 # Unknown sender (e.g. the server restarted): ask it to register again
                 # (rate limited: the sender's address may be forged).
-                if take(self.error_buckets, addr[0], ERRORS_PER_IP):
+                if take(self.error_buckets, self.limit_key(addr), ERRORS_PER_IP):
                     self.error(addr, 1, "not registered")
                 return
             peer.seen = time.monotonic()
@@ -197,27 +205,43 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.drop(peer, "restarted")  # same address, new game process
             peer = None
         if peer is None:
-            if len(self.peers) >= self.max_peers or self.per_ip.get(addr[0], 0) >= MAX_PEERS_PER_IP:
-                if take(self.error_buckets, addr[0], ERRORS_PER_IP):
+            proxied = limits.is_trusted_proxy(addr[0])
+            key = self.limit_key(addr)
+            # A trusted proxy has no per-address player cap (its players are many), but the
+            # whole-server cap and the per-tunnelled-player rates stay.
+            if len(self.peers) >= self.max_peers or (
+                    not proxied and self.per_ip.get(addr[0], 0) >= MAX_PEERS_PER_IP):
+                if take(self.error_buckets, key, ERRORS_PER_IP):
                     self.error(addr, 3, "server full")
                 return
-            if not take(self.hello_buckets, addr[0], HELLOS_PER_IP):
+            if not take(self.hello_buckets, key, HELLOS_PER_IP):
                 return
             while self.next_id in self.peers or self.next_id == 0:
                 self.next_id = (self.next_id + 1) & 0xFFFFFF
             peer = Peer(self.next_id, addr, token, xuid, name, room, (local_ip, local_port))
             self.next_id = (self.next_id + 1) & 0xFFFFFF
+            peer.proxied = proxied
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
             self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
-            log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)", peer.id, name, xuid,
-                     room, addr[0], addr[1], u32_to_ip(local_ip), local_port)
+            log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s", peer.id, name,
+                     xuid, room, addr[0], addr[1], u32_to_ip(local_ip), local_port,
+                     " via proxy" if proxied else "")
         peer.seen = time.monotonic()
         peer.name, peer.xuid, peer.room, peer.local = name, xuid, room, (local_ip, local_port)
-        body = struct.pack(">IHIHH", peer.id, self.epoch, ip_to_u32(addr[0]), addr[1], len(self.motd))
+        # Behind a proxy the observed address is the proxy's local socket, no public address
+        # of the player: report none (0.0.0.0:0), as in forward_header.
+        public = (0, 0) if peer.proxied else (ip_to_u32(addr[0]), addr[1])
+        body = struct.pack(">IHIHH", peer.id, self.epoch, *public, len(self.motd))
         self.send(addr, WELCOME, body + self.motd + struct.pack(">H", self.http_port))
 
     def forward_header(self, src):
+        """Who a forwarded datagram is from, with the addresses other players punch to. A
+        player behind a trusted proxy has none (its observed address is the proxy's socket,
+        useless to others): clients punch only toward a nonzero public address, so they
+        keep using the server relay for it."""
+        if src.proxied:
+            return struct.pack(">IIHIH", src.id, 0, 0, 0, 0)
         return struct.pack(">IIHIH", src.id, ip_to_u32(src.addr[0]), src.addr[1], src.local[0],
                            src.local[1])
 
@@ -548,6 +572,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             rooms.setdefault(p.room, []).append(
                 {"id": p.id, "gamertag": p.name, "xuid": f"{p.xuid:016X}",
                  "online_for": int(time.time() - p.since), "relayed_bytes": p.relayed_bytes,
+                 "via_proxy": p.proxied,
                  "state": f"{p.state:08X}", "session": p.session[:8].hex(), "status": p.status,
                  "match": None if not getattr(p, "match", None) else
                  {"playlist": p.match[0], "session": p.match[1][:8].hex(),
@@ -557,7 +582,9 @@ class ForzaLive(asyncio.DatagramProtocol):
                               "event": world.WORLDS.state.get(sid)}
                   for sid, (host, humans) in self.world_sessions().items()}
         return {"server": "forza-live", "protocol": VERSION, "uptime": int(time.time() - self.started),
-                "players": len(self.peers), "relayed_packets": self.relayed_packets,
+                "players": len(self.peers),
+                "via_proxy": sum(1 for p in self.peers.values() if p.proxied),
+                "relayed_packets": self.relayed_packets,
                 "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds,
                 **self.challenges.status()}
 
@@ -612,7 +639,9 @@ async def http_handler(server, reader, writer):
     web front ends."""
     peer = writer.get_extra_info("peername") or ("?", 0)
     ip = peer[0]
-    if http_conns.get(ip, 0) >= HTTP_PER_IP or sum(http_conns.values()) >= HTTP_TOTAL:
+    # A trusted proxy carries all its players' connections: no per-address cap for it.
+    if ((http_conns.get(ip, 0) >= HTTP_PER_IP and not limits.is_trusted_proxy(ip))
+            or sum(http_conns.values()) >= HTTP_TOTAL):
         writer.close()
         return
     http_conns[ip] = http_conns.get(ip, 0) + 1
@@ -677,6 +706,11 @@ async def main():
     parser.add_argument("--max-peers", type=int, default=1024)
     parser.add_argument("--rate-limit", type=int, default=RATE_LIMIT,
                         help="bytes per second the server relays for one player (bursts of 4 s)")
+    parser.add_argument("--trusted-proxy", action="append", default=[], metavar="IP[/BITS]",
+                        help="address of a tunnel agent (playit.gg) relaying the players: exempt "
+                             "from the per-address limits, its players use the server relay "
+                             "instead of hole punching (repeatable; env FORZA_TRUSTED_PROXIES, "
+                             "comma separated)")
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)
@@ -684,6 +718,9 @@ async def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(message)s")
+    limits.configure_proxies(os.environ.get("FORZA_TRUSTED_PROXIES", ""), *args.trusted_proxy)
+    if limits.TRUSTED_PROXIES:
+        log.info("trusted proxies: %s", ", ".join(map(str, limits.TRUSTED_PROXIES)))
     lsp.configure(args)
     world.configure(args)
     challenge.configure(args)

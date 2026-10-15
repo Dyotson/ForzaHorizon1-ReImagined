@@ -518,7 +518,10 @@ def is_admin(peer, headers, query):
         if hmac.compare_digest(given.encode(), ADMIN_TOKEN.encode()):
             return True
     proxied = "x-forwarded-for" in headers or "x-real-ip" in headers or "forwarded" in headers
-    return bool(peer) and peer[0] in ("127.0.0.1", "::1") and not proxied
+    # Behind a tunnel agent on this machine every internet request comes from loopback:
+    # a trusted proxy's address is not "this machine", only the token admits then.
+    return (bool(peer) and peer[0] in ("127.0.0.1", "::1") and not proxied
+            and not limits.is_trusted_proxy(peer[0]))
 
 
 def find_player(who):
