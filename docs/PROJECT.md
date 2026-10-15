@@ -72,6 +72,24 @@ cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYP
 nice -n 15 ninja -C forza-recomp/out/build/linux -j4
 ```
 
+## Pre-release checks
+
+`tools/prerelease.sh [--skip-build] [--only sdk,build,unit,boot,server,launcher,ci] [--iso PATH] [--ci]`
+runs them all, non-interactively, in about 25 minutes: one PASS/FAIL line per check, the last 30 lines of a
+failing check's log, full logs in `~/.cache/forza-prerelease/<timestamp>/`, exit status = failures.
+
+| Check | What |
+|---|---|
+| sdk | the SDK overlay matches `patches/rexglue-sdk` (reinstalled by `tools/build_rexglue_sdk.sh` only when the patches changed since the last install; a game running from the overlay is affected) |
+| build | ninja of `linux-tu4` and `linux`, then restores `generated/rexglue.cmake` |
+| unit | `launcher/test_*.py` and `server/test_*.py` |
+| boot | TU4 build to the main menu on a scratch copy of the Xenia save (never `~/.local/share/forza`) with `present_effect` bilinear, cas and fsr, then the base build: no fault, frame rate above 5 fps, a non-flat presenter image that changed after START (the screenshot hook captures the guest output before the upscaling filter, so the filter itself is not seen; a crash or Presenter layout mismatch with the SDK would show) |
+| server | a Forza Live server on ports 21310/21311: the game signs in, reaches the menu, its stats reads (XUserReadStats) are answered |
+| launcher | the launcher as a frozen build runs it (foreign `LD_LIBRARY_PATH`, #53): AES helper, default.xex and facades out of the disc image (`--iso`, default `HorizonISO/*.iso`) |
+| ci | `--ci`: `gh workflow run release.yml` (artifacts only) and wait for it; prints the run id |
+
+Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the VM / on the device.
+
 ## Hard rules
 
 - Never modify, move or delete anything in the game folder, the zip next to it, Xenia
