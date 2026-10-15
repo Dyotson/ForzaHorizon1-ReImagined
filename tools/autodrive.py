@@ -8,7 +8,8 @@ lookahead (m), the share of the CPU driver's speed, and the steering gain. It fi
 the 4 laps of GoPro Millennia Masters (Clear Springs Circuit) with the Aventador, 8th,
 best lap 1:55.13.
 
-Reads every car from guest memory (list at *(*(*(0x832DF024)+4)+4) +0x80/+0x84; car =
+Reads every car from guest memory (list at *(*(*(ROOT)+4)+4) +0x80/+0x84, ROOT 0x832DF024,
+TU4 0x833CAAE4; car =
 vehicle+0x2D90; kind at vehicle+0x2DD0: 0 ours, 1 a CPU driver; position car-0xA20,
 forward car-0xA40), records the leading CPU driver's trail as the path (the racing line,
 with its speeds), and steers toward a point ahead on it with short stick pulses through
@@ -29,6 +30,10 @@ GAIN = float(os.environ.get("AD_GAIN", "0.25"))  # seconds of full lock per radi
 LEAD_KINDS = {int(k) for k in os.environ.get("AD_KINDS", "1,3").split(",") if k}
 PATH_SAVE = os.environ.get("AD_PATH_SAVE")  # write the lap (x z speed per line) when closed
 PATH_LOAD = os.environ.get("AD_PATH_LOAD")  # start with a saved lap (races without CPU cars)
+# AD_OPEN=1: the loaded path is point to point (a rally stage, tools/owt_path.py), not a lap;
+# exit once the car has stood still for 4 s in the path's last quarter (the game stops it at
+# the finish).
+OPEN = os.environ.get("AD_OPEN") == "1"
 
 
 def find_pid():
@@ -50,6 +55,9 @@ if not pid:
     print("no game", file=LOG)
     sys.exit(1)
 mem = open("/proc/%s/mem" % pid, "rb")
+# The car list's root: 0x832DF024 in the base executable, 0x833CAAE4 in Title Update 4
+# (a TU4 game runs with --update_data_root).
+CAR_ROOT = 0x833CAAE4 if b"--update_data_root" in open("/proc/%s/cmdline" % pid, "rb").read() else 0x832DF024
 
 
 def rd(a, n):
@@ -68,7 +76,7 @@ def ok(a):
 def cars():
     """[(kind, (x, y, z), (fx, fz))]"""
     out = []
-    root = u32(0x832DF024)
+    root = u32(CAR_ROOT)
     if not ok(root):
         return out
     holder = u32(root + 4)
@@ -110,11 +118,12 @@ path = []          # [(x, z, speed)] of the leader
 closed = False     # the leader came back to its start: path is one lap, used in a loop
 if PATH_LOAD:
     path = [tuple(float(v) for v in line.split()) for line in open(PATH_LOAD) if line.strip()]
-    closed = True
+    closed = not OPEN
 leader = None      # its slot
 last = {}          # slot -> (t, x, z)
 own_last = None
 stuck_since = None
+stopped_since = None
 reverse_until = 0
 t_end = time.time() + SECS
 tick = 1.0 / HZ
@@ -146,7 +155,7 @@ while time.time() < t_end:
         best = max(cpu, key=lambda c: (c[1][0] - ox) * fx + (c[1][2] - oz) * fz)
         leader = best[3]
     lead = next((c for c in cpu if c[3] == leader), None)
-    if lead is not None and not closed:
+    if lead is not None and not closed and not OPEN:
         lx, lz = lead[1][0], lead[1][2]
         if not path or math.hypot(lx - path[-1][0], lz - path[-1][1]) > 2.0:
             path.append((lx, lz, speeds.get(leader, 0.0)))
@@ -216,6 +225,13 @@ while time.time() < t_end:
                 stuck_since = None
         else:
             stuck_since = None
+        if OPEN and idx > 0.75 * N and v < 0.5:
+            stopped_since = stopped_since or now
+            if now - stopped_since > 4:
+                print(time.strftime("%T"), "stopped at the end of the path (idx %d of %d)" % (idx, N), file=LOG, flush=True)
+                break
+        else:
+            stopped_since = None
     send(*cmds)
     n += 1
     if n % int(HZ * 3) == 0:
