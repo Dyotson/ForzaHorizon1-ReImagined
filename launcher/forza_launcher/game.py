@@ -250,11 +250,18 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     elif cfg.advanced.get("data_root", "").strip() or paths.IS_WINDOWS:
         # Windows: the game's own default is Documents\forza, not the launcher's folder
         # (%LOCALAPPDATA%\ForzaReImagined): name it, or saves, DLC and the shader cache go there.
+        root = home
         if write and paths.IS_WINDOWS:
             from . import datafolder
-            datafolder.carry_game_written_data(datafolder.game_default_data_home(), home,
-                                               LOCAL_PROFILE, log)
-        args.append(f"--user_data_root={home}")
+            old = datafolder.game_default_data_home()
+            try:
+                datafolder.carry_game_written_data(old, home, LOCAL_PROFILE, log)
+            except OSError as e:
+                # The saves could not be copied: play on them where they are, try again next time.
+                log(f"could not copy the saves from {old} to {home} ({e}); starting the game on {old}")
+                notes.append(f"Your saves are still in {old}: they could not be copied to {home} ({e}).")
+                root = old
+        args.append(f"--user_data_root={root}")
 
     # Xbox LIVE: public/custom through the server named in forza.toml (and FORZA_SERVER, which
     # outranks it); local starts a Forza Live server on this PC; offline uses none.

@@ -180,6 +180,31 @@ class Move(unittest.TestCase):
             self.assertEqual(df.carry_game_written_data(old, new, p), 0)
             self.assertEqual(df.carry_game_written_data(new, new, p), 0)
 
+    def test_carry_never_overwrites_and_profile_is_all_or_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old, new = Path(tmp) / "Documents" / "forza", Path(tmp) / "Local" / "ForzaReImagined"
+            p = "B13EBABEBABEBABE"
+            touch(old / p / "4D5309C9" / "00000001" / "a", b"a")
+            touch(old / p / "4D5309C9" / "00000001" / "b", b"b")
+            touch(old / "0000000000000000" / "4D5309C9" / "00000002" / "dlc", b"old")
+            touch(new / "0000000000000000" / "4D5309C9" / "00000002" / "dlc", b"launcher")
+            real = df.shutil.copy2
+
+            def fail_on_b(src, dst, *a, **k):
+                if Path(src).name == "b":
+                    raise OSError(28, "No space left on device")
+                return real(src, dst, *a, **k)
+            with mock.patch.object(df.shutil, "copy2", fail_on_b):
+                with self.assertRaises(OSError):
+                    df.carry_game_written_data(old, new, p)
+            self.assertFalse((new / p).exists())                 # no half profile: the gate stays open
+            self.assertFalse((new / (p + ".carrying")).exists())
+            self.assertEqual((new / "0000000000000000" / "4D5309C9" / "00000002" / "dlc").read_bytes(),
+                             b"launcher")                        # never overwritten
+            self.assertTrue((old / p / "4D5309C9" / "00000001" / "b").is_file())
+            self.assertEqual(df.carry_game_written_data(old, new, p), 2)   # the next launch finishes it
+            self.assertEqual((new / p / "4D5309C9" / "00000001" / "b").read_bytes(), b"b")
+
     def test_cancel(self):
         with tempfile.TemporaryDirectory() as tmp:
             touch(Path(tmp) / "old" / "a")

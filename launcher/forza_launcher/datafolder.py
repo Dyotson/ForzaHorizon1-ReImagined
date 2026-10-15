@@ -296,25 +296,49 @@ def carry_game_written_data(old: Path, new: Path, profile: str, log=None) -> int
     """v0.1.4-v0.1.5 on Windows started the game without --user_data_root, so it kept its saves,
     DLC and shader cache in Documents\\forza (`old`) while the launcher's folder was `new`. Once,
     when `new` has no profile folder and `old` has one, copy what the game wrote there (not the
-    launcher's own folders) into `new`. Never moves or deletes. Returns bytes copied."""
+    launcher's own folders) into `new`. Never moves, deletes or overwrites the player's files.
+
+    The profile (the saves) is copied into a temporary folder and renamed into place only when every
+    file is there, so a copy that fails half way leaves no partial profile behind (which would close
+    the gate and start the game on an empty save). Raises OSError then: the caller should start the
+    game on `old`, where the saves still are. Other files (DLC, shader cache) are best effort.
+    Returns bytes copied."""
     old, new = Path(old), Path(new)
     if _samepath(old, new) or (new / profile).exists() or not (old / profile).is_dir():
         return 0
     files = _files_under(old, old, set(REBUILDABLE) | set(MARKERS))
+    in_profile = lambda rel: Path(rel).parts[0] == profile
     done = 0
     for src, rel in files:
+        if in_profile(rel):
+            continue
         dst = new / rel
         try:
-            size = os.path.getsize(src)
-            if not (dst.is_file() and dst.stat().st_size == size):
+            if not dst.exists():             # never replace a file the launcher or game put there
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
-            done += size
+                done += os.path.getsize(src)
         except OSError as e:
             if log:
                 log(f"could not copy {src}: {e}")
+    tmp = new / (profile + ".carrying")       # ours alone: a leftover of a copy that failed
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        n = 0
+        for src, rel in files:
+            if in_profile(rel):
+                dst = tmp / Path(rel).relative_to(profile)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                done += os.path.getsize(src)
+                n += 1
+        tmp.mkdir(parents=True, exist_ok=True)
+        os.rename(tmp, new / profile)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     if log:
-        log(f"copied the game's saves, DLC and shader cache ({len(files)} files) from {old} to {new}; "
+        log(f"copied the game's saves ({n} files), DLC and shader cache from {old} to {new}; "
             f"the old folder is untouched")
     return done
 
