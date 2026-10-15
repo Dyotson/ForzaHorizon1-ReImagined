@@ -1,5 +1,5 @@
 # Posts a published release to the Discord announcements channel through a webhook.
-# Set the repository secret DISCORD_WEBHOOK_URL (Discord: channel settings > Integrations >
+# Set the secret DISCORD_WEBHOOK_URL in the "announcements" environment (Discord: channel settings > Integrations >
 # Webhooks > New Webhook > Copy Webhook URL). Without it the job does nothing.
 # A release published with the workflow's own GITHUB_TOKEN does not trigger this; releases
 # published by a person (or `gh release edit --draft=false`) do. Run it by hand to (re)post a tag.
@@ -20,6 +20,8 @@ permissions:
 jobs:
   post:
     runs-on: ubuntu-24.04
+    # The webhook secret lives in this environment, usable only from v* tags and main.
+    environment: announcements
     steps:
       - name: Post to Discord
         env:
