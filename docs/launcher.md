@@ -556,3 +556,7 @@ installer's overlay, `--build --base --jobs 4 --accept-microsoft-license`, game 
   A data folder with write access denied stops before any work ("Cannot write to ..."). Trap: that deny ACE also removes
   READ_CONTROL, so even the owner's `icacls /remove` fails ("Access is denied"); `takeown /r` and `icacls /grant` repair it.
   Not tested: real OneDrive, Controlled folder access, antivirus.
+
+`release.yml` (workflow_dispatch, artifacts only) run 38666192753 on the final commit: all jobs green (sdk-linux, sdk-windows,
+launcher-linux, flatpak, launcher-windows, installer-test; publish skipped). No tag pushed, no release made. Left: a real
+Visual Studio 2022 and a machine with OneDrive / Controlled folder access to confirm both fixes outside the VM.
