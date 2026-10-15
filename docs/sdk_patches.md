@@ -22,3 +22,13 @@ project's alone):
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
 range and uses a divider of one when twice the frame rate does not fit.
+
+0044 fixes native clang-cl SDK builds on Windows. 0045 records the Vulkan
+presenter's output-pipeline format so an unchanged swapchain does not rebuild
+that pipeline every paint.
+
+0047 uses hardware implicit LOD for ordinary automatic cubemap samples on NVIDIA,
+preserving mip bias and filtering. The captured traffic-car reflection shader
+produced a checker pattern with manually emitted coarse gradients; implicit LOD
+matched the reference result. Explicit guest gradients and LOD, and other GPU
+vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-car-reflection-sampling-2026-10-15).
