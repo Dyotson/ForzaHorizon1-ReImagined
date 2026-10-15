@@ -1,5 +1,5 @@
 name: Bug report
-description: "Something broke while building or playing Forza Horizon"
+description: "Something broke while installing, building or playing Forza Horizon 1: ReImagined"
 labels: [bug]
 body:
   - type: markdown
@@ -10,57 +10,86 @@ body:
     id: area
     attributes:
       label: Area
-      options: [Building, Crash or hang, Graphics, Performance, Audio, Input or controller, Online, Saves, Other]
+      options: [Installing or the launcher, Building the game, Crash or hang, Graphics, Performance, Audio, Input or controller, Online, Saves, Other]
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: What you expected and what you got instead.
+      description: What you expected and what you got instead. Screenshots help a lot.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
-      placeholder: "1. Start the campaign\n2. ...\n3. ..."
+      placeholder: "1. Open the launcher, Setup\n2. ...\n3. ..."
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options: [Windows installer (launcher), Linux Flatpak (launcher), Linux .tar.gz (launcher), Built from source]
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
-      label: Commit you built
-      description: Output of `git rev-parse --short HEAD`.
+      label: Launcher version
+      description: "Shown at the bottom left of the launcher and on its About page, e.g. 0.1.5. If you built from source, the commit (`git rev-parse --short HEAD`)."
     validations:
       required: true
+  - type: dropdown
+    id: gamefiles
+    attributes:
+      label: Your game files
+      options: [Games on Demand package, Disc image (.iso), Extracted game folder, I don't know]
+  - type: input
+    id: xex
+    attributes:
+      label: Game version shown in Setup (optional)
+      description: "Setup shows your default.xex version and media id once the files are checked, e.g. 0.0.0.12, media id 4000D145."
+  - type: dropdown
+    id: tu
+    attributes:
+      label: Title Update 4 and DLC
+      options: [Title Update 4 and DLC, Title Update 4 only, DLC only, Neither]
   - type: input
     id: os
     attributes:
       label: OS
-      placeholder: "Fedora 44, Bazzite, Windows 11, ..."
+      placeholder: "Windows 11, Windows 10, SteamOS, Bazzite, Ubuntu 24.04, ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: gpuvendor
+    attributes:
+      label: GPU vendor
+      options: [NVIDIA, AMD, Intel, Steam Deck, Other]
     validations:
       required: true
   - type: input
     id: gpu
     attributes:
       label: GPU and driver
-      placeholder: "RX 9060 XT, Mesa 26.1 (RADV)"
+      placeholder: "RTX 3080, driver 581.xx / RX 9060 XT, Mesa 26.1 / Steam Deck OLED"
     validations:
       required: true
   - type: input
     id: settings
     attributes:
-      label: Settings changed in forza.toml
-      placeholder: "frame_rate = 60, resolution_scale = 2, ..."
-  - type: input
+      label: Settings you changed in the launcher
+      placeholder: "Frame rate 144, Render scale 2, Upscaling filter FSR 1, Direct3D 12, ..."
+  - type: dropdown
     id: server
     attributes:
-      label: Online server (if online)
-      placeholder: "dyotserver.ddns.net:21200, your own, or none"
+      label: Online
+      options: [Public server (default), Local server on this PC, Offline, My own server, Not relevant]
   - type: textarea
     id: log
     attributes:
       label: Log
-      description: "Drag the log file here (Linux: ~/.local/share/forza/, Windows launcher: %LOCALAPPDATA%\\ForzaReImagined, or Documents\\forza on older installs; launcher errors: %APPDATA%\\ForzaReImagined\\launcher.log). For a crash, the last 100 lines matter most."
+      description: "In the launcher, press **Open log folder** (Play page) and drag `forza.log` here. For install or build problems, also `launcher.log` (Windows: %APPDATA%\\ForzaReImagined\\launcher.log; Linux: ~/.config/forza-reimagined/launcher.log; Flatpak: ~/.var/app/io.github.dyotson.ForzaHorizon1ReImagined/config/forza-reimagined/launcher.log). For a crash, the last 100 lines matter most."
   - type: checkboxes
     id: legal
     attributes:
