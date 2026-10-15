@@ -381,5 +381,6 @@ def find_msvc(log=lambda s: None, installs=None, load=load_vcvars):
 
 
 def usable_vs_installed() -> bool:
-    """Cheap check by version (no vcvars run): is a Visual Studio 2022 17.3+ with C++ tools installed?"""
-    return any(vs_too_old(v) is None for v in list_vs_installs())
+    """Is there a Visual Studio whose toolset can build the game (the same test the build makes; runs
+    vcvars64.bat, so it takes a second or two)?"""
+    return find_msvc()[0] is not None

@@ -86,7 +86,10 @@ def onedrive_roots() -> list:
 def _attrs(path) -> int | None:
     if not IS_WINDOWS:
         return None
-    a = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    fn = ctypes.windll.kernel32.GetFileAttributesW
+    fn.restype = ctypes.c_uint32      # the default (int) would make INVALID_FILE_ATTRIBUTES -1
+    fn.argtypes = [ctypes.c_wchar_p]
+    a = fn(str(path))
     return None if a == 0xFFFFFFFF else a
 
 
