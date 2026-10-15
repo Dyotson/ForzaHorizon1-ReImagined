@@ -502,8 +502,9 @@ cannot even stat keeps `build.ninja` dirty. Changes (`forza_launcher/datafolder.
 * **Default.** Windows: `%LOCALAPPDATA%\ForzaReImagined` (not synced, not a protected folder). An install that already
   lives in `Documents\forza` (it has content and the new folder does not exist) keeps using it, so nothing changes under
   a working player. Linux and Flatpak are untouched (`~/.local/share/forza`, the Flatpak data dir).
-* **Choose the folder (Discussion #31).** Setup has a card "Where the game is built" (path, Change folder, Open; also in
-  Settings > Advanced as before). A chosen folder that is not empty and is not one of ours gets a `ForzaReImagined`
+* **Choose the folder (Discussion #31, issue #40).** Setup has a card "Where the game is built" (path, Change folder, Open);
+  Settings > Advanced "Game data folder" is the same button and flow (it was a free text field that changed the folder
+  with no check). A chosen folder that is not empty and is not one of ours gets a `ForzaReImagined`
   subfolder. It is checked: writable (a file is created, read and deleted), free space (about 15 GB, 18 with a toolchain
   download, less when the game is already extracted), OneDrive. Errors block, warnings ask.
 * **Move, never delete.** Changing the folder offers to copy saves, profiles, DLC, shader cache, log and the built game

@@ -432,6 +432,20 @@ class SettingsPage(QWidget):
             e = QLineEdit(adv.get(key, ""))
             e.setPlaceholderText(placeholder)
             e.setMinimumWidth(280)
+            if key == "data_root":
+                # the same checked flow as Setup > Where the game is built: free space, OneDrive,
+                # and the choice to copy saves and files (nothing is deleted)
+                e.setText(str(self.cfg.data_home()))
+                e.setReadOnly(True)
+                b = QPushButton("Change folder")
+
+                def change(_=False, e=e):
+                    self.window.setup.change_folder()
+                    e.setText(str(self.cfg.data_home()))
+                b.clicked.connect(change)
+                h.addWidget(e)
+                h.addWidget(b)
+                return w
             e.editingFinished.connect(lambda e=e: self._adv(key, e.text().strip()))
             h.addWidget(e)
             if browse:
@@ -444,8 +458,8 @@ class SettingsPage(QWidget):
             line("Game program folder", "Where the game's executable is. Empty: the game the launcher built (the runtime folder in the game data folder).",
                  "game_dir", "automatic", True),
             line("Game data folder", "Saves, DLC, shader cache, extracted game files, the build and the log. "
-                 "Change it in Setup (Where the game is built), which checks the folder and can copy your saves. "
-                 "Empty: " + str(game.paths.data_home()), "data_root", "automatic", True),
+                 "Changing it checks the folder (writable, free space, OneDrive) and offers to copy your saves and "
+                 "files; the old folder is never deleted. Same as Setup > Where the game is built.", "data_root", "automatic", True),
             line("Extra command-line flags", "Added to the game's command line, for example "
                  "--resolution_scale=2.", "extra_args", "--flag=value"),
         ]
