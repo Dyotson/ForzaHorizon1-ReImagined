@@ -531,3 +531,27 @@ cannot even stat keeps `build.ninja` dirty. Changes (`forza_launcher/datafolder.
 Tests: `python3 -m unittest launcher/test_datafolder.py` (OneDrive by environment, name and attribute; the access-denied
 patterns; the message; probe; free space; defaults for a fresh and an existing install; folder choice; copy keeps the old
 folder, skips rebuildable parts, resumes, cancels).
+
+Verified in the Windows 11 VM (clock set right first: it was 7 h fast again; source tree of the launcher with the CI
+installer's overlay, `--build --base --jobs 4 --accept-microsoft-license`, game files from the ISO, no `--root`):
+
+* **Default folder.** `--extract` of the ISO went to `%LOCALAPPDATA%\ForzaReImagined\game` (7.0 GB, a few minutes); the build
+  that followed ran there: LLVM/CMake/ninja downloaded, with the fake Visual Studio 2017 and a fake 2022 holding toolset 14.29
+  both skipped (log lines above) and xwin used, 349 ninja steps, **7.1 min, 1.7 GB peak**, `forza.exe` linked and staged
+  (so the xwin fallback still builds). The attribute check had a bug found here: `GetFileAttributesW` returns
+  INVALID_FILE_ATTRIBUTES as -1 through ctypes' default `int`, which made every folder that did not exist yet look
+  cloud-synced; fixed (unsigned result type). Then real folders: `%OneDrive%\forza` is flagged by the environment, a folder
+  with `attrib +P` by its attribute, `Documents\forza` and the default are not.
+* **Chosen folder.** The copy that "Change folder" runs (saves, runtime, state, and the 7.1 GB of game files, 6 s on the VM's
+  disk), the config switched to `C:\fh2`, the old folder untouched, then a headless build with no `--root` built in `C:\fh2`
+  (6.4 min, `runtime: C:\fh2\runtime`). The window flow (both questions, the check, the switch) was run against a Linux
+  offscreen window with the dialogs answered by script; not clicked by hand on Windows.
+* **Access denied.** Denying read on `SDL3Config.cmake` alone (`icacls /deny tester:(RA)`) did not make ninja fail (Windows
+  grants attribute reads through the folder), so the player's exact ninja line was not reproduced by the ACL; the real
+  `builder.run` was fed that line from `cmd` and ends in `FolderBlocked` with the message above. Denying read on the SDK's
+  `cmake` folder (`icacls /deny tester:(OI)(CI)(R)`) made CMake say only "ReXGlue SDK not found": the build log shows
+  that, and now `datafolder.read_problem` (listing sdk, toolchain, xwin and build, opening a few hundred files) finds the
+  denied path and the build ends with the blocked-folder message naming `...\cmake\SDL3Config.cmake: Permission denied`.
+  A data folder with write access denied stops before any work ("Cannot write to ..."). Trap: that deny ACE also removes
+  READ_CONTROL, so even the owner's `icacls /remove` fails ("Access is denied"); `takeown /r` and `icacls /grant` repair it.
+  Not tested: real OneDrive, Controlled folder access, antivirus.
