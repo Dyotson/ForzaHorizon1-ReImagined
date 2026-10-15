@@ -271,8 +271,11 @@ check_launcher() {
     head -c 4096 /dev/urandom > "$fake/libssl.so.3"
     if [ -n "$iso" ]; then isos=("$iso"); else isos=(HorizonISO/*.iso); fi
     [ -f "${isos[0]}" ] || { echo "no disc image (--iso PATH, default HorizonISO/*.iso)"; return 1; }
-    LD_LIBRARY_PATH="$fake" PYTHONPATH="$ROOT/launcher" python3 -I - "${isos[0]}" "$LOG/disc" "$ROOT" <<'EOF'
+    FAKE_LIBS="$fake" PYTHONPATH="$ROOT/launcher" python3 -I - "${isos[0]}" "$LOG/disc" "$ROOT" <<'EOF'
 import os, subprocess, sys
+# Like a frozen launcher: its own Python (and ssl) load fine, but the programs it starts
+# (the system openssl) inherit a library path with libraries they cannot load.
+os.environ["LD_LIBRARY_PATH"] = os.environ["FAKE_LIBS"]
 iso, out, root = sys.argv[1:4]
 sys.path[:0] = [root + "/launcher", root + "/tools"]
 import apply_title_update as atu
