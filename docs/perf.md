@@ -357,3 +357,28 @@ a few half-second holds while loading. They go away once the cache is kept, so a
 is not kept (a folder Windows blocks or OneDrive holds, a driver cache that is cleared) means
 stutter every session. `--vulkan_async_skip_incomplete_frames=false` shows those frames
 instead (objects whose pipeline is not ready are missing for a frame or two).
+
+## Steam Deck approximation (#45)
+
+No Deck was available. The test machine (Ryzen 7 7800X3D, 5 GHz, RX 9060 XT) was restricted to 4 cores
+(`taskset -c 0-3`) and each of those cores shared with N busy loops pinned to it, so every game thread gets
+1/(N+1) of a core (N=1: 50 %, 2: 33 %, 3: 25 %, 4: 20 %). This approximates a slower CPU only; the Deck's GPU
+(about 1/15 of this card, shared memory bandwidth, shared power budget) is not approximated. `frame_rate = 30`,
+render scale 1, `present_effect = fsr`, warm cache, no other game.
+
+| CPU share per core | Scenario | fps | p95 | on target |
+| --- | --- | --- | --- | --- |
+| 100 % (4 cores) | free roam | 30.0 | 33.9 | 100 |
+| 50 % | free roam | 30.0 | 36.4 | 99.6 |
+| 33 % | free roam | 30.0 | 38.2 | 97.0 |
+| 25 % | free roam | 29.9 | 40.8 | 85.6 |
+| 25 % | race | 27.9 | 49.1 | 63 |
+| 20 % | race | 22.5-24.2 (3 runs) | 56-58 | 27-38 |
+
+The profile (`tools/cpuprof_report.py`) shows the game's main guest thread and the GPU command processor
+saturating first (about 0.2 and 0.15 of a 5 GHz core in a race; the rest, audio, the XMA/WMA decoder, the
+Vulkan submission thread, is each under 5 %). At 20 % per core the race runs 22-24 fps, the range reported on
+the Deck. Settings tried at 20 % in the race (fps, guest): `native_2x_msaa=false` 23.0,
+`readback_resolve=none` 23.2, `vulkan_threaded_submission=false` 22.9, `ignore_thread_priorities=false` 22.7
+(rebuilt game), against 22.5-24.2 for the defaults: none moves the CPU-bound frame rate. Shader compilation
+(warm cache), audio decode and readback are not what limits it; the main thread is.

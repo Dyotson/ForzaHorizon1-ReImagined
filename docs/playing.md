@@ -107,6 +107,17 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   RX 9060 XT); fine at 30 fps. Above 2 is experimental and halves the frame rate (#47).
 - `fsr2` / `fsr3` do not exist (no temporal data); `cas` only sharpens. See `docs/rendering.md`.
 
+## Steam Deck
+
+The launcher detects the Deck and applies its preset: Vulkan, render scale 1, AMD FSR 1, `frame_rate = 30`,
+background shader compilation and the shader cache on. Keep these: render scale 2 and `frame_rate = 60` only
+make it slower. Play a session or two on a warm shader cache before judging the speed. Reported speed on a
+Steam Deck OLED (#45): 17 to 25 fps. We have no Deck; with a PC restricted to 4 cores that each give the game a
+fifth of a core, a race runs 22 to 24 fps (`docs/perf.md`, "Steam Deck approximation"), so the limit is the
+game's main thread and the graphics command thread, and none of the settings (MSAA, readback, submission thread,
+thread priorities) changes it. Cutscene audio that does not match the picture comes with the low frame rate;
+it has not been reproduced here.
+
 ## Keyboard and mouse
 
 `mnk_mode = true` makes the SDK present the keyboard (and mouse) as a controller on player 1.
