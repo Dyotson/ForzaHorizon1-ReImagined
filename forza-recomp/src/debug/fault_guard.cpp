@@ -10,7 +10,8 @@
 // This handler is installed after the runtime's, so it only sees faults nobody took.
 // It logs the fault once with the host call stack as module+offset (resolve with
 // `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET`; frames in sub_XXXXXXXX
-// are the recompiled guest functions) and exits with status 134. No core dump: one of a
+// are the recompiled guest functions; on Windows the pc and the frames are forza.exe+offset,
+// for the same lookup in the released executable) and exits with status 134. No core dump: one of a
 // process mapping 5+ GB of guest memory takes minutes and gigabytes. FORZA_FAULT=wait
 // parks the thread instead, so gdb can attach (gdb -p PID, then `thread apply all bt`).
 
@@ -24,7 +25,15 @@
 #include <rex/system/xmemory.h>
 #include <rex/system/xthread.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #include <execinfo.h>
 #endif
@@ -34,6 +43,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
+#include <string>
 #include <thread>
 
 namespace forza {
@@ -47,8 +58,34 @@ bool Wait() {
   return v && std::strcmp(v, "wait") == 0;
 }
 
+// "module+0xOFFSET" for a host code address (Windows: the image the address is in, so a
+// player's crash log maps onto the released forza.exe; elsewhere the plain address).
+std::string HostAddr(uint64_t pc) {
+#ifdef _WIN32
+  HMODULE module = nullptr;
+  wchar_t path[MAX_PATH];
+  if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCWSTR>(pc), &module) &&
+      GetModuleFileNameW(module, path, MAX_PATH)) {
+    const wchar_t* name = std::wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    std::string narrow;
+    for (; *name; ++name) narrow += *name < 128 ? char(*name) : '?';
+    return fmt::format("{}+0x{:X}", narrow, pc - reinterpret_cast<uint64_t>(module));
+  }
+#endif
+  return fmt::format("0x{:X}", pc);
+}
+
 void LogStack() {
-#ifndef _WIN32
+#ifdef _WIN32
+  void* frames[48];
+  const USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
+  for (USHORT i = 0; i < n; ++i) {
+    REXLOG_ERROR("  #{} {}", i, HostAddr(reinterpret_cast<uint64_t>(frames[i])));
+  }
+#else
   void* frames[48];
   const int n = backtrace(frames, 48);
   for (int i = 0; i < n; ++i) {
@@ -104,15 +141,15 @@ bool OnUnhandledFault(rex::arch::Exception* ex, void* /*data*/) {
   if (ex->code() == Code::kAccessViolation) {
     const uint64_t addr = ex->fault_address();
     const bool guest = addr >= kGuestVirtualBase && addr < kGuestVirtualBase + 0x100000000ull;
-    REXLOG_CRITICAL("Unhandled {} fault at host 0x{:X}{} (pc 0x{:X})",
+    REXLOG_CRITICAL("Unhandled {} fault at host 0x{:X}{} (pc {})",
                     ex->access_violation_operation() ==
                             rex::arch::Exception::AccessViolationOperation::kWrite
                         ? "write"
                         : "read",
                     addr, guest ? fmt::format(" = guest 0x{:08X}", uint32_t(addr)) : "",
-                    ex->pc());
+                    HostAddr(ex->pc()));
   } else {
-    REXLOG_CRITICAL("Unhandled illegal instruction (trap) at pc 0x{:X}", ex->pc());
+    REXLOG_CRITICAL("Unhandled illegal instruction (trap) at pc {}", HostAddr(ex->pc()));
   }
   LogStack();
   LogGuestState();
