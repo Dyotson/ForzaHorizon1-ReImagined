@@ -6,7 +6,7 @@
 // check sub_82876D90. That one says ready when
 //   humans present (sub_828754A0 counting sub_82865560: player state p[7] == 0, p[0] != 0)
 //     >= the playlist's minPlayersToLaunch (+2016),
-//   nobody joining (counting sub_82865500: status p[6] 3, 4 or 5) == 0,
+//   nobody still in the last round (counting sub_82865500: status p[6] 3, 4 or 5) == 0,
 //   the bucket check's result (+2148) != 0 (or the mode is 10, Find Custom Game),
 //   +2164 clear and *(+2156)+4 != 3
 // (base offsets; Title Update 4 has the fields from the game options on 24 bytes later). The
@@ -17,7 +17,9 @@
 //
 // Logged ("LOBBY:" lines): each peer's lobby state when it changes; for the host, the check's
 // inputs sampled each second, logged when they change and every 10 s, with each player's
-// state bytes; the lobby's events (sub_8287E098, category and code; frequent ones thinned).
+// state bytes; the lobby's events (sub_8287E098, category and code; frequent ones thinned);
+// every player status change ("EVENT: status record", world_events.cpp; 1 is car select,
+// 3 loading, 4 in game, 6 removed).
 
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
@@ -41,7 +43,7 @@ extern "C" REX_FUNC(__imp__sub_8287E098);
 namespace {
 
 constexpr uint32_t kIsHumanPresent = FORZA_ADDR(0x82865560);
-constexpr uint32_t kIsJoining = FORZA_ADDR(0x82865500);
+constexpr uint32_t kIsInRound = FORZA_ADDR(0x82865500);
 constexpr uint32_t kIsAi = FORZA_ADDR(0x82865528);
 constexpr uint32_t kSession = FORZA_ADDR(0x832E4A84);  // pointer; +24 -> +40 the CPU driver count
 
@@ -92,6 +94,8 @@ thread_local std::string* collect = nullptr;
 }  // namespace
 
 namespace forza {
+bool LobbyLogEnabled() { return Enabled(); }
+
 // Called by world_events.cpp's lobby update hook on every peer: the lobby state when it changes.
 void LobbyLogTick(uint8_t* base, uint32_t game) {
   if (!Enabled() || !game) return;
@@ -124,7 +128,7 @@ extern "C" REX_FUNC(sub_82876D90) {
   collect = &players;
   const uint32_t humans = CallGuest(before, base, __imp__sub_828754A0, game, kIsHumanPresent);
   collect = nullptr;
-  const uint32_t joining = CallGuest(before, base, __imp__sub_828754A0, game, kIsJoining);
+  const uint32_t in_round = CallGuest(before, base, __imp__sub_828754A0, game, kIsInRound);
   const uint32_t ai = CallGuest(before, base, __imp__sub_828754A0, game, kIsAi);
   uint32_t session_ai = ~0u;
   if (const uint32_t s = Load32(base, kSession)) {
@@ -133,9 +137,9 @@ extern "C" REX_FUNC(sub_82876D90) {
   uint8_t* g = forza::GuestPtr(base, game);
   const uint32_t state_ptr = Load32(base, game + kStatePtr);
   const std::string line = fmt::format(
-      "ready {} | humans {} >= min {} | joining {} | bucket result {} due {} (CPU {} session {}) | "
+      "ready {} | humans {} >= min {} | in round {} | bucket result {} due {} (CPU {} session {}) | "
       "block {} | state {} | launch {:X}/{:X} | rebalance {}/{} | preset {} next {} | players{}",
-      ready, humans, Load32(base, game + kMinPlayers), joining, Load32(base, game + kBucketResult),
+      ready, humans, Load32(base, game + kMinPlayers), in_round, Load32(base, game + kBucketResult),
       g[kBucketDue], ai, int32_t(session_ai), g[kBlock], state_ptr ? int32_t(Load32(base, state_ptr + 4)) : -1,
       Load32(base, game + kLaunchTime), Load32(base, game + kLaunchTime2), Load32(base, game + kRebalance),
       Load32(base, game + kRebalance + 4), g[kPreset], g[kNextPreset], players);
@@ -146,7 +150,7 @@ extern "C" REX_FUNC(sub_82876D90) {
   }
 }
 
-// A player's state (r3): p[0] present, p[6] status (3-5 joining), p[7] 1 for a CPU driver.
+// A player's state (r3): p[0] present, p[6] status (3-5: still in the last round), p[7] 1 for a CPU driver.
 extern "C" REX_FUNC(sub_82865560) {
   if (collect) {
     const uint8_t* p = forza::GuestPtr(base, ctx.r3.u32);

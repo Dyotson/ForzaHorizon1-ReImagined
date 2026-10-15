@@ -184,6 +184,7 @@ extern "C" REX_FUNC(__imp__sub_8287E538);
 extern "C" REX_FUNC(__imp__sub_8287BBE0);
 namespace forza {
 void LobbyLogTick(uint8_t* base, uint32_t game);
+bool LobbyLogEnabled();
 }
 extern "C" REX_FUNC(__imp__sub_8286A250);
 extern "C" REX_FUNC(__imp__sub_828786E8);
@@ -453,9 +454,10 @@ extern "C" REX_FUNC(sub_828655E0) {
   __imp__sub_828655E0(ctx, base);
 }
 
-// sub_82880A90(status record, status): the store behind every status change.
+// sub_82880A90(status record, status): the store behind every status change (logged with
+// FORZA_EVENT_TRACE or FORZA_LOBBY_LOG).
 extern "C" REX_FUNC(sub_82880A90) {
-  if (Trace()) {
+  if (Trace() || forza::LobbyLogEnabled()) {
     const uint8_t* r = forza::GuestPtr(base, ctx.r3.u32);
     if (r[6] != ctx.r4.u8) {
       REXLOG_INFO("EVENT: status record {:08X}{} {} -> {} (lr {:08X})", ctx.r3.u32,
