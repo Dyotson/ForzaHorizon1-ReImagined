@@ -118,6 +118,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
 | After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
 | Sometimes | `Xls User.SetFriends` | empty |
+| Photo mode, SAVE / large photo ("uploading to forzamotorsport.net") | `LargeFileUpload.Create(payloadSize, overwriteOldest, userFileName)` or `Storefront.PhotoCreate(fileHeader, photoDesc, payloadSize, previewData)`, then `Xls Content.UploadContent(contentId, payloadOffset, payloadTotalSize, uploadData)` | `contentFileId`, then `payloadUploadedSize` = bytes held so far (`forza_photos.py`: kept per player under `photos/`, 2 MB each, 100 per player, in the disk quota; `DownloadContent` gives the owner's file back). Answered empty before, the game never saw its upload finish (#71); the chunk size and the answer's meaning (bytes held, not bytes of this chunk) are from the descriptors, not yet seen in a game |
 
 The game keeps one HTTP connection to the title server for all its calls. The server must
 leave it open while idle: when it closed idle connections after 15 s, the game's next call

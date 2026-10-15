@@ -19,6 +19,8 @@ services). This answers the ones online play needs:
     Forza.WebServices.Auction, Gifting  the Auction House and car gifts (forza_market.py)
     Xls.WebServices.Clan, User; Forza.WebServices.CarClub, SharedCar  car clubs and the
                                club garage (forza_clubs.py)
+    Forza.WebServices.LargeFileUpload, Storefront.PhotoCreate; Xls.WebServices.Content
+                               photo uploads and their downloads (forza_photos.py)
     Xls.WebServices.Notifications  the Message Center (forza_notifications.py): Rivals,
                                gifts, auctions and car club messages
 
@@ -41,6 +43,7 @@ import forza_clubs as clubs
 import forza_limits as limits
 import forza_market as market
 import forza_notifications as notifications
+import forza_photos as photos
 import forza_scores as scores
 import forza_stats as stats
 import forza_world as world
@@ -162,6 +165,7 @@ def configure(args):
     market.configure(DATA_DIR)
     clubs.configure(DATA_DIR, load_player)
     notifications.configure(DATA_DIR)
+    photos.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -476,6 +480,7 @@ SERVICES = {
     **market.services(gamertag_of),
     **clubs.services(),
     **notifications.services(),
+    **photos.services(),
 }
 
 

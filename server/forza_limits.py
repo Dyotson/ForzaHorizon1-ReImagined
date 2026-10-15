@@ -14,7 +14,7 @@ MAX_BLOB = 2 << 20
 DISK_CAP = int(os.environ.get("FORZA_DISK_CAP_MB", "4096")) << 20
 MAX_PLAYERS = int(os.environ.get("FORZA_MAX_PLAYERS", "20000"))  # player records on disk
 PER_PLAYER = {"auctions": 30, "shared_cars": 100, "gifts": 50}  # open items per player
-BLOB_DIRS = ("ghosts", "market", "clubs")
+BLOB_DIRS = ("ghosts", "market", "clubs", "photos")
 
 _data_dir = "forza_live_data"
 _cache = [0.0, 0]  # time of the last scan, bytes found
