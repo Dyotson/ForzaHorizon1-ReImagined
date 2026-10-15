@@ -19,6 +19,17 @@ except Exception as e:
     ok = False
     print(f"FAIL tcp {port + 1}: {e}")
 
+# Control: a STUN binding request to a public server, so a failure below can be told apart
+# from a network that doesn't let UDP out at all.
+try:
+    st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    st.settimeout(3)
+    st.sendto(struct.pack(">HHI12s", 1, 0, 0x2112A442, os.urandom(12)), ("stun.l.google.com", 19302))
+    st.recvfrom(1024)
+    print("PASS udp out: STUN answered (this network lets UDP out)")
+except Exception as e:
+    print(f"WARN udp out: STUN failed ({e}); this network may block UDP, the server test proves nothing")
+
 token, xuid = int.from_bytes(os.urandom(8), "big"), 0x0009000000000000 | int.from_bytes(os.urandom(4), "big")
 body = struct.pack(">HQQIH", 1, token, xuid, 0, 0) + bytes([5]) + b"probe" + bytes([5]) + b"Probe"
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
