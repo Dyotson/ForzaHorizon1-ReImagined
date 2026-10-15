@@ -207,3 +207,47 @@ tried: guest video modes below 720p for slow GPUs (Steam Deck, #45).
   means one render scale for scene and post targets, which the SDK does not separate.
   Also needs the FidelityFX runtime built (shaders on Linux) and 60 fps or more to look good.
 - DLSS needs NVIDIA's SDK and an NVIDIA GPU; not tested here (AMD only).
+
+
+## NVIDIA car reflection sampling (2026-10-15)
+
+**Reproduced.** Traffic cars on the Windows RTX 5060 Ti showed a colored checker
+pattern that bloom turned into a white/cyan/magenta glow. It occurs with DLSS off
+as well. Clamping the 7e3 output range before blending did not fix it and that
+experiment was reverted. Disabling anisotropic filtering also reproduced the
+blowout; the road's filtering need not be reduced.
+
+**Capture evidence.** A native 2560x1440, 120-FPS-cap run under RenderDoc triggered
+its capture when the glow was visible. The material buffer already contains the
+checker pattern before bloom. Pixel history identified the Durango body draw;
+the captured GPU pixel was approximately `(0.4363, 2.9199, 0.2661)`. Replacing the
+shader with an identical binary reproduced that pixel. The shader validates with
+the device's enabled scalar-block layout. All six reflection cubemap faces and
+mip levels contained valid-looking data, rather than an uninitialized mip chain.
+
+The CPU shader debugger (with only its unsupported explicit FP32 RTE declaration
+removed in the diagnostic copy) produced `(0.22796, 0.06113, 0.09175)`. Removing
+that declaration in the GPU shader did not fix the corruption. Forcing the cube
+sample to mip zero removed the body blowout, but would sacrifice normal mip
+selection. Replacing its explicit coarse-gradient cube samples with implicit LOD
+instead gave `(0.22791, 0.06113, 0.09174)` on the GPU, matching the reference after
+float16 quantization. The cause is narrowed to this sampling path; the precise
+NVIDIA driver/compiler failure is not established.
+
+**Correction.** SDK patch 0047 uses implicit LOD for ordinary automatic cubemap
+fetches on NVIDIA. Fetch-constant and instruction mip bias still apply, and the
+sampler retains its filters and anisotropy. Guest register gradients and explicit
+LOD keep their explicit path. Other GPU vendors are unchanged. The startup cvar
+`vulkan_implicit_cube_lod=false` restores the previous path for comparisons.
+
+**Live validation.** Two 105-second native-1440p runs used the same renderer binary,
+profile copy, 16x anisotropic filtering and 120 FPS cap, changing only that cvar.
+The old path reproduced the blowout. The correction showed normal materials in all
+16 captured traffic frames, including close passes. A fixed road-region detector
+counted up to 1,850 almost-white pixels with the old path and zero in that region
+across the corrected captures; this is a scene-specific check, not an all-game
+artifact detector. Screenshots and the RenderDoc capture are retained locally.
+
+Post-fix DLSS Performance and DLAA runs also had clean captured traffic and no
+NGX feature/evaluation or native-HUD composition errors. The installed launcher
+launch path passed a separate moving-scene test with the same renderer.
