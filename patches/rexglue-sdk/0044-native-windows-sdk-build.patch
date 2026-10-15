@@ -1,0 +1,46 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c9dfc17..6458b71 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -249,10 +249,11 @@ endif()
+ add_subdirectory(thirdparty)
+ 
+ # Enable warnings after thirdparty
+-add_compile_options(
+-    -Wall
+-    -Wextra
+-)
++if(MSVC)
++    add_compile_options(/clang:-Wall /clang:-Wextra)
++else()
++    add_compile_options(-Wall -Wextra)
++endif()
+ 
+ include_directories(${REXGLUE_ROOT}/include)
+ 
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_ob.cpp b/src/kernel/xboxkrnl/xboxkrnl_ob.cpp
+index 5709e6d..0b94c3f 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_ob.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_ob.cpp
+@@ -177,7 +177,7 @@ u32 ObCreateSymbolicLink_entry(ppc_ptr_t<X_ANSI_STRING> path_ptr,
+   auto target = rex::string::utf8_canonicalize_guest_path(
+       util::TranslateAnsiPath(REX_KERNEL_MEMORY(), target_ptr));
+ 
+-  if (rex::string::utf8_starts_with(path, u8"\\??\\")) {
++  if (rex::string::utf8_starts_with(path, "\\??\\")) {
+     path = path.substr(4);  // Strip the full qualifier
+   }
+ 
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..01484d9 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -126,7 +126,7 @@ target_compile_options(aes128 PRIVATE -w)
+ 
+ # libmspack - LZX decompression (only lzxd.c needed for XEX decompression)
+ # Uses cabextract version which has all needed headers in one place
+-set(MSPACK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libmspack/cabextract/mspack")
++set(MSPACK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libmspack/libmspack/mspack")
+ add_library(mspack STATIC
+     ${MSPACK_DIR}/lzxd.c
+ )
