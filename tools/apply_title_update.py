@@ -155,7 +155,19 @@ def aes_decrypt(key, data, cbc):
         args = [openssl, "enc", "-d", "-aes-128-cbc" if cbc else "-aes-128-ecb", "-K", key.hex(), "-nopad"]
         if cbc:
             args += ["-iv", "00" * 16]
-        return subprocess.run(args, input=data, capture_output=True, check=True).stdout
+        # A frozen launcher (PyInstaller) points LD_LIBRARY_PATH at its own libraries, which
+        # the system openssl must not load; on any failure the pure-Python AES below is used.
+        env = dict(os.environ)
+        if "LD_LIBRARY_PATH_ORIG" in env:
+            env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+        try:
+            out = subprocess.run(args, input=data, capture_output=True, check=True, env=env).stdout
+            if len(out) == len(data):
+                return out
+        except (OSError, subprocess.CalledProcessError):
+            pass
     rk = _expand_key(key)
     out = bytearray()
     prev = bytes(16)
