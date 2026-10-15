@@ -70,7 +70,8 @@ Captured from the recompiled game running natively on Linux.
   audio and saves. Saves from Xenia Canary can be continued (`tools/play.sh --xenia`).
 - **Title Update 4 (the default), Horizon Rally and the 1000 Club:** TU4 is built from your
   own copy of the update (`tools/apply_title_update.py`, about 2 s). It adds the **Horizon
-  Rally** expansion (its map loads and resumes the rally progress of a Xenia save) and the
+  Rally** expansion (with a Xenia save that has reached it: the Rally Heats and whole
+  championships played to the end and saved; the co-driver is not heard yet) and the
   **1000 Club** in the pause menu (signed in to the Forza Live server: its challenges
   earn medals that are kept with the career, and the server has the club's leaderboard).
   [`docs/dlc.md`](docs/dlc.md)

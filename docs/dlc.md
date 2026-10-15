@@ -100,13 +100,15 @@ Notes:
 ### Status
 
 - TU4 reaches the main menu, which lists HORIZON RALLY next to Single Player and
-  Multiplayer (the base has no such entry). With a profile without progress the game
-  says "You must earn a yellow wristband in Horizon Single Player before you can enter
-  Horizon Rally" (game rule). With a Xenia save, Horizon Rally loads its map and resumes
-  the rally progress; the free roam pause menu lists 1000 CLUB, which says "not available
-  because you are not signed into Xbox LIVE" when offline; signed in (Forza Live
-  server) it opens (tutorial, then the challenge cards); its challenges can be completed
-  and are kept in the save, and the server has its leaderboard ("The 1000 Club" below).
+  Multiplayer (the base has no such entry). With a profile without progress the game says
+  "You must earn a yellow wristband in Horizon Single Player before you can enter Horizon
+  Rally" (game rule). With a Xenia save, Horizon Rally loads its map and resumes the rally
+  progress; its events and championships play to the end and are saved, without the
+  co-driver's voice ("Horizon Rally" below); the free roam pause menu lists 1000 CLUB,
+  which says "not available because you are not signed into Xbox LIVE" when offline;
+  signed in (Forza Live server) it opens (tutorial, then the challenge cards); its
+  challenges can be completed and are kept in the save, and the server has its leaderboard
+  ("The 1000 Club" below).
 - Saves: TU4 converts a profile save when it loads it (`ForzaProfile/VersionFlags` goes
   from 0 to version 4, flags 2; a `NeedsAA` file appears). The base build then refuses it:
   "MISSING TITLE UPDATE: Your profile save game requires the latest title update". Going
@@ -176,33 +178,54 @@ cross-version join), TU4 DriverB was placed into DriverA's.
 
 ### Horizon Rally (#16)
 
-Checked 2026-10-14 with the TU4 build, offline, a scratch copy of the Xenia career save
-(rally progress: the Rally Heats event in progress) and scripted driving.
+Checked 2026-10-14/15 with the TU4 build, offline, a scratch copy of the Xenia career save
+(rally progress: the Rally Heats event in progress) and scripted driving, at 30, 60 and
+144 fps.
 
 - The mode's data: `gamedb.slt` (TU4's media.zip) has the 7 championships (`Events`
   271-277, `MS_RALLY_01`-`07`, B to R class, 10,000-50,000 Cr), each of 4 stages
   (`MultiStageSeriesEvents` / `MultiStageSeriesRaces`: stages 1-3 are `RALLY_nA`-`nC`,
-  stage 4 `RALLY_nD`, 8-12 km), and `RALLY_HEATS` (event 279, the qualifier with a given
+  stage 4 `RALLY_nD`, 8-12 km), and `RALLY_HEATS` (event 279, the qualifier in a given
   Impreza). Each stage is a `ColoradoDirt` track whose `RouteId` names the AI route in the
-  Rally package (`media/AIOpenWorld/coloradodirt/Ribbon_00/route_NNN.owt`).
+  Rally package (`media/AIOpenWorld/coloradodirt/Ribbon_00/route_NNN.owt`; a route can run
+  on past the stage's finish).
 - Driving: `tools/owt_path.py` makes an autodrive path from a stage's route,
   `tools/autodrive.py` with `AD_OPEN=1 AD_PATH_LOAD=<path>` drives it (a TU4 game's car list
-  is at `0x833CAAE4`). The car keeps within 1-4 m of the route at 25-30 m/s, with a few
-  crashes at 34 m/s.
+  is at `0x833CAAE4`) and stops when the game holds the car after the finish. The car keeps
+  within 1-4 m of the route at 25-30 m/s, with a few crashes at 34 m/s; it finishes last
+  (50th, 1.5-2 times the winners' totals), which is enough to play everything but the
+  final.
 - **Played:** HORIZON RALLY from the main menu loaded the Rally Heats in progress (26 %);
   finished it (50th of 50: 45,000 Cr, the mileage and assists bonuses); HORIZON
   RECOMMENDS: bought the Lancer Evolution VIII MR (20,000 Cr), the rally conversion
-  (8,514 Cr of parts, B 436 -> 497); the rally hub listed **Beaumont** (10,000 Cr). Its 4
-  stages played one after the other (start menu, countdown, HUD with progress, race clock,
-  splits and the rivals around you, pace-note icons from the co-driver, finish gantry,
-  STAGE RESULTS, RALLY STANDINGS): 3:43.312, 2:39.901, 5:08.718, 7:37.371; standings and
-  RALLY RESULTS 19:09.302 (each the sum of the stages). Back at the hub: Beaumont shows
-  that best time, the next championship (Montano Plains, A class, 15,000 Cr) is unlocked,
-  "To Final" went from 310 to 300.
-- Timing: the race clock against the log's screenshot times, 60.335 s of clock in 60.339 s
-  (30 fps).
-- Saving: the career is written at the end of the championship and again when quitting
-  to the main menu (QUIT HORIZON RALLY).
+  (8,514 Cr of parts, B 436 -> 497); then the rally hub. Three championships to the end,
+  each stage after the other (start menu, countdown, HUD with progress, race clock, splits
+  and the rivals around you, pace-note icons, finish gantry, STAGE RESULTS, RALLY
+  STANDINGS, and after stage 4 RALLY RESULTS, each total the sum of its stages):
+
+  | Championship | fps | Stages | Total |
+  |---|---|---|---|
+  | Beaumont (B, 10,000 Cr) | 30 | 3:43.312, 2:39.901, 5:08.718, 7:37.371 | 19:09.302 |
+  | Montano Plains (A, 15,000 Cr; the game's automatic upgrade to A 597, 10,296 Cr) | 60 | 2:52.767, 4:31.712, 4:36.732, 7:41.341 | 19:42.552 |
+  | North Plains (B, 20,000 Cr, night; "Illegal car": the game configured the Lancer back to B 499) | 144 | 3:26.160, 3:17.601, 4:43.562, 8:07.972 | 19:35.295 |
+
+  After each, the hub shows the championship's best time and unlocks the next one (after
+  North Plains: The Rockies, A, 25,000 Cr); "To Final" goes down by 10 points per
+  championship at 50th (310, 300, 290, 280). No crash or hang in the 3 sessions.
+- Timing: the race clock against the log's screenshot times: 60.335 s of clock in
+  60.339 s at 30 fps, 60.333 in 60.354 at 60, 60.396 in 60.409 at 144 (94-144 fps in the
+  stages).
+- Saving: the career is written at the end of each championship and when quitting to the
+  main menu (QUIT HORIZON RALLY); not between stages. After a restart the hub showed the
+  best times, the unlocked championships, the credits and the car.
+- **The co-driver's voice is not heard** (#41): his pace-note icons appear and his bank
+  (`CoDriver_EN.fsb`) is loaded, but the sound is the same with Rally Co-Driver ON or OFF.
+- Logs: one XMA decode error in 3 hours ("ffmpeg: overflow ... in spectral RLE"), and
+  ambient banks opened by bare name (`ResolvePath(AMB_Mountains.fsb) failed`, twice, in a
+  North Plains stage), which other runs' logs show for the base game's banks too
+  (AMB_FA_Autoshow, AMB_FA_Workshop): not checked whether an ambience goes missing.
+- Not played: the other 4 championships and the final (it needs rally points that a
+  last place does not give), the Service Area and the All Access Pass.
 
 ### The 1000 Club (#17)
 
