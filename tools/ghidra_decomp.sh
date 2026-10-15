@@ -6,6 +6,7 @@
 #   tools/ghidra_decomp.sh stop
 # The function containing an address is decompiled (one is created at the address if Ghidra
 # has none). Files go to $GHIDRA_DECOMP_DIR (default /tmp/forza-decomp-$USER).
+# GHIDRA_PROJECT=ForzaHorizonTU4 uses the Title Update 4 project (TU4 addresses).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIR=${GHIDRA_DECOMP_DIR:-/tmp/forza-decomp-$USER}
@@ -17,7 +18,7 @@ case "${1:-}" in
     export PATH=/home/linuxbrew/.linuxbrew/opt/openjdk@21/bin:$PATH
     export JAVA_HOME=/home/linuxbrew/.linuxbrew/opt/openjdk@21/libexec
     DECOMP_LIST=$DIR/list DECOMP_OUT=$DIR/out MAXMEM=4G nohup timeout 7200 \
-      "$GHIDRA/support/analyzeHeadless" "$ROOT/ghidra_projects" ForzaHorizon -process default.xex \
+      "$GHIDRA/support/analyzeHeadless" "$ROOT/ghidra_projects" "${GHIDRA_PROJECT:-ForzaHorizon}" -process default.xex \
       -noanalysis -readOnly -scriptPath "$ROOT/tools/ghidra" -postScript Decomp.java \
       > "$DIR/headless.log" 2>&1 &
     echo $! > "$DIR/pid"; echo "started $(cat "$DIR/pid"), log $DIR/headless.log" ;;

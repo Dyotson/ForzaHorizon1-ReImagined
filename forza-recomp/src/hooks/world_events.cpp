@@ -182,6 +182,9 @@ void LogGame(const char* what, uint8_t* base, uint32_t game, uint32_t lr) {
 extern "C" REX_FUNC(__imp__sub_8286A800);
 extern "C" REX_FUNC(__imp__sub_8287E538);
 extern "C" REX_FUNC(__imp__sub_8287BBE0);
+namespace forza {
+void LobbyLogTick(uint8_t* base, uint32_t game);
+}
 extern "C" REX_FUNC(__imp__sub_8286A250);
 extern "C" REX_FUNC(__imp__sub_828786E8);
 extern "C" REX_FUNC(__imp__sub_8286E660);
@@ -503,6 +506,7 @@ extern "C" REX_FUNC(sub_825ADB30) {
 // and launches). An event round of the world playlist waits world_event_wait_seconds and
 // starts at once when its grid is all humans.
 extern "C" REX_FUNC(sub_8287F670) {
+  forza::LobbyLogTick(base, ctx.r3.u32);  // FORZA_LOBBY_LOG (src/debug/lobby_log.cpp)
   if (const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0) {
     uint8_t* g = forza::GuestPtr(base, game);
     const bool event = g[kPreset] != kPresetFreeRoam;

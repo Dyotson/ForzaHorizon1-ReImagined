@@ -36,6 +36,8 @@
 #define __imp__sub_82865340 __imp__sub_82915B58
 #define sub_828653D8 sub_82915BE0
 #define __imp__sub_828653D8 __imp__sub_82915BE0
+#define sub_82865560 sub_82915D70
+#define __imp__sub_82865560 __imp__sub_82915D70
 #define sub_828655E0 sub_82915DF0
 #define __imp__sub_828655E0 __imp__sub_82915DF0
 #define sub_82869CE0 sub_8291A700
@@ -62,6 +64,8 @@
 #define __imp__sub_82875FB8 __imp__sub_82927160
 #define sub_82876378 sub_82927530
 #define __imp__sub_82876378 __imp__sub_82927530
+#define sub_82876D90 sub_82927F48
+#define __imp__sub_82876D90 __imp__sub_82927F48
 #define sub_82877470 sub_82928648
 #define __imp__sub_82877470 __imp__sub_82928648
 #define sub_828786E8 sub_82929960  // check
@@ -70,6 +74,8 @@
 #define __imp__sub_82878800 __imp__sub_82929AB0
 #define sub_8287BBE0 sub_8292CFF8
 #define __imp__sub_8287BBE0 __imp__sub_8292CFF8
+#define sub_8287E098 sub_8292F478
+#define __imp__sub_8287E098 __imp__sub_8292F478
 #define sub_8287E538 sub_8292F918  // check
 #define __imp__sub_8287E538 __imp__sub_8292F918
 #define sub_8287F670 sub_82930AF8
@@ -99,7 +105,9 @@ constexpr uint32_t Tu4Address(uint32_t a) {
     case 0x8270101C: return 0x827B1FDC;  // code  // check
     case 0x828196F4: return 0x828C0CD4;  // code
     case 0x8281B364: return 0x828C4124;  // code
+    case 0x82865500: return 0x82915D10;  // code
     case 0x82865528: return 0x82915D38;  // code  // check
+    case 0x82865560: return 0x82915D70;  // code
     case 0x8286A418: return 0x8291AE40;  // code  // check
     case 0x82875A10: return 0x82926BB8;  // code
     case 0x8288DCD8: return 0x8293EEB0;  // code
@@ -108,6 +116,7 @@ constexpr uint32_t Tu4Address(uint32_t a) {
     case 0x832DF024: return 0x833CAAE4;  // data
     case 0x832E29A0: return 0x833D02E0;  // data
     case 0x832E4A70: return 0x833D23D0;  // data
+    case 0x832E4A84: return 0x833D23E4;  // data
     case 0x832FF054: return 0x833EDC08;  // data
     case 0x832FF090: return 0x833EDC44;  // data
     case 0x83305CC4: return 0x833F4A80;  // data

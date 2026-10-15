@@ -1,5 +1,5 @@
 // forza - FORZA_CODRIVER_LOG=1 traces the Horizon Rally co-driver's pace notes (Title Update 4
-// only; docs/dlc.md, #41).
+// only; docs/dlc.md, #41). The addresses are Title Update 4's (tu_address_map: TU4 addresses).
 //
 // The chain, TU4 addresses:
 // - sub_825BD4B0, the co-driver's update, walks the stage's phrases; when the car reaches one

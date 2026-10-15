@@ -111,6 +111,7 @@ set(FORZA_SOURCES
     src/debug/dlc_log.cpp
     src/debug/fault_guard.cpp
     src/debug/fiber_trace.cpp
+    src/debug/lobby_log.cpp
     src/debug/frame_stats.cpp
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
