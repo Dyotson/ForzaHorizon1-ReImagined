@@ -248,6 +248,5 @@ counted up to 1,850 almost-white pixels with the old path and zero in that regio
 across the corrected captures; this is a scene-specific check, not an all-game
 artifact detector. Screenshots and the RenderDoc capture are retained locally.
 
-Post-fix DLSS Performance and DLAA runs also had clean captured traffic and no
-NGX feature/evaluation or native-HUD composition errors. The installed launcher
-launch path passed a separate moving-scene test with the same renderer.
+This correction is independent of DLSS and does not establish that every moving-scene
+artifact is resolved.
