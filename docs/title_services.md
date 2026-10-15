@@ -297,7 +297,17 @@ Two players (A and B, copies of one save, local server): A drove the Rt. 29 spee
 (board 230) at 162.32 km/h, B at 144.02 km/h; B's map LEADERBOARDS on that trap listed "1
 DriverA R3 797 LP700-4 162.32 km/h, 2 DriverB 144.02 km/h, YOU ARE IN THE TOP 100% OF 2
 PLAYERS" (A's score had been kept by the server before the restart that split the store by
-type, and came back through the migration).
+type, and came back through the migration). TrueSkill, two consoles in Playground Games
+(Infected, `--playground-games 4`): at each round's end the host wrote both players' rows
+(`XSessionWriteStats` view `0xFFFF0000`: relative score 1/0, team 1/0, the lobby's session
+id, the same for every round of the lobby) and both consoles read their row
+(`XUserReadStats` view `0xFFFE0000`) at once; after two rounds the server had DriverA mu
+3.72 sigma 0.79 skill 12 (rank 1) and DriverB mu 2.28 (rank 2), kept across server
+restarts. The game shows no skill anywhere seen (the lobby's yellow number is the online
+wristband; `hideTrueSkill` false changed nothing visible).
+
+Not done: a speed zone (type 2) and an event board (type 3) were not driven again with
+the new board keys (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
 
 ### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
 
