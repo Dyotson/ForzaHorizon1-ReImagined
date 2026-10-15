@@ -655,6 +655,23 @@ two consoles into Playground Games; `seed.py`: a score from a fake player, optio
 a ghost; `ut_*.py`: in-process unit tests of the services) were scratch files and are not
 in the repo.
 
+## Without a server answer (#63, 2026-10-15)
+
+A Forza Live server that never answers (TU4, `FORZA_SERVER` at a closed port, and at a
+UDP port that swallows packets) does not hang the game: the boot waits 3 s for the
+welcome ("no answer ... still trying"), title servers enumerate empty, stats reads answer
+defaults after 0.5 s and matchmaking searches answer no sessions after 0.5 s. Single Player
+loads free roam; Multiplayer shows "Server Unavailable" (no XP), Find Game offers the
+default playlist (Quick Match), which hosts its own session and waits for players.
+`joining session 0000000000000000 (flags 00000702)` is not a join: it is the game's own
+single-player free-roam presence session (no host flag, invites and joins disabled, empty
+XSESSION_INFO), logged on every free-roam load, with or without a server. The player's
+endless loading (Windows, v0.1.6) stopped right after it, before the facade unload that
+follows within a second normally; that run had crashed earlier on a guest read of 0x4 with
+registers like a broken `longjmp` landing (lr = r31 = mid-function `0x824469B8`), the class
+of the libjpeg crash fixed after v0.1.6 (CRT setjmp/longjmp as host calls, PROJECT.md
+2026-10-15). Not confirmed: whether that load decodes a JPEG (the save's car pictures).
+
 ## State and next steps (Message Center work, 2026-10-12)
 
 Done and tested in the game: notifications (format, categories, poll timing), operator
