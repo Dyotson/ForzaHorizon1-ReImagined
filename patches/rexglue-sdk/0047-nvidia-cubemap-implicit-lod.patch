@@ -1,0 +1,97 @@
+diff --git a/include/rex/graphics/pipeline/shader/spirv_translator.h b/include/rex/graphics/pipeline/shader/spirv_translator.h
+index dce3dbf..eb6b28a 100644
+--- a/include/rex/graphics/pipeline/shader/spirv_translator.h
++++ b/include/rex/graphics/pipeline/shader/spirv_translator.h
+@@ -399,6 +399,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
+ 
+     bool demote_to_helper_invocation;
+     bool sample_rate_shading;
++    // NVIDIA's explicit cube Grad path can corrupt ordinary reflection fetches.
++    bool implicit_cube_lod;
+   };
+ 
+   SpirvShaderTranslator(const Features& features, bool native_2x_msaa_with_attachments,
+diff --git a/src/graphics/pipeline/shader/spirv_translator.cpp b/src/graphics/pipeline/shader/spirv_translator.cpp
+index 11e4926..0b91a47 100644
+--- a/src/graphics/pipeline/shader/spirv_translator.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator.cpp
+@@ -21,11 +21,15 @@
+ #include <fmt/format.h>
+ 
+ #include <rex/assert.h>
++#include <rex/cvar.h>
+ #include <rex/graphics/pipeline/shader/spirv.h>
+ #include <rex/graphics/pipeline/shader/spirv_translator.h>
+ #include <rex/math.h>
+ #include <rex/string/buffer.h>
+ 
++REXCVAR_DEFINE_BOOL(vulkan_implicit_cube_lod, true, "GPU/Vulkan",
++    "Use hardware implicit LOD for automatic cubemap fetches on NVIDIA");
++
+ namespace rex::graphics {
+ 
+ SpirvShaderTranslator::Features::Features(bool all)
+@@ -42,7 +46,8 @@ SpirvShaderTranslator::Features::Features(bool all)
+       rounding_mode_rte_float32(all),
+       fragment_shader_sample_interlock(all),
+       demote_to_helper_invocation(all),
+-      sample_rate_shading(all) {}
++      sample_rate_shading(all),
++      implicit_cube_lod(false) {}
+ 
+ SpirvShaderTranslator::Features::Features(const ui::vulkan::VulkanDevice* const vulkan_device)
+     : max_storage_buffer_range(vulkan_device->properties().maxStorageBufferRange),
+@@ -59,7 +64,9 @@ SpirvShaderTranslator::Features::Features(const ui::vulkan::VulkanDevice* const
+       rounding_mode_rte_float32(vulkan_device->properties().shaderRoundingModeRTEFloat32),
+       fragment_shader_sample_interlock(vulkan_device->properties().fragmentShaderSampleInterlock),
+       demote_to_helper_invocation(vulkan_device->properties().shaderDemoteToHelperInvocation),
+-      sample_rate_shading(vulkan_device->properties().sampleRateShading) {
++      sample_rate_shading(vulkan_device->properties().sampleRateShading),
++      implicit_cube_lod(vulkan_device->properties().vendorID == 0x10DE &&
++                        REXCVAR_GET(vulkan_implicit_cube_lod)) {
+   const uint32_t vulkan_api_version = vulkan_device->properties().apiVersion;
+   if (vulkan_api_version >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+     spirv_version = spv::Spv_1_5;
+diff --git a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp b/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
+index 2fe2b3d..f1ee43b 100644
+--- a/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator_fetch.cpp
+@@ -1459,8 +1459,16 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+         // 2D vectors for k1D (because 1D images are emulated as 2D arrays),
+         // k2D.
+         // 3D vectors for k3DOrStacked, kCube.
++        // Ordinary cubemap fetches already request automatic LOD. Let NVIDIA
++        // derive it in the sample instruction: manually emitting coarse Grad
++        // here produced checkerboard car reflections and bloom blowouts. This
++        // matches the captured shader's reference result and retains mip bias
++        // and filtering. Guest register gradients and explicit LOD stay explicit.
++        const bool implicit_cube_lod = features_.implicit_cube_lod && is_pixel_shader() &&
++            instr.dimension == xenos::FetchOpDimension::kCube && use_computed_lod &&
++            !instr.attributes.use_register_gradients;
+         spv::Id gradients_h = spv::NoResult, gradients_v = spv::NoResult;
+-        if (use_computed_lod) {
++        if (use_computed_lod && !implicit_cube_lod) {
+           // TODO(Triang3l): Gradient exponent adjustment is currently not done
+           // in getCompTexLOD, so not doing it here too for now. Apply the
+           // gradient exponent biases from the word 4 of the fetch constant in
+@@ -1623,7 +1631,10 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+         spv::ImageOperandsMask image_operands_mask =
+             use_computed_lod ? spv::ImageOperandsGradMask : spv::ImageOperandsLodMask;
+         spv::Id sample_result_unsigned, sample_result_signed;
+-        if (!use_computed_lod) {
++        if (implicit_cube_lod) {
++          image_operands_mask = spv::ImageOperandsBiasMask;
++          texture_parameters.bias = lod;
++        } else if (!use_computed_lod) {
+           texture_parameters.lod = lod;
+         }
+         if (instr.dimension == xenos::FetchOpDimension::k3DOrStacked) {
+@@ -1843,7 +1854,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
+           sample_result_signed =
+               if_data_is_3d.createMergePhi(sample_result_signed_3d, sample_result_signed_stacked);
+         } else {
+-          if (use_computed_lod) {
++          if (use_computed_lod && !implicit_cube_lod) {
+             texture_parameters.gradX = gradients_h;
+             texture_parameters.gradY = gradients_v;
+           }
