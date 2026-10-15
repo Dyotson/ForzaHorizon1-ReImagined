@@ -224,8 +224,11 @@ nice -n 15 ninja -C forza-recomp/out/build/linux -j4
     - `XUserReadStats` (XGI `0xB0021`): the SDK answers success and leaves the results
       empty; the game reads its TrueSkill row (column 0 as an int64, two doubles: mu and
       sigma) through the empty view list right after creating the party session.
-      `live_xmsg.cpp` now writes a row per player and view with a new player's defaults
-      (skill 1, mu 3.0, sigma 1.0, other columns null).
+      `live_xmsg.cpp` now writes a row per player and view: the server's
+      (`server/forza_stats.py`, which also keeps and rates what `XSessionWriteStats`
+      writes at the end of an online game; `docs/title_services.md`, "Every
+      leaderboard"), or a new player's defaults (skill 1, mu 3.0, sigma 1.0, other columns
+      null).
     - The session socket: Forza's session networking (`0x8313xxxx`-`0x8315xxxx`) opens a
       VDP socket, binds it, reads its port with `getsockname` (an SDK stub), and keeps an
       overlapped `WSARecvFrom` posted on it (`sub_83143C40`; `WSA_IO_PENDING` hands the
