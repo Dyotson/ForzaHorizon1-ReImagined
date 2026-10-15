@@ -232,7 +232,10 @@ class MainWindow(QMainWindow):
         self.session = session
         self.session_plan = plan
         self.play.clear_message()
-        self.play.show_message("The game is running. " + " ".join(plan.notes))
+        if plan.notes:   # what the player set up but the game will not find (TU4, DLC): keep it in view
+            self.play.show_message("The game is running. " + " ".join(plan.notes), True, keep=True)
+        else:
+            self.play.show_message("The game is running.")
         self.poll.start()
         self.play.refresh()
 

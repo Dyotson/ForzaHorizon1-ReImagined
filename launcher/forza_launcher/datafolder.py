@@ -343,6 +343,65 @@ def carry_game_written_data(old: Path, new: Path, profile: str, log=None) -> int
     return done
 
 
+DLC_DIR = os.path.join("0000000000000000", "4D5309C9")   # under a user data root: 00000002 + Headers
+
+
+def dlc_packages(root) -> set:
+    """Names of the DLC packages the game finds under the user data root `root` (a link or junction
+    on the way is followed, as the game follows it)."""
+    d = Path(root) / DLC_DIR / "00000002"
+    try:
+        return {p.name for p in d.iterdir() if p.is_dir() and not p.name.endswith(".part")}
+    except OSError:
+        return set()
+
+
+def dlc_without_header(root) -> list:
+    """Packages under `root` that have no Headers/00000002/<name>.header (the game may not count them)."""
+    h = Path(root) / DLC_DIR / "Headers" / "00000002"
+    return sorted(n for n in dlc_packages(root) if not (h / (n + ".header")).is_file())
+
+
+def carry_dlc(old: Path, new: Path, log=None) -> int:
+    """Copies the DLC packages (and their headers) of the user data root `old` that `new` does not have.
+    Never overwrites or deletes; a package is copied into a .part folder and renamed into place, so a copy
+    that fails half way leaves nothing the game would mount. Returns the number of packages copied."""
+    old, new = Path(old), Path(new)
+    if _samepath(old, new):
+        return 0
+    have = dlc_packages(new)
+    todo = sorted(dlc_packages(old) - have)
+    n = 0
+    for name in todo:
+        src = old / DLC_DIR / "00000002" / name
+        dst = new / DLC_DIR / "00000002" / name
+        part = dst.with_name(name + ".part")
+        try:
+            shutil.rmtree(part, ignore_errors=True)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, part)
+            os.rename(part, dst)
+            n += 1
+        except OSError as e:
+            shutil.rmtree(part, ignore_errors=True)
+            if log:
+                log(f"could not copy the DLC package {src}: {e}")
+            continue
+    hsrc, hdst = old / DLC_DIR / "Headers" / "00000002", new / DLC_DIR / "Headers" / "00000002"
+    for name in dlc_packages(new):
+        s, d = hsrc / (name + ".header"), hdst / (name + ".header")
+        try:
+            if s.is_file() and not d.exists():
+                d.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(s, d)
+        except OSError as e:
+            if log:
+                log(f"could not copy the DLC header {s}: {e}")
+    if n and log:
+        log(f"copied {n} DLC package(s) from {old} to {new}; the old folder is untouched")
+    return n
+
+
 def _size(files) -> int:
     total = 0
     for src, _ in files:

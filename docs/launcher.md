@@ -87,6 +87,17 @@ Online: public (`dyotserver.ddns.net:21200`, written as `live_server` and `FORZA
 local (the launcher starts the Forza Live server inside its own executable, or reuses one
 on port 21201, like `play.sh`), your own, or offline. The Xenia save logic is `play.sh --xenia`
 ported (copy once, `--user_data_root/--cache_root/--profile_xuid`, DLC folder shared).
+The DLC is shared into the Xenia copy (`xenia-<XUID>/0000000000000000`) with a link, a junction
+on Windows, checked at every Play (issues #65, #70): a link to another folder is relinked, a real
+folder in its place gives its packages to the launcher's folder and is renamed
+`0000000000000000.old`, and where no link can be made the packages are mirrored with hard links.
+Without the DLC in the folder the game is started on, the game mounts none, and Horizon Rally
+answers "XBOX LIVE MARKETPLACE ERROR: Failed to download required Xbox LIVE Marketplace data"
+(reproduced 2026-10-15, TU4, Xenia save, link removed). On Windows, DLC that only
+`Documents\forza` has (the game's own default folder) is copied to the launcher's folder when that
+has none. Play warns, and the warning stays in view, when TU4 is chosen in Setup but the build has
+no `update` folder, when DLC is installed or chosen but the game's folder has none, and when a
+package has no header.
 `forza-launcher --dry-run` prints what Play would run; it matches `tools/play.sh`
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` / `fsr3` entries become `fsr`).
