@@ -107,6 +107,18 @@ class StatsTest(unittest.TestCase):
         self.assertEqual(by[A][2], by[A][4][61])                    # rating = skill
         self.assertEqual(by[A][3], "DriverA")
 
+    def test_read_right_after_the_game(self):
+        # The host writes both rows and both consoles read theirs within milliseconds.
+        self.write(A, A, 1, team=1, now=50.0)
+        self.write(A, B, 0, team=0, now=50.0)
+        rows = self.read([B])[SKILL_VIEW][1]
+        self.assertEqual(rows[0][4][62], 1)
+        # a repeat of the same session's writes (another console) is not a second game
+        self.write(B, A, 1, team=1, now=60.0)
+        self.write(B, B, 0, team=0, now=60.0)
+        stats.settle(now=100)
+        self.assertEqual([r[4][62] for r in self.read([A, B])[SKILL_VIEW][1]], [1, 1])
+
     def test_every_console_writes_the_same_game(self):
         for writer in (A, B):
             self.write(writer, A, 2)

@@ -19,8 +19,10 @@ The game sends the writes and reads to the server over UDP (forza_live_server.py
          rows u32, row count u8, per row: XUID u64, rank u32, rating i64, gamertag (u8
          length + bytes), column count u8, per column: id u16, type u8, value (8 bytes)
 
-A skill view's writes are a game's result: the writes of one session are collected and,
-SETTLE seconds after the last one, ranked by relative score (bigger is better, equal is a
+A skill view's writes are a game's result (the host writes every player's at once): the
+writes of one session are collected and, SETTLE seconds after the last one or when one of
+its players' rows is read (the game reads its party's right after the game), ranked by
+relative score (bigger is better, equal is a
 draw; teams rank by their players' best score) and every player's mu and sigma updated
 (TrueSkill, pairwise between adjacent places). Other views keep the last value written for
 each property, read as the column with the property id's low 16 bits. Rows of players
@@ -41,6 +43,7 @@ log = logging.getLogger("forza-live")
 
 DATA_DIR = "forza_live_data"
 SETTLE = 10.0          # seconds after a session's last write before its game is rated
+RATED_MEMORY = 3600.0  # seconds a rated session's later writes are ignored
 MAX_VIEWS = 16         # views per player
 MAX_PROPERTIES = 64    # properties per view and write
 MAX_PENDING = 256      # sessions waiting to be rated
@@ -117,6 +120,7 @@ class Store:
     def __init__(self):
         self.players = {}   # xuid hex -> {"gamertag", "views": {view id str: view}}
         self.pending = {}   # (session id, view) -> {"at": monotonic, "writes": {xuid: (score, team)}}
+        self.rated = {}     # (session id, view) -> when it was rated: later writes are repeats
         self.loaded = False
 
     def path(self):
@@ -213,6 +217,10 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             if RELATIVE_SCORE not in values:
                 continue
             key = (session, view)
+            if session and key in STORE.rated:
+                log.info("stats: %016X wrote view %08X for %016X again: session %016X is rated",
+                         xuid, view, target, session)
+                continue
             if key not in STORE.pending and len(STORE.pending) >= MAX_PENDING:
                 settle(now, force=True)
             match = STORE.pending.setdefault(key, {"writes": {}, "tags": {}})
@@ -233,15 +241,21 @@ def write(xuid, gamertag, body, allowed=None, now=None):
         STORE.save()
 
 
-def settle(now=None, force=False):
-    """Rates the games whose writes have settled."""
+def settle(now=None, force=False, players=()):
+    """Rates the games whose writes have settled (or, with force, all; with players, those
+    of these players: a read right after the game wants its result)."""
     now = time.monotonic() if now is None else now
     changed = False
+    for key, at in list(STORE.rated.items()):
+        if now - at > RATED_MEMORY:
+            del STORE.rated[key]
     for key in list(STORE.pending):
         match = STORE.pending[key]
-        if not force and now - match["at"] < SETTLE:
+        if not force and now - match["at"] < SETTLE and not set(players) & set(match["writes"]):
             continue
         del STORE.pending[key]
+        if key[0]:
+            STORE.rated[key] = now
         session, view = key
         writes = match["writes"]
         if len(writes) < 2:
@@ -324,8 +338,8 @@ def ranking(view):
 
 def read(xuid, body, gamertag_of=None):
     """The STATS_ROWS answer to a read (body after the op byte)."""
-    settle()
     request, xuids, specs = parse_read(body)
+    settle(players=xuids)
     out = [struct.pack(">IB", request, len(specs))]
     size = 5
     for asked, cols in specs:
