@@ -9,8 +9,12 @@ game then uploads it (UploadFile, an opaque blob of up to 250 KB that we keep as
 and another player racing that score as a rival downloads it (DownloadFile, by the row's
 ghostFileId). docs/title_services.md has the details.
 
+The 1000 Club (Title Update 4) reports each car challenge a player completes
+(Challenge.ChallengeCompleted: the car and the challenge's thumbprint); its leaderboard
+(GetRows type 5) ranks the players by the challenges (medals) they completed.
+
 Everything is kept in DATA_DIR/scoreboards.json (the best score of each player on each
-scoreboard) and DATA_DIR/ghosts/<id>.bin.
+scoreboard, the 1000 Club medals) and DATA_DIR/ghosts/<id>.bin.
 """
 
 import json
@@ -21,6 +25,7 @@ import uuid
 
 import forza_limits as limits
 import forza_xtsw as x
+import forza_xtsw_all as A
 
 log = logging.getLogger("forza-live")
 
@@ -40,6 +45,7 @@ class Store:
     def __init__(self):
         self.boards = {}       # "sbid:stt" -> {xuid hex: entry}
         self.ghosts = {}       # scoreId hex -> (board key, xuid hex): waiting for UploadFile
+        self.club = {}         # 1000 Club: xuid hex -> {gamertag, cars: {carId: [thumbprints]}}
         self.next_file = 1
         self.loaded = False
 
@@ -54,6 +60,7 @@ class Store:
             with open(self.path()) as f:
                 data = json.load(f)
             self.boards = data.get("boards", {})
+            self.club = data.get("club1000", {})
             self.next_file = data.get("nextFileId", 1)
         except (OSError, ValueError):
             pass
@@ -62,7 +69,8 @@ class Store:
         os.makedirs(DATA_DIR, exist_ok=True)
         tmp = self.path() + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"boards": self.boards, "nextFileId": self.next_file}, f, indent=1)
+            json.dump({"boards": self.boards, "club1000": self.club,
+                       "nextFileId": self.next_file}, f, indent=1)
         os.replace(tmp, self.path())
 
     def board(self, sbid, stt):
@@ -212,12 +220,68 @@ def rows_view(entries, xuid, view, start_at, max_results):
 
 
 ONLINE_XP_TYPE = 4  # Race Central's ONLINE XP: GetRows(type 4, board 1); SubmitScore type 4
+CLUB_TYPE = 5       # the 1000 Club's leaderboard: GetRows(type 5, board 1)
+
+# 1000 Club: 218 cars with 5 or 6 challenges each, 1145 in all (Title Update 4's
+# gamedb.slt, CarChallenges). The limits keep a bad client from growing the store.
+CLUB_MAX_PER_CAR = 8
+CLUB_MAX_CARS = 400
+
+
+def challenge_completed(gamertag_of):
+    """Challenge.ChallengeCompleted(carId, challengeThumbprint): a 1000 Club challenge
+    completed (a medal). Sent once per completion; a challenge done again in the same car
+    sends the same thumbprint. No results."""
+    def handler(xuid, body):
+        p, _ = x.decode(A.ForzaChallengeChallengeCompleted_Params, body)
+        car, thumb = p["carId"], p["challengeThumbprint"]
+        STORE.load()
+        key = "%016X" % xuid
+        entry = STORE.club.setdefault(key, {"xuid": key, "cars": {}})
+        entry["gamertag"] = gamertag_of(xuid)
+        cars = entry["cars"]
+        done = cars.get(str(car), [])
+        new = thumb not in done and car != 0 and len(done) < CLUB_MAX_PER_CAR and \
+            (str(car) in cars or len(cars) < CLUB_MAX_CARS)
+        if new:
+            cars[str(car)] = done + [thumb]
+            entry.update(carId=car, submitted=int(time.time()))
+            STORE.save()
+        log.info("title: 1000 Club %016X '%s': challenge %08X in car %d%s, %d medals", xuid,
+                 entry["gamertag"], thumb, car, "" if new else " (already counted)",
+                 club_medals(entry))
+        return x.reply()
+    return handler
+
+
+def club_medals(entry):
+    return sum(len(v) for v in entry["cars"].values())
+
+
+def club_entries():
+    """Every player with a 1000 Club medal, most medals first (the first to get there
+    first on a tie)."""
+    STORE.load()
+    out = []
+    for e in STORE.club.values():
+        medals = club_medals(e)
+        if medals:
+            out.append({"xuid": e["xuid"], "gamertag": e.get("gamertag", e["xuid"]),
+                        "score": float(medals), "submitted": e.get("submitted", 0),
+                        "carId": e.get("carId", 0), "carClassId": 0,
+                        "carPerformanceIndex": 0.0, "usedSTM": 0, "usedTCS": 0, "usedABS": 0,
+                        "usedAutoBrake": 0, "usedAutoShifting": 0, "usedClutch": 0,
+                        "ghostFileId": -1})
+    out.sort(key=lambda e: (-e["score"], e["submitted"]))
+    return out
 
 
 def get_rows(xuid, body):
     p, _ = x.decode(x.ScoreboardGetRows_Params, body)
     if p["type"] == ONLINE_XP_TYPE:
         entries = online_xp_entries()
+    elif p["type"] == CLUB_TYPE:
+        entries = club_entries()
     else:
         entries, _ = STORE.ranked(p["gameScoreboardId"], p["isServerTimeTrial"])
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
@@ -464,4 +528,5 @@ def services(gamertag_of):
         ("Scoreboard", "GetBestScores"): get_best_scores,
         ("Scoreboard", "NotifyRival"): notify_rival,
         ("Scoreboard", "GetTimeTrials"): get_time_trials,
+        ("Challenge", "ChallengeCompleted"): challenge_completed(gamertag_of),  # TU4
     }

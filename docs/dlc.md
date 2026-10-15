@@ -105,7 +105,8 @@ Notes:
   Horizon Rally" (game rule). With a Xenia save, Horizon Rally loads its map and resumes
   the rally progress; the free roam pause menu lists 1000 CLUB, which says "not available
   because you are not signed into Xbox LIVE" when offline; signed in (Forza Live
-  server) it opens (tutorial, then the challenge cards).
+  server) it opens (tutorial, then the challenge cards); its challenges can be completed
+  and are kept in the save, and the server has its leaderboard ("The 1000 Club" below).
 - Saves: TU4 converts a profile save when it loads it (`ForzaProfile/VersionFlags` goes
   from 0 to version 4, flags 2; a `NeedsAA` file appears). The base build then refuses it:
   "MISSING TITLE UPDATE: Your profile save game requires the latest title update". Going
@@ -161,7 +162,7 @@ Results (TU4 + TU4):
 | Event (`/world/event`, event 4, 1 lap) | both to the event lobby: 2 humans + 6 CPU drivers, INTERMISSION from 30, class B cars; the race with 8 cars (each console runs 3 CPU drivers, sees the other's 3), A saw B's car and tag; CPU level Easy (2 of 8 human); after the race each console removed only its own CPU drivers, both back in the world's free roam; online race scores submitted, XP and credits given |
 | Head-to-head | A drove up behind B (29 m), X: B got the prompt, accepted; both "race to the Wind Farm", GPS route on both minimaps; B's game closed: A "YOU WIN: DriverB left" |
 | Rivals | GoPro Millennia Masters: Rivals screen (`GetRivalAndPersonalBest`, `GetBestScores`), Rivals race started and quit (`WriteRaceStatsEx`); a finished lap (a rival time) was not driven |
-| 1000 Club, signed in | opens (tutorial, challenge cards, `Scoreboard.GetRows`), challenges begun in a car |
+| 1000 Club, signed in | opens (tutorial, challenge cards, `Scoreboard.GetRows`), challenges begun in a car; a challenge completed and kept, the leaderboard (below) |
 | Host leaves | when B quit, A became the world's host |
 
 TU4 and base together: they can't play together. The base game placed into a TU4 world
@@ -172,6 +173,36 @@ TU4 build signs in to the server's room with "#TU4" added (`LiveRoom()`,
 `src/kernel/identity.cpp`): matchmaking, the friends list and invites only see players of
 the same version. Tested: base BaseC and TU4 DriverA each hosted their own world (no
 cross-version join), TU4 DriverB was placed into DriverA's.
+
+### The 1000 Club (#17)
+
+Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam
+in the Lamborghini Aventador LP700-4, car 1398) and a local Forza Live server.
+
+- The challenges are the 1000 Club package's (`2700_pri_65` zip:
+  `media/carchallenges/carchallenges_<carId>.xml`, 218 cars, 1145 challenges; TU4's
+  `gamedb.slt` has their counts and titles). The Aventador's: ONE EIGHTY SKILL (any
+  grade), 4 great near misses, 190 mph for 10 s, a skill road trip, 5 trash cans in 30 s,
+  a festival event.
+- Flow: pause menu, 1000 CLUB: the tutorial ("Select the My First Challenge achievement"),
+  the eligible garage cars, BEGIN CHALLENGES IN THIS CAR; back in free roam the HUD lists
+  the car's challenges (1-6, "1000 Club Info"), D-pad up shows CURRENT CAR CHALLENGES.
+- **ONE EIGHTY SKILL completed** with scripted input (e-brake and full lock from 20 m/s
+  until the car had turned about 150 degrees, then throttle with a little counter-steer;
+  the car stopped turning near 180 and drove off the other way; it took one or two tries in
+  an open field). The HUD's challenge 1 turned into a medal, and the game sent
+  `Challenge.ChallengeCompleted(carId 1398, challengeThumbprint 0xAE6828D3)` and wrote
+  `ForzaProfile`. The 1000 CLUB screen then moved on to the next achievements (14 and 20
+  medals) and its LEADERBOARDS showed the 1000 Club board (`GetRows` type 5, board 1).
+- **Saving:** the medal is kept with the career, which the game saves when leaving single
+  player (pause menu, QUIT: `ForzaProfile` and `PlayerDatabase` written). Quit that way and
+  restarted: CURRENT CAR CHALLENGES showed the medal on ONE EIGHTY SKILL. Killed right
+  after the medal instead (only the `ForzaProfile` write at the medal): after the restart
+  the medal was gone (the tutorial's progress was kept), and doing the challenge again
+  sent the same `ChallengeCompleted`. So, as for the rest of the career: quit to the title
+  screen before closing the game.
+- The leaderboard: the server keeps every `ChallengeCompleted` and answers the board
+  (docs/title_services.md, scoreboards).
 
 ## Every package (#18)
 

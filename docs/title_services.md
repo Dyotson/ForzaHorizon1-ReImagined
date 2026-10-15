@@ -357,6 +357,29 @@ on a trial: `CTimeTrialRivals::DownloadTimeTrial` (`sub_827D1E40`) calls
 SELECT, and the time trial loads (`GetBestScores(1001, ...)`, START RIVALS, the HUD's LAP
 and TARGET 04:00.500 on track 156).
 
+**The 1000 Club** (Title Update 4, #17). Each of 218 cars has 5 or 6 challenges, 1145 in
+all (`CarChallenges` / `CarChallengeTitles` in TU4's `gamedb.slt`; the challenges
+themselves are `media/carchallenges/carchallenges_<carId>.xml` in the 1000 Club
+package's `2700_pri_65` zip: `pass_when` / `fail_when` groups of skills, speed traps,
+A-to-B times, smashables, events). A completed challenge is a medal. The service calls:
+
+| When | Call | Our answer |
+| --- | --- | --- |
+| A challenge completed (the medal on the HUD) | `Challenge.ChallengeCompleted(carId u16, challengeThumbprint u32)` | success (no results); the medal is kept per player and car, a thumbprint counted once |
+| 1000 CLUB opened (pause menu) | `Scoreboard.GetRows(type 5, view 5, board 1, startAt 1, max 200)` | the 1000 Club board |
+| Its LEADERBOARDS (Y) | `GetRows(type 5, view 2 Friends Only, board 1, 1, 50)`; X changes the filter | the 1000 Club board |
+
+The board (`club_entries`) ranks every player by medals (the number of challenges the
+server saw completed), the first to reach a count first on a tie; a row's car is the car
+of the player's latest medal. Kept in `scoreboards.json` (`club1000`: per player, the
+thumbprints per car). The game sends nothing else for the club: no score submission, and
+it does not send `ChallengeCompleted` again for a medal it already has, so medals earned
+before the server kept them (or on another server) are not on the board.
+
+The thumbprint names the challenge: the Aventador's ONE EIGHTY SKILL sent `carId 1398,
+challengeThumbprint 0xAE6828D3` both times it was completed (the second time after a
+restart had lost the medal: the career must be saved, `docs/dlc.md`).
+
 ### Car clubs and the club garage (`server/forza_clubs.py`)
 
 At the festival the CAR CLUB sign (X) calls `Xls User.GetUserData`: with no club the menu
