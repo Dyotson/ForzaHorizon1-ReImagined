@@ -2,6 +2,7 @@
 import hashlib
 import os
 import shutil
+import ssl
 import stat
 import tarfile
 import urllib.request
@@ -13,6 +14,38 @@ from . import pins
 
 class Cancelled(Exception):
     pass
+
+
+# CA bundles of the common distributions. A frozen launcher's OpenSSL looks where the build
+# machine keeps them (Ubuntu), which Fedora, Bazzite, SteamOS or Arch don't have (#68).
+_CA_FILES = (
+    "/etc/ssl/certs/ca-certificates.crt",                 # Debian, Ubuntu, Arch, SteamOS
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  # Fedora, Bazzite, RHEL
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",                             # openSUSE
+    "/etc/ssl/cert.pem",                                  # Alpine, macOS
+)
+_SSL_CONTEXT = None
+
+
+def ssl_context() -> ssl.SSLContext:
+    """A verifying context with the system's CA certificates wherever the distribution keeps them."""
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        ctx = ssl.create_default_context()
+        for ca in (os.environ.get("SSL_CERT_FILE"),) + _CA_FILES:
+            if ca and os.path.isfile(ca):
+                try:
+                    ctx.load_verify_locations(cafile=ca)
+                except (OSError, ssl.SSLError):
+                    pass
+        try:
+            import certifi
+            ctx.load_verify_locations(cafile=certifi.where())
+        except Exception:
+            pass
+        _SSL_CONTEXT = ctx
+    return _SSL_CONTEXT
 
 
 def sha256_of(path: Path, progress=None):
@@ -42,7 +75,7 @@ def download(name: str, cache: Path, progress=lambda d, t: None, cancelled=lambd
     if have:
         req.add_header("Range", f"bytes={have}-")
     try:
-        resp = urllib.request.urlopen(req, timeout=60)
+        resp = urllib.request.urlopen(req, timeout=60, context=ssl_context())
     except urllib.error.HTTPError as e:
         if e.code == 416:  # the partial file is already complete
             resp, have = None, have
