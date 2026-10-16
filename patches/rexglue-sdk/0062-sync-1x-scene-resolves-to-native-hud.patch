@@ -1,0 +1,56 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -5057,8 +5057,9 @@
+ // have different integer scales. This keeps minimap and other render-to-texture
+ // HUD inputs coherent without a CPU readback or borrowing foreign image views.
+ bool VulkanCommandProcessor::Fh1SynchronizeResolve(uint32_t address, uint32_t length) {
+-  if (!fh1_split_enabled_ || !fh1_other_textures_ || !texture_cache_->IsDrawResolutionScaled() ||
+-      !fh1_other_textures_->IsDrawResolutionScaled() || !length ||
++  if (!fh1_split_enabled_ || !fh1_other_textures_ ||
++      !fh1_other_textures_->IsDrawResolutionScaled() || !length) return true;
++  if (texture_cache_->IsDrawResolutionScaled() &&
+       !texture_cache_->HasScaledResolveRange(address, length)) return true;
+   auto& source = *texture_cache_;
+   auto& destination = *fh1_other_textures_;
+@@ -5073,9 +5074,18 @@
+   if (source.draw_resolution_scale_y() != source_scale ||
+       destination.draw_resolution_scale_y() != destination_scale ||
+       length > UINT32_MAX / (destination_scale * destination_scale)) return false;
+-  uint64_t source_start, source_length, dest_start, dest_length;
+-  if (!source.GetScaledResolveRange(address, length, 0, source_start, source_length) ||
+-      !destination.CommitScaledResolveRange(address, length) ||
++  // A 1x scene writes resolves to shared memory, while the native HUD
++  // reads its own scaled resolve buffer. Mirror that source too (DLSS
++  // Performance at 1440p is 1x scene / 2x HUD). The reverse direction keeps
++  // the existing policy: never overwrite the live scene's shared buffer.
++  uint64_t source_start = address, source_length = length;
++  VkBuffer source_buffer = shared_memory_->buffer();
++  if (source.IsDrawResolutionScaled()) {
++    if (!source.GetScaledResolveRange(address, length, 0, source_start, source_length)) return false;
++    source_buffer = source.scaled_resolve_buffer();
++  }
++  uint64_t dest_start, dest_length;
++  if (!destination.CommitScaledResolveRange(address, length) ||
+       !destination.GetScaledResolveRange(address, length, 0, dest_start, dest_length)) return false;
+   if (!fh1_resolve_pipeline_) {
+     VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof(uint32_t)};
+@@ -5119,7 +5129,7 @@
+   const uint64_t alignment = vulkan_device->properties().minStorageBufferOffsetAlignment;
+   const uint64_t source_base = source_start & ~(alignment-1), dest_base = dest_start & ~(alignment-1);
+   const VkDescriptorBufferInfo buffers[] = {
+-      {source.scaled_resolve_buffer(), source_base, source_length+source_start-source_base},
++      {source_buffer, source_base, source_length+source_start-source_base},
+       {destination.scaled_resolve_buffer(), dest_base, dest_length+dest_start-dest_base}};
+   VkWriteDescriptorSet writes[2]{};
+   for (unsigned i=0;i<2;++i) {
+@@ -5128,7 +5138,8 @@
+     writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[i].pBufferInfo=&buffers[i];
+   }
+   f.vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+-  source.UseScaledResolveBufferForRead();
++  if (source.IsDrawResolutionScaled()) source.UseScaledResolveBufferForRead();
++  else shared_memory_->Use(VulkanSharedMemory::Usage::kRead);
+   destination.UseScaledResolveBufferForWrite(dest_start,dest_length);
+   SubmitBarriers(true);
+   BindExternalComputePipeline(fh1_resolve_pipeline_);

@@ -145,3 +145,13 @@ initial fill or the DLSS split needs it. The ordered 46-patch stack applies to
 bd833a2; the 20 DLSS runtime/packaging tests pass. The general launcher suite on
 this Windows host has the same six failures and five errors on unmodified main
 (134 tests, 20 skipped), so those are not claimed as passing here.
+
+The corrected Windows plugin built with Vulkan and D3D12 enabled. A copied-save
+Vulkan session with DLSS off, native 2560x1440, a 120 FPS cap and
+`vulkan_render_target_initial_fill=true` reached free roam and produced a native
+output capture. D3D12 and other GPU vendors were not runtime-tested.
+
+The split of PR #59 moves DLSS-only patches 0057/0058 (projected-geometry jitter,
+rotated depth/motion reconstruction and tile-consistent displacement) and 0062
+(1x scene resolves copied into the native HUD cache) here. These operate without
+ultrawide; 0062 depends on the DLSS cache split and is not a general readback fix.
