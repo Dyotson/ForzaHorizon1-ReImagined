@@ -364,7 +364,7 @@ index f1ee43b..6daccbb 100644
          spv::Id& z_coordinate_ref = coordinates[2];
          spv::Id z_offset =
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 440ca6e..e5b8dfe 100644
+index ddf7caf..90fdc65 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
 @@ -12,6 +12,7 @@
@@ -391,7 +391,7 @@ index 440ca6e..e5b8dfe 100644
  #include <rex/dbg.h>
  #include <rex/logging.h>
  #include <rex/math.h>
-@@ -88,6 +98,10 @@ namespace rex::graphics::vulkan {
+@@ -88,6 +98,28 @@ namespace rex::graphics::vulkan {
 
  namespace {
 
@@ -399,10 +399,28 @@ index 440ca6e..e5b8dfe 100644
 +  return REXCVAR_GET(forza_native_width) > 0 && REXCVAR_GET(forza_native_height) > 0;
 +}
 +
++// FH1 reuses screen-pitched EDRAM for reflection faces and bloom intermediates.
++// A pitch match alone does not make a draw part of the native display.
++bool Fh1ScreenViewport(const RegisterFile& regs) {
++  const auto pitch = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch;
++  if (pitch != 1280 && pitch != 640 && pitch != 320 && pitch != 160) return false;
++  const auto vte = regs.Get<reg::PA_CL_VTE_CNTL>();
++  if (!vte.vport_x_scale_ena || !vte.vport_y_scale_ena) {
++    // Software viewports used by clears and off-screen copies have unbounded
++    // scissors. Only the explicitly bounded display UI needs native scaling.
++    const auto tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
++    const auto br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
++    return br.br_x - tl.tl_x == 1280 && br.br_y - tl.tl_y == 720;
++  }
++  const float x = std::abs(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE));
++  const float y = std::abs(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE));
++  return x != y || x == 0.0f;
++}
++
  // glslang default built-in resource limits.
  constexpr TBuiltInResource kGlslangDefaultTBuiltInResource = {
      /* .maxLights = */ 32,
-@@ -1078,6 +1092,13 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1078,6 +1110,13 @@ bool VulkanCommandProcessor::SetupContext() {
      REXGPU_ERROR("Failed to initialize the render target cache");
      return false;
    }
@@ -416,7 +434,7 @@ index 440ca6e..e5b8dfe 100644
 
    // Shared memory and EDRAM descriptor set layout.
    bool edram_fragment_shader_interlock =
-@@ -2646,6 +2667,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2646,6 +2685,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
              ? frontbuffer_height_scaled
              : (frontbuffer_height ? frontbuffer_height : frontbuffer_height_unscaled);
    }
@@ -427,7 +445,7 @@ index 440ca6e..e5b8dfe 100644
    bool swap_source_scaled = frontbuffer_width_unscaled && frontbuffer_height_unscaled &&
                              (frontbuffer_width_scaled != frontbuffer_width_unscaled ||
                               frontbuffer_height_scaled != frontbuffer_height_unscaled);
-@@ -2699,6 +2724,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2699,6 +2742,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
    kernel::xboxkrnl::VdQueryVideoMode(&video_mode);
    uint32_t display_width = std::max(uint32_t(1), uint32_t(video_mode.display_width));
    uint32_t display_height = std::max(uint32_t(1), uint32_t(video_mode.display_height));
@@ -438,7 +456,7 @@ index 440ca6e..e5b8dfe 100644
 
    presenter->RefreshGuestOutput(
        guest_output_width, guest_output_height, display_width, display_height,
-@@ -4340,6 +4369,29 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4340,6 +4387,29 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      }
    }
 
@@ -468,13 +486,11 @@ index 440ca6e..e5b8dfe 100644
    // Update system constants before uploading them.
    UpdateSystemConstantValues(primitive_polygonal, primitive_processing_result,
                               shader_32bit_index_dma, 0, viewport_info, used_texture_mask,
-@@ -6123,6 +6175,13 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
+@@ -6140,6 +6210,11 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
    // https://github.com/freedreno/mesa/blob/master/src/mesa/drivers/dri/r200/r200_state.c
    auto pa_sc_window_offset = regs.Get<reg::PA_SC_WINDOW_OFFSET>();
 
-+  const auto screen_pitch = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch;
-+  const bool fh1_screen = Fh1NativeEnabled() && (screen_pitch == 1280 || screen_pitch == 640 ||
-+                                                 screen_pitch == 320 || screen_pitch == 160);
++  const bool fh1_screen = Fh1NativeEnabled() && Fh1ScreenViewport(regs);
 +  const float native_x =
 +      fh1_screen ? float(REXCVAR_GET(forza_native_width)) / (1280 * draw_resolution_scale_x) : 1.0f;
 +  const float native_y =
@@ -482,7 +498,7 @@ index 440ca6e..e5b8dfe 100644
    // Viewport.
    VkViewport viewport;
    if (viewport_info.xy_extent[0] && viewport_info.xy_extent[1]) {
-@@ -6141,6 +6200,10 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
+@@ -6158,6 +6233,10 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
    }
    viewport.minDepth = viewport_info.z_min;
    viewport.maxDepth = viewport_info.z_max;
@@ -493,7 +509,7 @@ index 440ca6e..e5b8dfe 100644
    SetViewport(viewport);
 
    // Scissor.
-@@ -6155,6 +6218,10 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
+@@ -6172,6 +6251,10 @@ void VulkanCommandProcessor::UpdateDynamicState(const draw_util::ViewportInfo& v
    scissor_rect.offset.y = int32_t(scissor.offset[1]);
    scissor_rect.extent.width = scissor.extent[0];
    scissor_rect.extent.height = scissor.extent[1];
@@ -504,14 +520,12 @@ index 440ca6e..e5b8dfe 100644
    SetScissor(scissor_rect);
 
    if (render_target_cache_->GetPath() == RenderTargetCache::Path::kHostRenderTargets) {
-@@ -6619,6 +6686,26 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
+@@ -6636,6 +6719,24 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
          point_screen_diameter_to_ndc_radius_y;
    }
 
-+  const auto screen_pitch = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch;
 +  const bool fh1_native = Fh1NativeEnabled();
-+  const bool fh1_screen = fh1_native && (screen_pitch == 1280 || screen_pitch == 640 ||
-+                                         screen_pitch == 320 || screen_pitch == 160);
++  const bool fh1_screen = fh1_native && Fh1ScreenViewport(regs);
 +  const float ratios[4] = {
 +      fh1_native ? float(REXCVAR_GET(forza_native_width)) / (1280 * draw_resolution_scale_x) : 1.0f,
 +      fh1_native ? float(REXCVAR_GET(forza_native_height)) / (720 * draw_resolution_scale_y) : 1.0f,
