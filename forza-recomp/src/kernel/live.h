@@ -54,8 +54,10 @@ void LiveInviteReceived(const LiveInvite& invite);
 // Matchmaking sessions on the server (live_xmsg.cpp; RecompiledHaloReach's
 // docs/online_plan.md section 5.4): publish ours or search for a playlist's (bodies as
 // forza_live_server.py documents); the network thread hands the server's answers to
-// LiveMatchResults.
-void LiveSendMatch(bool search, const std::vector<uint8_t>& body);
+// LiveMatchResults. The last published records (ours, our standby) are sent again with
+// every keep-alive, so a lost datagram or a server restart does not hide our session.
+// False when nothing was sent (the server has not welcomed us).
+bool LiveSendMatch(bool search, const std::vector<uint8_t>& body);
 void LiveMatchResults(const uint8_t* body, size_t size);
 
 // The playlist our last matchmaking search was for (Find Game: the hopper id; 0 before the

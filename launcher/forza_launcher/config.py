@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import PUBLIC_SERVER, gpu, paths, schema
+from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, gpu, paths, schema
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
@@ -77,6 +77,9 @@ class Config:
             self.loaded = True
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
+        online = self.d["online"]
+        if online.get("mode") == "custom" and online.get("custom_server", "").strip() in OLD_PUBLIC_SERVERS:
+            online["mode"], online["custom_server"] = "public", ""
 
     def save(self):
         _atomic_write(self.path, json.dumps(self.d, indent=2) + "\n")
@@ -227,7 +230,7 @@ def import_toml(cfg: Config, text: str) -> None:
             cfg.settings[key] = schema.coerce(s, val)
         elif key == "live_server":
             if isinstance(val, str) and val:
-                if val == PUBLIC_SERVER:
+                if val == PUBLIC_SERVER or val in OLD_PUBLIC_SERVERS:
                     cfg.online["mode"] = "public"
                 else:
                     cfg.online["mode"], cfg.online["custom_server"] = "custom", val

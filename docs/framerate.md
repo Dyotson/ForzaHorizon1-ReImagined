@@ -239,7 +239,9 @@ anyway), A (START RIVALS).
   Fixed: the series is applied to a temporary index and only files that differ are rewritten.
 - Not measured: rates other than 60, 120 and 144 (165 and 240 run 330 and 480 Hz vblanks),
   more than two players online at mixed rates, the relay path (the test peers talked
-  directly), the opening drive and the festival intro video above 60, Windows.
+  directly), Windows. Run at 240 (#66, no numbers): a new profile's festival intro video
+  and opening drive, an Autoshow purchase and the return to free roam, Single Player
+  after a restart (238 fps in the menus, 225-235 in the Autoshow).
 - Seen at every rate, not from this work: in a world event the peer's race clock started
   about 12 s after the host's (the cars raced together); at 60 fps in the race the frames
   handed to the presenter have a p99 of 32 ms (14-15 stutters in 26 s, before and after

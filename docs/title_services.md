@@ -118,6 +118,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
 | After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
 | Sometimes | `Xls User.SetFriends` | empty |
+| Photo mode, SAVE / large photo ("uploading to forzamotorsport.net") | `LargeFileUpload.Create(payloadSize, overwriteOldest, userFileName)` or `Storefront.PhotoCreate(fileHeader, photoDesc, payloadSize, previewData)`, then `Xls Content.UploadContent(contentId, payloadOffset, payloadTotalSize, uploadData)` | `contentFileId`, then `payloadUploadedSize` = bytes held so far (`forza_photos.py`: kept per player under `photos/`, 2 MB each, 100 per player, in the disk quota; `DownloadContent` gives the owner's file back). Answered empty before, the game never saw its upload finish (#71); the chunk size and the answer's meaning (bytes held, not bytes of this chunk) are from the descriptors, not yet seen in a game |
 
 The game keeps one HTTP connection to the title server for all its calls. The server must
 leave it open while idle: when it closed idle connections after 15 s, the game's next call
@@ -254,6 +255,38 @@ Live server), those with a free slot only, the fullest first. The **session host
 lobby shows after this one; a vote to skip asks again). In the Horizon World the server
 answers it with a festival event when one was requested for that world
 (`server/forza_world.py`, `docs/online_vision.md` phase 2).
+
+### Find Custom Game (#61, 2026-10-15)
+
+A public custom game is found by its game type. The host's Create Custom Game makes a
+`0x2D` session; its property `0x10000030` is `0xFFFFFFFF` while the lobby is Private
+(nobody searches for that, so a private lobby is never listed) and the game type tab's
+value once Setup Game is saved as Public (Circuit Race 2, Point-to-Point 3, Street Race 4,
+Infected 5, Cat and Mouse 6, King 7, Free Roam 8, Rally 9): properties first, then
+`XSessionModify`, which republishes the record. Find Custom Game searches each tab the
+cursor rests on (procedure 5, `10000030=<type> 30008105=0 30008106=0 800A:1 800B:0`, up to
+25 results) and shows the host's QoS data (game type, track, car class, time limit). With
+two TU4 instances on a local server this worked as it was (King lobby listed, joined).
+What could hide a public lobby, fixed:
+
+- Every publication was one UDP datagram, sent once. One lost datagram left the server
+  with the Private key, and after a server restart (or a player dropped for 30 s without
+  keep-alive) the lobby was gone until it changed. The client now keeps its last record
+  (and withdrawal) and sends it again with every keep-alive (5 s), with its current
+  XNADDR: the record names the host by the server id it had when the game made the
+  session, and after a restart a joiner waited at "Attempting to join lobby" for that
+  old id. Tested: server restarted under a public King lobby; 3 s later the searcher
+  listed it and joined.
+- A search is asked up to three times, 0.4 s apart, before it answers no sessions; when
+  the server has not welcomed us it answers none at once.
+- A record is about 860 bytes (608 of them QoS data), and the answer was one datagram of
+  at most 1,400 bytes: only one lobby per game type was ever listed. The answer now spans
+  as many datagrams as it needs (up to 25 sessions; bit 15 of the count means another
+  datagram follows), and the client waits for the last. Older clients read the first.
+  Tested with a second lobby: both listed.
+
+A player whose game never hears from the server sees "No Sessions Found" too (#69: its log
+has `no answer from <server> yet` and no `signed in to`): see "Without a server answer" below.
 
 ### XP and credits
 
@@ -660,7 +693,7 @@ in the repo.
 A Forza Live server that never answers (TU4, `FORZA_SERVER` at a closed port, and at a
 UDP port that swallows packets) does not hang the game: the boot waits 3 s for the
 welcome ("no answer ... still trying"), title servers enumerate empty, stats reads answer
-defaults after 0.5 s and matchmaking searches answer no sessions after 0.5 s. Single Player
+defaults after 0.5 s and matchmaking searches answer no sessions at once. Single Player
 loads free roam; Multiplayer shows "Server Unavailable" (no XP), Find Game offers the
 default playlist (Quick Match), which hosts its own session and waits for players.
 `joining session 0000000000000000 (flags 00000702)` is not a join: it is the game's own

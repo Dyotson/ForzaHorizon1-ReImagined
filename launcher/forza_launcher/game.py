@@ -150,8 +150,11 @@ def _link_dir(link: Path, target: Path):
     except OSError:
         pass
     if paths.IS_WINDOWS:  # a junction needs no privilege
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
-                       capture_output=True, creationflags=0x08000000)
+        try:
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                           capture_output=True, creationflags=0x08000000)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def prepare_xenia(cfg: Config, refresh=False, log=print):
@@ -178,12 +181,86 @@ def prepare_xenia(cfg: Config, refresh=False, log=print):
         shutil.copytree(src, dest)
         log(f"Copied the Xenia save of {xuid} to {dest}")
     # Installed DLC lives with the normal profile; share it.
-    (home / "0000000000000000").mkdir(parents=True, exist_ok=True)
-    link = root / "0000000000000000"
-    if not os.path.lexists(link):
-        _link_dir(link, Path("..") / "0000000000000000" if not paths.IS_WINDOWS
-                  else home / "0000000000000000")
+    share_dlc(home, root, log)
     return root, xuid
+
+
+def _is_link(p: Path) -> bool:
+    return os.path.islink(p) or bool(getattr(os.path, "isjunction", lambda _p: False)(p))
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _remove_link(p: Path):
+    try:
+        os.unlink(p)
+    except OSError:
+        os.rmdir(p)      # a Windows junction or directory symlink
+
+
+def _mirror(src: Path, dst: Path) -> int:
+    """Makes `dst` hold every file of `src` (hard links where the disk allows, else copies); files
+    already there with the same size are kept. Returns the number of files added."""
+    n = 0
+    for dirpath, _dirs, files in os.walk(src):
+        rel = os.path.relpath(dirpath, src)
+        for f in files:
+            s, d = Path(dirpath) / f, dst / rel / f
+            if d.is_file() and d.stat().st_size == s.stat().st_size:
+                continue
+            d.parent.mkdir(parents=True, exist_ok=True)
+            if d.exists():
+                d.unlink()
+            try:
+                os.link(s, d)
+            except OSError:
+                shutil.copy2(s, d)
+            n += 1
+    return n
+
+
+def share_dlc(home: Path, root: Path, log=print) -> str:
+    """Makes the DLC installed in `home` (home/0000000000000000) visible to a game started on the user
+    data root `root` (a Xenia save's copy): a link (Linux), a symbolic link or junction (Windows) at
+    root/0000000000000000. Repairs a link that points elsewhere (a folder that moved) or a real folder
+    left in its place (its packages are first copied to `home`, then it is renamed, never deleted).
+    When no link can be made, mirrors the packages with hard links. Returns "linked" or "mirrored"."""
+    from . import datafolder
+    target = home / "0000000000000000"
+    target.mkdir(parents=True, exist_ok=True)
+    link = root / "0000000000000000"
+    if _same_dir(link, target):
+        return "linked"
+    how = Path("..") / "0000000000000000" if not paths.IS_WINDOWS else target
+    if os.path.lexists(link) and _is_link(link):
+        log(f"{link} pointed to another folder; linking it to {target}")
+        _remove_link(link)
+    backup = None
+    if os.path.lexists(link):
+        # A real folder: keep its packages, then move it aside.
+        datafolder.carry_dlc(root, home, log)
+        backup = link.with_name("0000000000000000.old")
+        i = 1
+        while os.path.lexists(backup):
+            backup, i = link.with_name(f"0000000000000000.old{i}"), i + 1
+        os.rename(link, backup)
+    _link_dir(link, how)
+    if _same_dir(link, target):
+        if backup is not None:
+            log(f"moved the folder {link} aside to {backup} and linked {link} to {target}")
+        return "linked"
+    if os.path.lexists(link) and _is_link(link):
+        _remove_link(link)
+    if backup is not None and not os.path.lexists(link):
+        os.rename(backup, link)
+    n = _mirror(target, link)
+    log(f"could not link {link} to {target}: mirrored the DLC there instead ({n} files)")
+    return "mirrored"
 
 
 # --- the launch plan -------------------------------------------------------------------------
@@ -224,6 +301,36 @@ def parse_env(text: str):
     return env
 
 
+def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, extra_update=False,
+                     check_dlc=True) -> list:
+    """What the player set up but the game will not find: Title Update 4 chosen but this build has
+    no update (the base game starts: no Horizon Rally, no 1000 Club), or DLC installed or chosen but
+    none in the user data folder the game is started on (Horizon Rally then says "Xbox LIVE
+    Marketplace error"; issues #65, #70)."""
+    from . import datafolder
+    out = []
+    if cfg["tu_package"].strip() and not extra_update and not (game.dir / "update").is_dir():
+        out.append(f"Title Update 4 is chosen in Setup, but this build has none ({game.dir / 'update'} is "
+                   "missing): the game starts without Horizon Rally and the 1000 Club. Open Setup and press "
+                   "Rebuild.")
+    if not check_dlc:
+        return out
+    seen = datafolder.dlc_packages(root)
+    installed = datafolder.dlc_packages(home)
+    if not seen and (installed or cfg["dlc_dir"].strip()):
+        where = f"{root / datafolder.DLC_DIR / '00000002'}"
+        out.append(f"No DLC in the game's folder ({where})" +
+                   (f", though {len(installed)} package(s) are installed in {home}" if installed else "") +
+                   ": the game starts without its DLC cars, and Horizon Rally says \"Xbox LIVE Marketplace "
+                   "error\". Open Setup and install the DLC again (step 2).")
+    elif seen:
+        bare = datafolder.dlc_without_header(root)
+        if bare:
+            out.append(f"{len(bare)} DLC package(s) have no header in {root / datafolder.DLC_DIR / 'Headers'} "
+                       f"({', '.join(bare[:3])}{' ...' if len(bare) > 3 else ''}): install the DLC again in Setup.")
+    return out
+
+
 def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print) -> LaunchPlan:
     home = cfg.data_home()
     data = cfg.game_files()
@@ -236,6 +343,16 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
 
     # The profile: your own, or a copy of your Xenia Canary save (play.sh --xenia).
     log_file = home / "forza.log"
+    if write and paths.IS_WINDOWS:
+        # DLC an older launcher (or the game, started without --user_data_root) installed in
+        # Documents\forza while the launcher's folder has none (issues #65, #70).
+        from . import datafolder
+        if not datafolder.dlc_packages(home):
+            try:
+                datafolder.carry_dlc(datafolder.game_default_data_home(), home, log)
+            except OSError as e:
+                log(f"could not copy the DLC from {datafolder.game_default_data_home()}: {e}")
+    root = home
     if cfg.profile["mode"] == "xenia":
         if write:
             root, xuid = prepare_xenia(cfg, refresh_xenia, log)
@@ -283,9 +400,10 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
             notes.append("No custom server address set: starting offline.")
         unset.append("FORZA_SERVER")
 
-    if (game.dir / "update").is_dir() and not any(a.startswith("--update_data_root") for a in
-                                                  split_args(cfg.advanced.get("extra_args", ""))):
+    extra_update = any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", "")))
+    if (game.dir / "update").is_dir() and not extra_update:
         args.append(f"--update_data_root={game.dir / 'update'}")  # the title update's files
+    notes += content_warnings(cfg, game, home, root, extra_update, check_dlc=write or root.exists())
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
 

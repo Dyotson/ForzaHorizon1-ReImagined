@@ -542,6 +542,24 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   `hints_tu4/rexcrt.toml` (base: `hints/rexcrt.toml`) make the codegen emit host
   setjmp/longjmp (a codegen run, 28 files change). Needs no readback setting. Why the
   decode fails is open: the game now takes its error path instead of crashing.
+- 2026-10-15: **Crash after buying the first car, then endless loading (#66, #63)**, one
+  player (Windows, RX 6700 XT, v0.1.7, TU4 + DLC, `frame_rate` 240). The log: a new
+  career, the "Take Her for a Spin!" achievement (156, a car bought in the Autoshow), 5 s
+  later a guest read of 0x4 on the render thread (call chain `8249E118 824A1E6C 8247F9E4
+  82616BFC 8261E1C0 82B3A4FC`, TU4: the render thread's command list `sub_8247F818` runs
+  `sub_824A1E40`, which waits on one of 12 slots and applies its state with
+  `sub_824469B0(device, slot+0x14, 0)`); every later start loads the career straight
+  away and stops right after `joining session 0000000000000000`, the loader thread
+  silent. Not the libjpeg longjmp (that fix is in v0.1.7). Not reproduced on Linux
+  (TU4, scratch profiles, one game at a time): at 240 a new profile plays the intro and
+  the opening drive; the Xenia save buys a car in the Autoshow (also at 30 and 60),
+  returns to free roam with it and loads Single Player after a restart, also after a
+  hard kill 5 s after the purchase. 240 is not the cause seen here. Open: the player's
+  save folder (`ForzaProfile`) would show whether the load hang comes from the save.
+  The fault line now names the pc as `forza.exe+0xOFFSET` on Windows, with a host stack
+  (`src/debug/fault_guard.cpp`), so the next Windows crash log maps onto the executable.
+  Seen on the way, every rate: the thumbnail made at a purchase is nearly black
+  (`Thumbnail_46.xdc`, 23,734 bytes).
 
 ## Debugging recipes
 
