@@ -1,4 +1,5 @@
-// forza - a car's picture is rendered with real pipelines (#74, docs/rendering.md).
+// forza - a car's picture and its livery are rendered with real pipelines (#74, #77,
+// docs/rendering.md).
 //
 // The game renders a car's picture once (the purchase, Car Select, the garage), reads the
 // resolve back on the CPU and saves it in the profile (ForzaProfile/Thumbnails). With
@@ -13,6 +14,14 @@
 // real pipeline of each draw, for kWindow. Other draws in that time wait for their pipeline
 // too, as with async_shader_compilation=false; with a warm cache nothing waits.
 // FORZA_THUMB_SYNC=0 switches the hook off.
+//
+// The livery (paint, vinyls and decals) is drawn once into the car's 1024x1024 textures when
+// the car is loaded, and the same skipped draws left those textures without some of their
+// layers for as long as the car stayed loaded (#77: with an empty cache the BMW M3 GTR at
+// the festival lost the white of its left front wing). sub_82C8FE60 sets up each livery
+// element render (render scenario "RenderLiveryElements" or "...Highlight"; called 10 times
+// within 1 ms at the festival load), and holds the same window. FORZA_LIVERY_SYNC=0 switches
+// that hook off.
 
 #include "../platform/guest_addr.h"
 
@@ -31,12 +40,9 @@ namespace {
 
 constexpr auto kWindow = std::chrono::seconds(8);
 
-bool Enabled() {
-  static const bool on = [] {
-    const char* v = std::getenv("FORZA_THUMB_SYNC");
-    return !(v && std::strcmp(v, "0") == 0);
-  }();
-  return on;
+bool EnvOn(const char* name) {
+  const char* v = std::getenv(name);
+  return !(v && std::strcmp(v, "0") == 0);
 }
 
 void SetSync(bool on) {
@@ -64,6 +70,14 @@ void HoldSync() {
 
 extern "C" REX_FUNC(__imp__sub_82546460);
 extern "C" REX_FUNC(sub_82546460) {
-  if (Enabled()) HoldSync();
+  static const bool on = EnvOn("FORZA_THUMB_SYNC");
+  if (on) HoldSync();
   __imp__sub_82546460(ctx, base);
+}
+
+extern "C" REX_FUNC(__imp__sub_82C8FE60);
+extern "C" REX_FUNC(sub_82C8FE60) {
+  static const bool on = EnvOn("FORZA_LIVERY_SYNC");
+  if (on) HoldSync();
+  __imp__sub_82C8FE60(ctx, base);
 }

@@ -311,3 +311,33 @@ Checked at scale 2 in the same photo mode view: lamps lit as at scale 1. The tex
 scaled resolves (1280x720 photo and depth targets, the bloom chain) keep their scaled size.
 The red line on the car in the report was not reproduced (it may be the same fault on another
 texture: any streamed texture whose tail overlaps a resolve range is affected the same way).
+
+**Follow-up checks (2026-10-16).** Headlight beam on the ground in photo mode: not
+reproduced. Same save, Zonda R at dusk, scales 1, 2 and 3 (scale 2 and 3 also with the
+reporter's AF 16x and FXAA extreme): the default photo mode view, the camera pitched down
+to the ground in front of the car (-41 to -43 degrees), turned away from the car (yaw 318)
+and the photo taken from there: the lit patch is there at every scale, with the same
+brightness within 1-2 levels (8x9 grid of the screenshots). The bloom over the car's nose in
+the pitched-down view depends on the pitch (it shows at -41.4 degrees at scale 2 and 3, not
+at -42 or -43), not on the scale.
+
+A car's livery lost layers with an empty pipeline cache (found while looking for the red
+line). At the festival (the BMW M3 GTR the 1000 Club flow ends in, photo mode default view)
+the first run with a new cache showed the left front wing blue where it is white in every
+later run. It first showed at scale 2 only because that was the first festival load with
+that cache: an empty `--cache_root` and `MESA_SHADER_CACHE_DIR` show it at scale 1 too.
+RenderDoc: the car's two 1024x1024 RGBA8 livery textures (6 mips, 2048x2048 at scale 2)
+differ from a good run in a few areas (mean difference 42-48/255 in the area of the wing
+shape), the same in every mip, so the layer was never drawn (not a resolve fault). The game
+draws the livery once when the car is loaded, so the draws `async_shader_compilation` skips
+for a placeholder pipeline (#74) are missing for as long as the car stays loaded.
+`--async_shader_compilation=false` with an empty cache: correct.
+
+Fix: `src/hooks/thumbnail_sync.cpp` also holds `sync_pipeline_creation` (patch 0051) for 8 s
+from each call of `sub_82C8FE60` (TU4 `sub_82D50EA0`), which sets up a livery element render
+(render scenario `RenderLiveryElements` or `RenderLiveryElementsHighlight`; 10 calls within
+1 ms at the festival load, none in free roam or photo mode afterwards). Empty cache with the
+fix: wing white at scale 1 and 2, the same as a warm cache. `FORZA_LIVERY_SYNC=0` switches the
+hook off. The red line in the report (a red VW Corrado, not in the test save) was not
+reproduced on the cars at hand (Zonda R, M3 GTR at scale 2, AF 16x, FXAA extreme); a livery
+layer missing in the same way is a likely cause.
