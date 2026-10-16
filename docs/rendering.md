@@ -250,3 +250,35 @@ artifact detector. Screenshots and the RenderDoc capture are retained locally.
 
 This correction is independent of DLSS and does not establish that every moving-scene
 artifact is resolved.
+
+## The car's picture with an empty pipeline cache (#74, 2026-10-16)
+
+Buying a car saved its picture (`ForzaProfile/Thumbnails/Thumbnail_N.xdc`, 768x288) nearly
+black: 23-33 KB, mean luma under 2/255, only the narrow side view on the right edge and no
+car (a correct one is 80-110 KB with the 3/4 view on the left, `tools/xdc_decode.py`).
+Cause: the SDK skips a draw whose pipeline is still a placeholder
+(`async_shader_compilation`, Vulkan `IssueDraw`: the frame is not shown, but a render made
+once keeps the hole). With an empty pipeline cache (a new install's first purchase) the
+showroom and the picture need dozens of new pipelines, so the car's draws (MSAA 2x, scissor
+1216x256, about 90 draws in the run below) were skipped and the picture was saved without them.
+
+Test (TU4, Linux, RADV, 60 fps, headless gamescope, scratch copy of the pristine save, buy the
+F50 GT from the 1000 Club car list; cold = empty `--cache_root` and `MESA_SHADER_CACHE_DIR`):
+
+| Run | Picture |
+| --- | --- |
+| cold cache, async on (before) | 27,109 bytes, mean 0.8: side view only |
+| warm cache of a run with other cars (M6 Coupe, new pipelines) | 33,130 bytes, mean 1.2: same fault |
+| cold cache, `--async_shader_compilation=false` | 93,116 bytes, mean 5.0: correct |
+| cold cache, with the fix | 93,116 bytes, mean 5.0: identical to the previous row |
+| same cache again (warm), with the fix | 93,116 bytes, mean 5.0 |
+
+Fix: SDK patch 0051 adds `sync_pipeline_creation` (draws wait for their real pipeline while
+it is set) and `src/hooks/thumbnail_sync.cpp` sets it for 8 s from the guest call that starts
+a picture (`sub_82546460`, TU4 `sub_825B63B8`; its callee `sub_82546168` is only the save
+setup). A window by time and not by the call: the guest returns long before the GPU reaches
+the render (270 ms later in the cold run, behind about 1,400 draws of the new scene), so a
+setting cleared at the return was off again when the draws came. Draws in those 8 s wait for
+their pipeline as with `async_shader_compilation=false` (a stutter only while pipelines are
+new); a warm cache waits for nothing. `FORZA_THUMB_SYNC=0` switches the hook off. Direct3D 12
+(`--gpu_backend=d3d12`) is not covered.

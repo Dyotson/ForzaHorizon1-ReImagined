@@ -20,6 +20,8 @@
 #define __imp__sub_82502DD8 __imp__sub_8256D008
 #define sub_82502E18 sub_8256D048
 #define __imp__sub_82502E18 __imp__sub_8256D048
+#define sub_82546460 sub_825B63B8
+#define __imp__sub_82546460 __imp__sub_825B63B8
 #define sub_825548A0 sub_825D3860  // check
 #define __imp__sub_825548A0 __imp__sub_825D3860
 #define sub_825723B0 sub_825E7B40
