@@ -133,6 +133,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         # The same port as a tunnel publishes it (it differs from --http-port): told to
         # players that arrive through a trusted proxy.
         self.proxy_http_port = 0
+        self.invites = True  # deliver game invites (--no-invites: log and drop them)
         self.dropped_packets = 0  # over a player's rate limit
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
@@ -313,6 +314,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         name = src.name.encode()
         for peer in self.room_peers(src):
             if peer.xuid == target:
+                if not self.invites:
+                    log.info("invite #%d %r -> #%d %r dropped (invites off)", src.id, src.name,
+                             peer.id, peer.name)
+                    return
                 log.info("invite #%d %r -> #%d %r", src.id, src.name, peer.id, peer.name)
                 self.send(peer.addr, INVITE, struct.pack(">IQB", src.id, src.xuid, len(name)) +
                           name + session)
@@ -721,6 +726,12 @@ async def main():
                         help="the TCP port a tunnel publishes --http-port on, told to players "
                              "arriving through a trusted proxy (default: the same port; env "
                              "FORZA_PROXY_HTTP_PORT)")
+    parser.add_argument("--no-invites", action="store_true",
+                        default=os.environ.get("FORZA_INVITES", "1") == "0",
+                        help="log and drop game invites instead of delivering them: games up to "
+                             "v0.1.12 accept every invite by themselves and their Invite sends it "
+                             "to every player online, so one press pulls everybody into that "
+                             "party (#90; env FORZA_INVITES=0)")
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)
@@ -743,6 +754,7 @@ async def main():
     if args.http_port:
         server.http_port = args.http_port
         server.proxy_http_port = args.proxy_http_port
+        server.invites = not args.no_invites
         await asyncio.start_server(lambda r, w: http_handler(server, r, w), args.host, args.http_port,
                                  limit=1 << 15)
         log.info("title servers and status page on http://%s:%d/", args.host, args.http_port)
