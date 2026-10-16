@@ -51,6 +51,83 @@ Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCAL
 The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 (`%APPDATA%\ForzaReImagined\launcher.json`).
 
+## Launcher updates
+
+**About > Launcher updates** checks the project's latest stable GitHub release and offers
+the matching x86-64 Windows installer, Linux archive or Flatpak bundle. Packaged launchers
+check once in the background each time they open; turn this off with **Check for updates
+when the launcher opens**. An available update adds an **Update available** link in the
+sidebar. Offline or rate-limited checks leave Play and Setup usable; retry under About.
+Checking does not start a download. On packaged Linux launchers, **Update and restart**
+downloads, verifies, installs and restarts in one action. Finish any task and close the game first.
+
+Downloads go to `updates/<tag>/` under the launcher's configuration directory. The updater
+requires the release asset's GitHub SHA-256 digest and expected size, writes a partial file,
+and exposes the completed download only after both match. Failed or cancelled partial
+downloads are removed; retry starts fresh. A verified completed download can be reused.
+Assets without a digest, a matching platform, or a URL under this repository's release
+are not offered; **Releases** remains available for manual installation. Only stable
+three-part versions are compared; development versions are reported without recommending
+an automatic upgrade or downgrade.
+
+Installation behavior:
+
+* **Windows:** after downloading, choose **Open installer**, close the launcher and follow
+  the installer. Packaged launchers pass their current install directory, including custom locations.
+* **Linux archive:** **Update and restart** rechecks the downloaded archive's size and digest,
+  extracts it safely into a private sibling of the install folder, and checks the new executable's
+  version. A detached helper waits for the current launcher to exit, keeps the old folder as
+  `.forza-update-<id>/previous` beside the installation, and moves the new folder into the same
+  location. It checks the executable again at that location, then restarts. A failed replacement
+  or startup check restores and restarts the previous copy. The helper is copied outside the
+  installed bundle, so moving that bundle does not remove the helper. It uses a file lock to
+  exclude another updater and refuses a changed installation. The previous copy remains as
+  a recovery backup; old backups may be removed once the new launcher works. The directory
+  containing the launcher must be writable by the player. If the configured game, data or
+  configuration folder is inside the launcher folder, move it using Setup before updating.
+* **Flatpak:** **Download update** saves a size- and SHA-256-verified bundle under the system's
+  Downloads folder, in `ForzaHorizon1-ReImagined/<tag>/`. The card shows the exact quoted
+  command to install it for the current user: `flatpak install --user <bundle>`. Close the
+  launcher, run that command in a host terminal, then reopen the launcher. **Open download
+  folder** opens the folder through the desktop portal; the command remains visible if that
+  fails. The manifest grants `xdg-download` write access for these bundles, while home and
+  game media remain read-only. It grants no host-command permission, and the launcher never
+  starts the Flatpak installer or restarts the sandbox itself. System installations can be
+  managed manually through the host's software tools or terminal.
+
+During installation, Play, Setup and Settings are disabled, and closing waits for the
+installation to finish. Preparation/installation errors keep the existing window usable.
+Archive helper logs go to `update-install.log` in the configuration
+folder. On restart, About displays the installation result from `update-result.txt`; this
+message is consumed once and is not overwritten by an immediate automatic release check.
+An archive helper that cannot observe the old launcher exiting within 60 seconds aborts
+without replacing it.
+
+Settings, saves, DLC and the player's game files remain in their existing user folders.
+The existing build ID logic marks the game stale when the launcher/project version changes;
+use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
+checks and can open a downloaded package, but never replace the checkout or run Git commands.
+
+Validation: `python3 -m unittest discover -s launcher -p 'test_*.py'` covers release selection,
+version comparison, download integrity, cancellation/retries, real archive replacement and
+rollback with fixture launchers, and the detached helper waiting for its parent to exit.
+With PySide6 installed, offscreen UI tests cover automatic archive download/install,
+restart, install failure recovery, shutdown during a request or installation, and Windows
+installer invocation. Flatpak UI tests cover the Downloads destination, shell quoting,
+manual instructions, failed integrity checks, and preservation of the instructions when
+opening the folder fails. They assert that downloading and opening the folder never invokes
+host commands, installs the bundle, or closes the launcher. The suite passes 72 tests with
+9 game-fixture tests skipped. Native Windows installation still requires platform testing.
+
+Linux archive platform validation used an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb and
+real PyInstaller packages. Test releases used versions 0.1.0 and 0.1.1 with local HTTP release
+metadata/downloads and normal integrity checks. The game itself was not included. Tests
+verified a custom installation path with spaces, a visible replacement GUI, retained
+settings/save data, and restoration of the previous working GUI after a deliberately broken
+replacement. The current Flatpak manual-download flow is also exercised with local HTTP
+fixtures and rendered Qt UI; no native Flatpak sandbox rerun has been performed since
+removing host execution.
+
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and
@@ -268,7 +345,7 @@ server, the CI-built SDK overlay, licenses; no game code, data or generated code
 `flatpak/stage/` (git-ignored). `paths.IN_FLATPAK` (FLATPAK_ID) adds the extension's `bin` to PATH and
 switches Qt to its own file dialogs (the portal would hand out the one picked file, losing a Games on
 Demand package's `<name>.data`). Permissions: wayland, fallback-x11, pulseaudio, network, `--device=all`,
-read-only `home`, `/media`, `/run/media`, `/mnt` (other disks: `flatpak override --user --filesystem=PATH:ro`).
+read-only `home`, `/media`, `/run/media`, `/mnt`, plus writable `xdg-download` for verified launcher bundles (other disks: `flatpak override --user --filesystem=PATH:ro`).
 Saves, config, extracted game and build live in `~/.var/app/<id>/`. New CLI: `forza-launcher --extract PACKAGE`.
 
 Tested (this host, Fedora Atomic, user installation): the app builds and installs; `--extract` of the

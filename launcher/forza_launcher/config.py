@@ -16,6 +16,7 @@ FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
 def _default():
     return {
         "version": 1,
+        "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
         "dlc_dir": "",            # folder of DLC packages (4D5309C9/00000002)
