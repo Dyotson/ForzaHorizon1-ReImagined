@@ -23,6 +23,8 @@ NVIDIA, AMD, INTEL, DECK = "nvidia", "amd", "intel", "deck"
 VENDORS = [NVIDIA, AMD, INTEL, DECK]
 LABELS = {NVIDIA: "NVIDIA", AMD: "AMD", INTEL: "Intel", DECK: "Steam Deck"}
 PCI_VENDOR = {0x10DE: NVIDIA, 0x1002: AMD, 0x1022: AMD, 0x8086: INTEL}
+# the value of the game's gpu_vendor setting (rexglue SDK patch 0054) for each vendor the game can be told
+SDK_VENDORS = {NVIDIA: "nvidia", AMD: "amd", INTEL: "intel"}
 DECK_BOARDS = {"jupiter", "galileo"}  # LCD and OLED Steam Deck (DMI board name)
 # Adapters that are not a GPU the game could use
 _IGNORED = ("microsoft basic", "remote", "virtual", "parsec", "citrix", "vmware", "virtio", "hyper-v",

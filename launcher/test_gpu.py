@@ -179,5 +179,55 @@ class ConfigFlow(unittest.TestCase):
                 c.detect_gpu()
 
 
+class GameVendorArgument(unittest.TestCase):
+    """The game is told which card to use (#89): --gpu_vendor from the Settings choice."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        t = Path(self.tmp.name)
+        self.cfg = Config(t / "launcher.json")
+        self.cfg.advanced["data_root"] = str(t / "home")
+        self.cfg.online["mode"] = "offline"
+        from forza_launcher import game
+        self.game = game
+        self.install = game.GameInstall(t / "rt", t / "rt" / game.EXE)
+
+    def plan_args(self):
+        return self.game.build_plan(self.cfg, self.install, write=False, log=lambda _t: None).argv
+
+    def test_the_chosen_vendor_is_passed(self):
+        for vendor, want in [(gpu.NVIDIA, "nvidia"), (gpu.AMD, "amd"), (gpu.INTEL, "intel")]:
+            self.cfg.gpu["vendor"] = vendor
+            self.assertIn(f"--gpu_vendor={want}", self.plan_args())
+
+    def test_other_deck_and_unknown_pass_nothing(self):
+        for vendor in ("", gpu.DECK, "voodoo"):
+            self.cfg.gpu["vendor"] = vendor
+            self.assertFalse([a for a in self.plan_args() if a.startswith("--gpu_vendor")], vendor)
+
+    def test_the_player_own_choice_wins(self):
+        self.cfg.gpu["vendor"] = gpu.NVIDIA
+        self.cfg.advanced["extra_args"] = "--gpu_vendor=intel"
+        self.assertEqual([a for a in self.plan_args() if a.startswith("--gpu_vendor")], ["--gpu_vendor=intel"])
+        self.cfg.advanced["extra_args"] = "--vulkan_device=1"
+        self.assertFalse([a for a in self.plan_args() if a.startswith("--gpu_vendor")])
+        self.cfg.advanced["extra_args"] = ""
+        self.cfg.advanced["extras_toml"] = 'gpu_vendor = "amd"'
+        self.assertFalse([a for a in self.plan_args() if a.startswith("--gpu_vendor")])
+        self.cfg.advanced["extras_toml"] = "d3d12_adapter = 1"
+        self.assertFalse([a for a in self.plan_args() if a.startswith("--gpu_vendor")])
+        self.cfg.advanced["extras_toml"] = ""
+        self.cfg.settings["vulkan_device"] = 2
+        self.assertFalse([a for a in self.plan_args() if a.startswith("--gpu_vendor")])
+        self.cfg.settings["vulkan_device"] = -1
+        self.assertTrue([a for a in self.plan_args() if a.startswith("--gpu_vendor")])
+
+    def test_laptop_with_intel_and_nvidia_detects_nvidia_and_passes_it(self):
+        names = ["Intel(R) UHD Graphics 630", "NVIDIA GeForce GTX 1050"]   # the laptop of #89
+        self.cfg.gpu["vendor"] = gpu.vendor_from_adapters(names)[0]
+        self.assertIn("--gpu_vendor=nvidia", self.plan_args())
+
+
 if __name__ == "__main__":
     unittest.main()

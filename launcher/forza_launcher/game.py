@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, paths
+from . import TITLE_ID, cleanenv, gpu, paths
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -340,6 +340,27 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
     return out
 
 
+def gpu_vendor_arg(cfg: Config, extra_args=()) -> str:
+    """--gpu_vendor=nvidia|amd|intel for the graphics card chosen in Settings (#89): a laptop with an
+    Intel iGPU and a GeForce otherwise started on the Intel one (Vulkan 1.2, old driver, device lost).
+    Nothing when the choice is "Other" or the Steam Deck (one GPU) or the player set it themselves
+    (extra flags, other settings, or a device index, which wins in the game anyway); the game then
+    prefers a discrete GPU over an integrated one."""
+    vendor = cfg.gpu_vendor()
+    if vendor not in gpu.SDK_VENDORS:
+        return ""
+    mine = ("gpu_vendor", "vulkan_device", "d3d12_adapter")
+    if int(cfg.settings.get("vulkan_device", -1)) >= 0:
+        return ""
+    for a in extra_args:
+        if a.lstrip("-").split("=", 1)[0] in mine:
+            return ""
+    for line in cfg.advanced.get("extras_toml", "").splitlines():
+        if line.split("=", 1)[0].strip() in mine:
+            return ""
+    return f"--gpu_vendor={gpu.SDK_VENDORS[vendor]}"
+
+
 def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print) -> LaunchPlan:
     home = cfg.data_home()
     data = cfg.game_files()
@@ -417,6 +438,9 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         env["FORZA_PAD_PER_USER"] = "1"
 
     extra = split_args(cfg.advanced.get("extra_args", ""))
+    vendor_arg = gpu_vendor_arg(cfg, extra)
+    if vendor_arg:
+        args.append(vendor_arg)
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
     args += extra

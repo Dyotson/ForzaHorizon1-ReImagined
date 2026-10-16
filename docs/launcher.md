@@ -222,6 +222,21 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
   and `Win32_BaseBoard`), falling back to `wmic`; the vendor comes from the adapter name or the `VEN_xxxx` of its
   PNP id; Microsoft Basic, remote and virtual adapters are ignored. With several cards (laptop iGPU + dGPU) the
   discrete one wins (NVIDIA, then AMD, then Intel). `FORZA_GPU=nvidia|amd|intel|deck` overrides.
+* **Which card the game runs on** (#89): a laptop with an Intel UHD 630 and a GTX 1050 started the game on the Intel
+  GPU (Vulkan 1.2, an old driver: device lost at the intro). The SDK already had `vulkan_device` / `d3d12_adapter`
+  (an index, -1 = automatic), which the launcher cannot know, so the SDK patch `0054-gpu-vendor-and-discrete-preference`
+  adds the `gpu_vendor` setting (`nvidia`, `amd`, `intel` or a PCI id such as `0x10de`; empty = automatic) and a better
+  automatic choice. Vulkan (`src/ui/vulkan/vulkan_provider.cpp`) orders the physical devices by: the `gpu_vendor`
+  match, the supported features (the existing `vulkan_prefer_*` cvars), then the device type (discrete, integrated,
+  virtual, software), then the driver's order. Direct3D 12 (`src/ui/d3d12/d3d12_provider.cpp`) takes among the
+  adapters that can create a feature level 11_0 device the `gpu_vendor` match, else the one with the most dedicated
+  video memory (an iGPU has little of its own), else the lowest index. An index (`vulkan_device >= 0`,
+  `d3d12_adapter >= 0` or -2 for WARP) still wins; a vendor with no such card logs a warning and chooses
+  automatically. The chosen device is logged once (`Vulkan device in use: 1: NVIDIA GeForce GTX 1050 (vendor
+  0x10DE, ..., discrete, API 1.3.x)`; Direct3D 12: `DXGI adapter in use: ...`). The launcher passes
+  `--gpu_vendor=nvidia|amd|intel` for the card chosen in Settings (`game.gpu_vendor_arg`); "Other", "Steam Deck",
+  or a `gpu_vendor` / `vulkan_device` / `d3d12_adapter` of the player's own (extra flags, other settings,
+  the Vulkan device setting) pass nothing. The patch is number 0054 because PR #88 may take 0053.
 * **Defaults**: a new launcher gets the vendor's preset as its first-run values (backend, render scale, upscaling
   filter, frame rate, shader switches). A launcher that already holds settings keeps every one: it only learns the
   vendor. Changing the vendor asks "Use the recommended settings for X now?" (No changes only the markings);
@@ -238,7 +253,7 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 | Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
 
 Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
-valid for the schema, warnings, the first-run / existing-settings / player-choice flows).
+valid for the schema, warnings, the first-run / existing-settings / player-choice flows, the `--gpu_vendor` argument).
 
 ## Release and CI (`.github/workflows/`)
 

@@ -1,0 +1,359 @@
+diff --git a/include/rex/ui/gpu_vendor.h b/include/rex/ui/gpu_vendor.h
+new file mode 100644
+index 0000000..18d127a
+--- /dev/null
++++ b/include/rex/ui/gpu_vendor.h
+@@ -0,0 +1,50 @@
++/**
++ * Choosing a graphics card by vendor (the gpu_vendor cvar), shared by the Vulkan and Direct3D 12
++ * providers. ReXGlue-Forza addition.
++ */
++
++#pragma once
++
++#include <algorithm>
++#include <cctype>
++#include <cstdint>
++#include <cstdlib>
++#include <string>
++
++namespace rex::ui {
++
++enum GpuVendorId : uint32_t {
++  kGpuVendorNone = 0,
++  kGpuVendorAmd = 0x1002,
++  kGpuVendorNvidia = 0x10DE,
++  kGpuVendorIntel = 0x8086,
++};
++
++// The PCI vendor id named by the gpu_vendor cvar: "nvidia", "amd", "intel" or a hex id such as
++// "0x10de". 0 when empty, "auto" or not understood (any card).
++inline uint32_t PreferredGpuVendorId(std::string text) {
++  text.erase(std::remove_if(text.begin(), text.end(), [](unsigned char c) { return std::isspace(c); }),
++             text.end());
++  std::transform(text.begin(), text.end(), text.begin(),
++                 [](unsigned char c) { return char(std::tolower(c)); });
++  if (text.empty() || text == "auto") {
++    return kGpuVendorNone;
++  }
++  if (text == "nvidia") {
++    return kGpuVendorNvidia;
++  }
++  if (text == "amd" || text == "ati" || text == "radeon") {
++    return kGpuVendorAmd;
++  }
++  if (text == "intel") {
++    return kGpuVendorIntel;
++  }
++  char* end = nullptr;
++  const unsigned long value = std::strtoul(text.c_str(), &end, 16);
++  if (end != text.c_str() && *end == '\0' && value > 0 && value <= 0xFFFF) {
++    return uint32_t(value);
++  }
++  return kGpuVendorNone;
++}
++
++}  // namespace rex::ui
+diff --git a/src/ui/d3d12/d3d12_provider.cpp b/src/ui/d3d12/d3d12_provider.cpp
+index bf8252b..abaae16 100644
+--- a/src/ui/d3d12/d3d12_provider.cpp
++++ b/src/ui/d3d12/d3d12_provider.cpp
+@@ -14,6 +14,7 @@
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
++#include <rex/ui/gpu_vendor.h>
+ #include <rex/ui/d3d12/d3d12_immediate_drawer.h>
+ #include <rex/ui/d3d12/d3d12_presenter.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+@@ -29,8 +30,11 @@ REXCVAR_DEFINE_BOOL(d3d12_break_on_error, false, "UI/D3D12",
+ REXCVAR_DEFINE_BOOL(d3d12_break_on_warning, false, "UI/D3D12",
+                     "Break on Direct3D 12 validation warnings");
+ 
++REXCVAR_DECLARE(std::string, gpu_vendor);
++
+ REXCVAR_DEFINE_INT32(d3d12_adapter, -1, "UI/D3D12",
+-                     "Index of the DXGI adapter to use (-1 for any physical, -2 for WARP)")
++                     "Index of the DXGI adapter to use (-1 for the gpu_vendor one, else the one with "
++                     "the most dedicated video memory, -2 for WARP)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ 
+ REXCVAR_DEFINE_INT32(d3d12_queue_priority, 1, "UI/D3D12",
+@@ -250,32 +254,64 @@ bool D3D12Provider::Initialize() {
+     return false;
+   }
+ 
+-  // Choose the adapter.
++  // Choose the adapter. An index (d3d12_adapter >= 0) or WARP (-2) is taken as given. Otherwise the
++  // adapters that can create a device compete: the vendor asked for with gpu_vendor first, then the
++  // one with the most dedicated video memory (a laptop's integrated GPU is often listed first and
++  // has little of its own, #89), then the lowest index.
++  const int32_t wanted_adapter = REXCVAR_GET(d3d12_adapter);
++  const uint32_t wanted_vendor = rex::ui::PreferredGpuVendorId(REXCVAR_GET(gpu_vendor));
+   uint32_t adapter_index = 0;
++  uint32_t chosen_index = 0;
+   IDXGIAdapter1* adapter = nullptr;
+-  while (dxgi_factory->EnumAdapters1(adapter_index, &adapter) == S_OK) {
+-    DXGI_ADAPTER_DESC1 adapter_desc;
+-    if (SUCCEEDED(adapter->GetDesc1(&adapter_desc))) {
+-      if (SUCCEEDED(pfn_d3d12_create_device_(adapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device),
+-                                             nullptr))) {
+-        if (REXCVAR_GET(d3d12_adapter) >= 0) {
+-          if (adapter_index == REXCVAR_GET(d3d12_adapter)) {
+-            break;
+-          }
+-        } else if (REXCVAR_GET(d3d12_adapter) == -2) {
+-          if (adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+-            break;
+-          }
+-        } else {
+-          if (!(adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+-            break;
++  {
++    IDXGIAdapter1* candidate = nullptr;
++    bool vendor_found = false;
++    uint32_t best_vendor_match = 0;
++    SIZE_T best_memory = 0;
++    while (dxgi_factory->EnumAdapters1(adapter_index, &candidate) == S_OK) {
++      DXGI_ADAPTER_DESC1 desc;
++      bool keep = false;
++      if (SUCCEEDED(candidate->GetDesc1(&desc)) &&
++          SUCCEEDED(pfn_d3d12_create_device_(candidate, D3D_FEATURE_LEVEL_11_0,
++                                             _uuidof(ID3D12Device), nullptr))) {
++        const bool software = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
++        REXLOG_INFO("DXGI adapter {}: vendor 0x{:04X}, device 0x{:04X}, {} MB dedicated{}",
++                    adapter_index, desc.VendorId, desc.DeviceId,
++                    uint64_t(desc.DedicatedVideoMemory >> 20), software ? ", software" : "");
++        if (wanted_adapter >= 0) {
++          keep = adapter_index == uint32_t(wanted_adapter);
++        } else if (wanted_adapter == -2) {
++          keep = software;
++        } else if (!software) {
++          const uint32_t vendor_match = wanted_vendor && desc.VendorId == wanted_vendor ? 1 : 0;
++          vendor_found = vendor_found || vendor_match;
++          keep = !adapter || vendor_match > best_vendor_match ||
++                 (vendor_match == best_vendor_match && desc.DedicatedVideoMemory > best_memory);
++          if (keep) {
++            best_vendor_match = vendor_match;
++            best_memory = desc.DedicatedVideoMemory;
+           }
+         }
+       }
++      if (keep) {
++        if (adapter) {
++          adapter->Release();
++        }
++        adapter = candidate;
++        chosen_index = adapter_index;
++        if (wanted_adapter >= 0 || wanted_adapter == -2) {
++          break;
++        }
++      } else {
++        candidate->Release();
++      }
++      candidate = nullptr;
++      ++adapter_index;
++    }
++    if (wanted_vendor && wanted_adapter < 0 && !vendor_found) {
++      REXLOG_WARN("gpu_vendor '{}' matches no Direct3D 12 adapter; choosing automatically",
++                  REXCVAR_GET(gpu_vendor));
+     }
+-    adapter->Release();
+-    adapter = nullptr;
+-    ++adapter_index;
+   }
+   if (adapter == nullptr) {
+     REXLOG_ERROR(
+@@ -298,8 +334,8 @@ bool D3D12Provider::Initialize() {
+     char* adapter_name_mb = reinterpret_cast<char*>(alloca(adapter_name_mb_size));
+     if (WideCharToMultiByte(CP_UTF8, 0, adapter_desc.Description, -1, adapter_name_mb,
+                             adapter_name_mb_size, nullptr, nullptr) != 0) {
+-      REXGPU_INFO("DXGI adapter: {} (vendor 0x{:04X}, device 0x{:04X})", adapter_name_mb,
+-                  adapter_desc.VendorId, adapter_desc.DeviceId);
++      REXGPU_INFO("DXGI adapter in use: {}: {} (vendor 0x{:04X}, device 0x{:04X})", chosen_index,
++                  adapter_name_mb, adapter_desc.VendorId, adapter_desc.DeviceId);
+     }
+   }
+ 
+diff --git a/src/ui/vulkan/vulkan_provider.cpp b/src/ui/vulkan/vulkan_provider.cpp
+index 9eeb902..3f6f526 100644
+--- a/src/ui/vulkan/vulkan_provider.cpp
++++ b/src/ui/vulkan/vulkan_provider.cpp
+@@ -14,6 +14,7 @@
+ 
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
++#include <rex/ui/gpu_vendor.h>
+ #include <rex/ui/vulkan/immediate_drawer.h>
+ #include <rex/ui/vulkan/presenter.h>
+ #include <rex/ui/vulkan/provider.h>
+@@ -25,6 +26,13 @@ REXCVAR_DEFINE_BOOL(vulkan_validation_enabled, false, "UI/Vulkan",
+ REXCVAR_DEFINE_INT32(vulkan_device, -1, "UI/Vulkan", "Vulkan device index (-1 for auto selection)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+ 
++REXCVAR_DEFINE_STRING(
++    gpu_vendor, "", "GPU",
++    "Graphics card to use: nvidia, amd, intel or a PCI vendor id such as 0x10de (Vulkan and "
++    "Direct3D 12). Empty prefers a discrete GPU over an integrated one. vulkan_device / "
++    "d3d12_adapter name an index and win over this.")
++    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
++
+ REXCVAR_DEFINE_BOOL(vulkan_prefer_geometry_shader, true, "UI/Vulkan",
+                     "Prefer physical devices supporting geometryShader when auto-selecting")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -83,24 +91,30 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+   }
+ 
+   if (!provider->vulkan_device_) {
+-    std::vector<VkPhysicalDevice> physical_devices_ordered = physical_devices;
+-    bool prefer_geometry_shader = REXCVAR_GET(vulkan_prefer_geometry_shader);
+-    bool prefer_fragment_stores = REXCVAR_GET(vulkan_prefer_fragment_stores_and_atomics);
+-    bool prefer_vertex_stores = REXCVAR_GET(vulkan_prefer_vertex_pipeline_stores_and_atomics);
+-    bool prefer_fill_mode_non_solid = REXCVAR_GET(vulkan_prefer_fill_mode_non_solid);
+-    if (with_gpu_emulation && physical_devices.size() > 1 &&
+-        (prefer_geometry_shader || prefer_fragment_stores || prefer_vertex_stores ||
+-         prefer_fill_mode_non_solid)) {
+-      struct PhysicalDeviceScore {
+-        VkPhysicalDevice physical_device;
+-        uint32_t score;
+-      };
+-      std::vector<PhysicalDeviceScore> scored_devices;
+-      scored_devices.reserve(physical_devices.size());
+-      for (const VkPhysicalDevice physical_device : physical_devices) {
++    // Order: the vendor asked for with gpu_vendor, then the supported features (the prefer_* cvars),
++    // then the kind of device (discrete before integrated before virtual before software), then the
++    // driver's own order. A laptop's integrated GPU is often listed first (#89).
++    const bool prefer_geometry_shader = REXCVAR_GET(vulkan_prefer_geometry_shader);
++    const bool prefer_fragment_stores = REXCVAR_GET(vulkan_prefer_fragment_stores_and_atomics);
++    const bool prefer_vertex_stores = REXCVAR_GET(vulkan_prefer_vertex_pipeline_stores_and_atomics);
++    const bool prefer_fill_mode_non_solid = REXCVAR_GET(vulkan_prefer_fill_mode_non_solid);
++    const uint32_t wanted_vendor = rex::ui::PreferredGpuVendorId(REXCVAR_GET(gpu_vendor));
++    struct PhysicalDeviceScore {
++      VkPhysicalDevice physical_device;
++      uint32_t vendor_match;
++      uint32_t score;
++      uint32_t type_rank;
++    };
++    std::vector<PhysicalDeviceScore> scored_devices;
++    scored_devices.reserve(physical_devices.size());
++    bool vendor_found = false;
++    for (const VkPhysicalDevice physical_device : physical_devices) {
++      VkPhysicalDeviceProperties properties;
++      ifn.vkGetPhysicalDeviceProperties(physical_device, &properties);
++      uint32_t score = 0;
++      if (with_gpu_emulation) {
+         VkPhysicalDeviceFeatures supported_features = {};
+         ifn.vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
+-        uint32_t score = 0;
+         if (prefer_geometry_shader && supported_features.geometryShader) {
+           ++score;
+         }
+@@ -113,26 +127,48 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+         if (prefer_fill_mode_non_solid && supported_features.fillModeNonSolid) {
+           ++score;
+         }
+-        scored_devices.push_back({physical_device, score});
+       }
+-
+-      std::stable_sort(scored_devices.begin(), scored_devices.end(),
+-                       [](const PhysicalDeviceScore& a, const PhysicalDeviceScore& b) {
+-                         return a.score > b.score;
+-                       });
+-
+-      if (!scored_devices.empty() && scored_devices.front().score != scored_devices.back().score) {
+-        physical_devices_ordered.clear();
+-        physical_devices_ordered.reserve(scored_devices.size());
+-        for (const PhysicalDeviceScore& scored_device : scored_devices) {
+-          physical_devices_ordered.push_back(scored_device.physical_device);
+-        }
++      uint32_t type_rank = 0;
++      switch (properties.deviceType) {
++        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
++          type_rank = 4;
++          break;
++        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
++          type_rank = 3;
++          break;
++        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
++          type_rank = 2;
++          break;
++        case VK_PHYSICAL_DEVICE_TYPE_CPU:
++          type_rank = 1;
++          break;
++        default:
++          break;
+       }
++      const uint32_t vendor_match = wanted_vendor && properties.vendorID == wanted_vendor ? 1 : 0;
++      vendor_found = vendor_found || vendor_match;
++      scored_devices.push_back({physical_device, vendor_match, score, type_rank});
+     }
+-
+-    for (const VkPhysicalDevice physical_device : physical_devices_ordered) {
+-      provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
+-          provider->vulkan_instance_.get(), physical_device, with_gpu_emulation, with_presentation);
++    if (wanted_vendor && !vendor_found) {
++      REXLOG_WARN("gpu_vendor '{}' matches no Vulkan physical device; choosing automatically",
++                  REXCVAR_GET(gpu_vendor));
++    }
++    std::stable_sort(scored_devices.begin(), scored_devices.end(),
++                     [](const PhysicalDeviceScore& a, const PhysicalDeviceScore& b) {
++                       if (a.vendor_match != b.vendor_match) {
++                         return a.vendor_match > b.vendor_match;
++                       }
++                       if (a.score != b.score) {
++                         return a.score > b.score;
++                       }
++                       return a.type_rank > b.type_rank;
++                     });
++
++    for (const PhysicalDeviceScore& scored_device : scored_devices) {
++      provider->vulkan_device_ =
++          VulkanDevice::CreateIfSupported(provider->vulkan_instance_.get(),
++                                          scored_device.physical_device, with_gpu_emulation,
++                                          with_presentation);
+       if (provider->vulkan_device_) {
+         break;
+       }
+@@ -146,6 +182,42 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+     }
+   }
+ 
++  {
++    // Said once: which card the game runs on (the list above only names what exists).
++    const VkPhysicalDevice chosen = provider->vulkan_device_->physical_device();
++    VkPhysicalDeviceProperties chosen_properties;
++    ifn.vkGetPhysicalDeviceProperties(chosen, &chosen_properties);
++    size_t chosen_index = 0;
++    for (size_t i = 0; i < physical_devices.size(); ++i) {
++      if (physical_devices[i] == chosen) {
++        chosen_index = i;
++      }
++    }
++    const char* chosen_type = "other";
++    switch (chosen_properties.deviceType) {
++      case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
++        chosen_type = "discrete";
++        break;
++      case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
++        chosen_type = "integrated";
++        break;
++      case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
++        chosen_type = "virtual";
++        break;
++      case VK_PHYSICAL_DEVICE_TYPE_CPU:
++        chosen_type = "software";
++        break;
++      default:
++        break;
++    }
++    REXLOG_INFO("Vulkan device in use: {}: {} (vendor 0x{:04X}, device 0x{:04X}, {}, API {}.{}.{})",
++                chosen_index, chosen_properties.deviceName, chosen_properties.vendorID,
++                chosen_properties.deviceID, chosen_type,
++                VK_VERSION_MAJOR(chosen_properties.apiVersion),
++                VK_VERSION_MINOR(chosen_properties.apiVersion),
++                VK_VERSION_PATCH(chosen_properties.apiVersion));
++  }
++
+   if (with_presentation) {
+     provider->ui_samplers_ = UISamplers::Create(provider->vulkan_device_.get());
+     if (!provider->ui_samplers_) {
