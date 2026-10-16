@@ -45,7 +45,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   To play together in a party: everyone opens
   Multiplayer; one player picks Invite Friends in the party lobby (there is no Guide, so
   this invites everyone in the room) and the others join that party on their own
-  (`live_accept_invites`). The party leader then picks Create Custom Game, sets the game
+  (`live_accept_invites`; a player in free roam restarts the game to join, as on the
+  console, which takes a few seconds). The party leader then picks Create Custom Game, sets the game
   type under Setup Game (Free Roam, races, ...), saves the setup (YES) and starts once
   the others are ready. Or, without a party: Find Game, then the Races playlist; the
   first player hosts the playlist's lobby and the next ones join it, and the race starts

@@ -281,6 +281,12 @@ class MainWindow(QMainWindow):
         code = self.session.poll()
         if code is None:
             return
+        if code == game.RELAUNCH_EXIT_CODE:
+            try:
+                self.session.relaunch()
+                return
+            except OSError as e:
+                paths.log_error("start the game again", e)
         self.poll.stop()
         self.session.cleanup()
         self.session = None

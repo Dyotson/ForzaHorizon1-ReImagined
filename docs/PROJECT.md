@@ -620,6 +620,31 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   intro. Before b0daca0 the manager was also in state 3, which picks the "not enough space"
   text. The game now logs its DLC packages and offers at start and warns when a TU4 build
   has no Rally Expansion Pack; the launcher warns at Play (docs/dlc.md, "Horizon Rally").
+- 2026-10-16: **The game closes 0.3 s after accepting an invite in free roam (#81)**, Windows
+  11, v0.1.10, TU4 + DLC, public server: the log ends with `FORZA_LIVE: joining Driver4799's
+  game` and `Execution complete`, no crash. In free roam the game joins a friend by
+  restarting itself: its invite state machine (`sub_8291A298`, TU4) keeps the accepted
+  `X_INVITE_INFO` (0x58 bytes) as launch data and calls `sub_824AC7E8`, which launches its
+  own executable (`XamLoaderLaunchTitle("default.xex", 0)`); in the menus (main menu, party
+  lobby) it joins in place. At boot `sub_824B32E0` reads the launch data (0x58 bytes: the
+  invite, +496 of the game object; or the text "softreboot", which `sub_824AC7E8` sets when
+  it has none) and sets the "soft reboot" byte +39, with which the boot skips its movies and
+  goes straight to the invite's party. The SDK's `XamLoaderLaunchTitle` only ended the
+  title. `src/kernel/xam_loader.cpp` now starts the game again with the same command line
+  and hands it the launch data in `relaunch_launch_data.bin` (next to `live_identity.txt`,
+  read only by a run with `FORZA_RELAUNCHED=1`): on Linux by `execv` in the same process
+  (same PID, so the launcher and scripts keep waiting on it; descriptors close on exec and
+  the guest memory file is unlinked first); on Windows a run from the launcher exits with
+  code 75 and the launcher starts it again (keeping its local server), otherwise the game
+  starts a new process of itself. The byte +39 stays set after the boot, and with it
+  Single Player never loaded afterwards (the main menu stayed up; same with "softreboot"
+  data alone; clearing the byte in a running game fixed it): the main loop's entry
+  (`sub_823ED888`, base) clears it. `title_relaunch = false` restores the old exit.
+  Tested (Linux, TU4, two instances, local server): B in free roam, A in the party lobby
+  picks Invite Friends; B restarts within 1 s and is in A's party lobby 4 s after the
+  invite (`screenshots/2026-10-16_invite_in_free_roam_A_top_B_bottom.jpg`); B leaves the
+  party and Single Player loads free roam; an invite at the main menu joins without a
+  restart. The Windows paths compile but are untested.
 
 ## Debugging recipes
 

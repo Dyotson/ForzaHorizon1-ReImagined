@@ -462,6 +462,11 @@ def crash_reason(plan: "LaunchPlan", code) -> str:
     return text
 
 
+# The game exits with this code when it restarts itself (accepting an invite in free roam,
+# src/kernel/xam_loader.cpp) and FORZA_LAUNCHER_RELAUNCH is set: start it again.
+RELAUNCH_EXIT_CODE = 75
+
+
 class Session:
     """A running game, and the local Forza Live server started for it."""
 
@@ -484,11 +489,22 @@ class Session:
                                            stderr=subprocess.STDOUT, creationflags=flags,
                                            stdin=subprocess.DEVNULL)
             self.log("Started a local Forza Live server")
+        self._start_game({})
+
+    def _start_game(self, extra):
+        plan = self.plan
         env = dict(os.environ)
         for k in plan.unset:
             env.pop(k, None)
         env.update(plan.env)
+        env["FORZA_LAUNCHER_RELAUNCH"] = "1"
+        env.update(extra)
         self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+
+    def relaunch(self):
+        """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running."""
+        self.log("The game restarts itself")
+        self._start_game({"FORZA_RELAUNCHED": "1"})
 
     def poll(self):
         return None if self.proc is None else self.proc.poll()

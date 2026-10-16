@@ -568,7 +568,13 @@ uint32_t XInviteGetAcceptedInfo(uint8_t* base, uint32_t args) {
   if (!args) return kInvalidArg;
   const uint32_t info = ArgPointer(base, args, 1);
   forza::LiveInvite invite;
-  if (!info || !forza::LiveTakeInvite(invite)) return 0x80155206;  // session not found
+  if (!info) return 0x80155206;  // session not found
+  if (!forza::LiveTakeInvite(invite)) {
+    // The game restarted itself to join (xam_loader.cpp): the invite it kept.
+    if (!forza::LoaderTakeBootInvite(GuestPtr(base, info))) return 0x80155206;
+    REXLOG_INFO("FORZA_LIVE: joining the game of the invite accepted before the restart");
+    return kSuccess;
+  }
   std::memset(GuestPtr(base, info), 0, 0x54);
   Store64(GuestPtr(base, info), forza::IdentityXuid());
   Store64(GuestPtr(base, info + 8), invite.inviter_xuid);

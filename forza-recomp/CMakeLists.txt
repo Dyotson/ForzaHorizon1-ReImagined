@@ -135,6 +135,7 @@ set(FORZA_SOURCES
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp
     src/kernel/xam_enumerate.cpp
+    src/kernel/xam_loader.cpp
     src/kernel/xam_nui.cpp
     src/kernel/xam_signin.cpp
     src/kernel/xecrypt_rsa.cpp

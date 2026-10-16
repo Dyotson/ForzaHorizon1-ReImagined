@@ -48,6 +48,10 @@ struct LiveInvite {
 void LiveSendInvite(uint64_t xuid, const uint8_t* session_info);
 bool LiveTakeInvite(LiveInvite& out);
 
+// The invite a previous run of the game kept as launch data when it restarted itself to
+// join (X_INVITE_INFO, 0x54 bytes; xam_loader.cpp), once; false when there is none.
+bool LoaderTakeBootInvite(uint8_t* out);
+
 // Called by the network thread when an invite arrives (live_xmsg.cpp).
 void LiveInviteReceived(const LiveInvite& invite);
 
