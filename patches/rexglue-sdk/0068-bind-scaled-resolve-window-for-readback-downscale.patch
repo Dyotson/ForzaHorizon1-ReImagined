@@ -1,0 +1,62 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index ddf7caf..1156944 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4937,7 +4937,36 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+     }
+ 
+     VkBuffer scaled_resolve_buffer = texture_cache_->scaled_resolve_buffer();
+-    if (scaled_resolve_buffer == VK_NULL_HANDLE || scaled_start > uint64_t(UINT32_MAX)) {
++    if (scaled_resolve_buffer == VK_NULL_HANDLE) {
++      return true;
++    }
++
++    // At a draw resolution scale of 3 (and above) the scaled resolve buffer (512 MB * scale^2)
++    // is larger than maxStorageBufferRange (4 GB on AMD), so binding all of it (VK_WHOLE_SIZE)
++    // is invalid and reads come back as zeros (a black thumbnail, #102), and the 32-bit byte
++    // offsets in the shader can't address the upper part. Bind only a window of the buffer
++    // around the range then. Smaller buffers keep the whole-buffer binding as before.
++    const uint64_t scaled_buffer_size =
++        uint64_t(SharedMemory::kBufferSize) * texture_cache_->draw_resolution_scale_x() *
++        texture_cache_->draw_resolution_scale_y();
++    const bool scaled_source_windowed =
++        scaled_buffer_size > uint64_t(vulkan_device->properties().maxStorageBufferRange);
++    uint64_t scaled_source_window_start = 0;
++    VkDeviceSize scaled_source_window_range = VK_WHOLE_SIZE;
++    if (scaled_source_windowed) {
++      const uint64_t window_alignment =
++          std::max<uint64_t>(vulkan_device->properties().minStorageBufferOffsetAlignment, 4096);
++      scaled_source_window_start = scaled_start & ~(window_alignment - 1);
++      scaled_source_window_range =
++          rex::align(scaled_start - scaled_source_window_start + scaled_length, uint64_t(4));
++      scaled_source_window_range =
++          std::min<uint64_t>(scaled_source_window_range,
++                             scaled_buffer_size - scaled_source_window_start);
++      if (scaled_start - scaled_source_window_start > uint64_t(UINT32_MAX) ||
++          scaled_source_window_range > uint64_t(vulkan_device->properties().maxStorageBufferRange)) {
++        return true;
++      }
++    } else if (scaled_start > uint64_t(UINT32_MAX)) {
+       return true;
+     }
+ 
+@@ -4983,8 +5012,8 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+ 
+     VkDescriptorBufferInfo buffer_infos[2] = {};
+     buffer_infos[0].buffer = scaled_resolve_buffer;
+-    buffer_infos[0].offset = 0;
+-    buffer_infos[0].range = VK_WHOLE_SIZE;
++    buffer_infos[0].offset = scaled_source_window_start;
++    buffer_infos[0].range = scaled_source_window_range;
+     buffer_infos[1].buffer = resolve_downscale_buffer_;
+     buffer_infos[1].offset = 0;
+     buffer_infos[1].range = written_length;
+@@ -5023,7 +5052,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+     constants.scale_y = texture_cache_->draw_resolution_scale_y();
+     constants.pixel_size_log2 = pixel_size_log2;
+     constants.tile_count = tile_count;
+-    constants.source_offset_bytes = uint32_t(scaled_start);
++    constants.source_offset_bytes = uint32_t(scaled_start - scaled_source_window_start);
+     constants.half_pixel_offset = (REXCVAR_GET(readback_resolve_half_pixel_offset) &&
+                                    (constants.scale_x > 1 || constants.scale_y > 1))
+                                       ? 1u

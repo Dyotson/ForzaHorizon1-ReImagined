@@ -364,6 +364,28 @@ That gameplay test predates the public cold-pipeline fix; it does not prove
 this change alone resolves every report in #50. Original saves were untouched.
 
 
+### Black thumbnail at render scale 3 (#102)
+
+At render scale 3 (and above) a newly bought car's picture was saved black (768x288, 938 bytes) on
+AMD (RX 9060 XT, RADV); scale 1 and 2 were fine. Cause: the readback path (0053/0065) downscales
+the scaled resolve data on the GPU with a compute shader that read the whole scaled resolve
+buffer (`VK_WHOLE_SIZE`). That buffer is 512 MB x scale^2: 2 GB at scale 2, 4.5 GB at scale 3,
+which is over RADV's `maxStorageBufferRange` (4 GB). An oversized descriptor range is invalid and
+reads came back zero (the shader also computes 32-bit byte offsets, which cannot address above
+4 GB anyway). The log showed every 1280x720 tile and the atlas read back with 0 non-zero bytes.
+The same also dropped other resolves above 4 GB at scale 3 (silently skipped).
+
+Fix: SDK patch 0068 binds only a window of the buffer (offset aligned down to 4 KB or the device
+offset alignment, range up to the end of the resolved range) and passes the offset inside the
+window to the shader. It applies only when 512 MB x scale^2 is larger than `maxStorageBufferRange`;
+smaller buffers keep the whole-buffer binding, so scale 1 and 2 are unchanged on AMD (they also
+get the window on GPUs with a smaller range, which is correct there too).
+
+Validation (copy of a save, local server, RX 9060 XT / RADV, TU4): buying the F50 GT saves
+89,715 bytes at scale 3 (was 938, black), 89,838 at scale 2 and 93,116 at scale 1, all showing
+the car.
+
+
 ## Festival video flashes purple (#91, open)
 
 Report: RX 9070 XT, Windows 11, Vulkan, v0.1.12, `frame_rate` 240, render scale 2, AF 16x,

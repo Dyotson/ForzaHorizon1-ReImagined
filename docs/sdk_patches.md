@@ -55,3 +55,9 @@ conversions remain unchanged.
 without shader stencil export. Previously the stencil-only shader skipped its
 bit test and filled the destination with 255, rejecting dynamic shadows (#75).
 See [Rendering issues](rendering.md#missing-dynamic-shadows-in-the-stencil-copy-fallback-75).
+
+0068 binds a window of the scaled resolve buffer, not the whole buffer, for the readback downscale
+compute pass when the buffer (512 MB x scale^2) is larger than `maxStorageBufferRange`. At render
+scale 3 on AMD the whole-buffer binding was invalid and the car thumbnail was saved black (#102).
+Smaller buffers (scale 1 and 2 on AMD) are unchanged. See
+[Rendering issues](rendering.md#black-thumbnail-at-render-scale-3-102).
