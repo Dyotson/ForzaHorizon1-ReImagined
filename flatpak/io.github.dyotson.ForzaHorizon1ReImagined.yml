@@ -42,7 +42,7 @@ cleanup-commands:
   - mkdir -p ${FLATPAK_DEST}/lib/sdk/llvm22
 
 modules:
-  # The launcher's only third-party dependency. PySide6 6.12 wheels (Qt 6.12 inside), pinned.
+  # The launcher's main third-party dependency. PySide6 6.12 wheels (Qt 6.12 inside), pinned.
   - name: pyside6
     buildsystem: simple
     build-commands:
@@ -56,6 +56,16 @@ modules:
         url: https://files.pythonhosted.org/packages/49/c2/a04fa003b4360e99d8e3fc2829abacf37396ace63ea1cd616402209ec7c6/shiboken6-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl
         sha256: 3bde565bb0890044b5c7f63808adddede5abc241e9395a2bfed61919884d6240
         only-arches: [x86_64]
+
+  # certifi's CA bundle, the launcher's fallback when the runtime has none for its OpenSSL (#85).
+  - name: certifi
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} --no-build-isolation certifi
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl
+        sha256: 62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
 
   - name: forza-reimagined
     buildsystem: simple

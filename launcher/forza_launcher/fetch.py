@@ -4,7 +4,10 @@ import os
 import shutil
 import ssl
 import stat
+import sys
 import tarfile
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -25,27 +28,97 @@ _CA_FILES = (
     "/etc/ssl/ca-bundle.pem",                             # openSUSE
     "/etc/ssl/cert.pem",                                  # Alpine, macOS
 )
-_SSL_CONTEXT = None
+_CONTEXTS = None
+
+
+class CertificateError(OSError):
+    """The server's certificate could not be verified by any of the trust stores (#85)."""
+
+
+def _default_context() -> ssl.SSLContext:
+    """Python's default context plus the CA files of the distributions and certifi's bundle."""
+    ctx = ssl.create_default_context()
+    for ca in (os.environ.get("SSL_CERT_FILE"),) + _CA_FILES:
+        if ca and os.path.isfile(ca):
+            try:
+                ctx.load_verify_locations(cafile=ca)
+            except (OSError, ssl.SSLError):
+                pass
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:
+        pass
+    return ctx
+
+
+def _truststore_context():
+    """A context that lets the operating system verify the chain (Windows fetches a missing root
+    certificate itself while doing so; Python's own read of the ROOT store does not). None where
+    truststore is not installed."""
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        return None
+
+
+def contexts() -> list:
+    """The verifying contexts to try, in order. Verification is never turned off.
+    Windows and macOS: the operating system's verification (truststore), then the default context
+    with certifi. Elsewhere only the default context (#68 made it find the distribution's CAs)."""
+    global _CONTEXTS
+    if _CONTEXTS is None:
+        found = []
+        if sys.platform in ("win32", "darwin"):
+            ts = _truststore_context()
+            if ts is not None:
+                found.append(ts)
+        found.append(_default_context())
+        _CONTEXTS = found
+    return _CONTEXTS
 
 
 def ssl_context() -> ssl.SSLContext:
-    """A verifying context with the system's CA certificates wherever the distribution keeps them."""
-    global _SSL_CONTEXT
-    if _SSL_CONTEXT is None:
-        ctx = ssl.create_default_context()
-        for ca in (os.environ.get("SSL_CERT_FILE"),) + _CA_FILES:
-            if ca and os.path.isfile(ca):
-                try:
-                    ctx.load_verify_locations(cafile=ca)
-                except (OSError, ssl.SSLError):
-                    pass
+    """The first (preferred) verifying context."""
+    return contexts()[0]
+
+
+def is_certificate_error(exc: BaseException) -> bool:
+    reason = getattr(exc, "reason", exc)
+    return isinstance(reason, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+
+
+def urlopen(req, timeout=60):
+    """urllib.request.urlopen with ssl_context(); when the certificate cannot be verified, the next
+    context is tried, and when none can, a CertificateError that names the host."""
+    ctxs = contexts()
+    last = None
+    for i, ctx in enumerate(ctxs):
         try:
-            import certifi
-            ctx.load_verify_locations(cafile=certifi.where())
-        except Exception:
-            pass
-        _SSL_CONTEXT = ctx
-    return _SSL_CONTEXT
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, ssl.SSLError) as e:
+            if not is_certificate_error(e):
+                raise
+            last = e
+            try:
+                from . import paths
+                paths.log_error(f"certificate verification failed for {_host(req)} (context {i + 1} of {len(ctxs)})", e)
+            except Exception:
+                pass
+    host = _host(req)
+    raise CertificateError(
+        f"The certificate of {host} could not be verified ({getattr(last, 'reason', last)}). "
+        "This usually means an antivirus program is scanning HTTPS traffic (turn off its web or HTTPS "
+        "scanning, or add this launcher as an exception) or a proxy or firewall replaces certificates. "
+        "Details are in launcher.log.") from last
+
+
+def _host(req) -> str:
+    url = req if isinstance(req, str) else req.full_url
+    return urllib.parse.urlsplit(url).hostname or url
 
 
 def sha256_of(path: Path, progress=None):
@@ -75,7 +148,7 @@ def download(name: str, cache: Path, progress=lambda d, t: None, cancelled=lambd
     if have:
         req.add_header("Range", f"bytes={have}-")
     try:
-        resp = urllib.request.urlopen(req, timeout=60, context=ssl_context())
+        resp = urlopen(req, timeout=60)
     except urllib.error.HTTPError as e:
         if e.code == 416:  # the partial file is already complete
             resp, have = None, have

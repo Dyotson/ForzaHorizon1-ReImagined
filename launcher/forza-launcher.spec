@@ -7,6 +7,8 @@ import ast
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 root = Path(SPECPATH).resolve()
 repo = root.parent
 images = repo / "docs" / "images"
@@ -34,6 +36,11 @@ datas = [
     (str(repo / "tools" / "xiso_extract.py"), "tools"),
     (str(repo / "tools" / "install_dlc.py"), "tools"),
 ]
+# certifi's cacert.pem (the fallback CA bundle of fetch.py) and truststore (the OS certificate store on
+# Windows/macOS), both imported lazily and so invisible to the import scan (#85).
+datas += collect_data_files("certifi")
+hidden += ["certifi"] + collect_submodules("truststore")
+
 # The title update step (a Python tool the frozen app runs itself with --run-script).
 for _tool in ("apply_title_update.py", "lzx_delta.py"):
     if (repo / "tools" / _tool).is_file():

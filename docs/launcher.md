@@ -150,6 +150,20 @@ removing host execution.
   The Windows overlay is the whole SDK prefix (the SDK's prebuilt Windows plugin has no
   Vulkan backend), built by CI.
 
+### HTTPS certificates (#68, #85)
+
+Every download and the update check go through `fetch.urlopen`, which verifies certificates
+(never switched off). On Windows and macOS it first lets the operating system verify the chain
+(`truststore`, as pip does: Windows fetches a missing root certificate itself, which Python's own
+read of the ROOT store does not trigger, the cause of "CERTIFICATE_VERIFY_FAILED: unable to get
+local issuer certificate" on a fresh Windows 11 in #85); if that fails it tries Python's default
+context with the distributions' CA files and `certifi`'s bundle. On Linux only that second context
+is used (#68). If no context can verify, the error names the host and says it is usually antivirus
+HTTPS scanning or a proxy that replaces certificates, and each failure is written to `launcher.log`.
+`truststore` and `certifi` are in `launcher/requirements.txt` and bundled by the spec (certifi's
+`cacert.pem` as data); the Flatpak module `certifi` pins the wheel by sha256. Tests:
+`launcher/test_fetch.py` (context choice per platform, fallback, error text).
+
 ## Settings
 
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,

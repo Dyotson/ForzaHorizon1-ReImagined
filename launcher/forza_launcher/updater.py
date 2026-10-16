@@ -88,7 +88,7 @@ def check():
         "Accept": "application/vnd.github+json",
     })
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT, context=fetch.ssl_context()) as response:
+        with fetch.urlopen(request, timeout=TIMEOUT) as response:
             raw = response.read(2_000_001)
         if len(raw) > 2_000_000:
             raise UpdateError("GitHub returned too much release data. Try again later.")
@@ -99,6 +99,8 @@ def check():
         if exc.code in (403, 429):
             raise UpdateError("GitHub's request limit was reached. Try again later or open Releases.") from exc
         raise UpdateError(f"GitHub returned HTTP {exc.code}. Try again later.") from exc
+    except fetch.CertificateError as exc:
+        raise UpdateError(str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise UpdateError("Could not check for updates. Check your connection and try again.") from exc
 
@@ -116,7 +118,7 @@ def download(asset: Asset, directory: Path, progress=lambda d, t: None, cancelle
     try:
         digest = hashlib.sha256()
         done = 0
-        with urllib.request.urlopen(request, timeout=TIMEOUT, context=fetch.ssl_context()) as response, part.open("wb") as output:
+        with fetch.urlopen(request, timeout=TIMEOUT) as response, part.open("wb") as output:
             while True:
                 if cancelled():
                     raise fetch.Cancelled()
