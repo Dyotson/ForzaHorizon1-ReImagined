@@ -117,6 +117,7 @@ set(FORZA_SOURCES
     src/debug/frame_dump.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/frame_time.cpp
+    src/hooks/gpu_wait.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/world_challenge.cpp
     src/hooks/world_drop_in.cpp

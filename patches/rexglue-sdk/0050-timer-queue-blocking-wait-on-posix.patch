@@ -1,0 +1,89 @@
+diff --git a/src/core/timer_queue.cpp b/src/core/timer_queue.cpp
+--- a/src/core/timer_queue.cpp
++++ b/src/core/timer_queue.cpp
+@@ -16,6 +16,12 @@
+ #include <disruptorplus/ring_buffer.hpp>
+ #include <disruptorplus/sequence_barrier.hpp>
+ #include <disruptorplus/spin_wait_strategy.hpp>
++#ifndef _WIN32
++#include <disruptorplus/blocking_wait_strategy.hpp>
++#endif
++#ifdef __linux__
++#include <sys/prctl.h>
++#endif
+ 
+ #include <rex/assert.h>
+ #include <rex/thread.h>
+@@ -23,6 +29,18 @@
+ 
+ namespace dp = disruptorplus;
+ 
++// The timer thread waits for the next due timer or a new one. The spin strategy polls in
++// between (pause loops, then sched_yield 19 times out of 20 and a 1 ms sleep the 20th): with
++// the 1 ms timestamp timer that was 5-7% of a core in a race, and up to 1 ms late in its sleep
++// phase. On POSIX it blocks on a condition variable with the due time as the deadline (a
++// futex: as precise as the thread's timer slack, set to 1 us below). Windows keeps the spin
++// strategy: its condition variable deadlines are whole timer ticks.
++#ifdef _WIN32
++using TimerWaitStrategy = dp::spin_wait_strategy;
++#else
++using TimerWaitStrategy = dp::blocking_wait_strategy;
++#endif
++
+ namespace rex::thread {
+ 
+ using WaitItem = TimerQueueWaitItem;
+@@ -63,6 +81,9 @@
+     };
+ 
+     set_current_thread_name("rex::thread::TimerQueue");
++#ifdef __linux__
++    prctl(PR_SET_TIMERSLACK, 1000UL);
++#endif
+ 
+     while (!stop_token.stop_requested()) {
+       {
+@@ -142,9 +163,9 @@
+   // This ring buffer will be used to introduce timers queued by the public API
+   static constexpr size_t kWaitCount = 512;
+   dp::ring_buffer<std::shared_ptr<WaitItem>> buffer_;
+-  dp::spin_wait_strategy wait_strategy_;
+-  dp::multi_threaded_claim_strategy<dp::spin_wait_strategy> claim_strategy_;
+-  dp::sequence_barrier<dp::spin_wait_strategy> consumed_;
++  TimerWaitStrategy wait_strategy_;
++  dp::multi_threaded_claim_strategy<TimerWaitStrategy> claim_strategy_;
++  dp::sequence_barrier<TimerWaitStrategy> consumed_;
+ 
+   // This is a _sorted_ (ascending due_) list of active timers managed by a
+   // dedicated thread
+diff --git a/thirdparty/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp b/thirdparty/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp
+--- a/thirdparty/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp
++++ b/thirdparty/disruptorplus/include/disruptorplus/blocking_wait_strategy.hpp
+@@ -118,11 +118,11 @@
+                 std::unique_lock<std::mutex> lock(m_mutex);
+                 m_cv.wait_for(
+                     lock,
++                    timeout,
+                     [&]() -> bool {
+                         result = minimum_sequence_after(sequence, count, sequences);
+                         return difference(result, sequence) >= 0;
+-                    },
+-                    timeout);
++                    });
+             }
+             return result;
+         }
+@@ -171,11 +171,11 @@
+                 std::unique_lock<std::mutex> lock(m_mutex);
+                 m_cv.wait_until(
+                     lock,
++                    timeoutTime,
+                     [&]() -> bool {
+                         result = minimum_sequence_after(sequence, count, sequences);
+                         return difference(result, sequence) >= 0;
+-                    },
+-                    timeoutTime);
++                    });
+             }
+             return result;
+         }
