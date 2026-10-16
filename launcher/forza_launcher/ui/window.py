@@ -288,11 +288,12 @@ class MainWindow(QMainWindow):
             except OSError as e:
                 paths.log_error("start the game again", e)
         self.poll.stop()
+        stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
         plan = self.session_plan
         self.play.clear_message()
-        if code == 0:
+        if not game.exit_is_crash(plan, code, stopped):
             self.play.show_message("The game closed.")
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)

@@ -187,6 +187,27 @@ not affect what is loaded). Tests: `launcher/test_cleanenv.py` (frozen environme
 empty, every launch path). `tools/prerelease.sh --only launcher` also runs `git` and a fake game under a library
 path of broken `libz`/`libpcre2`/`libstdc++` and fails if either inherits it.
 
+### When the game ends (#98)
+
+The Play page polls the game. Exit 0 and 75 (the game restarting itself, #81) are not errors. A red "The game stopped
+(exit code N)" box is only for crash-like exits: `game.exit_is_crash` says no when the player pressed Stop in the
+launcher (`Session.stop_requested`), when Linux reports SIGINT/SIGTERM (-2, -15), and when the game's log ends with its
+own shutdown lines ("Title terminated; hard-exiting process", "Execution complete").
+
+Why a reporter on Windows saw "exit code 1" after closing the game: the game itself exits 0 when its window is closed
+(SDK `ReXApp::OnClosing` ends with `std::_Exit(0)`; checked on Linux with SIGTERM: "Title terminated; hard-exiting
+process", exit 0). The report's log has that closing line in its first two runs and in none of the later ones (the runs
+the launcher started): they just stop, and exit code 1 is what Python's `Popen.terminate()` gives on Windows
+(`TerminateProcess(handle, 1)`), which is what the Stop button (and quitting the launcher) did. The launcher therefore
+now stops the game the way the close button does: on Windows it posts WM_CLOSE to the game's windows
+(`game.request_window_close`), so the game shuts down, writes its log and exits 0, and ends it with `terminate()` only if
+it is still there after 10 s; on Linux `terminate()` is SIGTERM, which SDL turns into the same close request. Not tested on
+a real Windows machine (the code is exercised with the window call stubbed).
+
+"Last errors in the log" skips lines the game writes in normal play (`game.HARMLESS_ERRORS`: `ffmpeg:` audio frames,
+`Unimplemented XLIVEBASE/XAM message`, `ResolvePath(... device not found`, `[NtCreateFile] FAILED`, `STUB`), and shows
+no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
+
 ## Settings
 
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,

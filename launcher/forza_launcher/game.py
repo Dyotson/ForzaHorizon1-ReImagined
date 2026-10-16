@@ -459,24 +459,73 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
 
 
 def log_path_of(plan: "LaunchPlan"):
-    for a in plan.argv:
+    for a in (plan.argv if plan is not None else ()):
         if str(a).startswith("--log_file="):
             return Path(str(a).split("=", 1)[1])
     return None
+
+
+# Log lines at error level that the game writes in normal play (missing sound banks, audio frames the
+# decoder does not like, XAM/XLIVEBASE calls the runtime has no answer for): never the reason a game
+# stopped, so "Last errors" skips them (#98).
+HARMLESS_ERRORS = (
+    "ffmpeg:",
+    "Unimplemented XLIVEBASE message",
+    "Unimplemented XAM message",
+    "ResolvePath(",
+    "device not found",
+    "[NtCreateFile] FAILED",
+    "STUB",
+)
+
+# Log lines the game writes when it closes by itself, after the player closed the window or chose to quit.
+CLEAN_CLOSE_MARKERS = ("Title terminated; hard-exiting process", "Execution complete")
+
+
+def _log_tail(plan: "LaunchPlan", lines=200):
+    log = log_path_of(plan)
+    try:
+        if log is not None and log.is_file():
+            with open(log, "r", encoding="utf-8", errors="replace") as f:
+                return f.readlines()[-lines:]
+    except OSError:
+        pass
+    return []
+
+
+def last_errors(tail, count=3):
+    """The last `count` error lines of a log tail that are not among the harmless ones."""
+    out = [ln.strip() for ln in tail
+           if ("[error]" in ln or "[critical]" in ln or "[fatal]" in ln)
+           and not any(h in ln for h in HARMLESS_ERRORS)]
+    return out[-count:]
+
+
+def closed_cleanly(plan: "LaunchPlan") -> bool:
+    """Did the game end its log the way a normal close does (the last lines say it shut down)?"""
+    tail = [ln for ln in _log_tail(plan, 12) if ln.strip()]
+    return any(m in ln for ln in tail[-4:] for m in CLEAN_CLOSE_MARKERS)
+
+
+def exit_is_crash(plan: "LaunchPlan", code, stopped=False) -> bool:
+    """Should the launcher show the "game stopped" box for this exit? Not for 0, not when the player
+    stopped the game from the launcher (Windows then reports 1, Linux -15), not for the player
+    ending it from outside (Ctrl+C, kill: -2, -15), and not when the log ends with the game's own
+    shutdown lines. 75 is the relaunch request and is handled before."""
+    if code in (0, None):
+        return False
+    if stopped:
+        return False
+    if not paths.IS_WINDOWS and code in (-2, -15):
+        return False
+    return not closed_cleanly(plan)
 
 
 def crash_reason(plan: "LaunchPlan", code) -> str:
     """A readable text for a game that stopped early: its exit code, the last error lines of its
     log and, for the usual causes, what to do."""
     log = log_path_of(plan)
-    errors = []
-    try:
-        if log is not None and log.is_file():
-            with open(log, "r", encoding="utf-8", errors="replace") as f:
-                tail = f.readlines()[-200:]
-            errors = [ln.strip() for ln in tail if "[error]" in ln or "[critical]" in ln or "[fatal]" in ln][-3:]
-    except OSError:
-        pass
+    errors = last_errors(_log_tail(plan))
     text = f"The game stopped (exit code {code})."
     joined = " ".join(errors)
     if "Vulkan" in joined:
@@ -499,6 +548,32 @@ RELAUNCH_LIMIT = 4
 RELAUNCH_WINDOW = 60.0
 
 
+def request_window_close(pid: int) -> int:
+    """Windows: ask the game's windows to close, as the close button does (WM_CLOSE), so it shuts down
+    and writes its log. Returns how many windows were asked. (Python's terminate() is TerminateProcess:
+    exit code 1, nothing flushed.)"""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    asked = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
+            asked.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    return len(asked)
+
+
+# How long the game gets to close after the window was asked to, before it is ended.
+STOP_GRACE_SECONDS = 10.0
+
+
 class Session:
     """A running game, and the local Forza Live server started for it."""
 
@@ -508,6 +583,8 @@ class Session:
         self.proc = None
         self.log = log
         self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
+        self.stop_requested = False   # the player stopped it from the launcher: its exit code is no crash
+        self.stop_deadline = None
 
     def start(self):
         plan = self.plan
@@ -548,10 +625,25 @@ class Session:
         return True
 
     def poll(self):
-        return None if self.proc is None else self.proc.poll()
+        if self.proc is None:
+            return None
+        code = self.proc.poll()
+        if code is None and self.stop_deadline is not None and time.monotonic() > self.stop_deadline:
+            self.stop_deadline = None
+            self.log("The game did not close by itself; ending it")
+            self.proc.terminate()
+        return code
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
+            self.stop_requested = True
+            if paths.IS_WINDOWS:
+                try:
+                    if request_window_close(self.proc.pid):
+                        self.stop_deadline = time.monotonic() + STOP_GRACE_SECONDS
+                        return
+                except (OSError, AttributeError, ValueError) as e:
+                    paths.log_error("ask the game to close", e)
             self.proc.terminate()
 
     def cleanup(self):
