@@ -42,3 +42,8 @@ vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-
 
 0053 refreshes known reused car-thumbnail readback surfaces on Vulkan; see
 [Rendering issues](rendering.md#reused-car-thumbnail-readbacks-vulkan).
+
+0067 enables the SDK's existing direct clock-conversion fallback on Linux libc++
+when C++20 clock conversions are unavailable, using the standard-library feature
+macro rather than an Apple-only platform check. Native libstdc++ and MSVC
+conversions remain unchanged.

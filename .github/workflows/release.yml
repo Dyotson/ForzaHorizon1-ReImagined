@@ -30,6 +30,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Test Linux dependency retry handling
+        run: python3 -m unittest launcher/test_ci_linux_sdk_setup.py
       - id: cache
         uses: actions/cache@v4
         with:
@@ -45,6 +47,9 @@ jobs:
         name: Build the patched SDK pieces
         run: |
           REXSDK_JOBS="$(nproc)" tools/build_rexglue_sdk.sh
+          clang++ -std=c++23 -fsyntax-only -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            -I"$HOME/rexglue-sdk-src-forza/sdk/thirdparty/fmt/include" \
+            tools/test_sdk_clock_conversions.cpp
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
