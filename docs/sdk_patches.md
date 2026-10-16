@@ -37,3 +37,6 @@ preserving mip bias and filtering. The captured traffic-car reflection shader
 produced a checker pattern with manually emitted coarse gradients; implicit LOD
 matched the reference result. Explicit guest gradients and LOD, and other GPU
 vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-car-reflection-sampling-2026-10-15).
+
+0053 refreshes known reused car-thumbnail readback surfaces on Vulkan; see
+[Rendering issues](rendering.md#reused-car-thumbnail-readbacks-vulkan).

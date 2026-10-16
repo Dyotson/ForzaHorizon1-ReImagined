@@ -341,3 +341,24 @@ fix: wing white at scale 1 and 2, the same as a warm cache. `FORZA_LIVERY_SYNC=0
 hook off. The red line in the report (a red VW Corrado, not in the test save) was not
 reproduced on the cars at hand (Zonda R, M3 GTR at scale 2, AF 16x, FXAA extreme); a livery
 layer missing in the same way is a likely cause.
+
+
+## Reused car thumbnail readbacks (Vulkan)
+
+Related: #50. FH1 reuses the 1280x720 RGBA8 thumbnail staging surfaces
+for its small garage tile and large car card. With `readback_resolve=some`,
+a reused key can retain the earlier CPU copy. SDK patch 0053 refreshes
+the known partial staging resolves and the 768x288 thumbnail atlas using
+the full readback path. Other resolves retain their configured policy;
+`readback_resolve=none` still disables readback.
+
+This is separate from the cold-pipeline fix for #74 (patch 0051 and
+`thumbnail_sync.cpp`), which must remain enabled. It does not change saved
+thumbnail dimensions or add DLSS. The scaled-thumbnail filtering and
+1x-scene/native-HUD synchronization are part of the graphics work in #59.
+
+Validation: copied-save regeneration and restart were tested at native
+2560x1440 with a 120 FPS cap on the graphics integration based on 05cbff8.
+The standalone patch also applies to the current public SDK patch stack.
+That gameplay test predates the public cold-pipeline fix; it does not prove
+this change alone resolves every report in #50. Original saves were untouched.
