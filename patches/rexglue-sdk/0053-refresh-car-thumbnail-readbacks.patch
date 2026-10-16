@@ -1,0 +1,27 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4877,6 +4877,23 @@
+     return true;
+   };
+ 
++  // FH1 reuses the three 1280x720 RGBA8 thumbnail staging surfaces for
++  // the small tile and the large car card within a few frames. "some" would
++  // retain the first (small-tile) CPU copy for the later card, saving a stale
++  // or empty car. Refresh these partial color resolves and the 768x288 atlas
++  // immediately; the continuously rendered scene/depth/float targets retain
++  // the normal cache behavior.
++  const auto dest_pitch = register_file_->Get<reg::RB_COPY_DEST_PITCH>();
++  const auto dest_info = register_file_->Get<reg::RB_COPY_DEST_INFO>();
++  const auto copy_control = register_file_->Get<reg::RB_COPY_CONTROL>();
++  const bool thumbnail_readback = copy_control.copy_src_select < 4 &&
++      dest_info.copy_dest_format == xenos::ColorFormat::k_8_8_8_8 &&
++      ((dest_pitch.copy_dest_pitch == 768 && dest_pitch.copy_dest_height == 288) ||
++       (dest_pitch.copy_dest_pitch == 1280 && dest_pitch.copy_dest_height == 720 &&
++        (written_length == 1310720 || written_length == 1146880)));
++  if (thumbnail_readback) {
++    readback_mode = ReadbackResolveMode::kFull;
++  }
+   bool is_scaled = texture_cache_->IsDrawResolutionScaled();
+   uint64_t resolve_key = GetReadbackResolveKey(written_address, written_length);
+   ReadbackBuffer& readback = readback_buffers_[resolve_key];
