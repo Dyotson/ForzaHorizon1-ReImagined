@@ -249,6 +249,18 @@ Checked 2026-10-14/15 with the TU4 build, offline, a scratch copy of the Xenia c
   (AMB_FA_Autoshow, AMB_FA_Workshop): not checked whether an ambience goes missing.
 - Not played: the other 4 championships and the final (it needs rally points that a
   last place does not give), the Service Area and the All Access Pass.
+- **Kettle Hills stage 1 (#86, 2026-10-16):** a player's game hung there three times (the
+  road ahead missing, then frozen: the resource loader looping in a zip member read, see
+  docs/PROJECT.md). On Linux it played to the finish (Kettle Hills is the fifth
+  championship, S class, 30,000 Cr; stage 1 is track 1129 `RALLY_016`, route 16, 5,021 m,
+  from about 0.1 to 0.6 of the route). To get there without playing the four before it: the
+  gamedb in a copy of the update folder's `media.zip` with
+  `UPDATE Events SET PopularityPointsReq=0 WHERE Id IN (271,273,274,276,277)` (the zip may
+  hold it stored, method 0), the Rally Heats driven to the end, the Lancer bought (pick a
+  colour first, then A: "BUY CAR?"), the rally conversion, then the hub's fifth card; "RACE
+  ANYWAY" skips the class upgrade. Swapping the Rally Heats' track instead
+  (`Races.TrackId`) crashes its resume (read of guest 0x44): the save's Heats in progress
+  belongs to its own track.
 
 ### The 1000 Club (#17)
 

@@ -681,6 +681,42 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   on the way: `extracted/analysis/tu4.elf` is a copy of `default.elf`, not the update's image
   (`tools/xex_image.py extracted/tu4/default.xex OUT --elf` makes the right one).
 
+- 2026-10-16: **Horizon Rally, Kettle Hills stage 1: the road ahead missing, then the game
+  hangs (#86)**, Windows 11, RX 6700 XT, v0.1.10, Direct3D 12 with resolution scaling, TU4 +
+  the player's 22 DLC packages (the same package folders as ours, without the Season Pass),
+  local server. The player closed three hung games in a row at the same place; each log's
+  `guest threads at close` has the resource loader thread (`sub_82F0CF00` -> `sub_82F0B2D0`
+  -> the cacheable resources' load step `sub_82CE2A38` -> a resource's deserialize
+  `sub_82CE5140` -> `sub_82CE4BC0`) in the first read of the resource's header, inside
+  `IOSys::CCompressedCacheStream::Read` (TU4 `sub_82D39EA0`, disc `sub_82C78C88`), at a
+  different leaf each time: running, not waiting. Not #83 (that is after the load). The
+  stream decodes a zip member whose compressed bytes are in memory (a block of the archive's
+  cache, `+0x38`, or a page list, `+0x3C`): `Read` loops "decode a step (`sub_82D37380` /
+  `sub_82C76508`) while bytes are wanted and the step says there is more", and the step (copy
+  for method 0, inflate for 8, XMemDecompressStream for 21; fields: output `+0x24` of
+  `+0x2C`, method `+0x28`, input left `+0x50`, read `+0x4C`) says "more" whenever the output
+  is short of the member's size. If the input runs out first (or the decoder stops taking
+  it), every later step copies nothing and still says "more": the loader, the only thread
+  that streams resources, never comes back, so the road ahead is not streamed in and the game
+  stops when the car gets there; the video shows exactly that (the road gone at 86 %, the
+  picture frozen at 89 % with the race clock running).
+  Not reproduced on Linux (TU4, Vulkan, a copy of the Xenia save, our DLC: Rally Heats
+  finished, HORIZON RECOMMENDS bought the Lancer and its rally conversion, the gamedb in a
+  copy of the update's media.zip with the championships' `PopularityPointsReq` at 0 so Kettle
+  Hills opens, the stage driven to the finish at scale 1 at 25 m/s and at scale 2 at up to
+  34 m/s; the road there, no hang). The ColoradoDirt zip (484 MB, 27,378 members, no local
+  headers: the central directory points at the data) decodes completely with
+  `tools/unxmem`, every CRC right, so our copy is sound; which member the player's loader was
+  on, and why its input ran out, is not known (a damaged copy, or bytes in the cache block
+  that are not the file's: Windows-only or Direct3D 12-only paths are the suspects).
+  `src/hooks/compressed_stream_stall.cpp` now ends such a read: a step that wanted bytes but
+  neither took input nor gave output 8 times in a row returns "no more", the read comes back
+  short (as for a damaged member) and the loader goes on with the next resources; one
+  `ZIPREAD:` line names the stream, method, sizes, positions and the cache block's state.
+  Checked with `FORZA_ZIPREAD_TEST=N` (the N-th step loses its input, as in the hang): the
+  stream of a 1.9 MB LZX member at the Rally load stopped at 589,824 bytes, the read came
+  back, the Rally Heats started and played. The next log of this hang names the member.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
