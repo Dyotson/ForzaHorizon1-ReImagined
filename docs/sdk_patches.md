@@ -42,6 +42,8 @@ vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-
 
 0065 skips repeated Vulkan GPU-to-host resolve work after a successful CPU copy in `some` mode, preserving the first copy and cache eviction. Other modes are unchanged. See [Performance](perf.md#nvidia-vulkan-resolve-readback-overhead-49-2026-10-15).
 
+0063 adds native ultrawide rasterization, proportional HUD layout/edge anchors and square reflection cube faces. It applies independently of DLSS; see [Ultrawide](ultrawide.md).
+
 0053 refreshes known reused car-thumbnail readback surfaces on Vulkan; see
 [Rendering issues](rendering.md#reused-car-thumbnail-readbacks-vulkan).
 
