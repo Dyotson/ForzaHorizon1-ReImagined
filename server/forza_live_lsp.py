@@ -351,13 +351,21 @@ HOPPER_ROUNDS = {
     WORLD_HOPPER: [(7, 1101, 0)],
 }
 
+# The car class of a round without one of its own: the Horizon World takes any class (-1,
+# as the game's IDS_PresetFreeRoam and DefaultPlaygroundHopperOptions.xml do; 255 is not a
+# class id and made the lobby accept only S-class cars, #6), the Races playlist keeps 255
+# for the lobby's class vote.
+ANY_CAR_CLASS = -1
+RACES_CAR_CLASS = 255
+
+
 GAME_OPTIONS_XML = """<GameOptions GameTypePreset="{preset}"{filter} TrackId="{track}" UseTraffic="false"
     CollisionMode="Default" MaxPlayers="{players}" MaxAIPlayers="0" NumPlayerBuckets="1"
     NumTeams="0" HorizonTimeOfDayIsRandom="true" HorizonTimeOfDay="Invalid"
-    PauseTimeOfDay="false" MinRecommendedCarClass="255" MaxRecommendedCarClass="255">
+    PauseTimeOfDay="false" MinRecommendedCarClass="{car_class}" MaxRecommendedCarClass="{car_class}">
   <Buckets>
     <Bucket Name="GROUP 1" CanStartEndOfRaceCountdown="1" MinPlayers="1" MaxPlayers="{players}">
-      <CarRestrictions CarClassId="255"/>
+      <CarRestrictions CarClassId="{car_class}"/>
     </Bucket>
   </Buckets>
   <StartingGridOptions StartType="OpenWorld" GridOrderingType="Random"/>
@@ -404,6 +412,23 @@ TIME_TRIAL_XML = """<GameOptions GameTypePreset="1" GameTypeFilterType="Circuit"
 """
 
 
+def default_round_xml(hopper, round_num):
+    """The built-in round (HOPPER_ROUNDS) of a hopper as GameOptions XML bytes."""
+    rounds = HOPPER_ROUNDS.get(hopper, HOPPER_ROUNDS[1])
+    preset, track, laps = rounds[round_num % len(rounds)]
+    players = next((h["playerCount"] for h in HOPPERS if h["id"] == hopper), 8)
+    # A free roam (laps 0) has no end, or a timed one (Type "Time", seconds) in the world.
+    end, time_attr = ("NumLaps", "") if laps else ("None", "")
+    if hopper == WORLD_HOPPER and WORLD_ROUND_MINUTES > 0:
+        end, time_attr = "Time", ' Time="%d"' % round(WORLD_ROUND_MINUTES * 60)
+    return GAME_OPTIONS_XML.format(
+        preset=preset, track=track, laps=max(laps, 1), players=players,
+        car_class=ANY_CAR_CLASS if hopper == WORLD_HOPPER else RACES_CAR_CLASS,
+        # the custom game's Free Roam preset sets it (GameOptionPresets.xml)
+        filter=' GameTypeFilterType="FreeRoam"' if preset == 7 else "",
+        end=end, time=time_attr).encode()
+
+
 def hopper_get_game_options(server, xuid, body):
     """A round's options as GameOptions XML (the format of the game's
     media/gametunablesettings Default*HopperOptions.xml). DATA_DIR/hoppers/<hopperId>.xml
@@ -433,20 +458,8 @@ def hopper_get_game_options(server, xuid, body):
         log.info("title: hopper %d round %d for %016X: playground preset %s", hopper, round_num,
                  xuid, xml.split(b'GameTypePreset="')[1].split(b'"')[0].decode())
     else:
-        rounds = HOPPER_ROUNDS.get(hopper, HOPPER_ROUNDS[1])
-        preset, track, laps = rounds[round_num % len(rounds)]
-        players = next((h["playerCount"] for h in HOPPERS if h["id"] == hopper), 8)
-        # A free roam (laps 0) has no end, or a timed one (Type "Time", seconds) in the world.
-        end, time_attr = ("NumLaps", "") if laps else ("None", "")
-        if hopper == WORLD_HOPPER and WORLD_ROUND_MINUTES > 0:
-            end, time_attr = "Time", ' Time="%d"' % round(WORLD_ROUND_MINUTES * 60)
-        xml = GAME_OPTIONS_XML.format(
-            preset=preset, track=track, laps=max(laps, 1), players=players,
-            # the custom game's Free Roam preset sets it (GameOptionPresets.xml)
-            filter=' GameTypeFilterType="FreeRoam"' if preset == 7 else "",
-            end=end, time=time_attr).encode()
-        log.info("title: hopper %d round %d for %016X: preset %d track %d laps %d", hopper,
-                 round_num, xuid, preset, track, laps)
+        xml = default_round_xml(hopper, round_num)
+        log.info("title: hopper %d round %d for %016X: built-in round", hopper, round_num, xuid)
     return x.reply(x.HopperGetGameOptions_Results, {"gameOptionsXml": xml})
 
 

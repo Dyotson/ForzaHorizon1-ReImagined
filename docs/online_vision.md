@@ -749,3 +749,35 @@ Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_
   supported mid-world), 4 to 8 players, 144 fps with three players.
 - `server/test_forza_world_players.py`: placement of the third player, fullest world first,
   full worlds not offered, the standby host after the host left, AI level per human count.
+
+## Any car class in the Horizon World (#6, checked 2026-10-16)
+
+The world's lobby accepted only S-class cars (View Setup: CAR CLASS S; a D or A class car
+was swapped for an S one). The server's `GAME_OPTIONS_XML` sent
+`CarRestrictions CarClassId="255"` and `Min/MaxRecommendedCarClass="255"`. 255 is the
+bucket's "any class" (the garage filter SQL skips the class for it), but the options loader
+(`sub_825F5AA8`, TU4 `sub_82699E48`) replaces a 255 of an online game's buckets: both
+recommended classes 255 give 6 (S), equal ones that class, else the class vote's pick. The
+game's own free roam presets say -1 (`IDS_PresetFreeRoam` in `GameOptionPresets.xml`:
+`CarClassId="-1"`; `DefaultPlaygroundHopperOptions.xml`: `Min/MaxRecommendedCarClass="-1"`),
+and the database's `Tracks` has 0 and 10 for the world's track 1101.
+
+- Server only did not work. Tried with `forza_live_data/hoppers/3.xml` overrides: -1 in all
+  three places, the game's own preset XML, `DefaultPlaygroundHopperOptions.xml`, 0 and 10,
+  one bucket per class 0 to 10: View Setup said S every time (and 255/0/10 with the class
+  vote on said nothing different). The loader turned "any" into S whatever the options said.
+- Client (`world_drop_in.cpp`, "4. The car class"): in the world's playlist the loader is
+  skipped, so the buckets keep "any" (255). The server now sends -1 for the world
+  (`ANY_CAR_CLASS`, as the game's presets; the Races playlist keeps 255, `RACES_CAR_CLASS`).
+  The TU4 address came from `tools/tu_address_map.py` (`tu4_addresses.h`).
+- Events keep their own class (`TargetClass`, `forza_world.py`): the event lobby of event 178
+  said class A and both players drove A-class cars. The Races playlist is unchanged.
+- Test (two TU4 games, local server, copies of one Xenia save): A in a Ford Focus RS500 (A,
+  600) hosted, B in a Fiat Abarth 500 (D, 287) was placed into the world, both drove in
+  it with each other in the HUD list (`screenshots/2026-10-16_world_any_class_fiat_d_class.jpg`);
+  a world event (`/world/event`) took both to its lobby with A-class cars, 1 lap, and both
+  were back in the world lobby after it (`..._event_lobby_a_class.jpg`).
+- The effect needs the client build with the hook; the server's -1 is the game's own value
+  (an old client with the new server was not tested).
+- `server/test_forza_round_options.py`: the world's round says -1 in the three places, the
+  Races rounds 255.

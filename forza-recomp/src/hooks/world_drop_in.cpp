@@ -24,6 +24,13 @@
 //    waited for a second player. For a world host alone in its lobby the flag is set, so the
 //    check runs, the intermission starts and the world loads with one player.
 //
+// 4. The car class. The restrictions of a game's buckets say "any class" with 255 (a custom
+//    game's ANY; the SQL of the garage filter skips the class for it). The options loader
+//    (sub_825F5AA8) replaces a 255 of the buckets of an online game by the class of the
+//    options' Min/MaxRecommendedCarClass (both 255: 6 = S, equal: that class, else the vote's
+//    pick), so the world's lobby listed only S-class cars (View Setup: CAR CLASS S). In the
+//    world's playlist the 255 stays: any car is allowed (#6).
+//
 // The lobby and the playlist's options (GetGameOptions, per round) stay Find Game's. As a
 // free roam the world has no timed end: the host's END FREE ROAM sends everyone back to the
 // lobby, which starts the next round after the intermission. world_drop_in = false turns
@@ -114,6 +121,7 @@ bool JoinInProgressSite(uint32_t lr, const PPCContext& ctx) {
 extern "C" REX_FUNC(__imp__sub_82865340);
 extern "C" REX_FUNC(__imp__sub_825548A0);
 extern "C" REX_FUNC(__imp__sub_82875FB8);
+extern "C" REX_FUNC(__imp__sub_825F5AA8);
 
 // bool IsCustomGameMode(int mode)
 extern "C" REX_FUNC(sub_82865340) {
@@ -169,6 +177,16 @@ extern "C" REX_FUNC(sub_82875FB8) {
     }
   }
   __imp__sub_82875FB8(ctx, base);
+}
+
+// sub_825F5AA8(options): sets the class of each bucket that restricts to "any" (255) from the
+// options' recommended class range (see 4. above). The world keeps "any".
+extern "C" REX_FUNC(sub_825F5AA8) {
+  if (REXCVAR_GET(world_drop_in) && forza::LiveMatchPlaylist() == kWorldPlaylist) {
+    if (Trace()) REXLOG_INFO("WORLD: the buckets keep any car class");
+    return;
+  }
+  __imp__sub_825F5AA8(ctx, base);
 }
 
 namespace forza {
