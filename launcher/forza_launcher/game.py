@@ -306,7 +306,8 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
     """What the player set up but the game will not find: Title Update 4 chosen but this build has
     no update (the base game starts: no Horizon Rally, no 1000 Club), or DLC installed or chosen but
     none in the user data folder the game is started on (Horizon Rally then says "Xbox LIVE
-    Marketplace error"; issues #65, #70)."""
+    Marketplace error"; issues #65, #70), or DLC there without the Rally Expansion Pack (the same
+    error, #79)."""
     from . import datafolder
     out = []
     if cfg["tu_package"].strip() and not extra_update and not (game.dir / "update").is_dir():
@@ -328,6 +329,12 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
         if bare:
             out.append(f"{len(bare)} DLC package(s) have no header in {root / datafolder.DLC_DIR / 'Headers'} "
                        f"({', '.join(bare[:3])}{' ...' if len(bare) > 3 else ''}): install the DLC again in Setup.")
+        has_update = extra_update or (game.dir / "update").is_dir()
+        if has_update and "1600" not in datafolder.dlc_offers(root):
+            out.append(f"The Rally Expansion Pack is not among the {len(seen)} DLC package(s) in "
+                       f"{root / datafolder.DLC_DIR / '00000002'}: Horizon Rally says \"Xbox LIVE Marketplace "
+                       "error\" (issue #79). Open Setup and install the DLC again (step 2) with the Rally "
+                       "Expansion Pack.")
     return out
 
 

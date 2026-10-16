@@ -178,6 +178,17 @@ cross-version join), TU4 DriverB was placed into DriverA's.
 
 ### Horizon Rally (#16)
 
+HORIZON RALLY needs the Rally Expansion Pack (the package with `Media/1600.puboffer`, 1 GB).
+Without it (#79; a copy of a player's save on Linux, TU4, the DLC folder without that package)
+the main menu checks the marketplace instead (TU4 addresses: `sub_8279E4F8` runs the check
+`sub_82753DB0`, then waits for the managers at `0x833F4CF8` and `0x833F4CEC`) and
+`sub_827956F0` answers "XBOX LIVE MARKETPLACE ERROR: Failed to download required Xbox LIVE
+Marketplace data", or "MARKETPLACE ERROR: There was not enough space for the marketplace save
+file" while the marketplace manager is in state 3 (the failed save before b0daca0). With the
+package (header or not) the same save starts the Rally intro and no check runs. The game logs
+its DLC at start (`DLC: N packages in ..., offers ...`, `src/debug/dlc_log.cpp`) and warns
+when a TU4 build has no offer 1600; the launcher warns at Play too.
+
 Checked 2026-10-14/15 with the TU4 build, offline, a scratch copy of the Xenia career save
 (rally progress: the Rally Heats event in progress) and scripted driving, at 30, 60 and
 144 fps.

@@ -138,6 +138,18 @@ class Warnings(unittest.TestCase):
         install(self.home, header=False)
         self.assertIn("no header", self.warnings()[0])
 
+    def test_title_update_without_the_rally_expansion_pack(self):
+        (self.home / "runtime" / "update").mkdir()
+        install(self.home, "CARS")
+        touch(self.home / DLC / "00000002" / "CARS" / "Media" / "1200.puboffer")
+        w = self.warnings()
+        self.assertEqual(len(w), 1)
+        self.assertIn("Rally Expansion Pack", w[0])
+        install(self.home)
+        touch(self.home / DLC / "00000002" / RALLY / "Media" / "1600.puboffer")
+        self.assertEqual(df.dlc_offers(self.home), {"1200", "1600"})
+        self.assertEqual(self.warnings(), [])
+
     def test_launch_plan_links_the_xenia_copy_and_warns_nothing(self):
         xenia = Path(self.tmp.name) / "xenia" / "content"
         touch(xenia / "E03000000FB1630A" / "4D5309C9" / "00000001" / "save")

@@ -356,6 +356,21 @@ def dlc_packages(root) -> set:
         return set()
 
 
+def dlc_offers(root) -> set:
+    """Offer ids of the DLC packages under `root` (each package's Media/<offer>.puboffer; 1600 is the
+    Rally Expansion Pack, 2700 the 1000 Club)."""
+    d = Path(root) / DLC_DIR / "00000002"
+    out = set()
+    for name in dlc_packages(root):
+        try:
+            media = [p for p in (d / name).iterdir() if p.name.lower() == "media" and p.is_dir()]
+            for m in media:
+                out |= {p.name[:-len(".puboffer")] for p in m.iterdir() if p.name.lower().endswith(".puboffer")}
+        except OSError:
+            pass
+    return out
+
+
 def dlc_without_header(root) -> list:
     """Packages under `root` that have no Headers/00000002/<name>.header (the game may not count them)."""
     h = Path(root) / DLC_DIR / "Headers" / "00000002"

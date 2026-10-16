@@ -173,8 +173,9 @@ answers "XBOX LIVE MARKETPLACE ERROR: Failed to download required Xbox LIVE Mark
 (reproduced 2026-10-15, TU4, Xenia save, link removed). On Windows, DLC that only
 `Documents\forza` has (the game's own default folder) is copied to the launcher's folder when that
 has none. Play warns, and the warning stays in view, when TU4 is chosen in Setup but the build has
-no `update` folder, when DLC is installed or chosen but the game's folder has none, and when a
-package has no header.
+no `update` folder, when DLC is installed or chosen but the game's folder has none, when a
+package has no header, and, with TU4, when no package in the game's folder holds the Rally
+Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Marketplace error (#79).
 `forza-launcher --dry-run` prints what Play would run; it matches `tools/play.sh`
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` / `fsr3` entries become `fsr`).

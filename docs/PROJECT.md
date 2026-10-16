@@ -610,6 +610,16 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   closing the window: `LogGuestThreads` (v0.1.9) walked a thread's stack chain into a
   released page; the chain now stops at unreadable pages (`src/debug/fault_guard.cpp`).
   `ResolvePath(\Device) failed` is the game's `\Device\Image` probe, in every log.
+  Follow-up the same day (v0.1.10): the player's new screenshot shows the other text,
+  "XBOX LIVE MARKETPLACE ERROR: Failed to download required Xbox LIVE Marketplace data". The
+  game in that log mounts 17 DLC packages (the `DLCRootN:` lookups; 21 in the player's first
+  sessions, 23 here) and none of them is the Rally Expansion Pack (`1600_pri_65`). Reproduced on
+  Linux with the player's ForzaProfile, TU4 and the DLC without that package: the main menu's
+  HORIZON RALLY gives that message (marketplace manager in state 1, error 0, so the earlier
+  fix holds); with the package (with or without its header) the same save starts the Rally
+  intro. Before b0daca0 the manager was also in state 3, which picks the "not enough space"
+  text. The game now logs its DLC packages and offers at start and warns when a TU4 build
+  has no Rally Expansion Pack; the launcher warns at Play (docs/dlc.md, "Horizon Rally").
 
 ## Debugging recipes
 
