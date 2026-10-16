@@ -480,6 +480,8 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
     tools = build_env.detect_tools(opts.root, opts.prefer_downloaded, max_age=0)
     for p in tools.problems:
         raise BuildError(p)
+    for n in tools.notes:
+        rep.log(n)
     if not tools.missing:
         for k, v in tools.source.items():
             rep.log(f"{k}: {v}")
@@ -753,6 +755,9 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
         env["PATH"] = os.pathsep.join([llvm_bin] + [p for p in tools.path_dirs if p != llvm_bin] +
                                       [env.get("PATH", "")])
         env["FORZA_LLVM_BIN"] = llvm_bin
+        env["PATH"], dropped = build_env.native_path(env["PATH"])   # vcvars re-adds the player's PATH (#100)
+        if dropped:
+            rep.log("PATH: left out MSYS2/Cygwin folders: " + "; ".join(dropped))
         cmake_extra += ["-DCMAKE_TOOLCHAIN_FILE=" + sync_toolchain_file(root).as_posix()]
     else:
         cmake_extra += ["-DCMAKE_CXX_COMPILER=" + tools.cxx]

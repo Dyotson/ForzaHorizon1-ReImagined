@@ -127,6 +127,7 @@ class Tools:
     missing: list = field(default_factory=list)     # download names still needed
     problems: list = field(default_factory=list)    # things only the user can fix
     hints: list = field(default_factory=list)       # optional improvements (shown as warnings)
+    notes: list = field(default_factory=list)       # log lines: which tool was skipped and why
 
 
 def _version_of(cmd, pattern):
@@ -137,6 +138,97 @@ def _version_of(cmd, pattern):
         return None
     m = re.search(pattern, out)
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+# ---- Windows: tools from MSYS2 / Cygwin must not be used (#100) ---------------------------------
+#
+# devkitPro, Git for Windows' SDK and others put an MSYS2 `usr\bin` on PATH. Its cmake is a POSIX
+# program: it turns `C:\Users\x` into `/home/x/...` and fails ("The source directory
+# /home/user1/AppData/... does not exist"). The same goes for ninja, clang and git of those trees.
+
+_MSYS_DIR_NAMES = ("msys", "msys2", "msys32", "msys64", "cygwin", "cygwin64", "cygwin32")
+_MSYS_RUNTIME_DLLS = ("msys-2.0.dll", "cygwin1.dll")
+
+
+def msys_reason(exe: str, windows=None, version_text=None) -> str | None:
+    """Why `exe` is an MSYS2/Cygwin program (so the launcher must not use it), else None. Looks at the
+    folders of its path, at the POSIX runtime DLL next to it and, when given, at its `--version` text."""
+    if not (sys.platform == "win32" if windows is None else windows):
+        return None
+    parts = [x.lower() for x in re.split(r"[\\/]+", str(exe)) if x]
+    for x in parts[:-1]:
+        if x in _MSYS_DIR_NAMES or x.startswith("cygwin"):
+            return f"inside the {x} tree"
+    folder = os.path.dirname(str(exe))
+    for dll in _MSYS_RUNTIME_DLLS:
+        try:
+            if folder and os.path.isfile(os.path.join(folder, dll)):
+                return f"next to {dll}"
+        except OSError:
+            pass
+    if version_text and re.search(r"\b(msys|cygwin)", version_text, re.I):
+        return "its --version output says MSYS/Cygwin"
+    return None
+
+
+def find_tool(name: str, notes: list | None = None, path: str | None = None, windows=None,
+              version_probe=None) -> str | None:
+    """The first `name` on PATH that is a native program. On Windows, programs of MSYS2/Cygwin trees are
+    skipped, each skip added to `notes`. `version_probe(exe)` may return the --version text."""
+    notes = [] if notes is None else notes
+    win = sys.platform == "win32" if windows is None else windows
+    path = os.environ.get("PATH", "") if path is None else path
+    seen = set()
+    for d in path.split(os.pathsep):
+        if not d or d.lower() in seen:
+            continue
+        seen.add(d.lower())
+        exe = shutil.which(name, path=d)
+        if not exe:
+            continue
+        why = msys_reason(exe, win)
+        if not why and win and version_probe:
+            why = msys_reason(exe, win, version_probe(exe))
+        if why:
+            notes.append(f"{name}: skipped {exe} ({why}; it does not understand Windows paths)")
+            continue
+        return exe
+    return None
+
+
+def native_path(path: str | None = None, windows=None) -> tuple:
+    """(PATH without the folders of MSYS2/Cygwin trees, the folders removed). Unchanged off Windows."""
+    path = os.environ.get("PATH", "") if path is None else path
+    if not (sys.platform == "win32" if windows is None else windows):
+        return path, []
+    keep, drop = [], []
+    for d in path.split(os.pathsep):
+        (drop if d and msys_reason(os.path.join(d, "x.exe"), True) else keep).append(d)
+    return os.pathsep.join(keep), drop
+
+
+def vs_bundled_tool(name: str, installs=None) -> str | None:
+    """cmake / ninja that Visual Studio ships (the CMake workload), else None. Windows only."""
+    if sys.platform != "win32":
+        return None
+    rel = {"cmake": ("CMake", "bin", "cmake.exe"), "ninja": ("Ninja", "ninja.exe")}[name]
+    try:
+        installs = list_vs_installs() if installs is None else installs
+    except Exception:
+        return None
+    for v in installs:
+        exe = Path(v.path, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", *rel)
+        if exe.is_file():
+            return str(exe)
+    return None
+
+
+def _probe_text(exe: str) -> str:
+    try:
+        return subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20,
+                              env=cleanenv.clean_environment()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
 def _plat():
@@ -223,11 +315,12 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
     exe = ".exe" if p == "windows" else ""
 
     # compiler
-    sys_clang = None if prefer_downloaded else shutil.which("clang-cl" if p == "windows" else "clang")
+    sys_clang = None if prefer_downloaded else find_tool("clang-cl" if p == "windows" else "clang", t.notes,
+                                                         version_probe=_probe_text)
     ver = _version_of([sys_clang, "--version"], r"clang version (\d+\.\d+)") if sys_clang else None
     if sys_clang and ver and ver[0] >= pins.MIN_SYSTEM_CLANG:
         t.cc = sys_clang
-        t.cxx = shutil.which("clang++") or sys_clang if p != "windows" else sys_clang
+        t.cxx = (shutil.which("clang++") or sys_clang) if p != "windows" else sys_clang
         t.source["clang"] = f"system (clang {ver[0]}.{ver[1]})"
     elif dp["clang"].is_file():
         t.cc = str(dp["clang"])
@@ -239,7 +332,7 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         if paths.IN_FLATPAK:
             t.hints.append(FLATPAK_LLVM_HINT)
     # cmake
-    sys_cmake = None if prefer_downloaded else shutil.which("cmake")
+    sys_cmake = None if prefer_downloaded else find_tool("cmake", t.notes, version_probe=_probe_text)
     cv = _version_of([sys_cmake, "--version"], r"version (\d+\.\d+)") if sys_cmake else None
     if sys_cmake and cv and cv >= (3, 25):
         t.cmake = sys_cmake
@@ -248,10 +341,14 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         t.cmake = str(dp["cmake"])
         t.path_dirs.append(str(dp["cmake"].parent))
         t.source["cmake"] = f"downloaded (cmake {pins.CMAKE_VERSION})"
+    elif (vs_cmake := vs_bundled_tool("cmake")) and (vv := _version_of([vs_cmake, "--version"], r"version (\d+\.\d+)")) and vv >= (3, 25):
+        t.cmake = vs_cmake
+        t.path_dirs.append(str(Path(vs_cmake).parent))
+        t.source["cmake"] = f"Visual Studio's (cmake {vv[0]}.{vv[1]})"
     else:
         t.missing.append(f"cmake-{p}")
     # ninja
-    sys_ninja = None if prefer_downloaded else shutil.which("ninja")
+    sys_ninja = None if prefer_downloaded else find_tool("ninja", t.notes, version_probe=_probe_text)
     if sys_ninja:
         t.ninja = sys_ninja
         t.source["ninja"] = "system"
@@ -259,6 +356,10 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         t.ninja = str(dp["ninja"])
         t.path_dirs.append(str(dp["ninja"].parent))
         t.source["ninja"] = f"downloaded (ninja {pins.NINJA_VERSION})"
+    elif vs_ninja := vs_bundled_tool("ninja"):
+        t.ninja = vs_ninja
+        t.path_dirs.append(str(Path(vs_ninja).parent))
+        t.source["ninja"] = "Visual Studio's"
     else:
         t.missing.append(f"ninja-{p}")
     # the C++ standard library headers (Linux): only the system can supply them
@@ -276,6 +377,8 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
 
 def tool_env(tools: Tools):
     env = cleanenv.clean_environment()
+    if sys.platform == "win32":
+        env["PATH"] = native_path(env.get("PATH", ""))[0]   # no MSYS2/Cygwin programs ahead of the right ones (#100)
     if tools.path_dirs:
         env["PATH"] = os.pathsep.join(tools.path_dirs + [env.get("PATH", "")])
     return env

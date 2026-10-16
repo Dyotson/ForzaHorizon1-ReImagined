@@ -149,6 +149,13 @@ removing host execution.
   Microsoft's is redistributed). The toolchain file is `tools/cmake/windows-native-clang-cl.cmake`.
   The Windows overlay is the whole SDK prefix (the SDK's prebuilt Windows plugin has no
   Vulkan backend), built by CI.
+  **MSYS2 and Cygwin tools are never used (#100).** devkitPro and similar put an MSYS2 `usr\bin` on PATH; its
+  `cmake` turns `C:\Users\x` into `/home/x/...` ("The source directory ... does not exist", build failed at 22%).
+  `build_env.find_tool` walks PATH and skips cmake, ninja and clang-cl that sit under a `msys`/`msys2`/`msys64`/`cygwin*`
+  folder, next to `msys-2.0.dll` or `cygwin1.dll`, or whose `--version` says MSYS/Cygwin; each skip is a line in the build
+  log (`cmake: skipped ...`). Order after that: a native program on PATH, the launcher's downloaded tool, the one bundled
+  with Visual Studio (`Common7\IDE\CommonExtensions\Microsoft\CMake`), then the download. The PATH given to cmake and
+  ninja has the MSYS2/Cygwin folders removed too (logged as `PATH: left out ...`). Tests: `launcher/test_tools_msys.py`.
 
 ### HTTPS certificates (#68, #85)
 
