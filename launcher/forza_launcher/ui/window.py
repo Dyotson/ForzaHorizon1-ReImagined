@@ -283,8 +283,8 @@ class MainWindow(QMainWindow):
             return
         if code == game.RELAUNCH_EXIT_CODE:
             try:
-                self.session.relaunch()
-                return
+                if self.session.relaunch():
+                    return
             except OSError as e:
                 paths.log_error("start the game again", e)
         self.poll.stop()

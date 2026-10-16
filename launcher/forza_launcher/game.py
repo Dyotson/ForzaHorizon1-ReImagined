@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -465,6 +466,10 @@ def crash_reason(plan: "LaunchPlan", code) -> str:
 # The game exits with this code when it restarts itself (accepting an invite in free roam,
 # src/kernel/xam_loader.cpp) and FORZA_LAUNCHER_RELAUNCH is set: start it again.
 RELAUNCH_EXIT_CODE = 75
+# A game that keeps exiting with that code (a bug, not an invite each time) is not started
+# again more than this many times within this many seconds: the exit then counts as a stop.
+RELAUNCH_LIMIT = 4
+RELAUNCH_WINDOW = 60.0
 
 
 class Session:
@@ -475,6 +480,7 @@ class Session:
         self.server = None
         self.proc = None
         self.log = log
+        self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
 
     def start(self):
         plan = self.plan
@@ -502,9 +508,17 @@ class Session:
         self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
 
     def relaunch(self):
-        """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running."""
+        """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running.
+        Returns False, starting nothing, when it asked too often."""
+        now = time.monotonic()
+        self.relaunches = [t for t in self.relaunches if now - t < RELAUNCH_WINDOW]
+        if len(self.relaunches) >= RELAUNCH_LIMIT:
+            self.log("The game keeps restarting itself; not starting it again")
+            return False
+        self.relaunches.append(now)
         self.log("The game restarts itself")
         self._start_game({"FORZA_RELAUNCHED": "1"})
+        return True
 
     def poll(self):
         return None if self.proc is None else self.proc.poll()
