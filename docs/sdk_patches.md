@@ -47,3 +47,9 @@ vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-
 when C++20 clock conversions are unavailable, using the standard-library feature
 macro rather than an Apple-only platform check. Native libstdc++ and MSVC
 conversions remain unchanged.
+
+
+0055 preserves the source stencil value when copying depth/stencil ownership
+without shader stencil export. Previously the stencil-only shader skipped its
+bit test and filled the destination with 255, rejecting dynamic shadows (#75).
+See [Rendering issues](rendering.md#missing-dynamic-shadows-in-the-stencil-copy-fallback-75).

@@ -398,3 +398,40 @@ keep it on the road. About 13 minutes from boot to the video; nothing saves on t
 Open: with Linux clean, Windows or the AMD Windows driver is the likely factor. Asked for a
 run at render scale 1, one with Direct3D 12, and whether the video looked right on their first
 save with v0.1.8.
+
+## Missing dynamic shadows in the stencil-copy fallback (#75)
+
+Reproduced on Windows / RTX 5060 Ti / Vulkan at draw scales 1 and 2, with
+DLSS off and synchronous shader compilation. In a stationary daylight scene,
+the car had its contact patch but no projected shadow, and nearby tree shadows
+were absent. The same copied save and default photo view were used for both scales.
+
+The car silhouette was present in its shadow map. The projection pass failed
+stencil testing: a depth/stencil ownership transfer changed source stencil zero
+into destination 255, while the projection required zero. On the bit-copy path,
+`GetTransferShader` deliberately declares only the stencil texture, but the
+packing branch was conditional on having loaded depth. `packed` stayed unset,
+so none of the eight bit-copy shaders emitted their conditional discard. Each
+pass therefore wrote its bit across the transfer rectangle.
+
+SDK patch 0055 feeds the loaded stencil value directly into the existing bit
+test. Color-to-stencil and the direct stencil-export path are unchanged. This
+fix applies to the fallback wherever it is used, rather than matching a vendor
+or an FH1 shader hash.
+
+Validation: the public SDK patch stack applies cleanly to bd833a2; the Windows
+GPU plugin built with Vulkan and D3D12 enabled. Live gameplay and matched photo
+views at scales 1 and 2 restore the car, traffic and tree shadows. A post-fix
+scale-1 GPU capture has 485,788 zero and 435,812 one stencil pixels in the
+1280x720 active area (no 255 values); the two used stencil-only shader variants
+now contain the conditional discard. Before the fix the scale-2 active area
+was entirely 255 and the projection's stencil reference was zero.
+The integration binary also contains the separate DLSS/HUD work; this patch
+itself is standalone. Other GPU vendors have not been runtime-tested here.
+No original saves were modified, and screenshots/captures remain outside Git.
+
+Capture caveat: RenderDoc with sparse shared memory produced zeroed index data
+and a misleading collapsed shadow mesh. A live GPU readback matched the CPU's
+index and vertex data byte-for-byte. For reliable replay, the subsequent
+capture used `vulkan_sparse_shared_memory=false` and
+`vulkan_threaded_submission=false`; ordinary live validation retained defaults.
