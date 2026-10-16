@@ -584,6 +584,10 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   on Windows (256 KB on Linux). Not reproduced; the log of the next hang will say more: closing
   the window now logs every guest thread's last call site and call chain (`LogGuestThreads`,
   `src/debug/fault_guard.cpp`).
+  Windows now behaves like Linux here: `FORZA_THREAD_PRIORITY` (default `normal` on Windows,
+  `game` restores the request) keeps a guest priority request from raising a host thread above
+  normal, on thread creation (flags 0x20/0x40, set by the SDK in `XThread::Create`) and in
+  `KeSetBasePriorityThread`; one log line per clamped thread (`src/debug/thread_trace.cpp`).
 
 ## Debugging recipes
 
