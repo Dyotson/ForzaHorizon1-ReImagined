@@ -7,14 +7,27 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SUDO=""; [ "$(id -u)" = 0 ] || SUDO=sudo
 export DEBIAN_FRONTEND=noninteractive
-$SUDO apt-get update
-$SUDO apt-get install -y software-properties-common ca-certificates
-$SUDO add-apt-repository -y ppa:ubuntu-toolchain-r/test
-$SUDO apt-get update
+# Launchpad occasionally returns 503 for individual packages. APT retries each
+# transfer; repeat the command too so already downloaded packages stay cached.
+apt_get() {
+    local attempt
+    for attempt in 1 2 3; do
+        if $SUDO apt-get -o Acquire::Retries=3 "$@"; then
+            return 0
+        fi
+        [ "$attempt" -lt 3 ] || return 1
+        echo "APT failed (attempt $attempt/3); retrying in $((attempt * 10)) seconds" >&2
+        sleep "$((attempt * 10))"
+    done
+}
+apt_get update
+apt_get install -y software-properties-common ca-certificates
+$SUDO add-apt-repository --no-update -y ppa:ubuntu-toolchain-r/test
+apt_get update
 # The -dev packages of PulseAudio and ALSA (and D-Bus, fribidi, libthai) matter at run time too: SDL3 inside
 # the runtime only gets those audio and input backends if its headers are present when it is built;
 # without them the game finds no audio device and stops (KeBugCheckEx).
-$SUDO apt-get install -y g++-14 make ninja-build python3 git patchelf pkg-config \
+apt_get install -y g++-14 make ninja-build python3 git patchelf pkg-config \
     libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxfixes-dev libxcursor-dev libxi-dev \
     libxrandr-dev libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev \
     libxkbcommon-dev libdrm-dev libgl1-mesa-dev libvulkan-dev \

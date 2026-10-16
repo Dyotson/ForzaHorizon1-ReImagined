@@ -38,5 +38,12 @@ produced a checker pattern with manually emitted coarse gradients; implicit LOD
 matched the reference result. Explicit guest gradients and LOD, and other GPU
 vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-car-reflection-sampling-2026-10-15).
 
+0064 flushes pending Vulkan shader/pipeline storage writes before sleeping and drains queued records on shutdown. See [Performance](perf.md#flush-pending-vulkan-shader-cache-writes-before-waiting-49).
+
 0053 refreshes known reused car-thumbnail readback surfaces on Vulkan; see
 [Rendering issues](rendering.md#reused-car-thumbnail-readbacks-vulkan).
+
+0067 enables the SDK's existing direct clock-conversion fallback on Linux libc++
+when C++20 clock conversions are unavailable, using the standard-library feature
+macro rather than an Apple-only platform check. Native libstdc++ and MSVC
+conversions remain unchanged.
