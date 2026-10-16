@@ -457,3 +457,25 @@ and a misleading collapsed shadow mesh. A live GPU readback matched the CPU's
 index and vertex data byte-for-byte. For reliable replay, the subsequent
 capture used `vulkan_sparse_shared_memory=false` and
 `vulkan_threaded_submission=false`; ordinary live validation retained defaults.
+
+## Filter supersampled car thumbnails (#50)
+
+Patch 0066 averages the RGBA8 samples in each supersampled guest pixel when
+reading back a known car-thumbnail surface. The old shader chose one corner
+sample, discarding the other three samples at 2x or eight at 3x. Depth, other
+formats and ordinary resolves keep their existing point/center policy. The
+thumbnail dimensions and refresh rule from patch 0053 are unchanged.
+
+The earlier integration validation ran 81 actual Vulkan compute cases at scales
+1-3, including nonzero offsets, multiple tiles and output bounds, and regenerated
+Mustang tile/card previews on a copied TU4 save at native 1440p. Those results
+predate this standalone split; the shader algorithm is unchanged. No claim is
+made that old saved thumbnails are rewritten automatically, that all #50 cases
+are fixed, or that other GPU vendors have been runtime-tested here.
+
+Standalone validation (2026-10-16, Windows / RTX 5060 Ti): dispatched the actual
+embedded SPIR-V for both versions through Vulkan. The matrix covers 1x-3x on
+each axis, point/center/box modes, source offsets 0/16/256 bytes, one or two
+tiles and a deliberately excess workgroup with guarded output. Before: 57/81
+cases pass, with all 24 nontrivial box-filter cases failing. After: 81/81 pass,
+including the output guards. No game assets are part of the test inputs.
