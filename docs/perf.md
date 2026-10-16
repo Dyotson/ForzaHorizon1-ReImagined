@@ -438,3 +438,19 @@ Ideas left (not cheap): build the generated code with `-mfma` behind a CPU check
 2013 and the Deck have FMA3; 11,700 `std::fma` calls in the generated code); cache Vulkan descriptor sets in
 `UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
 write-back instead of the 50 us sleeps.
+
+## Flush pending Vulkan shader-cache writes before waiting (#49)
+
+Patch 0064 completes a pending stdio flush before the storage writer sleeps,
+and drains shader/pipeline records queued before shutdown. Without it, a final
+flush request could consume its notification and go to sleep with buffered
+records, so hard exits left the next run without those cached states.
+
+The Windows regression harness executes the actual StorageWriteThread body with
+real files, a worker thread, one queued shader and pipeline, then 64 pipeline
+records queued immediately before shutdown. Before: the one-second flush check
+fails and shutdown drops the queued records. After: both checks pass, including
+all 65 pipeline records. This is a cache-persistence fix, not an FPS claim or a
+fix for every freeze in #49. No GPU-specific commands or policies change; AMD
+runtime validation remains with the maintainer. The ordered standalone SDK
+patch stack applies to bd833a2.
