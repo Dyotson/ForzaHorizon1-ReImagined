@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__, paths, pins
-from . import build_env, datafolder, fetch
+from . import build_env, cleanenv, datafolder, fetch
 from .fetch import Cancelled
 
 IS_WIN = sys.platform == "win32"
@@ -595,7 +595,7 @@ def apply_title_update(opts: Options, rep: Reporter, game_files: Path) -> Path |
     rep.status("Applying your title update")
     cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
         script, game_files / "default.xex", pkg, out]
-    run(cmd, opts.root, os.environ.copy(), rep, low_priority=opts.low_priority)
+    run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority)
     missing = [n for n in TU_EXECUTABLES if not (out.parent / n).is_file()]
     if missing:
         raise BuildError("The title update step did not produce " + ", ".join(missing) + ".")
@@ -660,12 +660,12 @@ def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
         exe = next(tooldir.rglob("xwin.exe"))
         rep.status("Downloading the Microsoft C++ runtime and Windows SDK")
         run([exe, "--accept-license", "--cache-dir", opts.root / "downloads" / "xwin-cache", "splat",
-             "--output", xdir], opts.root, os.environ.copy(), rep)
+             "--output", xdir], opts.root, cleanenv.clean_environment(), rep)
     inc = [xdir / "crt" / "include", xdir / "sdk" / "include" / "ucrt", xdir / "sdk" / "include" / "um",
            xdir / "sdk" / "include" / "shared", xdir / "sdk" / "include" / "winrt"]
     lib = [xdir / "crt" / "lib" / "x86_64", xdir / "sdk" / "lib" / "um" / "x86_64",
            xdir / "sdk" / "lib" / "ucrt" / "x86_64"]
-    env = dict(os.environ)
+    env = cleanenv.clean_environment()
     env["INCLUDE"] = os.pathsep.join(map(str, inc))
     env["LIB"] = os.pathsep.join(map(str, lib))
     return env
@@ -860,7 +860,7 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     script = rt / ".rpath.cmake"
     script.write_text(f'file(RPATH_SET FILE "{(rt / "librexgpu-xenos.so").as_posix()}" NEW_RPATH "$ORIGIN")\n')
     cmake = shutil.which("cmake") or str(build_env.downloaded_paths(opts.root)["cmake"])
-    subprocess.run([cmake, "-P", str(script)], capture_output=True)
+    subprocess.run([cmake, "-P", str(script)], capture_output=True, env=cleanenv.clean_environment())
     script.unlink(missing_ok=True)
     return rt
 

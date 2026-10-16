@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths, pins
+from . import cleanenv, paths, pins
 
 MB = 1 << 20
 GB = 1 << 30
@@ -131,7 +131,8 @@ class Tools:
 
 def _version_of(cmd, pattern):
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20,
+                             env=cleanenv.clean_environment()).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     m = re.search(pattern, out)
@@ -181,7 +182,7 @@ def _cxx_works(cxx: str, env=None) -> str | None:
         src.write_text('#include <format>\n#include <string>\n#include <thread>\n'
                        'int main(){ return std::format("{}", 1).size() == 1 ? 0 : 1; }\n')
         r = subprocess.run([cxx, "-std=c++23", str(src), "-o", str(Path(d) / "t")],
-                           capture_output=True, text=True, env=env, timeout=120)
+                           capture_output=True, text=True, env=env or cleanenv.clean_environment(), timeout=120)
         if r.returncode != 0:
             return (r.stderr.strip().splitlines() or ["compile failed"])[-1]
     return None
@@ -262,7 +263,7 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         t.missing.append(f"ninja-{p}")
     # the C++ standard library headers (Linux): only the system can supply them
     if t.cxx and p == "linux":
-        env = dict(os.environ)
+        env = cleanenv.clean_environment()
         env["PATH"] = os.pathsep.join(t.path_dirs + [env.get("PATH", "")])
         why = cxx_works(t.cxx, env)
         if why:
@@ -274,7 +275,7 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
 
 
 def tool_env(tools: Tools):
-    env = dict(os.environ)
+    env = cleanenv.clean_environment()
     if tools.path_dirs:
         env["PATH"] = os.pathsep.join(tools.path_dirs + [env.get("PATH", "")])
     return env

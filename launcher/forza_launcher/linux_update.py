@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 import time
 
-from . import fetch, paths, update_helper, updater
+from . import cleanenv, fetch, paths, update_helper, updater
 
 def verify_download(archive, asset, cancelled=lambda: False):
     digest = hashlib.sha256()
@@ -96,7 +96,8 @@ def start_archive(prepared, cancelled=lambda: False):
     try:
         with open(job["log"], "a") as log:
             process = subprocess.Popen(argv, cwd=helper.parent, stdout=log, stderr=subprocess.STDOUT,
-                                       stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+                                       stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True,
+                                       env=cleanenv.clean_environment())
         deadline = time.monotonic() + 15
         while not Path(job["ready"]).exists():
             if process.poll() is not None:

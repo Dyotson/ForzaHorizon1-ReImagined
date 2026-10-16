@@ -16,6 +16,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 
+from . import cleanenv
 from .paths import IS_WINDOWS
 
 NVIDIA, AMD, INTEL, DECK = "nvidia", "amd", "intel", "deck"
@@ -144,7 +145,7 @@ def vendor_from_adapters(names):
 def _run(args, timeout=12):
     flags = 0x08000000 if IS_WINDOWS else 0   # CREATE_NO_WINDOW
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, creationflags=flags,
-                          encoding="utf-8", errors="replace").stdout
+                          encoding="utf-8", errors="replace", env=cleanenv.clean_environment()).stdout
 
 
 PS_QUERY = ("$g = @(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,PNPDeviceID);"

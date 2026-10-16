@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, paths
+from . import TITLE_ID, cleanenv, paths
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -86,7 +86,8 @@ def game_version(game: GameInstall | None) -> str:
     if paths.in_checkout():
         try:
             out = subprocess.run(["git", "-C", str(paths.REPO_ROOT), "rev-parse", "--short", "HEAD"],
-                                 capture_output=True, text=True, timeout=5)
+                                 capture_output=True, text=True, timeout=5,
+                                 env=cleanenv.clean_environment())
             if out.returncode == 0 and out.stdout.strip():
                 return "source build " + out.stdout.strip()
         except (OSError, subprocess.SubprocessError):
@@ -424,8 +425,10 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     if not paths.IS_WINDOWS:
         # play.sh: LD_LIBRARY_PATH="$SDK/lib:$BUILD" for a source build, "$DIR" for a package.
         libs = [str(p) for p in game.lib_dirs] + [str(game.dir)]
-        if os.environ.get("LD_LIBRARY_PATH"):
-            libs.append(os.environ["LD_LIBRARY_PATH"])
+        # the player's own path, not the frozen launcher's _internal (#87)
+        user_libs = cleanenv.clean_environment().get("LD_LIBRARY_PATH")
+        if user_libs:
+            libs.append(user_libs)
         env["LD_LIBRARY_PATH"] = ":".join(libs)
     return LaunchPlan(game, game.dir, [str(game.exe)] + args, env, unset, toml_path,
                       toml_text, server_argv, notes, home)
@@ -493,13 +496,13 @@ class Session:
             self.server_log = open(data_dir / "server.log", "ab")
             self.server = subprocess.Popen(plan.server_argv, stdout=self.server_log,
                                            stderr=subprocess.STDOUT, creationflags=flags,
-                                           stdin=subprocess.DEVNULL)
+                                           stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
             self.log("Started a local Forza Live server")
         self._start_game({})
 
     def _start_game(self, extra):
         plan = self.plan
-        env = dict(os.environ)
+        env = cleanenv.clean_environment()
         for k in plan.unset:
             env.pop(k, None)
         env.update(plan.env)

@@ -164,6 +164,22 @@ HTTPS scanning or a proxy that replaces certificates, and each failure is writte
 `cacert.pem` as data); the Flatpak module `certifi` pins the wheel by sha256. Tests:
 `launcher/test_fetch.py` (context choice per platform, fallback, error text).
 
+### Child process environment (#87)
+
+PyInstaller puts the bundle's `_internal` folder on `LD_LIBRARY_PATH` (the player's own value is kept in
+`LD_LIBRARY_PATH_ORIG`), and every program the launcher started inherited it: `rexglue` failed with
+`libstdc++.so.6: version GLIBCXX_3.4.31 not found` against the bundled, older libstdc++ (Linux .tar.gz build).
+`launcher/forza_launcher/cleanenv.py` returns the environment for any external program: the saved `*_ORIG` library
+paths restored (or the variable removed, or only the bundle's entries stripped when none was saved), and the bundle's
+`QT_PLUGIN_PATH`, `PYTHONHOME`, `SSL_CERT_FILE` and bootloader `_PYI_*` markers dropped. The build steps
+(`builder.run`, `tool_env`, compiler and version probes, the `cmake -P` RPATH step, the `--run-script` tools),
+the game and the local server (`game.Session`; the game's lib dirs are put in front of the player's own path),
+the GPU queries, `git rev-parse` and the archive update helper all use it, and `ui.window.run` restores
+`os.environ` itself so that Qt's `xdg-open` is clean too (the loader reads the path at process start, so this does
+not affect what is loaded). Tests: `launcher/test_cleanenv.py` (frozen environments with the original set, unset and
+empty, every launch path). `tools/prerelease.sh --only launcher` also runs `git` and a fake game under a library
+path of broken `libz`/`libpcre2`/`libstdc++` and fails if either inherits it.
+
 ## Settings
 
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,

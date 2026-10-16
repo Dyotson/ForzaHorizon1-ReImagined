@@ -269,6 +269,11 @@ check_launcher() {
     # What a frozen launcher puts on the library path: libraries the system openssl cannot load
     head -c 4096 /dev/urandom > "$fake/libcrypto.so.3"
     head -c 4096 /dev/urandom > "$fake/libssl.so.3"
+    # ... and what the programs it starts (git, rexglue, cmake, the game) load: the build machine's
+    # libstdc++ is newer than the system's (#87: GLIBCXX_3.4.31 not found)
+    head -c 4096 /dev/urandom > "$fake/libz.so.1"
+    head -c 4096 /dev/urandom > "$fake/libpcre2-8.so.0"
+    head -c 4096 /dev/urandom > "$fake/libstdc++.so.6"
     if [ -n "$iso" ]; then isos=("$iso"); else isos=(HorizonISO/*.iso); fi
     [ -f "${isos[0]}" ] || { echo "no disc image (--iso PATH, default HorizonISO/*.iso)"; return 1; }
     FAKE_LIBS="$fake" PYTHONPATH="$ROOT/launcher" python3 -I - "${isos[0]}" "$LOG/disc" "$ROOT" <<'EOF'
@@ -314,6 +319,32 @@ print("facades:", msg)
 assert ok, "facade check failed"
 for f in getattr(pkg, "files", []):
     f.close()
+
+# every program the launcher starts, as the frozen build starts it: PyInstaller's _internal on
+# LD_LIBRARY_PATH (with and without the saved original), none of them may load its libraries (#87)
+import subprocess
+from forza_launcher import build_env, cleanenv, game
+fake = os.environ["FAKE_LIBS"]
+sys.frozen, sys._MEIPASS = True, fake
+real_libs = os.environ.get("LD_LIBRARY_PATH_ORIG", "")
+for orig in (None, "/usr/lib64"):
+    os.environ["LD_LIBRARY_PATH"] = fake + (":" + orig if orig else "")
+    os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
+    if orig:
+        os.environ["LD_LIBRARY_PATH_ORIG"] = orig
+    bad = subprocess.run(["git", "--version"], capture_output=True, text=True)
+    assert bad.returncode != 0, "the fake libraries do not break git: this check proves nothing"
+    r = subprocess.run(["git", "--version"], capture_output=True, text=True, env=build_env.tool_env(build_env.Tools()))
+    assert r.returncode == 0, "git under the tool environment: " + r.stderr.strip()
+    plan = game.LaunchPlan(game=None, cwd=Path(out), argv=["git", "--version"], env={}, unset=[],
+                           toml_path=Path(out) / "t.toml", toml_text="", server_argv=None)
+    s = game.Session(plan, log=lambda _t: None)
+    s.start()
+    assert s.proc.wait(timeout=30) == 0, "the game process inherited the launcher's library path"
+    s.cleanup()
+    env = cleanenv.clean_environment()
+    assert fake not in env.get("LD_LIBRARY_PATH", ""), env.get("LD_LIBRARY_PATH")
+print("children: no frozen LD_LIBRARY_PATH leaks (saved original: %s)" % ("yes" if orig else "no"))
 EOF
     rc=$?
     # the entry point the frozen build runs
