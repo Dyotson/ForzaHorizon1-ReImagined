@@ -110,7 +110,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | --- | --- | --- |
 | Sign-in (about 50 s after boot) | `User.Logon2(loginData)` | `responseData`: profile valid, a permission table allowing every feature (below), `userData` (XUID, gamertag, **currentXPTotal = the player's online XP**), timeouts |
 | | `OnlineProfile.UpdateAllTables`, `UpdateAll` | success; `UpdateAll`'s `playerRaceHistory` (level, XP, **onlineXP**, online races and wins) and `playerHistory` (credits) are kept per player |
-| | `DLCMetadata.GetStringTableInfo("EN")`, `Xls Content.DownloadContent(0, 0, 0x40000)` x2 | empty |
+| | `DLCMetadata.GetStringTableInfo("EN")` | no table (`Id` -1, #79); with the empty answer the game also asked `Xls Content.DownloadContent(0, 0, 0x40000)` x2 and saved a nameless file to `marketplace:\` |
 | Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)`; Title Update 4: `GetListEx` (each hopper also has `requiredOfferId`, u64) | the playlists (below) |
 | Find Game, picking a playlist | `Hopper.GetSearchSettings(hopperId)`, `GetGameOptions(hopperId, roundNum, 0x8000)`, then (after the session search) `UserRegister(hopperId, sessionId)` every `nextRegisterSeconds` | search settings, the round's GameOptions XML, 60 s |
 | Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
@@ -740,4 +740,11 @@ notification flows), all scratch files not kept in the repo.
 - Playground Games: a round of Cat & Mouse played to its end, and three or more
   consoles, were not tested.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and
-  thumbnails served by Turn 10) are empty.
+  thumbnails served by Turn 10): none. `GetStringTableInfo` answers `Id` -1, the game's
+  "no table" (#79). The empty answer (`Id` 0, no `Path`, `Size` 0) made the game download
+  content 0 and save it as `marketplace:\` + an empty name in its "marketplace" save; the
+  open fails (`[NtCreateFile] FAILED: path='marketplace:\' -> 0xc00000ba`, three tries),
+  the marketplace manager (`0x833F4CEC`) goes to state 3, and `sub_82753DB0`, which the game
+  runs on the way into Horizon Rally and from some free-roam menus, answers "MARKETPLACE
+  ERROR: There was not enough space for the marketplace save file". The SDK's device free
+  space is a constant (3 GB of a 20 GB dummy HDD) and plays no part.

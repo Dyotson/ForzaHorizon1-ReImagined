@@ -109,14 +109,32 @@ void LogStack() {
 
 uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 
+// Whether the guest word at `address` can be read: its page is allocated and readable.
+// A thread that has exited (or one whose context still holds an old r1) can leave a
+// stack pointer into a released stack; reading it faulted (#79: closing the window
+// logged "read of guest 0x708E0003" from LogGuestThreads and aborted).
+bool GuestReadable(uint32_t address) {
+  auto* kernel = rex::system::kernel_state();
+  if (!kernel || !kernel->memory()) return false;
+  auto* heap = kernel->memory()->LookupHeap(address);
+  uint32_t protect = 0;
+  return heap && heap->QueryProtect(address, &protect) &&
+         (protect & rex::memory::kMemoryProtectRead) &&
+         heap->QueryProtect(address + 3, &protect) &&
+         (protect & rex::memory::kMemoryProtectRead);
+}
+
 // Return addresses along a guest stack's back chain (saved LR at back chain - 8), from
-// the frame at r1 outwards. Stops at the first link that does not look like one.
+// the frame at r1 outwards. Stops at the first link that does not look like one, or
+// that points at memory that is not readable.
 std::string GuestChain(uint8_t* base, uint32_t frame, int max_frames) {
   std::string chain;
   for (int i = 0; i < max_frames && frame; ++i) {
     if (frame < 0x40000000 || frame >= 0x80000000) break;  // guest stacks (0x7xxxxxxx) only
+    if ((frame & 3) || !GuestReadable(frame)) break;
     const uint32_t parent = Load32(forza::GuestPtr(base, frame));
     if (parent <= frame || parent - frame > 0x100000 || (parent & 7)) break;
+    if (!GuestReadable(parent - 8)) break;
     const uint32_t lr = Load32(forza::GuestPtr(base, parent - 8));
     if (lr < 0x82000000 || lr >= 0x90000000) break;
     chain += fmt::format(" {:08X}", lr);

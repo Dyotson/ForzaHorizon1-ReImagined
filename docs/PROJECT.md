@@ -589,6 +589,28 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   normal, on thread creation (flags 0x20/0x40, set by the SDK in `XThread::Create`) and in
   `KeSetBasePriorityThread`; one log line per clamped thread (`src/debug/thread_trace.cpp`).
 
+- 2026-10-16: **"MARKETPLACE ERROR: not enough space for the marketplace save file" when
+  entering Horizon Rally (#79)**, Windows 11, Arc B580, v0.1.9, ISO + TU4 + DLC, public and
+  local server. Not the free space: the SDK answers `XamContentGetDeviceData` with constants
+  (3 of 20 GB) on every host, and the 15 MB `tmpfile` the game writes into a new
+  "marketplace" save works (an ENOSPC shim on its `ftruncate` only drops the save). The
+  server's empty answer to `DLCMetadata.GetStringTableInfo` (`Id` 0, no `Path`) made the
+  marketplace manager (`0x833F4CEC`, steps in `sub_829540B8`) download content 0 and save it
+  as `marketplace:\` + "" (`sub_829536A0`): the open fails on Linux too (the three
+  `NtCreateFile FAILED: path='marketplace:\' -> 0xc00000ba` lines every online start), the
+  failure handler `sub_82950A10` sets the manager's state to 3, and `sub_82753DB0` shows the
+  error for state 3 (title `MARKETPLACE ERROR`, the "damaged" text for error 2, else "not
+  enough space"). The game runs that check on the way into Horizon Rally and from some
+  free-roam menus; with the Xenia save (rally already started) the main menu's HORIZON
+  RALLY does not call it, so Linux never showed the dialog although the state was 3 there
+  too. The server now answers `Id` -1, the game's "no table": no download, no save, state 1
+  (Linux, TU4, local server: no failed open, state 1 instead of 3, Rally starts). Needs the
+  public server updated and the launcher's built-in server from the next release. The three
+  "Unhandled guest access violation: read of guest 0x708E0003" in that log came from
+  closing the window: `LogGuestThreads` (v0.1.9) walked a thread's stack chain into a
+  released page; the chain now stops at unreadable pages (`src/debug/fault_guard.cpp`).
+  `ResolvePath(\Device) failed` is the game's `\Device\Image` probe, in every log.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

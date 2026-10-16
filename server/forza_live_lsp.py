@@ -48,6 +48,7 @@ import forza_scores as scores
 import forza_stats as stats
 import forza_world as world
 import forza_xtsw as x
+import forza_xtsw_all as A
 
 log = logging.getLogger("forza-live")
 
@@ -449,6 +450,17 @@ def hopper_get_game_options(server, xuid, body):
     return x.reply(x.HopperGetGameOptions_Results, {"gameOptionsXml": xml})
 
 
+def dlc_string_table_info(xuid, body):
+    """No DLC string table (#79). The game saves the table this names to its "marketplace"
+    save (marketplace:\\<Path>) and downloads it with Content.DownloadContent(Id); with the
+    empty answer (Id 0, no Path) it saved a file without a name, that failed, the marketplace
+    manager (0x833F4CEC) went to state 3, and its check on the way into Horizon Rally
+    (sub_82753DB0) said "MARKETPLACE ERROR: There was not enough space for the marketplace
+    save file". Id -1 is the game's own "none": it skips the download and the save."""
+    return x.reply(A.ForzaDLCMetadataGetStringTableInfo_Results,
+                   {"stringTableInfo": {"base": {"Id": -1}, "DigestId": -1}})
+
+
 def gamertag_of(xuid):
     return load_player(xuid).get("gamertag") or "%016X" % xuid
 
@@ -473,6 +485,7 @@ SERVICES = {
     ("Hopper", "UserRegister"): hopper_user_register,
     ("Hopper", "ReportQosData"): lambda xuid, body: x.reply(),
     ("Hopper", "ReportVoting"): lambda xuid, body: x.reply(),
+    ("DLCMetadata", "GetStringTableInfo"): dlc_string_table_info,
     ("Hopper", "GetRaceMultipliers"):
         lambda xuid, body: x.reply(x.HopperGetRaceMultipliers_Results,
                                    {"specialMultiplier": 1.0}),
