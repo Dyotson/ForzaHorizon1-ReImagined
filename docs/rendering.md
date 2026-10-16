@@ -362,3 +362,39 @@ Validation: copied-save regeneration and restart were tested at native
 The standalone patch also applies to the current public SDK patch stack.
 That gameplay test predates the public cold-pipeline fix; it does not prove
 this change alone resolves every report in #50. Original saves were untouched.
+
+
+## Festival video flashes purple (#91, open)
+
+Report: RX 9070 XT, Windows 11, Vulkan, v0.1.12, `frame_rate` 240, render scale 2, AF 16x,
+FXAA extreme, a new save. The video after "Race to the Festival" (`media/ui/videos/FMV_01.wmv`,
+136 s: Kayla with the clipboard, the Corrado, the mechanic in the Horizon garage) flashes
+purple and nearly white; later videos are fine. In the reporter's video the purple frames have
+the right picture (luma) and colour planes near 255, with striped bands along whole tile rows;
+the white frames in between have a wrong luma plane as well.
+
+How the videos are drawn (RenderDoc, a boot video, TU4, scale 2): one quad samples three
+`R8_UNORM` textures, Y 1280x720 and U, V 640x360, which XMediaFacade's decoder writes with
+the CPU (unscaled textures), into the EDRAM; that is resolved and drawn by the UI. So in the
+purple frames the U and V textures (in the white ones also Y) hold other data than the decoder
+wrote: stale GPU copies or the wrong memory, not a shader fault.
+
+Not reproduced on Linux (TU4, RX 9060 XT on RADV, the reporter's settings, a new profile
+driven to the festival): FMV_01 played clean under RenderDoc, with render sync on (122 fps
+during the video) and with `FORZA_RENDER_SYNC=0` (main loop 240, render thread 122). Both
+machines enable the same Vulkan extensions (fragment shader interlock included). Not tried:
+the Windows build under Proton (its input FIFO is POSIX-only, and the video is 13 minutes of
+driving in). FMV_01 copied over a boot video (`T10_MS_Combined.wmv`) stays black, and over
+the new-game intro (`Forza_Tone.wmv`) it is skipped, so it only plays in its own place.
+
+Reaching the video: a new `--user_data_root`, START through the boot videos and the title,
+A on the video calibration and on Single Player. The opening drive follows the AI routes
+`colorado/Ribbon_00/route_160.owt` from the start to (2019, -982), then `route_155.owt`
+backwards to the diner (`tools/owt_path.py`, autodrive with `AD_PATH_LOAD` and `AD_OPEN=1`);
+"Race to the Festival" follows the CPU car (autodrive's leader mode, skipping the parked cars
+at y -1020 and below). The Viper spins at full throttle: throttle pulses of about half a tick
+keep it on the road. About 13 minutes from boot to the video; nothing saves on the way.
+
+Open: with Linux clean, Windows or the AMD Windows driver is the likely factor. Asked for a
+run at render scale 1, one with Direct3D 12, and whether the video looked right on their first
+save with v0.1.8.
