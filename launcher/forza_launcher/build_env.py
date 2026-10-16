@@ -51,29 +51,61 @@ def free_disk(path: Path) -> int:
 # 4 GB, the SDK 1.5 GB, and a downloaded toolchain 6 GB more.
 NEED_DISK_GB = 15
 NEED_DISK_TOOLCHAIN_GB = 3
-NEED_RAM_GB = 8
-RAM_PER_JOB_GB = 1.5
+# Peak build memory is a base (cmake, the linker, the SDK step) plus a share per compile job. Measured
+# (docs/launcher.md): 1.5 GB at -j3 (Windows), 1.8 to 2.0 GB at -j4, 3.2 GB at -j8 (Linux); a line of
+# 0.8 GB + 0.35 GB per job sits just above all three. The game itself needs about 1.1 GB, but only while
+# playing, not while building.
+RAM_BASE_GB = 0.8
+RAM_PER_JOB_GB = 0.35
+RAM_MIN_TOTAL_GB = 2.0      # below this even -j1 plus the system does not fit
+
+
+def ram_need_gb(jobs):
+    """Peak memory (GB) of a build with this many jobs."""
+    return RAM_BASE_GB + RAM_PER_JOB_GB * max(1, jobs)
+
+
+def jobs_for_ram(avail_gb):
+    """The most jobs whose build fits in this much free memory (at least 1)."""
+    return max(1, int((avail_gb - RAM_BASE_GB) / RAM_PER_JOB_GB))
 
 
 def default_jobs():
     cores = os.cpu_count() or 2
     _total, avail = ram_bytes()
-    by_ram = int(avail / GB / RAM_PER_JOB_GB) if avail else cores
+    by_ram = jobs_for_ram(avail / GB) if avail else cores
     return max(1, min(cores, by_ram, 16))
 
 
-def preflight(root: Path, game_files_ready: bool, need_toolchain: bool):
+def memory_check(jobs, total=None, avail=None):
+    """(level, text, suggested_jobs) for a build with `jobs` jobs; level is 'ok', 'warn' or 'error'.
+    Error only when even one job cannot fit in the installed memory; a shortage of free memory is a
+    warning with a lower job count to use."""
+    if total is None:
+        total, avail = ram_bytes()
+    if not total:
+        return "ok", "", jobs
+    text = f"Memory: {total / GB:.0f} GB installed, {avail / GB:.1f} GB free"
+    need = ram_need_gb(jobs)
+    if total < RAM_MIN_TOTAL_GB * GB:
+        return "error", text + f" (a build needs at least {ram_need_gb(1):.1f} GB even with one job)", 1
+    fit = min(jobs, jobs_for_ram(avail / GB))
+    if avail / GB >= need:
+        return "ok", text + f" (about {need:.1f} GB for {jobs} jobs)", jobs
+    if avail / GB >= ram_need_gb(1):
+        return "warn", text + (f" (about {need:.1f} GB for {jobs} jobs: use {fit} jobs or fewer, "
+                               "or close other programs)"), fit
+    return "warn", text + (f" (even one job needs about {ram_need_gb(1):.1f} GB: "
+                           "close other programs)"), 1
+
+
+def preflight(root: Path, game_files_ready: bool, need_toolchain: bool, jobs=None, memory=True):
     """[(level, text)] with level 'error', 'warn' or 'ok'."""
     out = []
-    total, avail = ram_bytes()
-    if total:
-        text = f"Memory: {total / GB:.0f} GB installed, {avail / GB:.0f} GB free"
-        lvl = "ok"
-        if total < NEED_RAM_GB * GB:
-            lvl, text = "error", text + f" (the build and the game need about {NEED_RAM_GB} GB)"
-        elif avail < NEED_RAM_GB * GB:
-            lvl, text = "warn", text + f" (close other programs; the build and the game need about {NEED_RAM_GB} GB)"
-        out.append((lvl, text))
+    if memory:
+        lvl, text, _fit = memory_check(jobs or default_jobs())
+        if text:
+            out.append((lvl, text))
     need = NEED_DISK_GB + (NEED_DISK_TOOLCHAIN_GB if need_toolchain else 0) - (8 if game_files_ready else 0)
     free = free_disk(root) / GB
     out.append(("ok" if free >= need else "error",

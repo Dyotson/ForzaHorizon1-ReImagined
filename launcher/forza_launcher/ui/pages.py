@@ -348,6 +348,9 @@ class SetupPage(QWidget):
                            "The launcher compiles the game on this computer: it generates C++ from your "
                            "default.xex and builds it with a C++ compiler. It takes a while (see below), uses a lot "
                            "of memory, and is only repeated when the project's version changes.")
+        self.mem_row = StatusRow("")
+        self.mem_row.title.hide()
+        self.c3.lay.addWidget(self.mem_row)
         self.checks = QVBoxLayout()
         self.checks.setSpacing(2)
         self.c3.lay.addLayout(self.checks)
@@ -358,10 +361,11 @@ class SetupPage(QWidget):
         self.jobs = QSpinBox()
         self.jobs.setRange(1, 64)
         self.jobs.setValue(cfg.advanced.get("build_jobs") or build_env.default_jobs())
-        self.jobs.valueChanged.connect(lambda v: (cfg.advanced.__setitem__("build_jobs", v), cfg.save()))
+        self.jobs.valueChanged.connect(lambda v: (cfg.advanced.__setitem__("build_jobs", v), cfg.save(),
+                                                  self._update_mem()))
         jrow.addWidget(self.jobs)
-        jrow.addWidget(label("Each job uses about 1.5 GB of memory. More jobs are faster; too many run out of "
-                             "memory.", "help"), 1)
+        jrow.addWidget(label(f"A build needs about {build_env.RAM_BASE_GB:g} GB plus {build_env.RAM_PER_JOB_GB:g} GB "
+                             "per job. More jobs are faster; with little free memory use fewer.", "help"), 1)
         self.c3.lay.addLayout(jrow)
         self.lowprio = WrappedCheck("Run at low priority (the computer stays usable)")
         self.lowprio.setChecked(True)
@@ -495,7 +499,13 @@ class SetupPage(QWidget):
         self.go3.setEnabled(not busy and have)
         self._pkg_kind()
 
+    def _update_mem(self):
+        lvl, text, _fit = build_env.memory_check(self.jobs.value())
+        self.mem_row.setVisible(bool(text))
+        self.mem_row.set({"ok": True, "warn": None, "error": False}[lvl], text)
+
     def _refresh_checks(self):
+        self._update_mem()
         while self.checks.count():
             w = self.checks.takeAt(0).widget()
             if w:
@@ -503,7 +513,7 @@ class SetupPage(QWidget):
         root = self.cfg.data_home()
         tools = build_env.detect_tools(root)
         for lvl, text in build_env.preflight(root, (self.cfg.game_files() / "default.xex").is_file(),
-                                              bool(tools.missing)):
+                                              bool(tools.missing), self.jobs.value(), memory=False):
             r = StatusRow("")
             r.title.hide()
             r.set({"ok": True, "warn": None, "error": False}[lvl], text)
@@ -759,7 +769,19 @@ class SetupPage(QWidget):
         if tools.problems:
             QMessageBox.warning(self, "Toolchain", tools.problems[0])
             return
-        errors = [t for lvl, t in build_env.preflight(cfg.data_home(), True, bool(tools.missing)) if lvl == "error"]
+        mlvl, mtext, fit = build_env.memory_check(self.jobs.value())
+        if mlvl == "warn" and fit < self.jobs.value():
+            ans = QMessageBox.question(
+                self, "Not much free memory",
+                f"{mtext}\n\nBuild with {fit} job{'s' if fit != 1 else ''} instead? It is slower but should "
+                "not run out of memory. (No keeps your choice.)",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.Yes)
+            if ans == QMessageBox.Cancel:
+                return
+            if ans == QMessageBox.Yes:
+                self.jobs.setValue(fit)
+        errors = [t for lvl, t in build_env.preflight(cfg.data_home(), True, bool(tools.missing), self.jobs.value())
+                  if lvl == "error"]
         if errors and QMessageBox.question(self, "This computer may not manage the build",
                                            "\n".join(errors) + "\n\nTry anyway?") != QMessageBox.Yes:
             return

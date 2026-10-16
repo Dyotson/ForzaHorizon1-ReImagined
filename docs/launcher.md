@@ -38,7 +38,7 @@ machine from their own copy:
    (`--game_data_root` stays the disc's files). Without it the base manifest is built and
    `runtime/update` removed. `--build` takes `--title-update PATH` (default: the launcher's
    setting) and `--base`.
-3. **Build**: preflight (RAM, disk, cores), toolchain, SDK, codegen from `default.xex`,
+3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
    result is staged into `<data>/runtime`. The build is repeated only when the launcher or
    project version changes, or the title update is added, removed or replaced (a hash of
@@ -232,6 +232,21 @@ launcher/.venv/bin/python launcher/main.py --build --root /path --jobs 4   # the
 cd launcher && .venv/bin/pyinstaller --noconfirm forza-launcher.spec    # the frozen app
 ```
 
+## Memory check (#32)
+
+A build peaks at a base plus a share per compile job: measured 1.5 GB at `-j3` (Windows), 1.8 to 2.0 GB at `-j4`
+and 3.2 GB at `-j8` (Linux). `build_env.ram_need_gb(jobs)` is `0.8 GB + 0.35 GB * jobs` (RAM_BASE_GB,
+RAM_PER_JOB_GB), a line just above those three points (1.85, 2.2, 3.6 GB). The game's own ~1.1 GB is not part of it:
+it matters while playing, not while building.
+
+* The Build page shows one memory row for the chosen "Parallel jobs" and updates it when the number changes:
+  green when the free memory covers the estimate; yellow when it does not, with the job count that fits
+  (`build_env.jobs_for_ram`); red only when the installed memory is under 2 GB (even `-j1` cannot work).
+* Start build with too few free GB for the chosen jobs asks "Build with N jobs instead?" Yes lowers the spin box
+  and builds, No keeps the choice, Cancel stops. Nothing refuses a build that has a chance.
+* The default job count is the most that fits the free memory (and the cores, at most 16).
+* An 8 GB machine with 5 GB free is green up to `-j12`; with 2.5 GB free `-j8` is yellow and suggests `-j4`.
+
 ## Measured (8 cores, 31 GB RAM, system clang 23.1.2; another game was running meanwhile)
 
 Clean builds through the launcher code (fresh data root, the pinned SDK nightly downloaded,
@@ -386,8 +401,8 @@ installed; the Sdk runtime is 1.8 GB installed, the llvm22 extension 0.5 GB).
   save's Aventador, driven with scripted RT and left stick (FORZA_AUTOPRESS_FIFO) for 3.5 minutes at
   59.7 to 60 fps. Peak RSS of the game (VmHWM): 0.68 GB at the main menu, 1.0 GB entering free roam,
   1.13 GB after 3.5 minutes of driving. README and the landing page say "about 4 GB free" now with these
-  numbers (game 1.1 GB; build 2 GB at -j4, 3.2 GB at -j8). Note: the launcher's preflight
-  (`build_env.NEED_RAM_GB = 8`) still errors under 8 GB installed; it is a conservative number, not measured.
+  numbers (game 1.1 GB; build 2 GB at -j4, 3.2 GB at -j8). The launcher's memory check follows them (#32, see
+  "Memory check" below).
 * The launcher window (not headless) runs under Qt's Wayland platform inside the sandbox (KDE Plasma 6,
   radv), with the Qt file dialogs; screenshots taken with spectacle on the host.
 * Test recipe: `FLATPAK_USER_DIR=~/.cache/forza-flatpak/userdir` for a clean installation. The window
@@ -501,8 +516,8 @@ click (`SetCursorPos` + `mouse_event`, `SendKeys`) and take screenshots (`Graphi
   TU4 applied, 357 ninja steps, `forza.exe` linked and staged: **563 s wall (9.4 min, with the downloads) and a
   1.5 GB peak** (summed working set of the process tree, now measured on Windows through Toolhelp +
   `GetProcessMemoryInfo`; `builder._windows_tree_memory`). On disk: build 0.9 GB (after link), toolchain + xwin 1.7 GB,
-  game 7.6 GB. The preflight says "8 GB installed, 5 GB free (need about 8 GB)" as an error on this 8 GB VM and asks
-  "Try anyway?"; the build did not run out of memory.
+  game 7.6 GB. The old preflight said "8 GB installed, 5 GB free (need about 8 GB)" as an error on this 8 GB VM and asked
+  "Try anyway?"; the build did not run out of memory (fixed in #32: that machine now gets a green row).
 * **Play without a GPU.** `forza.exe` starts, logs `Failed to create a Vulkan instance: ErrorIncompatibleDriver`
   and exits with code 1 within a second. The launcher said "The game is running." forever: `Play.show_message(warn)`
   was hidden by the `refresh()` that follows. Now (9949778) the Play page keeps a red box: exit code, a sentence
