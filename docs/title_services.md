@@ -118,7 +118,8 @@ Notifications, Transaction}`. What the game calls, in order:
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
 | After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
 | Sometimes | `Xls User.SetFriends` | empty |
-| Photo mode, SAVE / large photo ("uploading to forzamotorsport.net") | `LargeFileUpload.Create(payloadSize, overwriteOldest, userFileName)` or `Storefront.PhotoCreate(fileHeader, photoDesc, payloadSize, previewData)`, then `Xls Content.UploadContent(contentId, payloadOffset, payloadTotalSize, uploadData)` | `contentFileId`, then `payloadUploadedSize` = bytes held so far (`forza_photos.py`: kept per player under `photos/`, 2 MB each, 100 per player, in the disk quota; `DownloadContent` gives the owner's file back). Answered empty before, the game never saw its upload finish (#71); the chunk size and the answer's meaning (bytes held, not bytes of this chunk) are from the descriptors, not yet seen in a game |
+| Photo mode, SAVE / large photo ("uploading to forzamotorsport.net") | `LargeFileUpload.Create(payloadSize, overwriteOldest, userFileName)`, then `Xls Content.UploadContent(contentId, payloadOffset, payloadTotalSize, uploadData)` | `contentFileId`, then `payloadUploadedSize` = bytes held so far (`forza_photos.py`: kept per player under `photos/`, 2 MB each, 100 per player, in the disk quota; `DownloadContent` gives the owner's file back). Answered empty before, the game never saw its upload finish (#71); the chunk size and the answer's meaning (bytes held, not bytes of this chunk) are from the descriptors, not yet seen in a game |
+| Photo mode, SHARE to the storefront (MY SHARED PHOTOS) | `StorefrontPhoto.Create(fileHeader, photoDesc, payloadSize, previewData)` (27 KB: header, car/track ids and a thumbnail), then `UploadContent` as above; the pages and files are read with `Storefront.GetPhotoPageList`, `GetFileListForPage`, `GetStats`, `GetFeaturedPhotos`, `GetMostDownloadedPhotos`, `GetTopRatedPhotos` | the shared photos below (#82) |
 
 The game keeps one HTTP connection to the title server for all its calls. The server must
 leave it open while idle: when it closed idle connections after 15 s, the game's next call
@@ -600,6 +601,44 @@ the recipient list (`sub_826EA0A0`: popup screen 0xDE over the friends list; eve
 player online is a friend here) and on the choice (action 7, `sub_826F0330`) runs
 `Forza::CGiftingTransactionSendCarGift` (`sub_8289D9E8` -> `SendCarGift`).
 
+### Photos and the photo storefront (`server/forza_photos.py`, #71, #82)
+
+Photo mode > PHOTO SHARE has BROWSE PHOTOS (PG PICKS, most downloaded, top rated, search) and
+MY SHARED PHOTOS (the player's own storefront, `SLOTS AVAILABLE n/m`). Uploading from there
+(a saved photo, UPLOAD PHOTO: make, model, keywords, description) is **`StorefrontPhoto.Create`**
+(class `Forza.WebServices.StorefrontPhoto`, method `Create`; the descriptors name the records
+`ForzaStorefrontPhotoCreate_*`, which is why #71 answered `Storefront.PhotoCreate` and
+the TU4 game's real call got the empty answer: contentFileId 0, `UploadContent` to a file that
+does not exist, "Your photo was NOT successfully uploaded to the Forza Horizon Storefront").
+Request (about 2.3 KB here, 27 KB with a real picture's thumbnail): `fileHeader` (Title =
+the saved photo's name, Description, Price, Quantity, Type 5 = photo, PayloadSize, KeywordOne,
+KeywordTwo), `photoDesc` (EnvironmentId, TrackId, MakeId, ModelId, CreationTime,
+ForStorefrontUse), `payloadSize` (the JPEG, 15 KB at 1280x720 for a black one), `previewData`
+(a 416x240 JPEG). Answer `contentFileId`; the picture follows in `Content.UploadContent`.
+
+The storefront reads (all `Forza.WebServices.Storefront`):
+
+| Call | What the game does with it |
+| --- | --- |
+| `GetPhotoPageList(ownerXuid, maxPages 10)` | `Pages[{Page, TotalSlots, UsedSlots}]`: one page per file type, in the order tuning, liveries, layer groups, **photos**, replays (page 3 is the photos; page 1 opened MY PAINT JOBS). The screen shows `SLOTS AVAILABLE (Total - Used)/Total`; no slot count is in the game (the server decides) |
+| `GetFileListForPage(ownerXuid, startAt, maxFiles, page)` | the player's files of that page, one at a time in practice (`maxFiles 1`), `totalFiles` for the grid. A file's **`Ordinal` is the photo's EnvironmentId**: the detail screen's LOCATION reads it (63 = Colorado; other values: MISSING CONTENT) |
+| `GetFeaturedPhotos(10)`, `GetMostDownloadedPhotos(10)`, `GetTopRatedPhotos(10)` | BROWSE PHOTOS (PG PICKS and the other tabs), with previews |
+| `SearchPhotoFiles(searchParams, maxFiles 8192)` | `searchResults[{Id, Rating, Price, DownloadCount, Ordinal}]`; a field of -1 is "any" |
+| `GetFileHeavyWeightData`, `Purchase(fileId, price, maxPayloadSize, maxPreviewSize)` | a photo's data; `Purchase` answers the picture and preview (free) |
+| `RemoveFile`, `ChangeFileTitle`, `ChangeFileDescription`, `SubmitFileRating`, `IncrementViews`, `GetStats` | REMOVE (the screen's list stays stale until it is reopened), CHANGE DESCRIPTION, the star rating, views, MY DETAILS |
+
+VIEW downloads the picture with `Content.DownloadContent(fileId)`, so a shared photo is served to
+anybody (other content only to its owner). The server keeps `STOREFRONT_SLOTS` = 25 shared
+photos per player (`StorefrontPhoto.Create` fails with "storefront full" at 25; a REMOVE or
+an upload that never finished, after an hour, frees a slot), the 100-files and 2 MB limits
+of `LargeFileUpload` still apply, and the page, the lists and the search cover everybody's
+finished photos. Seen in a game (a copy of a save, a local server): photo mode > PHOTO SHARE >
+MY SHARED PHOTOS shows 25/25, UPLOAD PHOTO of a saved photo says "successfully uploaded", the
+list then shows it (24/25, LOCATION Colorado), BROWSE PHOTOS shows it under PG PICKS, REMOVE
+gives the slot back (25/25 on reopening). The thumbnails of the photo saved on a headless
+session are black. Not seen: other players' photos (no second account), ratings, search
+results with a match, `Purchase`, the 27 KB request (a photo of the player's own).
+
 ### Notifications (Message Center) (`server/forza_notifications.py`)
 
 The Message Center is in the pause menu (START, MESSAGE CENTER; not in multiplayer). It
@@ -725,7 +764,8 @@ notification flows), all scratch files not kept in the repo.
 
 ## Not done
 
-- The other services (storefront, DLC metadata) get empty answers.
+- The other services (the design storefront for liveries, tuning, layer groups and replays,
+  DLC metadata) get empty answers; only the photo storefront is kept (above).
 - Monthly Rivals: a time trial raced to its end (score, ghost, bounty) was not tried; the
   server has two sample trials and no tool to edit them.
 - Car gifts between players: the game's CAR SELECT (Dak's Garage, CHANGE CAR) offers GET

@@ -19,7 +19,7 @@ services). This answers the ones online play needs:
     Forza.WebServices.Auction, Gifting  the Auction House and car gifts (forza_market.py)
     Xls.WebServices.Clan, User; Forza.WebServices.CarClub, SharedCar  car clubs and the
                                club garage (forza_clubs.py)
-    Forza.WebServices.LargeFileUpload, Storefront.PhotoCreate; Xls.WebServices.Content
+    Forza.WebServices.LargeFileUpload, StorefrontPhoto.Create, Storefront (photos); Xls.WebServices.Content
                                photo uploads and their downloads (forza_photos.py)
     Xls.WebServices.Notifications  the Message Center (forza_notifications.py): Rivals,
                                gifts, auctions and car club messages
