@@ -129,7 +129,7 @@ against 60), well below the network delay of a real connection. The traffic grow
 frame rate (about 65 datagrams a second each way at 30 fps in an earlier free-roam test,
 about 100 at 60, 150-200 at 144, more when the render thread keeps up): a 144 fps player
 sends up to twice the traffic of a 60 fps one (about 50 KB/s to each peer at about 250
-bytes a datagram). Through the server's relay (64 KB/s per player, `--rate-limit`,
+bytes a datagram; measured through the relay with three players: 15-18 KB/s per peer at 144 fps, `docs/online_vision.md`, "Three players"). Through the server's relay (160 KB/s per player, `--rate-limit`,
 `docs/hosting.md`) that budget runs out sooner with several peers; direct peer-to-peer
 paths are not limited. Seen in both
 runs and unrelated to the frame rate: the host's race clock started about 12 s before the

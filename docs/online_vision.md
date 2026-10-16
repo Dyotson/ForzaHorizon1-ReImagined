@@ -167,8 +167,8 @@ next round is the server's choice). Players (host or not) can QUIT at any time.
   op 2 again if the flag goes off); the server advertises an op 4 member before the
   oldest one. Tested with two players: A (host) quit, B's flag turned on within a second
   (`the game made us the host of the session we joined`, server: `DriverB is now the
-  game's host of ...`), and A was placed into B's world. Not tested with three players
-  (two instances on this machine).
+  game's host of ...`), and A was placed into B's world. With three players: see "Three
+  players" below.
 - `XSessionMigrateHost` (0xB001E) is handled anyway (the SDK left the info untouched): the
   new host gets its own address in the info and publishes the session as its own.
 
@@ -719,3 +719,33 @@ Open questions, to fill in as the reverse engineering finds them:
   the number of cars per world.
 - XAM app 0xFE message `0x2B003` is sent once when the single-player game starts
   (Xenia answers success, "Games used in: 4D5309C9").
+
+## Three players (#12, checked 2026-10-16)
+
+Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_HOME` each,
+30 fps, scale 1) against a local server (`--world-event-laps 1`). Public server, last 24 h of
+`docker logs` (since its restart at 11:01): 8 worlds hosted, none with more than one player
+(`hosts ... (1/8)`), no standby records, no errors: nothing with 3+ humans there yet.
+
+- Placement and JUMP IN: A hosted, B was placed (`1 open session(s), first ... (1/8)`), C
+  was placed into the world with two (`(2/8)`); the lobby listed all three and the three
+  drove in the world, each with the other two in the HUD list. Twice (another host).
+- The host leaves with two others (game closed): after the 30 s timeout the game made one of
+  the two its host (`is now the game's host`), the server showed the world with 2 humans
+  under it, the other kept playing; a restarted third player was placed into that world
+  (`first ... (2/8)`) and jumped in. Twice in a row (A, then C as the host).
+- World event with 3 humans, led by a standby host: wait lobby ("INTERMISSION" 30 s, three
+  humans and five CPU drivers, AI Medium), the grid with the three humans and five CPU
+  drivers, the race (1 lap), the results and back in the free roam of the same world, all
+  three (`screenshots/2026-10-16_world_3_players_event_lobby.jpg`,
+  `..._host_left.jpg`).
+- Relay (`FORZA_SERVER_RELAY=1`, A and C at 30 fps, B at 60, free roam): what each player
+  makes the server send, per other player in the world: 3.0 KB/s at 30 fps, 6.1 at 60 fps
+  idle, 4.4 and 7.6 driving (two other players: 6, 12 and 9, 15 KB/s). At 144 fps that is (extrapolated)
+  about 15-18 KB/s per peer, 7 peers about 100-130 KB/s of the 160 KB/s budget; no packet
+  dropped in the run. (The earlier 50 KB/s per peer at 144 fps is too high by a factor of 3.)
+- Not done: head-to-head challenges with a third player nearby (a server restart in the
+  middle of the world split it: A and C each became "the game's host"; a restart is not
+  supported mid-world), 4 to 8 players, 144 fps with three players.
+- `server/test_forza_world_players.py`: placement of the third player, fullest world first,
+  full worlds not offered, the standby host after the host left, AI level per human count.
