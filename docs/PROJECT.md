@@ -644,7 +644,12 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   picks Invite Friends; B restarts within 1 s and is in A's party lobby 4 s after the
   invite (`screenshots/2026-10-16_invite_in_free_roam_A_top_B_bottom.jpg`); B leaves the
   party and Single Player loads free roam; an invite at the main menu joins without a
-  restart. The Windows paths compile but are untested.
+  restart. Windows (TU4 build under Proton/RADV, Vulkan, A on Linux, local server): standalone,
+  B in free roam starts a new process within 0.4 s, the old one exits, the new one reads the
+  launch data and is in A's party lobby 4 s later; with `FORZA_LAUNCHER_RELAUNCH=1` the
+  game exits with code 75 (umu-run's exit status) and a start with `FORZA_RELAUNCHED=1`
+  joins the party and appends to the same log. The launcher gives up on a game that exits
+  75 more than 4 times within 60 s (`launcher/test_relaunch.py`).
 
 ## Debugging recipes
 
