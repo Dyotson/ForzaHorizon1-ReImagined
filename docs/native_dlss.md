@@ -136,3 +136,12 @@ The earlier edge artifact remains visible in some captures. 4K DLAA also shows
 scene seams consistent with the existing warning for 3x scene rendering (#47).
 These modes remain experimental; this work does not establish artifact-free
 rendering or a matched performance improvement.
+
+Review corrections (2026-10-16): patch 0046 leaves Vulkan instance extension
+selection unchanged from upstream. Vulkan 1.1+ physical-device properties2
+queries remain enabled with reconstruction off, and portability enumeration is
+requested on Windows as before. Color targets retain TRANSFER_DST when either
+initial fill or the DLSS split needs it. The ordered 46-patch stack applies to
+bd833a2; the 20 DLSS runtime/packaging tests pass. The general launcher suite on
+this Windows host has the same six failures and five errors on unmodified main
+(134 tests, 20 skipped), so those are not claimed as passing here.

@@ -1540,7 +1540,7 @@ index 65aa134..9ffb126 100644
 -    if (REXCVAR_GET(vulkan_render_target_initial_fill)) {
 -      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 -    }
-+    if (command_processor_.fh1_split_enabled())
++    if (REXCVAR_GET(vulkan_render_target_initial_fill) || command_processor_.fh1_split_enabled())
 +      image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
    }
    if (image_create_info.format == VK_FORMAT_UNDEFINED) {
@@ -1626,30 +1626,3 @@ index 8197bb4..de7cfa2 100644
      }
    } else {
      if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
-diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
-index 914b311..0d5f7fb 100644
---- a/src/ui/vulkan/vulkan_instance.cpp
-+++ b/src/ui/vulkan/vulkan_instance.cpp
-@@ -124,7 +124,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
-   // extensions vector.
-   std::unordered_map<std::string, bool*> requested_extensions;
-   if (vulkan_instance->api_version_ >= VK_MAKE_API_VERSION(0, 1, 1, 0)) {
--    vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
-+    const auto reconstruction = rex::cvar::GetFlagByName("fh1_upscaler");
-+    if (reconstruction == "dlss" || reconstruction == "dlaa" || reconstruction == "quality" ||
-+       reconstruction == "balanced" || reconstruction == "performance")
-+      vulkan_instance->extensions_.ext_1_1_KHR_get_physical_device_properties2 = true;
-   } else {
-     // #60.
-     requested_extensions.emplace(
-@@ -135,8 +138,10 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
-   requested_extensions.emplace("VK_EXT_debug_utils",
-                                &vulkan_instance->extensions_.ext_EXT_debug_utils);
-   // #395.
-+#ifndef _WIN32
-   requested_extensions.emplace("VK_KHR_portability_enumeration",
-                                &vulkan_instance->extensions_.ext_KHR_portability_enumeration);
-+#endif
-   if (with_surface) {
-     // #1.
-     requested_extensions.emplace("VK_KHR_surface", &vulkan_instance->extensions_.ext_KHR_surface);
