@@ -1,0 +1,10 @@
+# The crash in races (#83): the resources' load step (sub_82CE2A38; sub_82C222C8 on the
+# disc; vtable slot 22 of the cacheable resources) takes its data object from
+# resource+0x40 and releases it; the object had been freed. The hook takes the field with
+# an atomic exchange and drops an object whose vtable is not in the image (logged).
+# src/hooks/resource_data_release.cpp.
+[[midasm_hook]]
+address = 0x82CE2A60
+name = "ForzaTakeResourceData_82C222F0"
+registers = ["r3"]
+jump_address = 0x82CE2A70

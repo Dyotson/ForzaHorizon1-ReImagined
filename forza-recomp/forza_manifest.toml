@@ -9,7 +9,7 @@ game_root = "../extracted/game"
 [entrypoint]
 file_path = "../extracted/game/default.xex"
 out_directory_path = "generated/default"
-includes = ["hints/tail_targets.toml", "hints/rexcrt.toml", "hints/default_indirect_entries.toml", "hints/default_orphan_functions.toml", "hints/physics_loader_check.toml"]
+includes = ["hints/tail_targets.toml", "hints/rexcrt.toml", "hints/default_indirect_entries.toml", "hints/default_orphan_functions.toml", "hints/physics_loader_check.toml", "hints/resource_data_release.toml"]
 
 # Facade DLLs the game loads at run time with XexLoadImage (Xenia log: from
 # \Device\Cdrom0 at 0x88000000 and up): media playback and Kinect speech.

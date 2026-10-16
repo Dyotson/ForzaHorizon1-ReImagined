@@ -10,8 +10,10 @@
 // This handler is installed after the runtime's, so it only sees faults nobody took.
 // It logs the fault once with the host call stack as module+offset (resolve with
 // `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET`; frames in sub_XXXXXXXX
-// are the recompiled guest functions; on Windows the pc and the frames are forza.exe+offset,
-// for the same lookup in the released executable) and exits with status 134. No core dump: one of a
+// are the recompiled guest functions; on Windows the pc and the frames are forza.exe+offset
+// followed by the guest function, sub_XXXXXXXX+0xN, from the recompiled functions' table:
+// a player's forza.exe is built on their machine and its layout follows their codegen
+// history, #83) and exits with status 134. No core dump: one of a
 // process mapping 5+ GB of guest memory takes minutes and gigabytes. FORZA_FAULT=wait
 // parks the thread instead, so gdb can attach (gdb -p PID, then `thread apply all bt`).
 //
@@ -23,6 +25,7 @@
 #include <rex/exception_handler.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
+#include <rex/ppc/func.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/xmemory.h>
@@ -42,6 +45,7 @@
 #endif
 #include <csignal>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -50,6 +54,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace forza {
 
@@ -60,6 +65,49 @@ constexpr uint64_t kGuestVirtualBase = 0x100000000ull;  // Linux: guest X is hos
 bool Wait() {
   const char* v = std::getenv("FORZA_FAULT");
   return v && std::strcmp(v, "wait") == 0;
+}
+
+// The recompiled functions' host addresses, sorted, with their guest addresses
+// (PPCFuncMappings), for naming the guest function a host pc is in. Needed on Windows: the
+// executable has no symbols, and which generated file holds a function depends on the
+// player's codegen history (codegen.partition.json keeps every earlier assignment), so
+// forza.exe+offset does not map onto another build (#83). Only the main run of entries
+// counts: hooks that replace a function live in src/, among other host code.
+struct HostFunc {
+  uint64_t host;
+  uint32_t guest;
+};
+std::vector<HostFunc> g_host_funcs;
+
+void BuildHostFuncs() {
+  for (const PPCFuncMapping* m = PPCFuncMappings; m->host; ++m) {
+    g_host_funcs.push_back({reinterpret_cast<uint64_t>(m->host), uint32_t(m->guest)});
+  }
+  std::sort(g_host_funcs.begin(), g_host_funcs.end(),
+            [](const HostFunc& a, const HostFunc& b) { return a.host < b.host; });
+  // The generated code is one contiguous run; split at gaps over 1 MB, keep the longest.
+  size_t best_begin = 0, best_end = 0;
+  for (size_t begin = 0, i = 1; i <= g_host_funcs.size(); ++i) {
+    if (i == g_host_funcs.size() || g_host_funcs[i].host - g_host_funcs[i - 1].host > 0x100000) {
+      if (i - begin > best_end - best_begin) best_begin = begin, best_end = i;
+      begin = i;
+    }
+  }
+  g_host_funcs.erase(g_host_funcs.begin() + best_end, g_host_funcs.end());
+  g_host_funcs.erase(g_host_funcs.begin(), g_host_funcs.begin() + best_begin);
+}
+
+// " sub_XXXXXXXX+0xN" when pc is in a recompiled function (the start of the function at or
+// below it; a function clang inlined into its caller shows as the caller), else "".
+std::string GuestFunc(uint64_t pc) {
+  if (g_host_funcs.empty() || pc < g_host_funcs.front().host ||
+      pc - g_host_funcs.back().host > 0x40000) {
+    return {};
+  }
+  auto it = std::upper_bound(g_host_funcs.begin(), g_host_funcs.end(), pc,
+                             [](uint64_t p, const HostFunc& f) { return p < f.host; });
+  --it;
+  return fmt::format(" sub_{:08X}+0x{:X}", it->guest, pc - it->host);
 }
 
 // "module+0xOFFSET" for a host code address (Windows: the image the address is in, so a
@@ -76,10 +124,11 @@ std::string HostAddr(uint64_t pc) {
     name = name ? name + 1 : path;
     std::string narrow;
     for (; *name; ++name) narrow += *name < 128 ? char(*name) : '?';
-    return fmt::format("{}+0x{:X}", narrow, pc - reinterpret_cast<uint64_t>(module));
+    return fmt::format("{}+0x{:X}{}", narrow, pc - reinterpret_cast<uint64_t>(module),
+                       GuestFunc(pc));
   }
 #endif
-  return fmt::format("0x{:X}", pc);
+  return fmt::format("0x{:X}{}", pc, GuestFunc(pc));
 }
 
 void LogStack() {
@@ -155,9 +204,15 @@ void LogGuestState() {
   if (!ctx || !kernel) return;
   uint8_t* base = kernel->memory()->virtual_membase();
   std::string regs;
+  // PPCContext keeps r3 first (r3, r0, r1, r2, r4, ...): index by name. Until #83 the dump
+  // walked from r0, so its r3..r31 were r4..r31 and lr, and r3 was missing.
+  const PPCRegister* gpr[32] = {
+      &ctx->r0,  &ctx->r1,  &ctx->r2,  &ctx->r3,  &ctx->r4,  &ctx->r5,  &ctx->r6,  &ctx->r7,
+      &ctx->r8,  &ctx->r9,  &ctx->r10, &ctx->r11, &ctx->r12, &ctx->r13, &ctx->r14, &ctx->r15,
+      &ctx->r16, &ctx->r17, &ctx->r18, &ctx->r19, &ctx->r20, &ctx->r21, &ctx->r22, &ctx->r23,
+      &ctx->r24, &ctx->r25, &ctx->r26, &ctx->r27, &ctx->r28, &ctx->r29, &ctx->r30, &ctx->r31};
   for (int i = 0; i < 32; ++i) {
-    regs += fmt::format("{}r{}={:08X}", i % 8 ? " " : (i ? "\n    " : "    "), i,
-                        (&ctx->r0)[i].u32);
+    regs += fmt::format("{}r{}={:08X}", i % 8 ? " " : (i ? "\n    " : "    "), i, gpr[i]->u32);
   }
   REXLOG_ERROR("Guest thread {:08X} registers (lr={:08X} ctr={:08X}):\n{}",
                thread->handle(), uint32_t(ctx->lr), ctx->ctr.u32, regs);
@@ -231,6 +286,7 @@ void LogGuestThreads(const char* why) {
 }
 
 void InstallFaultGuard() {
+  BuildHostFuncs();
   rex::arch::ExceptionHandler::Install(OnUnhandledFault, nullptr);
   std::signal(SIGABRT, OnAbort);
 }

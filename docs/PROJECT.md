@@ -651,6 +651,36 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   joins the party and appends to the same log. The launcher gives up on a game that exits
   75 more than 4 times within 60 s (`launcher/test_relaunch.py`).
 
+- 2026-10-16: **Crash in races, read of guest 0x0AF048B8 (#83)**, Windows 11, RX 9070 XT,
+  v0.1.9, render scale 2, offline, TU4 + DLC, after an hour of play. The fault is on the
+  resource loader thread (`sub_82B3A4C0` starts it; `sub_82F0CF00` waits for work,
+  `sub_82F0BEE0` pops a job, `sub_82F0B690` runs its state, `sub_82F0B2D0` calls the job's
+  load, vtable slot 22), in `sub_82CE2A38` (TU4; disc `sub_82C222C8`), the load step of the
+  cacheable resources (`CCacheableResource`, `CTextureResource`, `CTrackModelResource`,
+  `CTrackSHZoneResource` and the other track and texture resources share it): it runs the
+  resource's own load (slot 15), then takes the data object at resource+0x40, clears the
+  field and calls the object's Release (vtable +12, `sub_82478698`: refcount at +0x20). The
+  object (0x2EA0AD90) had a vtable pointer of 0x0AF048AC: it had been freed and its memory
+  reused, so reading the Release slot faulted. A resource's unload (slot 16, e.g.
+  `sub_82CE1E30`, `sub_82CE3000`) takes and releases the same field the same way, without
+  a lock. Who freed it first is not known: not reproduced on Linux (TU4, Xenia save copies,
+  `resolution_scale = 2`, the race scenario with 150 s races, 3 runs). `hints/resource_data_release.toml`
+  + `src/hooks/resource_data_release.cpp` now take the field with an atomic exchange (two
+  threads cannot both take one object) and drop an object whose vtable is not in the image,
+  with a `RESOURCE:` line naming the resource's class (RTTI) and the object's first words.
+  Mapping the player's `forza.exe+0x49970CF` took a rebuild: the player's executable is
+  built on their machine and which `forza_recomp.N.cpp` holds a function comes from
+  `codegen.partition.json`, which keeps every earlier assignment, so their layout follows
+  their codegen history. A fresh codegen did not match; a codegen with the hints before
+  v0.1.7 (no setjmp/longjmp lines), then one with v0.1.9's on the same output, compiled with
+  the cross build (clang-cl 23.1.2) and linked with `/MAP`, put every frame on the guest
+  chain (`sub_82CE2A38+0x1FF` and its callers) and the fault handler frames at the player's
+  offsets exactly. The fault line now names the guest function itself
+  (`forza.exe+0x... sub_XXXXXXXX+0xN`, from the recompiled functions' table), and the
+  register dump printed r4..r31 and lr as r3..r31 (`PPCContext` keeps r3 first); fixed. Seen
+  on the way: `extracted/analysis/tu4.elf` is a copy of `default.elf`, not the update's image
+  (`tools/xex_image.py extracted/tu4/default.xex OUT --elf` makes the right one).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
@@ -674,7 +704,11 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   last call and its call chain). A thread waiting in the kernel shows the call site of the wait.
 - A fault no handler takes aborts with a host stack in the log (`src/debug/fault_guard.cpp`):
   `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET` names the `sub_XXXXXXXX`
-  frames. `FORZA_FAULT=wait` parks the thread instead, for `gdb -p`.
+  frames. `FORZA_FAULT=wait` parks the thread instead, for `gdb -p`. On Windows the
+  frames carry the guest function (`sub_XXXXXXXX+0xN`) since #83; an older log's
+  `forza.exe+0xOFFSET` only maps onto an executable built from the player's codegen history
+  (#83 entry: replay the codegens of the versions they built, cross build, link with `/MAP`;
+  `src/debug` frames at the right offsets confirm the layout).
 - Never pass two files to `xxd` (`xxd a b` writes the dump into `b`): that clobbered a
   save header once.
 - Testing with the user's Xenia save without touching it: copy
