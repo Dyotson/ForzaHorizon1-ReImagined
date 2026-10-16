@@ -381,4 +381,60 @@ Vulkan submission thread, is each under 5 %). At 20 % per core the race runs 22-
 the Deck. Settings tried at 20 % in the race (fps, guest): `native_2x_msaa=false` 23.0,
 `readback_resolve=none` 23.2, `vulkan_threaded_submission=false` 22.9, `ignore_thread_priorities=false` 22.7
 (rebuilt game), against 22.5-24.2 for the defaults: none moves the CPU-bound frame rate. Shader compilation
-(warm cache), audio decode and readback are not what limits it; the main thread is.
+(warm cache), audio decode and readback are not what limits it; the main thread looked like it (but see the next section: most of its CPU time was a busy wait).
+
+### CPU time per frame (#45, 2026-10-16)
+
+Method: the race scenario (`tools/perf_scenario.sh race`, TU4 build, a fresh copy of the Xenia save each
+run, `--present_effect=fsr`, `frame_rate = 30`, warm cache) with `PERF_CPUPROF=1` (the built-in 1 ms CPU-time
+sampler, `src/debug/cpu_profile.cpp`; `tools/cpuprof_report.py` run from the build directory so `./forza`
+symbolizes). CPU time per frame = a thread's samples in the race scene / the frames of the scene. Call
+stacks of the command processor thread came from `eu-stack -1 -p TID` taken a few hundred times during a race
+(perf is not installed and samply needs `perf_event_paranoid <= 1`). BENCH lock held, no other game; the
+status lines that say CONTENDED only saw the load average of the previous run.
+
+What the profile showed (before; ms of CPU per frame at 30 fps, 5 GHz Zen 4):
+
+- **Render thread, 31 ms of its 33 ms frame:** 93% in the D3D library's wait for the GPU (`sub_824192A0`
+  calling `sub_82AAD418` in a loop, TU4 names; disc `sub_823E91F0` / `sub_829F04A8`). The game waits there
+  twice a frame for the command processor to pass a point of the ring buffer (the previous frames' swaps,
+  so this is where the 30 fps cap is spent: about 14 ms a wait), polling the read pointer write-back every
+  few nanoseconds. Its own work is 4-5 ms. This is the "main thread saturates" of the approximation above.
+- **Command processor, 7 ms:** a flat profile (packet parsing, register writes, `UpdateBindings` and its
+  descriptor updates ~15%, texture and render target lookups) except for one waste: after every draw the
+  memexport readback check looked the legacy setting up by name (registry lock, two `std::string`s, a hash
+  lookup, the value formatted as a string): 5-15% of the thread, nearly all of its `malloc` and `memcpy`.
+- **Timer thread, 1.6-3 ms:** the runtime's timer queue polls between timers (spin, `sched_yield`, 1 ms
+  sleeps) and the 1 ms timestamp timer keeps it busy.
+- Not wasted: an audio thread (4.5 ms, the game's own float DSP code; `std::fma` is a libm call because the
+  generated code is built without `-mfma`), the XMA/WMA decoder, Vulkan submission.
+
+Changes: `src/hooks/gpu_wait.cpp` (each wait polls as before for 20 us, yields up to 200 us, then sleeps
+50 us per poll on Linux / yields on Windows; `FORZA_GPU_WAIT=spin` keeps the game's loop,
+`FORZA_GPU_WAIT_LOG=1` logs the waits), SDK patches 0049 (memexport check after the empty-range test) and
+0050 (the timer queue blocks on POSIX). Before = the previous plugin and runtime with `FORZA_GPU_WAIT=spin`
+(a copy of the build directory with the old plugin), after = this commit; three runs each, ms of CPU per frame:
+
+| Race, 30 fps | fps | p95 / p99 ms | ontarget | All threads | Render thread | Command processor | Timer thread |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Before (3 runs) | 30.0 / 30.0 / 30.0 | 34.4-34.6 / 34.8-35.6 | 99.5-99.8 | 52.6-53.4 | 31.3-31.4 | 7.0-7.2 | 1.6-3.2 |
+| After (3 runs) | 30.0 / 30.0 / 30.0 | 34.3 / 34.7-34.9 | 99.6-99.8 | 20.7-22.4 | 4.7 | 6.7-7.1 | 0 |
+| Before, 2 cores (`taskset -c 0-1`, 2 runs) | 29.6 / 29.7 | 40.5-40.8 / 49.1-50.2 | 90.2 | 53.1-53.2 | 28.3-28.7 | 8.1-8.5 | |
+| After, 2 cores (2 runs) | 29.9 / 29.9 | 37.4-37.7 / 41.6-42.1 | 97.0-97.4 | 26.7-26.9 | 5.4 | 7.6-7.7 | 0 |
+| Before, 20% per core (as above, 3 runs) | 25.6 / 24.5 / 25.6 | 53.1-54.4 / 61.1-63.1 | 39-49 | 25.0-25.5 | 6.0-6.3 | 4.6-4.7 | |
+| After, 20% per core (3 runs) | 25.7 / 25.2 / 25.7 | 49.3-51.1 / 54.4-57.4 | 48.5-52.8 | 18.8-19.9 | 4.1-4.2 | 4.9-5.1 | |
+
+So the game uses 59% less CPU per frame (53 to 22 ms), the render thread 85% less, the command processor
+3-8% less (the memexport lookup is gone; the rest of its profile did not change), and the timer thread
+nothing. With two cores the spinning render thread had one of them to itself; now the race keeps 30 fps with
+97% of frames on target instead of 90% and a p99 of 42 instead of 50 ms. The 20%-per-core approximation does
+not move (25.2 to 25.5 fps, within the run-to-run spread): busy loops on every core leave no idle time to
+win back, and the frame there is bound by how fast each thread gets the CPU after it wakes, not by the CPU
+time the game uses. On a Deck the busy wait took one of its 8 hardware threads (and the SMT sibling's share of
+that core, and power from the shared CPU/GPU budget), so that is where the gain should show; a Deck log is
+still needed to tell.
+
+Ideas left (not cheap): build the generated code with `-mfma` behind a CPU check (every x86-64 CPU since
+2013 and the Deck have FMA3; 11,700 `std::fma` calls in the generated code); cache Vulkan descriptor sets in
+`UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
+write-back instead of the 50 us sleeps.
