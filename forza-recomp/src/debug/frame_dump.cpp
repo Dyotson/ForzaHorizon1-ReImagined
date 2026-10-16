@@ -34,6 +34,7 @@
 #include "../platform/sdk_import.h"
 #include "frame_stats.h"
 #include "../hooks/frame_time.h"
+#include "../platform/ultrawide.h"
 
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -266,6 +267,7 @@ extern "C" REX_FUNC(__imp__VdSwap) {
   const double elapsed =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   forza::perf::OnGuestFrame();
+  forza::ultrawide::Frame();
   forza::frame_time::OnGuestSwap();
   MaybeTriggerRenderDocCapture(elapsed);
   MaybeInvalidatePhysicalMemory(elapsed);
