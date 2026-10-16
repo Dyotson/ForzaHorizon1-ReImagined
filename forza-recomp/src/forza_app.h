@@ -24,6 +24,7 @@
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
+void LogGuestThreads(const char* why);  // src/debug/fault_guard.cpp
 void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
 }  // namespace forza
 
@@ -84,9 +85,11 @@ class ForzaApp : public rex::ReXApp {
   }
 
   // The SDK hard-exits right after a close request is accepted (SIGINT included), so the
-  // frame statistics summary is written here.
+  // frame statistics summary is written here, and where each guest thread is (a game that
+  // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
     forza::perf::Shutdown();
+    forza::LogGuestThreads("at close");
     return true;
   }
 

@@ -14,6 +14,9 @@
 // for the same lookup in the released executable) and exits with status 134. No core dump: one of a
 // process mapping 5+ GB of guest memory takes minutes and gigabytes. FORZA_FAULT=wait
 // parks the thread instead, so gdb can attach (gdb -p PID, then `thread apply all bt`).
+//
+// LogGuestThreads (called when the window closes) logs every guest thread's last call site
+// and call chain, so the log of a game that hangs without a fault shows where it waits.
 
 #include "../platform/guest_memory.h"
 
@@ -44,6 +47,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <set>
 #include <string>
 #include <thread>
 
@@ -105,6 +109,22 @@ void LogStack() {
 
 uint32_t Load32(const uint8_t* p) { return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
 
+// Return addresses along a guest stack's back chain (saved LR at back chain - 8), from
+// the frame at r1 outwards. Stops at the first link that does not look like one.
+std::string GuestChain(uint8_t* base, uint32_t frame, int max_frames) {
+  std::string chain;
+  for (int i = 0; i < max_frames && frame; ++i) {
+    if (frame < 0x40000000 || frame >= 0x80000000) break;  // guest stacks (0x7xxxxxxx) only
+    const uint32_t parent = Load32(forza::GuestPtr(base, frame));
+    if (parent <= frame || parent - frame > 0x100000 || (parent & 7)) break;
+    const uint32_t lr = Load32(forza::GuestPtr(base, parent - 8));
+    if (lr < 0x82000000 || lr >= 0x90000000) break;
+    chain += fmt::format(" {:08X}", lr);
+    frame = parent;
+  }
+  return chain;
+}
+
 // The guest registers of the faulting thread (as last stored in its PPCContext: values
 // the recompiled code keeps in host registers may be newer) and its guest call chain
 // from the stack back-chain (saved LR at back chain - 8).
@@ -123,17 +143,7 @@ void LogGuestState() {
   }
   REXLOG_ERROR("Guest thread {:08X} registers (lr={:08X} ctr={:08X}):\n{}",
                thread->handle(), uint32_t(ctx->lr), ctx->ctr.u32, regs);
-  std::string chain;
-  uint32_t frame = ctx->r1.u32;
-  for (int i = 0; i < 24 && frame; ++i) {
-    const uint32_t parent = Load32(forza::GuestPtr(base, frame));
-    if (parent <= frame || parent - frame > 0x100000 || (parent & 7)) break;
-    const uint32_t lr = Load32(forza::GuestPtr(base, parent - 8));
-    if (lr < 0x82000000 || lr >= 0x90000000) break;
-    chain += fmt::format(" {:08X}", lr);
-    frame = parent;
-  }
-  REXLOG_ERROR("Guest call chain (return addresses):{}", chain);
+  REXLOG_ERROR("Guest call chain (return addresses):{}", GuestChain(base, ctx->r1.u32, 24));
 }
 
 bool OnUnhandledFault(rex::arch::Exception* ex, void* /*data*/) {
@@ -173,6 +183,34 @@ void OnAbort(int sig) {
 }
 
 }  // namespace
+
+// Where every guest thread is when the player closes the window (#76): a game that loads
+// forever logs nothing else, so this is what a hang report shows. One line per thread: its
+// handle, start address, the guest return address of its last call (lr: the call site of a
+// kernel wait it is blocked in) and its call chain, as last stored in its PPCContext (a
+// thread running guest code without calls may be further on). Read without stopping the
+// threads, so a running thread's chain can be cut short.
+void LogGuestThreads(const char* why) {
+  auto* kernel = rex::system::kernel_state();
+  if (!kernel || !kernel->object_table()) return;
+  uint8_t* base = kernel->memory()->virtual_membase();
+  auto threads = kernel->object_table()->GetObjectsByType<rex::system::XThread>();
+  REXLOG_INFO("FORZA: guest threads {}:", why);
+  std::set<rex::system::XThread*> seen;  // a thread is listed once per handle
+  for (auto& thread : threads) {
+    if (!thread || !thread->is_guest_thread() || !seen.insert(thread.get()).second) continue;
+    auto* state = thread->thread_state();
+    PPCContext* ctx = state ? state->context() : nullptr;
+    if (!ctx) continue;
+    std::string host;  // the [tNNNN] of its log lines (Windows thread ids; not on Linux)
+#ifdef _WIN32
+    if (auto* t = thread->thread()) host = fmt::format(" t{}", t->system_id());
+#endif
+    REXLOG_INFO("  thread {:08X}{}{} start {:08X} lr {:08X} chain{}", thread->handle(), host,
+                thread->main_thread() ? " (main)" : "", thread->creation_params()->start_address,
+                uint32_t(ctx->lr), GuestChain(base, ctx->r1.u32, 16));
+  }
+}
 
 void InstallFaultGuard() {
   rex::arch::ExceptionHandler::Install(OnUnhandledFault, nullptr);

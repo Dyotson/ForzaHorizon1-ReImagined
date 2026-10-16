@@ -561,6 +561,30 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   Seen on the way, every rate: the thumbnail made at a purchase is nearly black
   (`Thumbnail_46.xdc`, 23,734 bytes).
 
+- 2026-10-16: **Endless loading after the first save (#76)**, Windows 11, RX 9070 XT, v0.1.8,
+  TU4 + DLC, 240 fps, local server. The first session (new career, prologue, first race, the
+  Corrado, save, Alt+F4 at the title screen) played; every later start stops right after
+  `joining session 0000000000000000`. The save is not the cause: its files are complete (TU4's
+  `VersionFlags` 4/2 and `NeedsAA`, sizes as ours), and a copy loads into free roam on Linux
+  (TU4, 240 fps, local server) and in the TU4 Windows build under Proton/RADV with the player's
+  picture settings (1440p, render scale 2, 16x AF, FXAA extreme), a warm shader cache and the
+  player's DLC set (#76 and #66 have the same one: `DLCRoot1` without `zipmount.xml`, no Season
+  Pass package; copied that way, it loads too). #66's last session hangs with an empty shader
+  cache, so that is not it either. What the hang logs (#76, #66) share: SpeechFacade loads on a
+  job worker, the game thread (`F800007C`, the `[tN]` of the `joining` line) logs the join, and
+  nothing follows; normally the loading fiber unloads XMediaFacade 0.4-0.9 s later. Traced with
+  gdb on Linux: after the join the game thread answers XSessionCreate, converts to a fiber,
+  creates the loading fiber (`82CCB7A0`, 128 KB) and switches to it, which queues the world's
+  jobs; the speech job ends (both `XamContentOpenFile("nuispeech", ...nuisp1033)` fail as in
+  Xenia) and its worker goes back to its idle wait. So on the player's PC the game thread or its
+  loading fiber stops before the unload, with nothing logged. Windows-only differences seen on
+  the way: the I/O worker the game starts with creation flag 0x20 (`82B317A8`, base `82A746F8`:
+  an IRP queue served under a spin lock) runs at THREAD_PRIORITY_ABOVE_NORMAL on Windows (the
+  SDK's `set_priority(1)`; EPERM on Linux, ignored by Wine), and host fiber stacks reserve 1 MB
+  on Windows (256 KB on Linux). Not reproduced; the log of the next hang will say more: closing
+  the window now logs every guest thread's last call site and call chain (`LogGuestThreads`,
+  `src/debug/fault_guard.cpp`).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.
@@ -579,6 +603,9 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   audio the game submits (non-zero means it makes sound), and the RMS of each of its 6
   channels (front left, front right, center, LFE, back left, back right);
   `FORZA_AUDIOLOG_MS` sets the window (default 5000).
+- A game that hangs: close its window; the log ends with `FORZA: guest threads at close`, one
+  line per guest thread (handle, `[tN]` on Windows, start address, the return address of its
+  last call and its call chain). A thread waiting in the kernel shows the call site of the wait.
 - A fault no handler takes aborts with a host stack in the log (`src/debug/fault_guard.cpp`):
   `addr2line -f -e forza-recomp/out/build/linux/forza 0xOFFSET` names the `sub_XXXXXXXX`
   frames. `FORZA_FAULT=wait` parks the thread instead, for `gdb -p`.
