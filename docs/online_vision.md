@@ -220,6 +220,15 @@ options: `--world-events 4,26` (pick from these `Events.Id`), `--world-event-lap
 event gets CPU drivers), `world_event_cpu_ready` (on: the results screen doesn't wait for
 the CPU drivers), `world_event_ai_grid` (0; a test knob, below).
 
+CPU drivers online are this project's addition and exist only in these world events
+(#67). The original game's online races have none: every online preset in
+`GameOptionPresets.xml` and both default playlists (`Default*HopperOptions.xml`) set
+`MaxAIPlayers="0"` (the Playground presets even lock it), and Create Custom Game's GAME
+SETUP (RULES, ADVANCED RULES, OVERRIDES) offers no AI option (checked in the game; the
+lobby's `IDS_OptionMaxAIPlayers` / "REMOVE AI PLAYER" strings, dated 2011, are unused
+in it). The server's playlist rounds keep `MaxAIPlayers="0"` too. The launcher's
+"This PC" server schedules no world events, so a player alone there never meets one.
+
 Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_server.py`
 (`WORLD_EVENT` message, `/world/event`, the `worlds` of the status page),
 `forza_live_lsp.py` (`GetGameOptions` answers the event), `src/hooks/world_events.cpp`
