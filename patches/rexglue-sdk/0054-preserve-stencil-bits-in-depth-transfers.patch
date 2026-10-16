@@ -1,0 +1,16 @@
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -3756,6 +3756,12 @@
+           }
+         } break;
+       }
++    } else if (mode.output == TransferOutput::kStencilBit) {
++      // This shader deliberately declares only the stencil aspect. Without
++      // packing that value, the bit-test below has no operand and every pass
++      // writes its bit unconditionally, turning the destination stencil into FF.
++      assert_true(source_stencil[0] != spv::NoResult);
++      packed = source_stencil[0];
+     } else if (source_depth_float[0] != spv::NoResult) {
+       if (mode.output == TransferOutput::kDepth && dest_depth_format == source_depth_format) {
+         builder.createStore(source_depth_float[0], output_fragment_depth);
