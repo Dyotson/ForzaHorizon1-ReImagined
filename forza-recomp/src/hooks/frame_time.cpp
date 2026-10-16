@@ -39,11 +39,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 REXCVAR_DECLARE(int32_t, frame_rate);  // src/main.cpp
 
@@ -145,6 +148,52 @@ void ReadVblank(uint64_t& count, uint64_t& actual, uint64_t& nominal) {
   }
 }
 
+// Render sync. Above 30 fps the main loop runs at the target rate whatever the render thread
+// makes, and the render thread draws the newest main frame it finds. When the render thread
+// falls behind (a race at 240 fps renders about 63 frames a second here), the main loop runs
+// three or four frames for each one drawn, and now and then the drawn frame has no HUD (#78:
+// the whole HUD missing for a frame, about one frame in 50), and the simulated time between
+// two drawn frames jumps by whole main frames (motion judders). While the render thread's
+// frames take more than 1.15 target frames (a moving average over about 16 swaps), each main
+// frame waits until the render thread has swapped since the previous one (at most 50 ms),
+// so the game runs at the rate it draws. The frame's timestamp is taken before the wait, so
+// dt still adds up to real time. When the render thread keeps up, nothing waits.
+// FORZA_RENDER_SYNC=0 turns it off.
+struct RenderState {
+  std::mutex mutex;
+  std::condition_variable swapped;
+  uint64_t swaps = 0, last_tick = 0;
+  double interval_ema = 0;  // ticks between swaps
+} render;
+
+struct SyncStats {
+  uint64_t waits = 0;
+  double wait_ms = 0;
+} sync_stats;
+
+bool RenderSyncEnabled() {
+  static const bool on = EnvInt("FORZA_RENDER_SYNC", 1) != 0;
+  return on;
+}
+
+void WaitForRender() {
+  static uint64_t seen = 0;
+  const uint64_t freq = rex::chrono::Clock::guest_tick_frequency();
+  const uint64_t start = rex::chrono::Clock::QueryGuestTickCount();
+  const double target_ticks = forza::frame_time::TargetMs() * 1e-3 * double(freq);
+  std::unique_lock<std::mutex> lock(render.mutex);
+  const bool behind = render.interval_ema > 1.15 * target_ticks &&
+                      start < render.last_tick + freq / 10;  // swaps are coming (100 ms)
+  if (behind && render.swaps == seen) {
+    render.swapped.wait_for(lock, std::chrono::milliseconds(50),
+                            [&] { return render.swaps != seen; });
+    sync_stats.waits += 1;
+    sync_stats.wait_ms +=
+        double(rex::chrono::Clock::QueryGuestTickCount() - start) * 1000.0 / double(freq);
+  }
+  seen = render.swaps;
+}
+
 struct Stats {
   uint64_t frames = 0, paced = 0, game_kept = 0;
   double sum = 0, sum2 = 0, min = 1e9, max = 0;
@@ -159,10 +208,12 @@ void LogStats(Stats& s, uint64_t now) {
   const double n = double(s.frames), mean = s.sum / n, game_mean = s.game_sum / n;
   REXLOG_INFO(
       "FRAMETIME: frames={} on_target={:.1f}% dt mean={:.3f} sd={:.3f} min={:.3f} max={:.3f} ms; "
-      "game's ms dt mean={:.3f} sd={:.3f}; kept game's={}",
+      "game's ms dt mean={:.3f} sd={:.3f}; kept game's={}; render sync waits={} ({:.0f} ms)",
       s.frames, 100.0 * s.paced / n, mean, std::sqrt(std::max(0.0, s.sum2 / n - mean * mean)),
       s.min, s.max, game_mean,
-      std::sqrt(std::max(0.0, s.game_sum2 / n - game_mean * game_mean)), s.game_kept);
+      std::sqrt(std::max(0.0, s.game_sum2 / n - game_mean * game_mean)), s.game_kept,
+      sync_stats.waits, sync_stats.wait_ms);
+  sync_stats = SyncStats{};
   s = Stats{};
   s.window_start = now;
 }
@@ -261,6 +312,22 @@ int VblanksPerFrame() {
   return n;
 }
 
+void OnGuestSwap() {
+  if (REXCVAR_GET(frame_rate) <= 30) return;
+  const uint64_t now = rex::chrono::Clock::QueryGuestTickCount();
+  {
+    std::lock_guard<std::mutex> lock(render.mutex);
+    if (render.last_tick) {
+      const double interval = double(now - render.last_tick);
+      render.interval_ema =
+          render.interval_ema ? render.interval_ema + (interval - render.interval_ema) / 16 : interval;
+    }
+    render.last_tick = now;
+    render.swaps += 1;
+  }
+  render.swapped.notify_all();
+}
+
 int VblankHz() { return REXCVAR_GET(frame_rate) * VblanksPerFrame(); }
 
 double TargetMs() { return 1000.0 * VblanksPerFrame() / GuestVblankHz(); }
@@ -291,7 +358,9 @@ extern "C" REX_FUNC(sub_8247C168) {
   __imp__sub_8247C168(ctx, base);
   if (lr != kFrameTimeCallReturn || REXCVAR_GET(frame_rate) <= 30) return;
   double dt;
-  if (!FrameTime(base, game_ms, dt) || !PreciseFrameTime()) return;
+  const bool timed = FrameTime(base, game_ms, dt);
+  if (RenderSyncEnabled()) WaitForRender();
+  if (!timed || !PreciseFrameTime()) return;
   ctx.f31.f64 = double(float(dt));
   ctx.r3.u64 = 1;
 }

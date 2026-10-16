@@ -27,7 +27,8 @@ that is 30 fps. Forza Motorsport 4, whose engine this is, ran with `mainthread30
 render thread; when the render thread (bound by the GPU emulation) is still busy, the main
 loop does not wait for it. In a race at a 144 fps target the main loop ran 144 times a
 second while the render thread swapped about 70 frames a second (below). So the frame rate the
-player sees is the render thread's, and the simulation keeps its own rate.
+player sees is the render thread's, and the simulation keeps its own rate. Since #78 the main loop waits
+for the render thread while that falls behind ("Render sync" below).
 
 **Frame time: the kernel's millisecond tick.** After the wait the main loop reads a clock
 (the object at `0x832ADD20`: `KeTimeStampBundle->TickCount` plus an offset, `sub_82CEBC40`)
@@ -156,7 +157,8 @@ guest vblank (`video_mode_refresh_rate`, which `VdQueryVideoMode` reports and th
 VSync thread follows) to twice the frame rate, or to the frame rate when twice is past the
 SDK's limit (480 Hz with patch 0037, 240 without), unless `video_mode_refresh_rate` is set
 explicitly (then the frame rate is that rate divided by the same divider). The frame
-stats' `ontarget` uses the same target. Test switches: `FORZA_FRAME_TIME=game` (the millisecond frame time),
+stats' `ontarget` uses the same target. Test switches: `FORZA_FRAME_TIME=game` (the millisecond frame time), `FORZA_RENDER_SYNC=0`
+(no render sync, below),
 `FORZA_VBLANK_DIVIDER=1|2`, `FORZA_FRAMETIME_LOG=1`, `FORZA_FRAMETIME_CSV=<path>` (per frame:
 time, dt, the game's ms, on target, the player's car position).
 
@@ -248,6 +250,65 @@ anyway), A (START RIVALS).
   the hook) while the guest frames are steady.
 - The developer options `framesperrender` and `unlockframerate` were not tried (they would
   run the main loop without the vblank wait).
+
+## Render sync: HUD missing and judder when the render thread falls behind (#78, #62)
+
+Report (#78, RX 9070 XT, Windows, `frame_rate = 240`, render scale 2, FXAA extreme; #62 the same
+symptom): in a race among AI cars the frame rate drops, motion stutters and the HUD flickers. The
+reporter's video shows single frames with the whole HUD missing (progress, place, standings,
+minimap, speedometer; the 3D name tags stay), and in the pack about 10-17 repeated frames a second
+of its 60 fps capture.
+
+Cause: above 30 fps the main loop runs at the target rate whatever the render thread makes, and the
+render thread draws the newest main frame it finds (see "Rendering is decoupled"). In the race at
+240 the render thread made 63 frames a second here (GPU emulation bound) while the main loop ran
+237: three or four main frames per drawn frame. Now and then the drawn frame has no HUD, and the
+simulated time between two drawn frames is a whole number of 4.2 ms main frames (12.5 or 16.7 or
+20.8 ms for frames shown about 16 ms apart), which is judder on top of the low frame rate. At 60,
+where the render thread keeps up, neither happens.
+
+Fix (`src/hooks/frame_time.cpp`, "render sync"): the VdSwap hook counts the render thread's swaps
+and keeps a moving average of their interval (about 16 swaps). While that interval is more than
+1.15 target frames and swaps keep coming (one in the last 100 ms), each main frame waits after its
+timestamp until the render thread has swapped since the previous main frame (a condition variable,
+at most 50 ms), so the game runs at the rate it draws. The timestamp is taken before the wait, so
+dt still sums to real time; a late frame gets its real length as before. When the render thread
+keeps up, nothing waits (at 60: 0 waits, dt 16.667 ms on 100% of frames, as before). At 30 (the
+default) the hook does nothing. `FORZA_RENDER_SYNC=0` turns it off; the FRAMETIME line counts the
+waits.
+
+Measured: race scenario (Millennia Masters, 7 AI cars, 26 s at full throttle), TU4 build, warm
+cache, the reporter's settings (`--frame_rate=240 --resolution_scale=2 --anisotropic_override=5
+--swap_post_effect=fxaa_extreme`), BENCH lock, one game at a time. HUD missing = burst screenshots
+(`FORZA_SCREENSHOT_BURST=20:1`, 13 bursts of 20 consecutive frames, 247 frames a run) with no white
+pixels in both the lap counter and the standings:
+
+| Run | Main loop | Guest fps | p50 / p95 / p99 ms | Frames with no HUD |
+| --- | --- | --- | --- | --- |
+| 240, scale 2, before (2 runs) | 237 fps | 62.9 / 62.7 | 15.8-16.0 / 21.6-22.5 / 27.2-27.7 | 5 and 1 of 247 |
+| 240, scale 2, render sync (3 runs) | 63 fps | 63.1 / 63.2 / 62.9 | 15.9-16.0 / 17.0-17.1 / 17.8-18.1 | 0, 0, 0 of 247 |
+| 240, scale 1, before | 237 fps | 105.5 | 10.0 / 12.2 / 13.1 | 1 of 247 |
+| 240, scale 1, render sync | 108 fps | 103.9 | 10.2 / 12.2 / 12.8 | 0 of 247 |
+| 60, scale 2, before | 60 fps | 59.8 | 16.7 / 17.7 / 19.1 | 0 of 247 |
+| 60, scale 2, render sync (0 waits) | 60 fps | 59.8 | 16.7 / 17.6 / 18.6 | 0 of 247 |
+
+The drawn frame rate does not change (the render thread is the bound); the HUD stays, the tail of
+the frame times shortens (p95 22 to 17 ms) and each drawn frame advances the simulation by its own
+length. Boot, title, menus, loading and the race intro ran at the same rates with and without it.
+
+Left (not changed here):
+
+- The race frame rate itself: the GPU emulation is the bound (docs/perf.md), 63 fps at scale 2 and
+  105 at scale 1 on the RX 9060 XT. Pipelines were not the stutter here (25-31 created in the
+  race with a warm cache, and the reporter's later sessions loaded 689 stored pipelines; only
+  their first session started cold).
+- Presentation at render scale 2 with FIFO (the default present mode): at 240 the presenter showed
+  53 of the 63 frames a second here, at irregular 1-5 host vblanks (144 Hz monitor), and the title
+  screen was held to 144 fps (240 at scale 1). With `vulkan_allow_present_mode_mailbox = true`
+  every frame was shown (62.8 of 63.1 fps, p95 17.1 ms). At 60 with scale 2 FIFO showed every
+  frame. The reporter's AMD Windows driver offers no MAILBOX (IMMEDIATE, FIFO, FIFO_RELAXED and
+  FIFO_LATEST_READY, which the SDK does not use): FIFO_LATEST_READY support is the next thing to
+  try there.
 
 ## Fixed: race-start animations looked too fast (#7, 2026-10-12, fixed 2026-10-14)
 

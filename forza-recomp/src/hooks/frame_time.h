@@ -17,4 +17,7 @@ int VblankHz();
 // configured guest refresh rate.
 double TargetMs();
 
+// The render thread handed a frame to VdSwap (src/debug/frame_dump.cpp).
+void OnGuestSwap();
+
 }  // namespace forza::frame_time
