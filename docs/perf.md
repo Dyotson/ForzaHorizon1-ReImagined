@@ -454,3 +454,52 @@ all 65 pipeline records. This is a cache-persistence fix, not an FPS claim or a
 fix for every freeze in #49. No GPU-specific commands or policies change; AMD
 runtime validation remains with the maintainer. The ordered standalone SDK
 patch stack applies to bd833a2.
+
+## NVIDIA Vulkan resolve-readback overhead (#49, 2026-10-15)
+
+SDK patch 0065 avoids repeating GPU readback work in `readback_resolve=some`
+after that resolve key has a valid CPU copy. The regular GPU resolve and
+cross-scale synchronization still run. The first CPU copy is unchanged;
+the validity flag is set only after the guest-memory copy succeeds. Keys include
+the address, byte length and format signature. Reused entries still update their
+last-used frame, and eviction discards the flag along with the buffers, preserving
+the existing refresh-after-inactivity behavior. `fast` and `full` are unchanged.
+
+Previously `some` skipped the repeated CPU `memcpy`, but still dispatched the
+downscale, copied into host buffers, and inserted transfer/host barriers on every
+resolve. This was substantial overhead on the tested NVIDIA system. Disabling
+readback entirely is a diagnostic control, not the fix: it removes CPU results
+needed by car-picture generation.
+
+RTX 5060 Ti, driver 617.14, Windows 11, Vulkan/FIFO, 120 FPS cap, 1440p output,
+16x AF and warmed persistent shader storage. No other game or build ran during
+measurement. Each run used the same copied save and the festival throttle sequence
+described below. These are short scene tests, not race-wide performance claims.
+
+| Native 1440p scene and HUD | Guest FPS | Renderer p99 (ms) |
+| --- | ---: | ---: |
+| Before: `some`, incomplete-frame skipping on | 52.9 | 22.8 |
+| Before: `some`, incomplete-frame skipping off | 52.4 | 23.4 |
+| Diagnostic: readback `none` | 68.1 | 18.3 |
+| Fixed: readback `some` | 68.8 | 18.2 |
+
+The table uses seconds 30-54. A new pipeline still caused a roughly 185 ms hitch
+near second 30 in the fixed native run; improving readback does not eliminate
+first-use shader compilation. The measured interval had zero renderer gaps over
+50 ms after the fix versus four before it. Do not treat this as all of #49 being
+resolved, or as a fix for missing story cutscenes or broken car thumbnails (#50).
+
+The DLSS Performance compatibility check retained 1280x720 scene rendering,
+native 2560x1440 HUD and the 120 FPS cap. A before/after repeat measured
+81.4 FPS / 17.0 ms renderer p99 before, versus 117.6 FPS / 12.7 ms afterwards.
+The first fixed run measured 118.5 FPS / 12.1 ms. Neither fixed measurement had
+renderer intervals over 25 ms in seconds 30-54. Both reported active NGX and
+native HUD rendering without evaluation failures. The installed renderer was
+updated only after building and validating the fix; the previous DLL and matching
+capability metadata were backed up. The patch also applies independently on the
+public main SDK patch series, without depending on the DLSS work.
+
+The table above is the earlier integration measurement, retained with its
+original method and limits; it is not a fresh measurement of this split branch.
+The standalone patch applies to main without DLSS, ultrawide or thumbnail changes.
+The readback key, first successful CPU copy and eviction lifetime are unchanged.

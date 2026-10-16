@@ -40,6 +40,8 @@ vendors, retain their existing path. See [Rendering issues](rendering.md#nvidia-
 
 0064 flushes pending Vulkan shader/pipeline storage writes before sleeping and drains queued records on shutdown. See [Performance](perf.md#flush-pending-vulkan-shader-cache-writes-before-waiting-49).
 
+0065 skips repeated Vulkan GPU-to-host resolve work after a successful CPU copy in `some` mode, preserving the first copy and cache eviction. Other modes are unchanged. See [Performance](perf.md#nvidia-vulkan-resolve-readback-overhead-49-2026-10-15).
+
 0053 refreshes known reused car-thumbnail readback surfaces on Vulkan; see
 [Rendering issues](rendering.md#reused-car-thumbnail-readbacks-vulkan).
 

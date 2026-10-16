@@ -1,0 +1,38 @@
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index cf73d5d..9aed52f 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -503,6 +503,8 @@ class VulkanCommandProcessor : public CommandProcessor {
+     uint32_t written_size[2] = {0, 0};
+     uint32_t current_index = 0;
+     uint64_t last_used_frame = 0;
++    // Resolve "some" mode keeps the first CPU copy until this entry is evicted.
++    bool resolve_cpu_copy_valid = false;
+   };
+   void EvictOldReadbackBuffers(std::unordered_map<uint64_t, ReadbackBuffer>& buffer_map);
+   static constexpr uint32_t kReadbackBufferSizeIncrement = 16 * 1024 * 1024;
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index d6adc7f..b29b6ad 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -5220,6 +5220,13 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   uint64_t resolve_key = GetReadbackResolveKey(written_address, written_length);
+   ReadbackBuffer& readback = readback_buffers_[resolve_key];
+   readback.last_used_frame = frame_current_;
++  // "some" only needs the first CPU copy of this address/size/format key.
++  // Keep the normal GPU resolve above, but avoid downscaling and transferring
++  // every subsequent result to a host buffer that the CPU will never read.
++  // Touch last_used_frame first so active entries retain the existing lifetime.
++  if (readback_mode == ReadbackResolveMode::kSome && readback.resolve_cpu_copy_valid) {
++    return true;
++  }
+   uint32_t write_index = readback.current_index;
+   uint32_t readback_size = AlignReadbackBufferSize(written_length);
+   if (!ensure_readback_slot(readback, write_index, readback_size)) {
+@@ -5426,5 +5433,6 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+     uint8_t* destination = memory_->TranslatePhysical(written_address);
+     if (destination) {
+       std::memcpy(destination, readback.mapped_data[read_index], written_length);
++      readback.resolve_cpu_copy_valid = true;
+     }
+   }
