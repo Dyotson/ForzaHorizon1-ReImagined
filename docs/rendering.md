@@ -414,7 +414,7 @@ packing branch was conditional on having loaded depth. `packed` stayed unset,
 so none of the eight bit-copy shaders emitted their conditional discard. Each
 pass therefore wrote its bit across the transfer rectangle.
 
-SDK patch 0054 feeds the loaded stencil value directly into the existing bit
+SDK patch 0055 feeds the loaded stencil value directly into the existing bit
 test. Color-to-stencil and the direct stencil-export path are unchanged. This
 fix applies to the fallback wherever it is used, rather than matching a vendor
 or an FH1 shader hash.
