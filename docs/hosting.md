@@ -81,12 +81,21 @@ internet side (it travels in plain HTTP).
 - per address (not for `--trusted-proxy` addresses): 16 players, 1500 datagrams/s, 2 new registrations/s, 32 HTTP connections
   (they stay open while idle: the game needs that);
 - per player: relay budget 160 KB/s (`--rate-limit`), 30 open auctions, 50 unretrieved
-  gifts, 100 shared cars; one upload at most 2 MB, HTTP bodies at most 8 MB;
+  gifts, 100 shared cars, 4 game invites per 30 s (the rest are dropped and logged);
+  one upload at most 2 MB, HTTP bodies at most 8 MB;
 - whole server: ghosts, cars and market blobs at most `FORZA_DISK_CAP_MB` (default 4096) MB,
   at most `FORZA_MAX_PLAYERS` (20000) player records;
 - the status page lists gamertags and XUIDs but no IP addresses.
 
 Players are not authenticated (the XUID is whatever the client claims).
+
+Game invites (#90) are delivered only between games that let their player pick whom to
+invite and ask the invited player before joining (v0.1.13 and later; they say so in their
+HELLO). Games up to v0.1.12 invite every player online with one press of Invite Friends and
+join every invite they get at once (a player in free roam has their game restarted into the
+party): their invites are dropped, and none are delivered to them. One player's invites are
+capped at 4 per 30 s. `--no-invites` (env `FORZA_INVITES=0`) drops every invite; a server
+older than this check needs it while v0.1.12 games are around.
 
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.

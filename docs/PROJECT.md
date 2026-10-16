@@ -717,6 +717,46 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   stream of a 1.9 MB LZX member at the Rally load stopped at 589,824 bytes, the read came
   back, the Rally Heats started and played. The next log of this hang names the member.
 
+- 2026-10-16: **One press of Invite Friends pulled every player online into that party
+  (#90)**, public server, v0.1.12: the party lobby's Invite Friends (`XamShowFriendsUI`)
+  invited every player in the room (on our server the friends list is the room), and every
+  game accepted every invite at once, so 13 players were pulled in. A player waiting in his
+  own public lobby was taken out of it, and players in the opening Corrado drive had their
+  game restarted (#81) into the party. Hotfix the same day: the public server runs
+  `--no-invites`. Now (`src/kernel/live_invites.cpp`):
+  - Sending: `XamShowFriendsUI`, `XamShowGameInviteUI` and `XInviteSend` open an invite
+    picker in the text box over the game (`src/platform/hud_overlay.h`). The player types
+    part of a gamertag to search the players online, moves with Up/Down (LB/RB jump to the
+    next letter), picks up to 4 with A or Enter and sends with Start or "Send invites"; B or
+    Escape cancels. Only the players picked get an invite. The picker lists sections, and a
+    friends list (players you add, a separate issue) plugs in as the first one
+    (`FriendSection`). `XFriendsCreateEnumerator` still lists the room, for the lobbies'
+    presence and joinable games, but no invite goes to that list on its own. While the picker
+    is open the game gets no input. With `mnk_mode` the keys also drive the pad, so a pad
+    button counts only if no keyboard key went down between its press and release.
+  - Receiving: "X invited you to their game": hold Back + A (keyboard Tab + Space, or Enter)
+    to join, Back + B or Escape to ignore (that player's invites stay hidden for 2 minutes),
+    no answer for 20 s ignores it. Only a join sends `XN_LIVE_INVITE_ACCEPTED`. While the
+    prompt shows the game does not get Back or Start, nor A or B while Back is held. One
+    prompt at a time. The opening drive can't be detected, but the game never joins (or
+    restarts) without the player's yes. `live_accept_invites = false` ignores every invite.
+  - Server: at most 4 invites per inviter in 30 s (the rest are dropped and logged). Invites
+    go only between games that send the new HELLO features byte (`FEATURE_INVITE_PICK`,
+    after the gamertag; old servers ignore it), so v0.1.12 games neither send nor get any,
+    and the public server can deliver invites again once it runs this version.
+    `server/test_forza_invites.py`.
+  - Test (Linux, TU4, three games DriverA/B/C from copies of one Xenia save, local server
+    on UDP 21470): A in the party lobby, Invite Friends: the picker listed DriverB and
+    DriverC; B cancelled it with nothing sent and the lobby stayed. A picked B and sent: only
+    B (in free roam) got the prompt, C got nothing. With no answer it was ignored after 20 s
+    and B kept driving. A invited C (party lobby): C's Back + B ignored it, C's lobby did
+    not get the B, and A's next invite to C was hidden. A invited B again: B held Back + A,
+    the game restarted 0.4 s later (#81) and B was in A's party lobby 4 s after the invite
+    (`screenshots/2026-10-16_invite_accepted_from_free_roam_A_left_B_right.jpg`). Not
+    driven here: typing a search on a real keyboard (the test games run headless with
+    scripted pad input), and the Y "INVITE Xbox LIVE Party" button, which calls none of
+    these.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

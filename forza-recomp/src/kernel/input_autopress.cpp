@@ -53,6 +53,7 @@ using forza::GuestPtr;
 
 namespace forza {
 uint16_t WorldChallengePad(uint16_t buttons);  // hooks/world_challenge.cpp
+uint16_t LiveInvitePad(uint16_t buttons, int left_y, bool& block_all);  // kernel/live_invites.cpp
 }
 
 namespace {
@@ -354,9 +355,14 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
-  // Head-to-head challenges (hooks/world_challenge.cpp) watch player 1's X and B and hide
-  // them from the game while a prompt asks for them.
-  if (user == 0) state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
+  // The invite picker and prompt (kernel/live_invites.cpp) and head-to-head challenges
+  // (hooks/world_challenge.cpp) watch player 1's pad and hide what they use from the game.
+  if (user == 0) {
+    bool block_all = false;
+    state.buttons &= uint16_t(~forza::LiveInvitePad(state.buttons, state.sticks[1], block_all));
+    if (block_all) state = PadState{};
+    state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
+  }
   if (buffer) {
     // The packet number changes whenever the state does.
     static std::mutex packet_mutex;

@@ -162,8 +162,9 @@ add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
 add("live_room", "Room", "Online", "str", "",
     "Only players in the same room on the server see each other. Empty is the default room.",
     "Forza Live")
-add("live_accept_invites", "Accept invites at once", "Online", "bool", True,
-    "There is no Xbox Guide to accept them in.", "Forza Live")
+add("live_accept_invites", "Show game invites", "Online", "bool", True,
+    "Another player's invite asks you: hold Back + A (or Enter) to join. Off ignores them.",
+    "Forza Live")
 add("world_drop_in", "Horizon World drop-in", "Online", "bool", True,
     "The Horizon World playlist is a shared free roam that players jump into.",
     "Horizon World")

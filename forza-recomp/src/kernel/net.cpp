@@ -703,14 +703,6 @@ class VNet {
     for (const auto& r : records) SendLive(server_, kMatchPublish, r);
   }
 
-  bool TakeInvite(forza::LiveInvite& out) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!pending_invite_.inviter_xuid) return false;
-    out = pending_invite_;
-    pending_invite_ = {};
-    return true;
-  }
-
   // Virtual IP of a peer's XNADDR.
   uint32_t VipOfXnAddr(const uint8_t* xna) {
     const uint32_t ina = Load32(xna);
@@ -933,6 +925,10 @@ class VNet {
     body.insert(body.end(), room_.begin(), room_.end());
     body.push_back(uint8_t(name.size()));
     body.insert(body.end(), name.begin(), name.end());
+    // Features (older games send none): 0x01, invites go only to players the player picked
+    // and an invite asks before joining (live_invites.cpp, #90). The server delivers invites
+    // only between games that have it.
+    body.push_back(0x01);
     SendLive(server_, kHello, body);
   }
 
@@ -1108,11 +1104,7 @@ class VNet {
         if (13 + name_size + 0x3C > n) return;
         invite.inviter.assign(reinterpret_cast<const char*>(p + 13), name_size);
         std::memcpy(invite.session, p + 13 + name_size, 0x3C);
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          pending_invite_ = invite;
-        }
-        forza::LiveInviteReceived(invite);
+        forza::LiveInviteReceived(invite);  // the player decides (live_invites.cpp)
         return;
       }
       case kMatchResults:
@@ -1298,7 +1290,6 @@ class VNet {
   std::unordered_map<uint32_t, uint32_t> live_id_by_vip_;
   std::vector<uint8_t> presence_;  // body of our last presence message
   std::vector<uint8_t> match_record_, standby_record_;  // our last MATCH_PUBLISH bodies
-  forza::LiveInvite pending_invite_;
   std::vector<forza::LiveFriend> roster_, roster_parts_;
   uint16_t roster_parts_seen_ = 0;
   int roster_changed_ = 0;  // 1: presence changed, 2: players came or went; LiveLoop reports it
@@ -1335,7 +1326,6 @@ void LiveSendInvite(uint64_t xuid, const uint8_t* session_info) {
   if (NetOn()) VNet::Get().SendInvite(xuid, session_info);
 }
 
-bool LiveTakeInvite(LiveInvite& out) { return NetOn() && VNet::Get().TakeInvite(out); }
 
 bool LiveSendMatch(bool search, const std::vector<uint8_t>& body) {
   return NetOn() && VNet::Get().SendMatch(search ? kMatchSearch : kMatchPublish, body);

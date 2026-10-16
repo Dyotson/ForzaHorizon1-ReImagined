@@ -8,7 +8,9 @@
 //   accepted (the SDK failed it, and the game retried every frame).
 // - XFriendsCreateEnumerator (0xFC/0x58020): the friends list. Every other player in our
 //   room on the server is a friend, with the presence it reported (online, playing,
-//   joinable session). The SDK failed it.
+//   joinable session), so lobbies show who is online and their joinable games. Invites
+//   never go to this list: the player picks the invitees (live_invites.cpp, #90). The
+//   SDK failed it.
 // - XSessionCreate (0xFB/0xB0010) for a session we host: the SDK leaves XSESSION_INFO
 //   empty. We fill it (an online peer session id, our XNADDR, a random key) and, for a
 //   presence session, publish it, so friends see it as joinable. Delete and modify
@@ -25,11 +27,11 @@
 //   XSESSION_INFO, from what each player published.
 // - XNetQosListen / XNetQosLookup: the host's game description travels with its
 //   presence; lookups are answered from the roster.
-// - XInviteSend / XInviteGetAcceptedInfo (0xFC/0x50002, 0x58023): "Invite to Party"
-//   goes through the server to the friend, whose game accepts it (live_accept_invites)
-//   and joins our session.
-// - XamShowFriendsUI / XamShowGameInviteUI: there is no Guide; opening it invites every
-//   other player in the room (the party lobby's "Invite Friends").
+// - XamShowFriendsUI / XamShowGameInviteUI / XInviteSend (0xFC/0x50002): there is no
+//   Guide; the party lobby's "Invite Friends" opens our invite picker (live_invites.cpp,
+//   #90), where the player searches gamertags and picks whom to invite. The invites go
+//   through the server; the friend's game asks its player, and XInviteGetAcceptedInfo
+//   (0xFC/0x58023) hands the game the invite they accepted, which then joins our session.
 // - XNetLogonGetTitleID / XNetLogonGetMachineID: the SDK stubs return garbage.
 // - XUserReadStats / XSessionWriteStats (0xFB/0xB0021, 0xB0025): Xbox LIVE stats rows
 //   (Forza's only view is TrueSkill) kept and rated by the server (server/forza_stats.py);
@@ -70,10 +72,6 @@
 #include <vector>
 
 using forza::GuestPtr;
-
-REXCVAR_DEFINE_BOOL(live_accept_invites, true, "Network/Forza Live",
-                    "Accept game invites from other players at once (there is no Xbox Guide "
-                    "to accept them in); the game declines them itself while busy");
 
 namespace {
 
@@ -543,6 +541,8 @@ bool InviteSession(uint8_t* out) {
 
 // XInviteSend (0xFC/0x50002): an XLIVEBASE_ASYNC_MESSAGE whose marshalled request is
 // (big-endian) user index, invitee count, invitee XUIDs, display text, message handle.
+// The game's friends list is every player in the room, so its invitees are not invited on
+// their own (#90): the player picks them in the invite picker.
 uint32_t XInviteSend(uint8_t* base, uint32_t message) {
   if (!message) return kInvalidArg;
   const uint32_t task = Load32(GuestPtr(base, message));
@@ -552,12 +552,8 @@ uint32_t XInviteSend(uint8_t* base, uint32_t message) {
   const uint32_t count = std::min<uint32_t>(Load32(GuestPtr(base, request + 4)), (size - 8) / 8);
   uint8_t session[kSessionInfoSize];
   if (!InviteSession(session)) return 0x80155206;  // X_ONLINE_E_SESSION_NOT_FOUND
-  for (uint32_t i = 0; i < count; ++i) {
-    const uint64_t xuid =
-        uint64_t(Load32(GuestPtr(base, request + 8 + 8 * i))) << 32 | Load32(GuestPtr(base, request + 12 + 8 * i));
-    forza::LiveSendInvite(xuid, session);
-    REXLOG_INFO("FORZA_LIVE: invite sent to {:016X}", xuid);
-  }
+  REXLOG_INFO("FORZA_LIVE: XInviteSend for {} players: the player picks whom to invite", count);
+  forza::LiveOpenInvitePicker(session, "XInviteSend");
   return kSuccess;
 }
 
@@ -1274,37 +1270,31 @@ extern "C" REX_FUNC(__imp__XMsgStartIORequestEx) {
 }
 
 namespace {
-// The Guide's friends list and game invite UI: there is no Guide, so opening it invites
-// every other player in our room on the server to the session a friend should join
-// (InviteSession: the newest joinable session we host, else the one we joined). Forza's
-// party lobby "Invite Friends" calls XamShowFriendsUI (the player picks friends in the
-// Guide, which sends the invites); the friend's game accepts (live_accept_invites).
-uint32_t InviteRoom(const char* from) {
+// The Guide's friends list and game invite UI: there is no Guide. Forza's party lobby
+// "Invite Friends" calls XamShowFriendsUI (the player picks friends in the Guide, which
+// sends the invites): our invite picker stands in (live_invites.cpp), for the session a
+// friend should join (InviteSession: the newest joinable session we host, else the one we
+// joined). Up to v0.1.12 this invited every player in the room (#90).
+uint32_t InvitePicker(const char* from) {
   uint8_t session[kSessionInfoSize];
   if (!forza::LiveSignin() || !InviteSession(session)) {
     REXLOG_INFO("FORZA_LIVE: {}: no session to invite friends to", from);
     return 0;
   }
-  uint32_t sent = 0;
-  for (const auto& f : forza::LiveRoster()) {
-    if (!f.xuid) continue;
-    forza::LiveSendInvite(f.xuid, session);
-    ++sent;
-  }
-  REXLOG_INFO("FORZA_LIVE: {}: invited {} players to session {:016X}", from, sent,
-              SessionId(session));
+  REXLOG_INFO("FORZA_LIVE: {}: inviting to session {:016X}", from, SessionId(session));
+  forza::LiveOpenInvitePicker(session, from);
   return 0;  // ERROR_SUCCESS
 }
 }  // namespace
 
 // DWORD XamShowFriendsUI(DWORD user_index)
 extern "C" REX_FUNC(__imp__XamShowFriendsUI) {
-  ctx.r3.u64 = InviteRoom("XamShowFriendsUI");
+  ctx.r3.u64 = InvitePicker("XamShowFriendsUI");
 }
 
 // DWORD XamShowGameInviteUI(DWORD user_index, const XUID* recipients, DWORD count, text)
 extern "C" REX_FUNC(__imp__XamShowGameInviteUI) {
-  ctx.r3.u64 = InviteRoom("XamShowGameInviteUI");
+  ctx.r3.u64 = InvitePicker("XamShowGameInviteUI");
 }
 
 namespace forza {
@@ -1321,16 +1311,6 @@ void LiveMatchTick() {
   REXLOG_INFO("FORZA_LIVE: the game {} the host of the session we joined",
               host ? "made us" : "no longer has us as");
   PublishStandbyLocked();
-}
-
-// An invite arrived: accept it for the player (XN_LIVE_INVITE_ACCEPTED, parameter: the
-// user index); the game then asks XInviteGetAcceptedInfo for it and joins, or tells the
-// player it can't right now.
-void LiveInviteReceived(const LiveInvite& invite) {
-  REXLOG_INFO("FORZA_LIVE: {} invited you{}", invite.inviter,
-              REXCVAR_GET(live_accept_invites) ? "; accepting" : " (live_accept_invites is off)");
-  if (!LiveSignin() || !REXCVAR_GET(live_accept_invites)) return;
-  if (auto* kernel = REX_KERNEL_STATE()) kernel->BroadcastNotification(0x02000002, 0);
 }
 
 // The server's answer to a matchmaking search: request u32, count u16, then per session

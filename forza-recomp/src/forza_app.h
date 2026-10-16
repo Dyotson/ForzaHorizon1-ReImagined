@@ -68,10 +68,11 @@ class ForzaApp : public rex::ReXApp {
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
-  // Also the text box of the Horizon World's head-to-head challenges (platform/hud_overlay.h).
+  // Also the text box of the Horizon World's head-to-head challenges and of the invite
+  // prompts (platform/hud_overlay.h).
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
-    forza::InstallHud(drawer, app_context());
+    forza::InstallHud(drawer, app_context(), window());
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }

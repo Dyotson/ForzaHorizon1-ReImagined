@@ -43,10 +43,16 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   after the round; `--world-round-minutes` on the server ends those rounds on a timer).
   Details: [`docs/online_vision.md`](docs/online_vision.md).
   To play together in a party: everyone opens
-  Multiplayer; one player picks Invite Friends in the party lobby (there is no Guide, so
-  this invites everyone in the room) and the others join that party on their own
-  (`live_accept_invites`; a player in free roam restarts the game to join, as on the
-  console, which takes a few seconds). The party leader then picks Create Custom Game, sets the game
+  Multiplayer; one player picks Invite Friends in the party lobby, which opens the invite
+  picker (there is no Guide): type part of a gamertag to search the players online (Up/Down
+  or the D-pad, LB/RB jump to the next letter), A or Enter picks a player (up to 4), Start
+  or "Send invites" sends, B or Escape cancels. Only the players picked get an invite. An
+  invited player sees "X invited you to their game": hold Back + A (keyboard: Tab + Space,
+  or Enter) to join, Back + B or Escape to ignore (that player's invites stay hidden for 2
+  minutes), or let it go away after 20 s. A player in free roam restarts the game to join,
+  as on the console, which takes a few seconds. `live_accept_invites = false` ignores all
+  invites. Games up to v0.1.12 invited everyone online and joined every invite at once
+  (#90). The party leader then picks Create Custom Game, sets the game
   type under Setup Game (Free Roam, races, ...), saves the setup (YES) and starts once
   the others are ready. Or, without a party: Find Game, then the Races playlist; the
   first player hosts the playlist's lobby and the next ones join it, and the race starts

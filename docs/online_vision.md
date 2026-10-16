@@ -46,7 +46,7 @@ Why this trigger:
   from the server, so the server decides who goes where, and the game itself joins the
   session it is given or hosts one when there is none.
 - No setup: a custom game's Free Roam needs its host to go through Create Custom Game,
-  Setup Game and Game Type first, and invites (Reach's `live_accept_invites`, the party
+  Setup Game and Game Type first, and invites (the invite picker and the accept prompt, #90; the party
   lobby's Invite Friends) only reach a party whose leader has already set that up.
 - It is two presses from the party lobby, and the playlist's options are server data:
   the round's GameOptions XML, its search settings and its intermission.

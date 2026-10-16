@@ -38,6 +38,13 @@ VERSION = 1
 (HELLO, WELCOME, ERROR, BROADCAST, RELAY, FORWARD, PUNCH, PUNCH_ACK, DATA, BYE, LIST, PEERS,
  PRESENCE, INVITE) = range(1, 15)
 MATCH_PUBLISH, MATCH_SEARCH, MATCH_RESULTS = 15, 16, 17  # matchmaking sessions
+# Invites one player may send per INVITE_WINDOW seconds; the rest are dropped (#90: games up
+# to v0.1.12 invited everyone in the room at once, and accepted every invite by themselves).
+INVITE_LIMIT, INVITE_WINDOW = 4, 30.0
+# HELLO's features byte (after the gamertag; older games send none). FEATURE_INVITE_PICK:
+# the game sends invites only to players its player picked and asks before joining one
+# (#90). Invites from or to a game without it are dropped.
+FEATURE_INVITE_PICK = 0x01
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
 STATS, STATS_ROWS = 20, 21  # Xbox LIVE stats written and read, the rows (forza_stats.py)
@@ -103,6 +110,8 @@ class Peer:
         self.session = bytes(SESSION_INFO_SIZE)
         self.status = ""
         self.extra = b""  # slots and QoS data of the hosted session, opaque to the server
+        self.invite_times = []  # when its last invites went out (INVITE_LIMIT per INVITE_WINDOW)
+        self.features = 0  # HELLO's features byte (FEATURE_*)
 
 
 def ip_to_u32(ip):
@@ -202,6 +211,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         pos += 1 + room_len
         name_len = body[pos]
         name = body[pos + 1:pos + 1 + name_len].decode()[:MAX_NAME]
+        pos += 1 + name_len
+        features = body[pos] if pos < len(body) else 0
         if version != VERSION:
             self.error(addr, 2, f"server speaks protocol {VERSION}, client {version}")
             return
@@ -234,6 +245,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                      " via proxy" if proxied else "")
         peer.seen = time.monotonic()
         peer.name, peer.xuid, peer.room, peer.local = name, xuid, room, (local_ip, local_port)
+        peer.features = features
         # Behind a proxy the observed address is the proxy's local socket, no public address
         # of the player: report none (0.0.0.0:0), as in forward_header.
         public = (0, 0) if peer.proxied else (ip_to_u32(addr[0]), addr[1])
@@ -318,6 +330,20 @@ class ForzaLive(asyncio.DatagramProtocol):
                     log.info("invite #%d %r -> #%d %r dropped (invites off)", src.id, src.name,
                              peer.id, peer.name)
                     return
+                if not src.features & FEATURE_INVITE_PICK or not peer.features & FEATURE_INVITE_PICK:
+                    # A game up to v0.1.12 invites everyone online, and joins any invite
+                    # at once.
+                    log.info("invite #%d %r -> #%d %r dropped (%s game)", src.id, src.name,
+                             peer.id, peer.name,
+                             "inviter's" if not src.features & FEATURE_INVITE_PICK else "invitee's")
+                    return
+                now = time.monotonic()
+                src.invite_times = [t for t in src.invite_times if now - t < INVITE_WINDOW]
+                if len(src.invite_times) >= INVITE_LIMIT:
+                    log.info("invite #%d %r -> #%d %r dropped (over %d invites in %d s)", src.id,
+                             src.name, peer.id, peer.name, INVITE_LIMIT, INVITE_WINDOW)
+                    return
+                src.invite_times.append(now)
                 log.info("invite #%d %r -> #%d %r", src.id, src.name, peer.id, peer.name)
                 self.send(peer.addr, INVITE, struct.pack(">IQB", src.id, src.xuid, len(name)) +
                           name + session)
@@ -728,10 +754,9 @@ async def main():
                              "FORZA_PROXY_HTTP_PORT)")
     parser.add_argument("--no-invites", action="store_true",
                         default=os.environ.get("FORZA_INVITES", "1") == "0",
-                        help="log and drop game invites instead of delivering them: games up to "
-                             "v0.1.12 accept every invite by themselves and their Invite sends it "
-                             "to every player online, so one press pulls everybody into that "
-                             "party (#90; env FORZA_INVITES=0)")
+                        help="log and drop every game invite (#90; env FORZA_INVITES=0). "
+                             "Without it invites are delivered only between games that ask "
+                             "before joining (FEATURE_INVITE_PICK), at most 4 per inviter in 30 s")
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)

@@ -39,7 +39,8 @@ void LiveSetPresence(uint32_t state, const uint8_t* session_info, const std::str
 void LiveSelfXnAddr(uint8_t* xnaddr);
 
 // Game invites through the server: send one to a player in the room (with our joinable
-// session), and take the last one received (false when none is waiting).
+// session), and take the one the player accepted (false when none is waiting;
+// live_invites.cpp).
 struct LiveInvite {
   uint64_t inviter_xuid = 0;
   std::string inviter;
@@ -52,8 +53,18 @@ bool LiveTakeInvite(LiveInvite& out);
 // join (X_INVITE_INFO, 0x54 bytes; xam_loader.cpp), once; false when there is none.
 bool LoaderTakeBootInvite(uint8_t* out);
 
-// Called by the network thread when an invite arrives (live_xmsg.cpp).
+// Called by the network thread when an invite arrives: the player is asked whether to
+// join (live_invites.cpp, #90).
 void LiveInviteReceived(const LiveInvite& invite);
+
+// The invite picker (live_invites.cpp): the player searches the online players, picks
+// whom to invite to `session_info` (XSESSION_INFO) and sends. `from` names the caller in
+// the log.
+void LiveOpenInvitePicker(const uint8_t* session_info, const char* from);
+
+// Player 1's pad for the picker and the invite prompt (XamInputGetState): returns the
+// buttons to hide from the game; `block_all`: the game gets no input at all.
+uint16_t LiveInvitePad(uint16_t buttons, int left_y, bool& block_all);
 
 // Matchmaking sessions on the server (live_xmsg.cpp; RecompiledHaloReach's
 // docs/online_plan.md section 5.4): publish ours or search for a playlist's (bodies as
