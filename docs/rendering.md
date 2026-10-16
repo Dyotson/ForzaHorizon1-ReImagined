@@ -282,3 +282,32 @@ setting cleared at the return was off again when the draws came. Draws in those 
 their pipeline as with `async_shader_compilation=false` (a stutter only while pipelines are
 new); a warm cache waits for nothing. `FORZA_THUMB_SYNC=0` switches the hook off. Direct3D 12
 (`--gpu_backend=d3d12`) is not covered.
+
+
+## Photo mode lights gone at render scale 2 (#77, 2026-10-16)
+
+At resolution scale 2 (240 fps, scale 2, AMD RX 9070 XT, Windows) the car's head and tail
+lights vanished in photo mode. Reproduced on Linux/RADV at scale 2 (Pagani Zonda R at dusk,
+free roam, START > Photo mode > Take photo, 1280x720 guest): scale 1 shows the lights'
+glow, scale 2 shows dark lamps, with `readback_resolve` some and full alike (so not a
+readback problem). RenderDoc captures at scale 1 and 2 (`FORZA_RDCAPTURE_TRIGGER`, the 3
+captured frames, `qrenderdoc --python`): the car's lamp draw (
+1019 indices) is issued in both and covers the same pixels (pixel history, same primitive), but its
+pixel shader writes (0.56, 0.56, 1.22) at scale 1 and (0, 0, 0) at scale 2. Its textures: one
+1024x1024 DXT5 texture was bound as 2048x2048 at scale 2 and was all zero.
+
+Cause: photo mode resolves the scene every frame into a 3,768,320-byte range starting at
+physical 0x1BDB1000 (and two more, 0x1C149000 and 0x1D728000). The lamp texture's mip chain
+(0x1BD53000 + 393,216 bytes) ends in the first 8 KB of that range. The texture cache turns
+a texture into a "scaled resolve" texture when any page of its range was resolved to
+(Xenia's rule); such a texture is read from the scaled resolve buffer, which is zero where no
+resolve wrote. So 2 pages of tiny mips (2 % of the mip range, none of the base level) made the
+whole texture black. At scale 1 the rule is off, so the data the game wrote is used.
+
+Fix: SDK patch 0052, `scaled_resolve_min_coverage_percent` (default 50): the texture counts as
+a resolve target only if resolves wrote at least 50 % of the pages of its base level or of its
+mip range (a resolve target is covered by its own resolve, 100 %). 0 restores the old rule.
+Checked at scale 2 in the same photo mode view: lamps lit as at scale 1. The textures that are
+scaled resolves (1280x720 photo and depth targets, the bloom chain) keep their scaled size.
+The red line on the car in the report was not reproduced (it may be the same fault on another
+texture: any streamed texture whose tail overlaps a resolve range is affected the same way).
