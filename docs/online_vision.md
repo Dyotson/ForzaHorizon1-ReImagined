@@ -771,6 +771,15 @@ HELLO, rooms and presence, a world with its host and joiner (and a second world)
 standby host, an old or damaged file ignored, ids not reused, restored players that do not
 return time out.
 
+Real test (Linux, TU4, two games DriverA and DriverB from copies of one save, local server on
+UDP 21730): both signed in (#2734, #2735), Find Game > Horizon World, A hosted and B was placed
+into its world (2/8), the lobby listed both. The server was stopped with SIGTERM and started
+again 4 s later: `restored 2 player(s)`, no `join` line, no new sign-in or `not registered` in
+either game's log, `/status` showed the same ids and one world with 2 humans; A pressed JUMP IN, B
+followed, both drove in the world with the other in the HUD list. A second restart in the
+free roam with `kill -9` (only the last periodic write on disk) also kept both
+(`screenshots/2026-10-16_server_restart_world_A_top_B_bottom.jpg`).
+
 ## Any car class in the Horizon World (#6, checked 2026-10-16)
 
 The world's lobby accepted only S-class cars (View Setup: CAR CLASS S; a D or A class car
