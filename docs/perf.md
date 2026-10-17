@@ -503,3 +503,50 @@ The table above is the earlier integration measurement, retained with its
 original method and limits; it is not a fresh measurement of this split branch.
 The standalone patch applies to main without DLSS, ultrawide or thumbnail changes.
 The readback key, first successful CPU copy and eviction lifetime are unchanged.
+
+## NVIDIA readback cache-miss stalls (#49, 2026-10-16)
+
+The redundant-transfer fix does not remove the first CPU copy after a readback
+cache miss. A warmed Horizon Heats race still produced intermittent long frames.
+A diagnostic run with `readback_resolve=none` removed these spikes, without
+improving average FPS. Disabling readbacks is not the fix: car-picture generation
+requires CPU results.
+
+Private timing scopes identified repeated 16 KB resolve readbacks at cache misses.
+The entries had been evicted after 61 inactive frames. The measured slow calls
+spent about 33-35 ms in `CheckSubmissionFenceAndDeviceLoss`, under
+`IssueCopy_ReadbackResolvePath`; these were not thumbnail overrides or new pipeline
+compilations. That wait was added to the normal frame workload.
+
+Patch 0069 uses two queued frames by default on NVIDIA, limiting CPU lead before
+such a wait. It keeps the three-slot resource ring and the existing fence-based
+retirement; AMD and other vendors retain the previous three-frame default. The
+copy, its first-result synchronization, readback keys and cache lifetime are
+unchanged. `vulkan_max_frames_in_flight=3` restores the previous queue depth;
+positive values are clamped to 1-3 and nonpositive values select the vendor
+default. Restart after changing this option. Queue depth 1 is exposed for
+diagnosis, but was not benchmarked here.
+
+RTX 5060 Ti, driver 617.14, Windows 11, Vulkan/FIFO, Windows set to 2560x1440
+at 360 Hz, native 1440p scene and HUD, 16x AF, 120 FPS cap, DLSS off. The comparison
+uses main `75149f1` (including the shadow and readback fixes), a copied save,
+eight drivers in Horizon Heats, and the same scripted road route. Each row is one
+60-second measured driving interval after a race warm-up. No build or other game
+ran during measurement; screenshots were taken outside the interval. AI positions
+and traffic interactions vary, so these are route tests, not identical frames.
+All measured intervals created zero new pipelines.
+
+| Variant | Presented FPS | p99 (ms) | Worst frame (ms) | Frames over 50 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Main, three-frame queue | 59.35 | 22.04 | 51.20 | 7 |
+| Diagnostic: readbacks disabled | 57.91 | 21.89 | 23.75 | 0 |
+| Two-frame prototype | 58.74 | 21.79 | 38.40 | 0 |
+| Patch 0069, NVIDIA automatic default | 59.00 | 21.56 | 35.13 | 0 |
+| Same patch binary, forced three-frame queue | 59.49 | 21.61 | 54.50 | 11 |
+
+The earlier three-frame race pass measured 59.32 FPS, a 54.85 ms worst frame and
+11 intervals over 50 ms. The queue change reduces the long waits; it does not
+eliminate every frame over 25 ms or make native 1440p reach 120 FPS. Validation
+is limited to this NVIDIA system. Other vendors' default queue depth is unchanged,
+but no AMD hardware was tested here. The timing scopes and captures are private
+diagnostic files, not part of the SDK patch.

@@ -61,3 +61,11 @@ compute pass when the buffer (512 MB x scale^2) is larger than `maxStorageBuffer
 scale 3 on AMD the whole-buffer binding was invalid and the car thumbnail was saved black (#102).
 Smaller buffers (scale 1 and 2 on AMD) are unchanged. See
 [Rendering issues](rendering.md#black-thumbnail-at-render-scale-3-102).
+
+0069 limits the default Vulkan frame queue to two frames on NVIDIA, retaining
+three on other vendors. This shortens blocking resolve-readback waits without
+skipping CPU copies or changing readback-cache eviction. The three-slot resource
+ring and fence-based retirement remain in place. Set
+`vulkan_max_frames_in_flight=3` to restore the previous queue depth; nonpositive
+values select the vendor default, and positive values are limited to 1-3.
+See [Performance](perf.md#nvidia-readback-cache-miss-stalls-49-2026-10-16).
