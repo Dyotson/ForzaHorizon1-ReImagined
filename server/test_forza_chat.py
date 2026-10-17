@@ -196,5 +196,10 @@ class ChatTest(unittest.TestCase):
         self.assertEqual(self.notices(a), ["No one else in your session has chat"])
 
 
+
+class CleanTextTest(unittest.TestCase):
+    def test_format_and_bidi_characters_become_spaces(self):
+        self.assertEqual(ch.clean("hi\u202egnp.exe\u200b x\x85y\x07"), "hi gnp.exe x y")
+
 if __name__ == "__main__":
     unittest.main()

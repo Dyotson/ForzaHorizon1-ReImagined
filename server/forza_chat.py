@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import struct
+import unicodedata
 import time
 
 import forza_friends as friends
@@ -64,7 +65,9 @@ def text16(s):
 
 def clean(text):
     """The text as it is relayed: no control characters, one line, at most MAX_CHARS."""
-    text = "".join(c if c >= " " and c != "\x7f" else " " for c in text)
+    # Control and format characters (C0/C1, bidi overrides like U+202E, zero-width) become
+    # spaces, so a message can't hide or reverse text in other players' overlays.
+    text = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") else c for c in text)
     return " ".join(text.split())[:MAX_CHARS]
 
 
