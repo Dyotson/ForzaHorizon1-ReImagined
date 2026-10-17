@@ -1,0 +1,19 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 5b03b08..f8b1b23 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4509,7 +4509,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+       host_render_targets_used && render_target_cache_->depth_float24_convert_in_pixel_shader(),
+       host_render_targets_used, pixel_shader && pixel_shader->writes_depth(), viewport_info);
+
+-  if (fh1_dlss_ && fh1_dlss_->Evaluating() && !fh1_native_hud_active_ && normalized_depth_control.z_enable &&
++  // Jitter projected scene geometry, preserving the coverage of window-space
++  // clears and depth-always background/screen passes. Moving those passes leaves
++  // stale edge texels that bloom spreads into bright flares before NGX runs.
++  if (fh1_dlss_ && fh1_dlss_->Evaluating() && !fh1_native_hud_active_ &&
++      normalized_depth_control.z_enable &&
++      normalized_depth_control.zfunc != xenos::CompareFunction::kAlways &&
++      !regs.Get<reg::PA_CL_VTE_CNTL>().vtx_xy_fmt &&
+       regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 1280) {
+     const auto& input = fh1_dlss_->input();
+     if (viewport_info.xy_extent[0] && viewport_info.xy_extent[1]) {

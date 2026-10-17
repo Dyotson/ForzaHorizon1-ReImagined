@@ -79,3 +79,12 @@ the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). S
 [Frame rate](framerate.md).
 
 0066 averages supersampled RGBA8 car-thumbnail pixels during readback, keeping other formats and resolves unchanged. Requires the known-thumbnail refresh rule already on main (0053); see [Rendering issues](rendering.md#filter-supersampled-car-thumbnails-50).
+
+0046 adds native Windows Vulkan DLSS/DLAA with separate scene/UI rendering.
+See [Native DLSS](native_dlss.md) for runtime setup, licensing and validation limits.
+
+0057/0058 keep DLSS viewport jitter consistent across EDRAM tiles and rotate
+depth, motion vectors and NGX jitter into the final color orientation. 0062
+synchronizes unscaled scene resolves into the scaled native HUD cache (1440p
+Performance uses a 1x scene and 2x HUD). All three belong to the DLSS integration
+and apply without the ultrawide patch series.

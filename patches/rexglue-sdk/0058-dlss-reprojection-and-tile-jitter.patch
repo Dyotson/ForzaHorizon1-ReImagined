@@ -1,0 +1,103 @@
+diff --git a/include/rex/graphics/util/fh1_jitter.h b/include/rex/graphics/util/fh1_jitter.h
+new file mode 100644
+index 0000000..b93ef36
+--- /dev/null
++++ b/include/rex/graphics/util/fh1_jitter.h
+@@ -0,0 +1,12 @@
++#pragma once
++#include <cstdint>
++
++namespace rex::graphics {
++// NDC is relative to the cropped host viewport, not the complete guest scene.
++inline float Fh1ViewportJitter(float jitter, uint32_t input_extent,
++                              uint32_t scene_extent, uint32_t viewport_extent) {
++  if (!input_extent || !viewport_extent) return 0.0f;
++  return 2.0f * jitter * float(scene_extent) /
++      (float(input_extent) * float(viewport_extent));
++}
++}  // namespace rex::graphics
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index f8b1b23..d6adc7f 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -48,6 +48,7 @@ REXCVAR_DECLARE(double, forza_ultrawide_hud_offset_y);
+ #include <rex/graphics/pipeline/shader/spirv_translator.h>
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/vulkan/command_processor.h>
++#include <rex/graphics/util/fh1_jitter.h>
+ #include <rex/graphics/vulkan/fh1_dlss.h>
+ #include <rex/graphics/vulkan/pipeline_cache.h>
+ #include <rex/graphics/vulkan/render_target_cache.h>
+@@ -4509,18 +4510,22 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+       host_render_targets_used && render_target_cache_->depth_float24_convert_in_pixel_shader(),
+       host_render_targets_used, pixel_shader && pixel_shader->writes_depth(), viewport_info);
+
+-  // Jitter projected scene geometry, preserving the coverage of window-space
+-  // clears and depth-always background/screen passes. Moving those passes leaves
+-  // stale edge texels that bloom spreads into bright flares before NGX runs.
++  // Keep window-space clears fixed so jitter cannot leave stale edge texels
++  // for bloom. Projected backgrounds still need the same jitter as geometry:
++  // depth-always draws may use a camera projection rather than screen space.
+   if (fh1_dlss_ && fh1_dlss_->Evaluating() && !fh1_native_hud_active_ &&
+       normalized_depth_control.z_enable &&
+-      normalized_depth_control.zfunc != xenos::CompareFunction::kAlways &&
+       !regs.Get<reg::PA_CL_VTE_CNTL>().vtx_xy_fmt &&
+       regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 1280) {
+     const auto& input = fh1_dlss_->input();
+     if (viewport_info.xy_extent[0] && viewport_info.xy_extent[1]) {
+-      viewport_info.ndc_offset[0] += 2.0f * input.jitter_x / float(fh1_dlss_->width());
+-      viewport_info.ndc_offset[1] += 2.0f * input.jitter_y / float(fh1_dlss_->height());
++      // Guest EDRAM tiling may crop the host viewport. Convert the desired
++      // full-scene pixel displacement using that viewport's actual extent, so
++      // each tile receives the same jitter instead of a fraction of it.
++      viewport_info.ndc_offset[0] += Fh1ViewportJitter(input.jitter_x,
++          fh1_dlss_->width(), 1280 * draw_resolution_scale_x, viewport_info.xy_extent[0]);
++      viewport_info.ndc_offset[1] += Fh1ViewportJitter(input.jitter_y,
++          fh1_dlss_->height(), 720 * draw_resolution_scale_y, viewport_info.xy_extent[1]);
+     }
+   }
+
+diff --git a/src/graphics/vulkan/fh1_dlss.cpp b/src/graphics/vulkan/fh1_dlss.cpp
+index bf22bc3..9261cdb 100644
+--- a/src/graphics/vulkan/fh1_dlss.cpp
++++ b/src/graphics/vulkan/fh1_dlss.cpp
+@@ -84,12 +84,16 @@ void main() {
+   ivec2 p=ivec2(gl_GlobalInvocationID.xy), size=imageSize(depthOut);
+   if(any(greaterThanEqual(p,size))) return;
+   vec2 uv=(vec2(p)+0.5)/vec2(size);
+-  uvec4 b=uvec4(round(textureLod(packedDepth,vec3(uv,0),0).wxyz*255.0));
++  // The guest depth resolve precedes the final scene's 180-degree rotation.
++  // Sample its matching pixel, and reconstruct in the guest clip coordinates
++  // used by the game's reprojection matrices, not the upright color coordinates.
++  vec2 guestUV=vec2(1.0)-uv;
++  uvec4 b=uvec4(round(textureLod(packedDepth,vec3(guestUV,0),0).wxyz*255.0));
+   float depth=exp2(float(int(b.x>>4)-15))*(1.0+float(((b.x&15u)<<16)|(b.y<<8)|b.z)/1048576.0);
+   depth=clamp(depth,0.0,1.0);
+   uint objectId=b.w>=128u?0u:min((b.w+1u)/3u,24u);
+   uint row=32u+4u*objectId;
+-  vec2 current=(uv-c[134].xy/vec2(size))*vec2(2.0,-2.0)+vec2(-1.0,1.0);
++  vec2 current=(guestUV-c[134].xy/vec2(size))*vec2(2.0,-2.0)+vec2(-1.0,1.0);
+   float denominator=1.0-c[132].x-depth;
+   float z=c[132].y/(abs(denominator)>1e-20?denominator:-1e-20);
+   // Match the original shader's r3.xyzz products exactly: its homogeneous
+@@ -98,7 +102,8 @@ void main() {
+   vec4 a=c[row], y=c[row+1u], w=c[row+3u];
+   float previousW=dot(position,w);
+   vec2 previous=vec2(dot(position,a),dot(position,y))/previousW;
+-  vec2 motion=(previous-current)*vec2(size)*vec2(0.5,-0.5);
++  // Rotate the guest current-to-previous displacement into upright color space.
++  vec2 motion=(previous-current)*vec2(size)*vec2(-0.5,0.5);
+   if(any(isnan(motion))||any(isinf(motion))||abs(previousW)<1e-20) motion=vec2(0);
+   motion=clamp(motion,-vec2(size),vec2(size));
+   imageStore(depthOut,p,vec4(depth));
+@@ -367,7 +372,9 @@ void Fh1Dlss::Execute(VkCommandBuffer command, VkImage scene, VkImage destinatio
+     eval.Feature.pInColor = &resources[0]; eval.Feature.pInOutput = &resources[1];
+     eval.pInDepth = &resources[2]; eval.pInMotionVectors = &resources[3];
+     eval.InRenderSubrectDimensions = {s.width, s.height}; eval.InMVScaleX = eval.InMVScaleY = 1.0f;
+-    eval.InJitterOffsetX = frame_input.jitter_x; eval.InJitterOffsetY = frame_input.jitter_y;
++    // Viewport jitter moves in guest raster space. The final scene rotates both
++    // axes, so NGX must receive that same displacement in upright color space.
++    eval.InJitterOffsetX = -frame_input.jitter_x; eval.InJitterOffsetY = -frame_input.jitter_y;
+     eval.InReset = !temporal || !s.previous_temporal;
+     eval.InPreExposure = eval.InExposureScale = 1.0f;
+     auto result = NGX_VULKAN_EVALUATE_DLSS_EXT(command, s.feature, s.parameters, &eval);
