@@ -69,3 +69,11 @@ ring and fence-based retirement remain in place. Set
 `vulkan_max_frames_in_flight=3` to restore the previous queue depth; nonpositive
 values select the vendor default, and positive values are limited to 1-3.
 See [Performance](perf.md#nvidia-readback-cache-miss-stalls-49-2026-10-16).
+
+0070 adds FIFO_LATEST_READY (`VK_EXT_present_mode_fifo_latest_ready`, or its KHR promotion) to the
+Vulkan presenter: enabled with the `presentModeFifoLatestReady` feature when the device has it, and
+chosen over plain FIFO when the surface offers it (after mailbox, immediate and relaxed FIFO, which
+keep their cvars). New cvar `vulkan_allow_present_mode_fifo_latest_ready` (default true); false or an
+unsupported driver gives plain FIFO exactly as before. The chosen mode is logged once. It evens out
+the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). See
+[Frame rate](framerate.md).

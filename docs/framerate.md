@@ -307,8 +307,13 @@ Left (not changed here):
   screen was held to 144 fps (240 at scale 1). With `vulkan_allow_present_mode_mailbox = true`
   every frame was shown (62.8 of 63.1 fps, p95 17.1 ms). At 60 with scale 2 FIFO showed every
   frame. The reporter's AMD Windows driver offers no MAILBOX (IMMEDIATE, FIFO, FIFO_RELAXED and
-  FIFO_LATEST_READY, which the SDK does not use): FIFO_LATEST_READY support is the next thing to
-  try there.
+  FIFO_LATEST_READY). Patch 0070 uses FIFO_LATEST_READY (`VK_EXT`/`VK_KHR_present_mode_fifo_latest_ready`)
+  instead of plain FIFO when the device feature and the surface offer it: vsync without tearing,
+  but the vblank takes the newest finished frame instead of the oldest queued one. Switch:
+  `vulkan_allow_present_mode_fifo_latest_ready` (default true, launcher: Advanced, "Use FIFO
+  latest ready"); false keeps plain FIFO. The chosen mode is logged once ("VulkanPresenter:
+  presentation mode ..." and the game's "present mode" line). Not measured on hardware yet: this
+  RADV does not offer it (plain FIFO as before); an AMD Windows player is asked to test.
 
 ## Fixed: race-start animations looked too fast (#7, 2026-10-12, fixed 2026-10-14)
 

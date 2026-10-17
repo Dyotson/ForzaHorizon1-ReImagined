@@ -1,0 +1,139 @@
+diff --git a/include/rex/ui/flags.h b/include/rex/ui/flags.h
+--- a/include/rex/ui/flags.h
++++ b/include/rex/ui/flags.h
+@@ -53,6 +53,7 @@
+ REXCVAR_DECLARE(bool, vulkan_allow_present_mode_immediate);
+ REXCVAR_DECLARE(bool, vulkan_allow_present_mode_mailbox);
+ REXCVAR_DECLARE(bool, vulkan_allow_present_mode_fifo_relaxed);
++REXCVAR_DECLARE(bool, vulkan_allow_present_mode_fifo_latest_ready);
+ REXCVAR_DECLARE(bool, vulkan_validation_enabled);
+ REXCVAR_DECLARE(int32_t, vulkan_device);
+ REXCVAR_DECLARE(bool, vulkan_prefer_geometry_shader);
+diff --git a/include/rex/ui/vulkan/device.h b/include/rex/ui/vulkan/device.h
+--- a/include/rex/ui/vulkan/device.h
++++ b/include/rex/ui/vulkan/device.h
+@@ -168,6 +168,10 @@
+     // VK_EXT_robustness2
+ 
+     bool nullDescriptor = false;
++
++    // VK_EXT_present_mode_fifo_latest_ready / VK_KHR_present_mode_fifo_latest_ready
++
++    bool presentModeFifoLatestReady = false;
+   };
+ 
+   // Properties of the core API and enabled extensions, and enabled features.
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -198,9 +198,17 @@
+     XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION(KHR_dynamic_rendering, 1, 3)
+   }
+ 
++  bool ext_EXT_present_mode_fifo_latest_ready = false;
++  bool ext_KHR_present_mode_fifo_latest_ready = false;
+   if (with_swapchain) {
+     // #2.
+     XE_UI_VULKAN_STRUCT_EXTENSION(KHR_swapchain)
++    if (get_physical_device_properties2_supported) {
++      // #362 (the KHR one is its promotion, with the same feature structure and present mode
++      // value): FIFO that shows the newest queued image instead of every one.
++      XE_UI_VULKAN_LOCAL_EXTENSION(EXT_present_mode_fifo_latest_ready)
++      XE_UI_VULKAN_LOCAL_EXTENSION(KHR_present_mode_fifo_latest_ready)
++    }
+   }
+ 
+   bool ext_1_2_KHR_sampler_mirror_clamp_to_edge = false;
+@@ -335,6 +343,9 @@
+   VulkanFeatures<VkPhysicalDeviceRobustness2FeaturesEXT,
+                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT>
+       features_EXT_robustness2;
++  VulkanFeatures<VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR,
++                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR>
++      features_KHR_present_mode_fifo_latest_ready;
+ 
+   if (get_physical_device_properties2_supported) {
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+@@ -376,6 +387,9 @@
+     if (device->extensions_.ext_EXT_robustness2) {
+       features_EXT_robustness2.Link(supported_features_2, device_create_info);
+     }
++    if (ext_EXT_present_mode_fifo_latest_ready || ext_KHR_present_mode_fifo_latest_ready) {
++      features_KHR_present_mode_fifo_latest_ready.Link(supported_features_2, device_create_info);
++    }
+     ifn.vkGetPhysicalDeviceProperties2(physical_device, &properties_2);
+     ifn.vkGetPhysicalDeviceFeatures2(physical_device, &supported_features_2);
+   }
+@@ -731,6 +745,10 @@
+     }
+   }
+ 
++  if (ext_EXT_present_mode_fifo_latest_ready || ext_KHR_present_mode_fifo_latest_ready) {
++    XE_UI_VULKAN_FEATURE_2(features_KHR_present_mode_fifo_latest_ready, presentModeFifoLatestReady)
++  }
++
+ #undef XE_UI_VULKAN_LIMIT
+ #undef XE_UI_VULKAN_ENUM_LIMIT
+ #undef XE_UI_VULKAN_FEATURE
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -58,6 +58,12 @@
+ REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_fifo_relaxed, true, "UI/Vulkan",
+                     "Allow FIFO relaxed present mode");
+ 
++REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_fifo_latest_ready, true, "UI/Vulkan",
++                    "Use FIFO latest ready (VK_EXT_present_mode_fifo_latest_ready) instead of "
++                    "plain FIFO when the device and the surface support it: vsync without "
++                    "tearing, but a frame queued while an older one waits for the vblank "
++                    "replaces it instead of being shown after it. false keeps plain FIFO");
++
+ namespace rex {
+ namespace ui {
+ namespace vulkan {
+@@ -1399,10 +1405,35 @@
+     // Limiting the frame rate, but lets too long frames cause tearing not to
+     // make the latency even worse.
+     swapchain_create_info.presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
++  } else if (REXCVAR_GET(vulkan_allow_present_mode_fifo_latest_ready) &&
++             vulkan_device->properties().presentModeFifoLatestReady &&
++             std::find(present_modes.cbegin(), present_modes.cend(),
++                       VK_PRESENT_MODE_FIFO_LATEST_READY_KHR) != present_modes.cend()) {
++    // Still limited to the refresh rate and without tearing, but when frames come faster than
++    // the display shows them, the vblank takes the newest finished one instead of the oldest
++    // queued: plain FIFO shows every frame, so a game drawing at a rate that is not a
++    // divisor of the refresh rate gets a queue that delays and drops frames irregularly.
++    swapchain_create_info.presentMode = VK_PRESENT_MODE_FIFO_LATEST_READY_KHR;
+   } else {
+     // Highest latency (but always guaranteed to be available).
+     swapchain_create_info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+   }
++  {
++    static bool present_mode_logged = false;
++    if (!present_mode_logged) {
++      present_mode_logged = true;
++      const bool fifo_latest_ready_offered =
++          std::find(present_modes.cbegin(), present_modes.cend(),
++                    VK_PRESENT_MODE_FIFO_LATEST_READY_KHR) != present_modes.cend();
++      REXLOG_INFO(
++          "VulkanPresenter: presentation mode {} (FIFO latest ready: device feature {}, surface "
++          "offers {}, vulkan_allow_present_mode_fifo_latest_ready {})",
++          uint32_t(swapchain_create_info.presentMode),
++          vulkan_device->properties().presentModeFifoLatestReady ? "yes" : "no",
++          fifo_latest_ready_offered ? "yes" : "no",
++          REXCVAR_GET(vulkan_allow_present_mode_fifo_latest_ready) ? "true" : "false");
++    }
++  }
+   swapchain_create_info.clipped = VK_TRUE;
+   swapchain_create_info.oldSwapchain = old_swapchain;
+   VkSwapchainKHR swapchain;
+@@ -1421,7 +1452,8 @@
+   image_format_out = swapchain_create_info.imageFormat;
+   image_extent_out = swapchain_create_info.imageExtent;
+   is_fifo_out = swapchain_create_info.presentMode == VK_PRESENT_MODE_FIFO_KHR ||
+-                swapchain_create_info.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
++                swapchain_create_info.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR ||
++                swapchain_create_info.presentMode == VK_PRESENT_MODE_FIFO_LATEST_READY_KHR;
+   return swapchain;
+ }
+ 

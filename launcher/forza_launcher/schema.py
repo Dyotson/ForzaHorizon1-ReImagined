@@ -210,6 +210,9 @@ add("vulkan_allow_present_mode_mailbox", "Allow mailbox present mode", "Advanced
     False, "Triple buffering.", "GPU")
 add("vulkan_allow_present_mode_fifo_relaxed", "Allow relaxed FIFO", "Advanced", "bool", False,
     "", "GPU")
+add("vulkan_allow_present_mode_fifo_latest_ready", "Use FIFO latest ready", "Advanced", "bool",
+    True, "Vsync that shows the newest finished frame when the game draws slower than the "
+    "refresh rate, if the driver offers it. Off: plain FIFO.", "GPU")
 add("store_shaders", "Keep a shader cache", "Advanced", "bool", True,
     "Fewer stutters the second time you play.", "GPU")
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,

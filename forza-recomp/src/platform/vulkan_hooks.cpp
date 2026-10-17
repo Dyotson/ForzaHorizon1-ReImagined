@@ -46,6 +46,8 @@ const char* PresentModeName(VkPresentModeKHR mode) {
       return "FIFO";
     case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
       return "FIFO_RELAXED";
+    case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR:
+      return "FIFO_LATEST_READY";
     default:
       return nullptr;
   }
