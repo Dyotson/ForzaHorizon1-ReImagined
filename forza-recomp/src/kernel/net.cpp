@@ -223,6 +223,7 @@ enum LiveType : uint8_t {
   kStats,        // client -> server: Xbox LIVE stats written or read (live_xmsg.cpp)
   kStatsRows,    // server -> client: the rows of a read
   kFriend,       // client <-> server: the friends list (live_friends.cpp, server/forza_friends.py)
+  kChat,         // client <-> server: text chat (live_friends.cpp, server/forza_chat.py)
 };
 // XNADDR.ina of a player on a Forza Live server: 0xF0000000 | the id the server gave
 // it. 240.0.0.0/8 is reserved, so it never collides with a LAN address.
@@ -930,8 +931,8 @@ class VNet {
     // and an invite asks before joining (live_invites.cpp, #90). The server delivers invites
     // only between games that have it. 0x02, the game keeps its friends list on the server
     // (live_friends.cpp, #92), followed by our friends key (u8 length + bytes), which the
-    // server binds our XUID's friends to.
-    body.push_back(0x03);
+    // server binds our XUID's friends to. 0x04, text chat (#92).
+    body.push_back(0x07);
     const std::string& key = forza::IdentityFriendsKey();
     body.push_back(uint8_t(key.size()));
     body.insert(body.end(), key.begin(), key.end());
@@ -1128,6 +1129,9 @@ class VNet {
         return;
       case kFriend:
         if (from_server) forza::LiveFriendMessage(p, n);
+        return;
+      case kChat:
+        if (from_server) forza::LiveChatMessage(p, n);
         return;
       case kPeers: {
         // Part header: total u16, first index u16, count u16; then the entries.
@@ -1351,6 +1355,10 @@ void LiveSendStats(const std::vector<uint8_t>& body) {
 
 bool LiveSendFriend(const std::vector<uint8_t>& body) {
   return NetOn() && VNet::Get().SendMatch(kFriend, body);
+}
+
+bool LiveSendChat(const std::vector<uint8_t>& body) {
+  return NetOn() && VNet::Get().SendMatch(kChat, body);
 }
 }  // namespace forza
 

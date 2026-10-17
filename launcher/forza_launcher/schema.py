@@ -167,6 +167,8 @@ add("live_accept_invites", "Show game invites", "Online", "bool", True,
     "Forza Live")
 add("live_friends_key", "Friends screen key", "Online", "str", "F8",
     "Opens the friends screen (a controller: hold the left stick press).", "Forza Live")
+add("live_chat_key", "Chat key", "Online", "str", "F9",
+    "Opens the chat (a controller: the friends screen's Chat tab).", "Forza Live")
 add("world_drop_in", "Horizon World drop-in", "Online", "bool", True,
     "The Horizon World playlist is a shared free roam that players jump into.",
     "Horizon World")

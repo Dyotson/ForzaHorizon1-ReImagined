@@ -79,9 +79,10 @@ class Osk {
     row_ = col_ = 0;
   }
 
-  // One poll's presses (PadReader); edits `text` (at most `max` bytes). Returns true when
-  // the keyboard closed.
-  bool Press(uint16_t presses, std::string& text, size_t max) {
+  enum Result { kTyping, kClosed, kDone };
+  // One poll's presses (PadReader); edits `text` (at most `max` bytes). kClosed: B closed
+  // it; kDone: Start or the Done key.
+  Result Press(uint16_t presses, std::string& text, size_t max) {
     using namespace pad;
     if (presses & kUp) row_ = (row_ + 4) % 5;
     if (presses & kDown) row_ = (row_ + 1) % 5;
@@ -91,7 +92,7 @@ class Osk {
     if ((presses & kY) && text.size() < max) text += ' ';
     if (presses & (kB | kStart)) {
       open = false;
-      return true;
+      return presses & kStart ? kDone : kClosed;
     }
     if (presses & kA) {
       if (row_ < 4) {
@@ -102,11 +103,11 @@ class Osk {
           case 1: page_ = page_ == 2 ? 0 : 2; break;  // Symbols / letters
           case 2: if (text.size() < max) text += ' '; break;
           case 3: PopUtf8(text); break;
-          default: open = false; return true;          // Done
+          default: open = false; return kDone;
         }
       }
     }
-    return false;
+    return kTyping;
   }
 
   // The keyboard, one line per row (the cursor's row highlighted, its key in brackets).
@@ -132,6 +133,8 @@ class Osk {
 
   static constexpr const char* kHint =
       "D-pad: move   A: key   X: delete   Y: space   B or Start: done";
+  static constexpr const char* kSendHint =
+      "D-pad: move   A: key   X: delete   Y: space   Start: send   B: close";
 
  private:
   const char* const* Rows() const {

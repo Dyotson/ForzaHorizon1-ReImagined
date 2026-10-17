@@ -137,15 +137,24 @@ bool LiveSendFriend(const std::vector<uint8_t>& body);
 void LiveFriendMessage(const uint8_t* body, size_t size);
 void LiveFriendsTick();
 
-// The friends screen over the game: F8 (live_friends_key) or holding the left stick press.
+// The friends screen over the game: F8 (live_friends_key) or holding the left stick press;
+// F9 (live_chat_key) opens it on the Chat tab.
 // Player 1's pad every XamInputGetState (after LiveInvitePad): returns the buttons to hide
 // from the game; `block_all`: the game gets no input.
 uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);
 bool LiveFriendsScreenOpen();
-// ForzaApp::OnCreateDialogs: registers the keyboard binding.
+// ForzaApp::OnCreateDialogs: registers the keyboard bindings.
 void InstallFriendsKey();
 
 // The invite picker or an invite prompt shows (live_invites.cpp).
 bool LiveInviteBusy();
+
+// --- Text chat (live_friends.cpp's Chat tab, server/forza_chat.py, #92) ---
+// A CHAT message to the server, and the server's (network thread).
+bool LiveSendChat(const std::vector<uint8_t>& body);
+void LiveChatMessage(const uint8_t* body, size_t size);
+// The ids of the sessions we host or joined (live_xmsg.cpp): the "session" chat channel
+// reaches the players in one of them.
+std::vector<uint64_t> LiveSessionIds();
 
 }  // namespace forza

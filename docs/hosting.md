@@ -126,6 +126,24 @@ and so are invites from a blocked player. The status page shows how many players
 friendships and open requests there are. Games up to v0.1.14 still see everyone online as a
 friend.
 
+Text chat (#92) is relayed, not stored: a message goes to the players online in the
+sender's session, Horizon World, or to one friend, and the server keeps only the last 200
+messages in memory (time, sender, channel, recipients, text) for moderation; they are gone
+when the server stops. Limits: 200 characters per message, 5 messages per 10 s per player
+(the sender is told to slow down), direct messages only between friends; a player's mutes
+(kept in `friends.json`) and blocks hide the other's messages. Games up to v0.1.14 have no
+chat. Moderation (operator endpoints, same rules as `/gift`):
+
+- `/admin/chat`: the last messages, and the mutes and bans with their seconds left;
+- `/admin/mute?who=<gamertag or XUID>&minutes=N`: the player's messages are refused (they
+  are told for how long); `minutes=0` lifts it;
+- `/admin/kick?who=...&minutes=N`: drops the player and refuses its sign-in for N minutes
+  (a ban; the game shows "server error 4: removed by the server admin"); `minutes=0` lifts
+  it.
+
+Mutes and bans are kept in `moderation.json` in the data folder until they run out. Example:
+`curl -H "X-Admin-Token: <token>" "http://host:21201/admin/mute?who=Name&minutes=30"`.
+
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.
 

@@ -787,6 +787,32 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
     with A and B online. A's Invite Friends picker listed "Friends: DriverB" then "Everyone
     online: DriverC". C typed "d" with the on-screen keyboard (DriverA, DriverB found), then
     blocked A; A's invite to C was dropped by the server ("dropped (blocked)").
+- 2026-10-16: **Text chat (#92, step 2)** (`server/forza_chat.py`, the friends screen's Chat
+  tab in `src/kernel/live_friends.cpp`):
+  - Protocol: HELLO features `0x04`; UDP kind 23 `CHAT` (op byte): SESSIONS (the ids of
+    the sessions the game hosts or joined, `LiveSessionIds`; sent on change and every 10 s;
+    count 0xFF asks for the mute list), SAY (channel 1 session, 2 Horizon World, 3 direct
+    to a friend's XUID; text u16 length + UTF-8), MUTE (XUID, on); the server sends
+    MESSAGE (channel, sender XUID and gamertag, text), NOTICE (text) and MUTED (XUIDs).
+    Session reaches the players sharing a session id with the sender, Horizon World
+    sessions excepted; World the players of the sender's world (`world_of_peer`).
+  - Server: control characters stripped, one line, 200 characters; 5 messages per 10 s;
+    blocks (either way) and the reader's mutes hide a message; admin mute and kick (ban)
+    for N minutes at `/admin/mute`, `/admin/kick` (`moderation.json`), the last 200
+    messages in memory at `/admin/chat`; nothing written about messages.
+  - Tests: `server/test_forza_chat.py` (9: session, world, direct only to friends and
+    online, cleaning and cap, rate limit, blocks and mutes, admin mute and kick with the
+    file, the 200-message ring, old games). Three games (same setup as step 1; the friends
+    from step 1 still there after restarting server and games): A sent B a direct message
+    with the on-screen keyboard ("hi"; B: "[direct] DriverA: hi"); A invited B into its
+    party (picker, Back + A); B's session message "yo" reached A, not C (in no session);
+    C's session and world messages were refused ("You are not in a session", "... a
+    Horizon World"); `/admin/mute?who=DriverA&minutes=5` refused A's next message ("muted
+    you (5 min left)"), `minutes=0` let the next one through; `/admin/chat` listed the three
+    delivered messages; `/admin/kick?who=DriverC&minutes=1` dropped C and refused its
+    sign-in ("server error 4"); after B's "Mute in chat" on A, A's session message did not
+    reach B. Not driven: the world channel in a real Horizon World (unit tests only), and
+    typing on a real keyboard (headless games, pad input only).
 
 ## Debugging recipes
 

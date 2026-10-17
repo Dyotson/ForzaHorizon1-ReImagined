@@ -20,6 +20,12 @@
 //   knows); with a controller, Y or A on the search line opens the on-screen keyboard
 //   (live_osk.h). The game gets no input while it shows.
 // - A friend request or an accepted one shows a short notification.
+// - Text chat (server/forza_chat.py), the screen's Chat tab (F9, live_chat_key, opens it
+//   there): Up/Down picks where a message goes (Session: the players in a session we host or
+//   joined, World: our Horizon World, or a friend online), typing writes it and Enter sends;
+//   with a controller A or Y opens the on-screen keyboard and Start sends. A message that
+//   arrives while the tab is not shown pops up for a few seconds. The server relays and
+//   rate limits; mute (a player's menu) and blocks hide a player's messages.
 //
 // Before the server sends a list (an older server), everyone in the room stays a friend.
 
@@ -46,6 +52,9 @@ REXCVAR_DEFINE_STRING(live_friends_key, "F8", "Network/Forza Live",
                       "Key that opens the friends screen (a controller: hold the left stick "
                       "press)");
 
+REXCVAR_DEFINE_STRING(live_chat_key, "F9", "Network/Forza Live",
+                      "Key that opens the chat (a controller: the friends screen's Chat tab)");
+
 namespace forza {
 namespace {
 
@@ -60,6 +69,13 @@ constexpr int64_t kStatusMs = 5000;     // a server message on the screen
 constexpr int64_t kSearchDelayMs = 300; // typing pauses this long before a server search
 constexpr size_t kRows = 8;
 constexpr size_t kMaxSearch = 15 * 3;
+// Chat (server/forza_chat.py).
+constexpr uint8_t kChatSessions = 1, kChatSay = 2, kChatMute = 3;
+constexpr uint8_t kChatRMessage = 16, kChatRNotice = 17, kChatRMuted = 18;
+constexpr size_t kMaxMessage = 200;
+constexpr size_t kChatLog = 50;
+constexpr size_t kChatRowsShown = 7;
+constexpr int64_t kChatToastMs = 6000;
 
 int64_t NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -121,11 +137,23 @@ std::vector<Result> results;
 // --- notifications ---
 std::deque<std::string> notices;
 int64_t notice_until = 0;
+// --- chat ---
+struct ChatLine {
+  uint8_t channel = 0;  // 1 session, 2 world, 3 direct
+  std::string from, to, text;  // `to`: a direct message we sent
+  bool mine = false;
+};
+std::deque<ChatLine> chat_log;
+size_t unread = 0;
+bool chat_toast = false;  // a message to pop up
+std::unordered_set<uint64_t> muted;
+std::vector<uint64_t> sessions_sent;
+int64_t next_sessions = 0;
 
 // --- the screen (game thread) ---
-enum Tab { kFriends, kRequests, kAdd, kBlocked, kTabs };
+enum Tab { kFriends, kRequests, kAdd, kBlocked, kChat, kTabs };
 enum Action { kDoAccept, kDoDecline, kDoRemove, kDoBlock, kDoUnblock, kDoRequest, kDoCancel,
-              kDoBack };
+              kDoMute, kDoUnmute, kDoMessage, kDoBack };
 struct Row {
   int kind = 1;  // 0 the search line, 1 a player, 2 "send a request to <search>"
   uint64_t xuid = 0;
@@ -134,8 +162,13 @@ struct Row {
   bool has_rel = false;
 };
 std::atomic<bool> screen{false};
-std::atomic<bool> toggle_request{false};
+std::atomic<bool> toggle_request{false}, chat_request{false};
 Tab tab = kFriends;
+// The Chat tab: where a message goes (0 session, 1 world, 2.. a friend online), the text.
+size_t chat_to = 0;
+uint64_t chat_friend = 0;
+std::string chat_friend_name;
+std::string chat_text;
 size_t cursor[kTabs] = {};
 std::string search;
 int64_t search_changed = 0;
@@ -250,8 +283,77 @@ const char* TabName(Tab t) {
     case kFriends: return "Friends";
     case kRequests: return "Requests";
     case kAdd: return "Add friend";
+    case kChat: return "Chat";
     default: return "Blocked";
   }
+}
+
+// The friends online a direct message can go to (mutex held).
+std::vector<const LiveRelation*> ChatFriendsLocked() {
+  std::vector<const LiveRelation*> out;
+  for (const auto& r : relations) {
+    if (r.kind == LiveRelationKind::kFriend && r.state) out.push_back(&r);
+  }
+  return out;
+}
+
+// Where the Chat tab sends, after the list of online friends changed (mutex held).
+void FixChatTargetLocked() {
+  if (chat_to < 2) return;
+  const auto online = ChatFriendsLocked();
+  for (size_t i = 0; i < online.size(); ++i) {
+    if (online[i]->xuid == chat_friend) {
+      chat_to = 2 + i;
+      return;
+    }
+  }
+  chat_to = 0;
+}
+
+std::string ChatTargetLocked() {
+  if (chat_to == 0) return "Session";
+  if (chat_to == 1) return "Horizon World";
+  return chat_friend_name + " (direct)";
+}
+
+std::string ChatLineText(const ChatLine& l) {
+  const char* where = l.channel == 1 ? "Session" : l.channel == 2 ? "World" : "";
+  if (l.channel == 3) {
+    return l.mine ? "[to " + l.to + "] You: " + l.text : "[direct] " + l.from + ": " + l.text;
+  }
+  return std::string("[") + where + "] " + (l.mine ? "You" : l.from) + ": " + l.text;
+}
+
+void ChatMoveLocked(int delta) {
+  const auto online = ChatFriendsLocked();
+  const size_t n = 2 + online.size();
+  chat_to = (chat_to + n + size_t(delta + int(n))) % n;
+  if (chat_to >= 2) {
+    chat_friend = online[chat_to - 2]->xuid;
+    chat_friend_name = online[chat_to - 2]->gamertag;
+  }
+  dirty = true;
+}
+
+void ChatSendLocked() {
+  if (chat_text.find_first_not_of(' ') == std::string::npos) {
+    chat_text.clear();
+    return;
+  }
+  const uint8_t channel = chat_to == 0 ? 1 : chat_to == 1 ? 2 : 3;
+  std::vector<uint8_t> body{kChatSay, channel};
+  Put64(body, channel == 3 ? chat_friend : 0);
+  const size_t n = std::min(chat_text.size(), kMaxMessage * 4);
+  body.push_back(uint8_t(n >> 8));
+  body.push_back(uint8_t(n));
+  body.insert(body.end(), chat_text.begin(), chat_text.begin() + n);
+  LiveSendChat(body);
+  REXLOG_INFO("FORZA_LIVE: chat: to {}: {}", ChatTargetLocked(), chat_text);
+  ChatLine line{channel, "", channel == 3 ? chat_friend_name : "", chat_text, true};
+  chat_log.push_back(std::move(line));
+  if (chat_log.size() > kChatLog) chat_log.pop_front();
+  chat_text.clear();
+  dirty = true;
 }
 
 void ShowScreenLocked(int64_t now) {
@@ -265,6 +367,7 @@ void ShowScreenLocked(int64_t now) {
     if (t == kFriends) n = CountLocked(LiveRelationKind::kFriend);
     if (t == kRequests) n = CountLocked(LiveRelationKind::kAsksUs);
     if (t == kBlocked) n = CountLocked(LiveRelationKind::kBlocked);
+    if (t == kChat) n = unread;
     if (n) name += " " + std::to_string(n);
     body += t == tab ? "[" + name + "]   " : " " + name + "    ";
   }
@@ -278,6 +381,20 @@ void ShowScreenLocked(int64_t now) {
               menu_items[i].first + "\n";
     }
     hint = "Up/Down: move   A or Enter: choose   B or Escape: back";
+  } else if (tab == kChat) {
+    FixChatTargetLocked();
+    unread = 0;
+    body += "To: " + ChatTargetLocked() + "   (Up/Down: Session, World or a friend online)\n";
+    const size_t first = chat_log.size() > kChatRowsShown ? chat_log.size() - kChatRowsShown : 0;
+    if (chat_log.empty()) body += "  No messages yet\n";
+    for (size_t i = first; i < chat_log.size(); ++i) body += "  " + ChatLineText(chat_log[i]) + "\n";
+    body += std::string(1, kHudHighlight) + "> " + chat_text + "_\n";
+    if (osk.open) {
+      body += osk.Render();
+      hint = Osk::kSendHint;
+    } else {
+      hint = "Type, Enter: send   A or Y: on-screen keyboard   LB/RB: tabs   B or Escape: close";
+    }
   } else if (osk.open) {
     body += "Search: " + search + "_\n" + osk.Render();
     hint = Osk::kHint;
@@ -321,7 +438,7 @@ void OpenMenuLocked(const Row& row) {
   if (row.has_rel) {
     switch (row.rel) {
       case LiveRelationKind::kFriend:
-        menu_items = {{"Remove friend", kDoRemove}, {"Block", kDoBlock}};
+        menu_items = {{"Send a message", kDoMessage}};
         break;
       case LiveRelationKind::kAsksUs:
         menu_items = {{"Accept", kDoAccept}, {"Decline", kDoDecline}, {"Block", kDoBlock}};
@@ -335,6 +452,17 @@ void OpenMenuLocked(const Row& row) {
   } else {
     menu_items = {{"Send a friend request", kDoRequest}, {"Block", kDoBlock}};
   }
+  if (!row.has_rel || row.rel == LiveRelationKind::kFriend) {
+    if (muted.count(row.xuid)) {
+      menu_items.push_back({"Unmute in chat", kDoUnmute});
+    } else {
+      menu_items.push_back({"Mute in chat", kDoMute});
+    }
+  }
+  if (row.has_rel && row.rel == LiveRelationKind::kFriend) {
+    menu_items.push_back({"Block", kDoBlock});
+    menu_items.push_back({"Remove friend", kDoRemove});
+  }
   menu_items.push_back({"Back", kDoBack});
   menu_row = row;
   menu_cursor = 0;
@@ -345,6 +473,13 @@ void OpenMenuLocked(const Row& row) {
 void DoLocked(Action a, const Row& row) {
   const char* what = "";
   switch (a) {
+    case kDoMessage:  // the Chat tab, to this friend
+      tab = kChat;
+      chat_to = 2;  // FixChatTargetLocked finds the friend among those online
+      chat_friend = row.xuid;
+      chat_friend_name = row.gamertag;
+      dirty = true;
+      return;
     case kDoAccept: SendOp(kAccept, row.xuid); what = "accept"; break;
     case kDoDecline: SendOp(kDecline, row.xuid); what = "decline"; break;
     case kDoCancel: SendOp(kDecline, row.xuid); what = "take back the request to"; break;
@@ -352,15 +487,26 @@ void DoLocked(Action a, const Row& row) {
     case kDoBlock: SendOp(kBlock, row.xuid, row.gamertag, true); what = "block"; break;
     case kDoUnblock: SendOp(kUnblock, row.xuid); what = "unblock"; break;
     case kDoRequest: SendOp(kRequest, row.xuid, row.gamertag, true); what = "ask"; break;
+    case kDoMute:
+    case kDoUnmute: {
+      std::vector<uint8_t> body{kChatMute};
+      Put64(body, row.xuid);
+      body.push_back(a == kDoMute);
+      LiveSendChat(body);
+      what = a == kDoMute ? "mute" : "unmute";
+      break;
+    }
     default: return;
   }
   REXLOG_INFO("FORZA_LIVE: friends: {} {} ({:016X})", what, row.gamertag, row.xuid);
   next_list = 0;  // the server sends the new list too; ask anyway
 }
 
-void OpenScreenLocked(int64_t now) {
+void OpenScreenLocked(int64_t now, bool for_chat) {
   screen = true;
-  tab = CountLocked(LiveRelationKind::kAsksUs) ? kRequests : kFriends;
+  tab = for_chat || unread                        ? kChat
+        : CountLocked(LiveRelationKind::kAsksUs) ? kRequests
+                                                  : kFriends;
   menu = false;
   osk.open = false;
   reader.Reset();
@@ -405,6 +551,30 @@ void ScreenInputLocked(uint16_t buttons, int left_x, int left_y, int64_t now) {
   if (p || any_key) {
     idle_until = now + kIdleMs;
     dirty = true;
+  }
+  if (tab == kChat && !menu) {  // the Chat tab: typing writes the message
+    if (!keys.typed.empty() || keys.backspace) {
+      chat_text += keys.typed;
+      for (int i = 0; i < keys.backspace; ++i) PopUtf8(chat_text);
+      if (chat_text.size() > kMaxMessage) chat_text.resize(kMaxMessage);
+    }
+    if (osk.open) {
+      if (keys.enter) p |= kStart;
+      if (keys.escape) p |= kB;
+      if (osk.Press(p, chat_text, kMaxMessage) == Osk::kDone) ChatSendLocked();
+      return;
+    }
+    if (keys.enter) ChatSendLocked();
+    if ((p & kB) || keys.escape) {
+      CloseScreenLocked(buttons, "closed");
+      return;
+    }
+    if (p & kUp) ChatMoveLocked(-1);
+    if (p & kDown) ChatMoveLocked(1);
+    if (p & (kA | kY)) osk.Open();
+    if ((p & (kRB | kRight)) || keys.right) tab = Tab((tab + 1) % kTabs);
+    if ((p & (kLB | kLeft)) || keys.left) tab = Tab((tab + kTabs - 1) % kTabs);
+    return;
   }
   // Typing: the search (on Add friend).
   if (!keys.typed.empty() || keys.backspace) {
@@ -531,6 +701,25 @@ bool LiveIsBlocked(uint64_t xuid) {
 void LiveFriendsTick() {
   if (!LiveSignin()) return;
   const int64_t now = NowMs();
+  // Chat: the sessions we are in, when they change and every 10 s (the first time also
+  // asks for our mute list).
+  auto ids = LiveSessionIds();
+  if (ids.size() > 4) ids.resize(4);
+  bool first_sessions;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    first_sessions = next_sessions == 0;
+    if (ids != sessions_sent || now >= next_sessions) {
+      std::vector<uint8_t> body{kChatSessions, uint8_t(first_sessions ? 0xFF : ids.size())};
+      if (!first_sessions) {
+        for (uint64_t id : ids) Put64(body, id);
+      }
+      if (LiveSendChat(body)) {
+        if (!first_sessions) sessions_sent = ids;
+        next_sessions = first_sessions ? 1 : now + 10000;
+      }
+    }
+  }
   if (now < next_list) return;
   uint32_t v;
   {
@@ -645,13 +834,68 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
   if (friends_changed) LiveRosterChanged(true);  // the game's friends list changed
 }
 
+// The network thread: a CHAT message from the server.
+void LiveChatMessage(const uint8_t* p, size_t n) {
+  if (!n) return;
+  std::lock_guard<std::mutex> lock(mutex);
+  switch (p[0]) {
+    case kChatRMessage: {
+      if (n < 11) return;
+      ChatLine line;
+      line.channel = p[1];
+      size_t pos = 10;
+      if (!ReadText(p, n, pos, line.from) || pos + 2 > n) return;
+      const size_t size = std::min<size_t>(Load16(p + pos), n - pos - 2);
+      line.text.assign(reinterpret_cast<const char*>(p + pos + 2), size);
+      REXLOG_INFO("FORZA_LIVE: chat: {}", ChatLineText(line));
+      chat_log.push_back(std::move(line));
+      if (chat_log.size() > kChatLog) chat_log.pop_front();
+      if (!screen || tab != kChat) {
+        ++unread;
+        chat_toast = true;
+      }
+      dirty = true;
+      return;
+    }
+    case kChatRNotice: {
+      if (n < 3) return;
+      const std::string text(reinterpret_cast<const char*>(p + 3),
+                             std::min<size_t>(Load16(p + 1), n - 3));
+      REXLOG_INFO("FORZA_LIVE: chat: {}", text);
+      if (screen) {
+        status = text;
+        status_until = NowMs() + kStatusMs;
+        dirty = true;
+      } else if (notices.size() < 5) {
+        notices.push_back(text);
+      }
+      return;
+    }
+    case kChatRMuted: {
+      if (n < 3) return;
+      muted.clear();
+      for (size_t i = 0, count = Load16(p + 1); i < count && 3 + 8 * i + 8 <= n; ++i) {
+        muted.insert(Load64(p + 3 + 8 * i));
+      }
+      dirty = true;
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 bool LiveFriendsScreenOpen() { return screen; }
 
 void InstallFriendsKey() {
-  const std::string key = REXCVAR_GET(live_friends_key);
-  if (key.empty()) return;
-  rex::ui::RegisterBind("bind_friends", key, "Open the Forza Live friends screen",
-                        [] { toggle_request = true; });
+  if (const std::string key = REXCVAR_GET(live_friends_key); !key.empty()) {
+    rex::ui::RegisterBind("bind_friends", key, "Open the Forza Live friends screen",
+                          [] { toggle_request = true; });
+  }
+  if (const std::string key = REXCVAR_GET(live_chat_key); !key.empty()) {
+    rex::ui::RegisterBind("bind_chat", key, "Open the Forza Live chat",
+                          [] { chat_request = true; });
+  }
 }
 
 uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all) {
@@ -663,10 +907,17 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
   if (!LiveSignin()) return latched;
   const int64_t now = NowMs();
   const bool toggle = toggle_request.exchange(false);
+  const bool chat_key = chat_request.exchange(false);
   if (screen) {
-    if (toggle) {
+    if (toggle || (chat_key && tab == kChat)) {
       CloseScreenLocked(buttons, "key");
       return latched;
+    }
+    if (chat_key) {
+      tab = kChat;
+      menu = false;
+      osk.open = false;
+      dirty = true;
     }
     ScreenInputLocked(buttons, left_x, left_y, now);
     if (!screen) return latched;
@@ -691,15 +942,24 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
   } else {
     ls_since = 0;
   }
-  if (!busy && (toggle || (ls_since && now - ls_since >= kHoldMs && !(latched & kLS)))) {
+  if (!busy && (toggle || chat_key ||
+                (ls_since && now - ls_since >= kHoldMs && !(latched & kLS)))) {
     ls_since = 0;
-    OpenScreenLocked(now);
+    OpenScreenLocked(now, chat_key);
     ShowScreenLocked(now);
     latched |= buttons;
     block_all = true;
     return 0xFFFF;
   }
-  if (!busy && !notices.empty() && now >= notice_until) {
+  if (!busy && chat_toast) {  // the last messages, for a few seconds
+    chat_toast = false;
+    std::string body;
+    const size_t first = chat_log.size() > 3 ? chat_log.size() - 3 : 0;
+    for (size_t i = first; i < chat_log.size(); ++i) body += ChatLineText(chat_log[i]) + "\n";
+    body += "Reply: " + REXCVAR_GET(live_chat_key) + ", or hold the left stick (Chat tab)";
+    HudShow("Chat", body, kChatToastMs / 1000.0);
+    notice_until = now + kChatToastMs;
+  } else if (!busy && !notices.empty() && now >= notice_until) {
     HudShow("Friends", notices.front(), kNoticeMs / 1000.0);
     notices.pop_front();
     notice_until = now + kNoticeMs;

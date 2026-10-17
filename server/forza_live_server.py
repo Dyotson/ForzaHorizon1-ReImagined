@@ -27,6 +27,7 @@ import time
 import urllib.parse
 
 import forza_challenge as challenge
+import forza_chat as chat
 import forza_discord_status as discord_status
 import forza_friends as friends
 import forza_limits as limits
@@ -52,6 +53,9 @@ FEATURE_INVITE_PICK = 0x01
 # features byte (u8 length + bytes).
 FEATURE_FRIENDS = friends.FEATURE
 FRIEND = friends.KIND  # 22
+# FEATURE_CHAT: the game has text chat (CHAT messages, forza_chat.py, #92).
+FEATURE_CHAT = chat.FEATURE
+CHAT = chat.KIND  # 23
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
 STATS, STATS_ROWS = 20, 21  # Xbox LIVE stats written and read, the rows (forza_stats.py)
@@ -127,6 +131,7 @@ class Peer:
         self.invite_times = []  # when its last invites went out (INVITE_LIMIT per INVITE_WINDOW)
         self.features = 0  # HELLO's features byte (FEATURE_*)
         self.friends_ok = False  # FEATURE_FRIENDS and its friends key owns the XUID's friends
+        self.chat_sessions = set()  # the session ids the game reports for chat (forza_chat.py)
         # Matchmaking: the session it hosts and the one it is in (see ForzaLive.on_match)
         self.match = None  # (playlist key, record, since)
         self.standby = None
@@ -168,6 +173,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.state_saved = 0.0  # monotonic time of the last write
         self.restored = set()  # ids of players loaded from the state file, not heard from yet
         self.friends = friends.Friends(self)
+        self.chat = chat.Chat(self, self.friends.store)
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
@@ -230,6 +236,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.on_stats(peer, body)
             elif kind == FRIEND and body:
                 self.friends.on_message(peer, body)
+            elif kind == CHAT and body:
+                self.chat.on_message(peer, body)
         except Exception as e:  # a malformed datagram must never end the server
             log.debug("bad packet from %s: %r", addr, e)
 
@@ -248,6 +256,10 @@ class ForzaLive(asyncio.DatagramProtocol):
             friend_key = body[pos + 2:pos + 2 + body[pos + 1]]
         if version != VERSION:
             self.error(addr, 2, f"server speaks protocol {VERSION}, client {version}")
+            return
+        if self.chat.banned(xuid):  # /admin/kick
+            if take(self.error_buckets, self.limit_key(addr), ERRORS_PER_IP):
+                self.error(addr, 4, "removed by the server admin")
             return
         peer = self.by_addr.get(addr)
         if peer is not None and peer.token != token:
@@ -806,7 +818,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 "via_proxy": sum(1 for p in self.peers.values() if p.proxied),
                 "relayed_packets": self.relayed_packets,
                 "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds,
-                **self.challenges.status(), **self.friends.status()}
+                **self.challenges.status(), **self.friends.status(),
+                "chat": {"with_chat": len(self.chat.chatters()), "kept": len(self.chat.ring)}}
 
 
 # How long a kept-alive connection may sit idle between requests. The game opens one
@@ -875,6 +888,31 @@ async def http_handler(server, reader, writer):
             if path in ("/", "/status"):
                 reply = response(200, json.dumps(server.status(), indent=2, default=str).encode(),
                                  "application/json", conn)
+            elif path.startswith("/admin/"):
+                # Chat moderation (forza_chat.py): /admin/chat, /admin/mute, /admin/kick.
+                url = urllib.parse.urlsplit(path)
+                query = urllib.parse.parse_qs(url.query)
+                if not lsp.is_admin(peer, headers, query):
+                    reply = response(403, b"forbidden", "text/plain", conn)
+                elif url.path == "/admin/chat":
+                    reply = response(200, json.dumps(server.chat.moderation(), indent=2).encode(),
+                                     "application/json", conn)
+                elif url.path in ("/admin/mute", "/admin/kick"):
+                    try:
+                        minutes = float(query.get("minutes", ["10"])[0])
+                    except ValueError:
+                        minutes = -1
+                    result = None if minutes < 0 else server.chat.admin(
+                        url.path[7:], query.get("who", [""])[0], minutes)
+                    if minutes < 0:
+                        reply = response(400, b"minutes: a number, 0 lifts it", "text/plain", conn)
+                    elif result is None:
+                        reply = response(404, b"no such player", "text/plain", conn)
+                    else:
+                        reply = response(200, json.dumps(result, indent=2).encode(),
+                                         "application/json", conn)
+                else:
+                    reply = response(404, b"not found", "text/plain", conn)
             elif path.startswith("/world/event"):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
                 if not lsp.is_admin(peer, headers, query):
@@ -963,6 +1001,8 @@ async def main():
     server.load_state()
     server.friends.store.path = os.path.join(args.data_dir, friends.FILE)
     server.friends.store.load()
+    server.chat.path = os.path.join(args.data_dir, chat.FILE)
+    server.chat.load()
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
     if args.http_port:
         server.http_port = args.http_port

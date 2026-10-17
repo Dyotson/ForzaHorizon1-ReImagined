@@ -531,6 +531,23 @@ uint32_t XSessionSearchById(uint8_t* base, uint32_t buffer) {
   return XSessionSearch(base, {id}, Load32(GuestPtr(base, buffer + 16)), Load32(GuestPtr(base, buffer + 12)));
 }
 
+}  // namespace
+
+// The ids of the sessions we host or joined (the "session" chat channel, live_friends.cpp).
+std::vector<uint64_t> forza::LiveSessionIds() {
+  std::vector<uint64_t> ids;
+  std::lock_guard<std::mutex> lock(sessions_mutex);
+  for (const auto* map : {&hosted_sessions, &guest_sessions}) {
+    for (const auto& [object, s] : *map) {
+      const uint64_t id = SessionId(s.info);
+      if (id && std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
+    }
+  }
+  return ids;
+}
+
+namespace {
+
 // The session a friend we invite should join: the newest joinable session we host, else
 // the one we joined. False when there is none.
 bool InviteSession(uint8_t* out) {

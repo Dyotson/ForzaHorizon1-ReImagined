@@ -64,7 +64,18 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   invite you or send you requests (they are dropped without telling them). Your friends
   are tied to `friends_key` in `live_identity.txt`: keep that file (it also holds your
   XUID) to keep your friends on another computer. With a server older than this, everyone
-  online counts as a friend, as before. A player in free roam restarts the game to join,
+  online counts as a friend, as before.
+  **Text chat (#92):** `F9` (`live_chat_key`) opens the friends screen on its **Chat** tab
+  (with a controller: hold the left stick press, then LB to Chat; a friend's "Send a
+  message" goes there too). Up/Down picks where the message goes: **Session** (the players
+  in your party or game session), **Horizon World** (the players in your world), or a
+  friend online (a direct message; only friends). Type and press Enter; with a controller,
+  A or Y opens the on-screen keyboard and Start sends. A message that arrives while the tab
+  isn't open pops up for 6 s. "Mute in chat" in a player's menu hides their messages (also
+  players who are not your friends: find them on Add friend); blocking hides them both ways.
+  At most 200 characters a message and 5 messages in 10 s. Messages are not stored: the
+  server passes them on to the players online and keeps only the last 200 in memory for its
+  admin. A player in free roam restarts the game to join,
   as on the console, which takes a few seconds. `live_accept_invites = false` ignores all
   invites. Games up to v0.1.12 invited everyone online and joined every invite at once
   (#90). The party leader then picks Create Custom Game, sets the game
