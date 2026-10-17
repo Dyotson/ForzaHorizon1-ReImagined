@@ -9,6 +9,10 @@
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
 #include "platform/vulkan_hooks.h"
+#include "platform/ultrawide.h"
+#include <rex/ui/window.h>
+#include <rex/cvar.h>
+#include <array>
 
 #include <string>
 
@@ -78,6 +82,14 @@ class ForzaApp : public rex::ReXApp {
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
+  std::optional<rex::PathConfig> OnFinalizePaths(const rex::PathConfig& defaults,
+      std::function<void(rex::PathConfig)> /*resume*/) override {
+    if (window()) forza::ultrawide::Prepare(window()->GetActualPhysicalWidth(), window()->GetActualPhysicalHeight());
+    return defaults;
+  }
+  void OnWindowPixelSizeChanged(uint32_t width, uint32_t height) override {
+    forza::ultrawide::Resize(width, height);
+  }
 
   // The SDK's achievement toasts, registered with the ImGui drawer only while one shows, so
   // the window is not repainted nonstop (src/platform/achievement_toast.h; from
@@ -103,6 +115,24 @@ class ForzaApp : public rex::ReXApp {
   // raw Cache0/Cache1 partitions with a null device), so cache:\ fails with "device
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
+    if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
+        window()->GetActualPhysicalHeight(),
+        [this, last = std::array<double, 6>{-1,-1,-1,-1,-1,-1}]
+        (bool letterbox, double sx, double sy, double ox, double oy, double edges) mutable {
+          const std::array<double, 6> next{double(letterbox), sx, sy, ox, oy, edges};
+          if (last == next) return;
+          last = next;
+          app_context().CallInUIThreadDeferred([this, letterbox, sx, sy, ox, oy, edges] {
+            rex::cvar::SetFlagByName("forza_present_16_9", "true");
+            rex::cvar::SetFlagByName("present_letterbox", letterbox ? "true" : "false");
+            rex::cvar::SetFlagByName("forza_ultrawide_hud_x", std::to_string(sx));
+            rex::cvar::SetFlagByName("forza_ultrawide_hud_y", std::to_string(sy));
+            rex::cvar::SetFlagByName("forza_ultrawide_hud_offset_x", std::to_string(ox));
+            rex::cvar::SetFlagByName("forza_ultrawide_hud_offset_y", std::to_string(oy));
+            rex::cvar::SetFlagByName("forza_ultrawide_hud_edge_shift", std::to_string(edges));
+            if (window()) window()->RequestPaint();
+          });
+        });
     // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
     // nothing else takes.
     forza::InstallFaultGuard();

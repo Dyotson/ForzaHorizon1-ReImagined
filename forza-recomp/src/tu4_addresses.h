@@ -6,6 +6,9 @@
 
 #include <cstdint>
 
+#define sub_823E22C8 sub_82412260
+#define __imp__sub_823E22C8 __imp__sub_82412260
+
 #define sub_823ED888 sub_8241D948  // check
 #define __imp__sub_823ED888 __imp__sub_8241D948
 #define sub_823FD208 sub_8242D1A0
@@ -114,6 +117,8 @@
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
   switch (a) {
+    case 0x829A48F4: return 0x82A58E34;
+    case 0x8263AE18: return 0x826E30A8;
     case 0x823EDB08: return 0x8241DBC8;  // code  // check
     case 0x82624B04: return 0x826CC2B4;  // code  // check
     case 0x82633824: return 0x826DBBFC;  // code

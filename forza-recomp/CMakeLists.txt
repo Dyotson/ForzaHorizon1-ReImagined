@@ -117,6 +117,7 @@ set(FORZA_SOURCES
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
     src/hooks/crowd_anim.cpp
+    src/hooks/ultrawide_projection.cpp
     src/hooks/frame_time.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/physics_loader_check.cpp
@@ -145,6 +146,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
     src/platform/sdk_import.cpp
@@ -209,3 +211,10 @@ if(UNIX AND NOT APPLE)
         endif()
     endforeach()
 endif()
+
+# Retain the notice for the adapted ultrawide presentation strategy with the binary.
+add_custom_command(TARGET forza POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE-Pinyon-Shift"
+        "$<TARGET_FILE_DIR:forza>/LICENSE-Pinyon-Shift"
+    VERBATIM)

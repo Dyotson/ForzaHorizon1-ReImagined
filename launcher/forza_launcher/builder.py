@@ -845,6 +845,9 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     """Copy what the game needs to run into runtime/ so the build tree can be deleted."""
     rt = runtime_dir(opts.root)
     rt.mkdir(parents=True, exist_ok=True)
+    notice = bdir / "LICENSE-Pinyon-Shift"
+    if notice.is_file():
+        shutil.copy2(notice, rt / notice.name)
     if IS_WIN:
         for f in [bdir / "forza.exe"] + sorted(bdir.glob("forza_*.dll")):
             shutil.copy2(f, rt / f.name)
