@@ -77,3 +77,5 @@ keep their cvars). New cvar `vulkan_allow_present_mode_fifo_latest_ready` (defau
 unsupported driver gives plain FIFO exactly as before. The chosen mode is logged once. It evens out
 the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). See
 [Frame rate](framerate.md).
+
+0066 averages supersampled RGBA8 car-thumbnail pixels during readback, keeping other formats and resolves unchanged. Requires the known-thumbnail refresh rule already on main (0053); see [Rendering issues](rendering.md#filter-supersampled-car-thumbnails-50).
