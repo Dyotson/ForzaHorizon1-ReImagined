@@ -14,7 +14,7 @@ class RuntimeSetup(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.cfg = SimpleNamespace(data_home=lambda: self.root)
+        self.cfg = SimpleNamespace(data_home=lambda: self.root, gpu_vendor=lambda: "nvidia")
         self.dll, self.license = b"test NVIDIA runtime", b"test license"
         for name, content in (("runtime", self.dll), ("license", self.license)):
             (self.root / name).write_bytes(content)
@@ -83,6 +83,29 @@ class RuntimeSetup(unittest.TestCase):
         self.assertIn("--resolution_scale=2", args)
         self.assertIn("DLSS Performance", notes[0])
         self.assertFalse(dlss.runtime_dir(self.cfg).exists())
+
+    def test_saved_dlss_modes_are_inactive_on_other_vendors(self):
+        for vendor in ("amd", "intel", "deck", ""):
+            for mode in ("quality", "balanced", "dlss", "dlaa"):
+                for write in (False, True):
+                    with self.subTest(vendor=vendor, mode=mode, write=write):
+                        self.cfg.gpu_vendor = lambda: vendor
+                        self.cfg.settings = {"fh1_upscaler": mode, "fh1_output_resolution": "4k"}
+                        env, args, notes = {"KEEP": "yes"}, ["--gpu_backend=d3d12"], []
+                        with patch.object(dlss, "prepare") as prepare:
+                            self.assertFalse(dlss.enabled(self.cfg))
+                            dlss.configure(self.cfg, env, args, notes, write=write)
+                            prepare.assert_not_called()
+                        self.assertEqual(env, {"KEEP": "yes"})
+                        self.assertEqual(args, ["--gpu_backend=d3d12"])
+                        self.assertEqual(notes, [])
+
+    def test_direct_setup_rejects_other_vendors_before_downloading(self):
+        self.cfg.gpu_vendor = lambda: "amd"
+        with patch.object(dlss.fetch, "download") as fetch:
+            with self.assertRaisesRegex(RuntimeError, "NVIDIA"):
+                dlss.prepare(self.cfg)
+            fetch.assert_not_called()
 
     def test_dlaa_launch_prepares_runtime_and_describes_native_input(self):
         self.cfg.settings = {"fh1_upscaler": "dlaa"}
@@ -188,6 +211,7 @@ class RuntimeSetup(unittest.TestCase):
         cfg.advanced["data_root"] = str(self.root)
         cfg.online["mode"] = "offline"
         cfg.settings["fh1_upscaler"] = "dlss"
+        cfg.gpu["vendor"] = "nvidia"
         install = game.GameInstall(self.root, self.root / "forza.exe")
         with patch.object(dlss, "check_renderer", side_effect=AssertionError("verified during preview")), \
              patch.object(dlss, "_sha256", side_effect=AssertionError("hashed during preview")):

@@ -5,6 +5,10 @@ DLAA, with a separate 1080p, 1440p or 4K output choice. These use NVIDIA's NGX
 Vulkan runtime on a supported RTX GPU and driver. They are separate from the
 presenter's spatial upscaling filter. Changes require restarting the game.
 
+These controls appear only for an NVIDIA GPU. A saved DLSS setting is inactive
+on AMD, Intel or an unknown GPU: it does not download the runtime or override
+the native renderer settings.
+
 On first Play, the launcher downloads the runtime and its license directly from
 NVIDIA's public DLSS SDK, verifies pinned SHA-256 hashes, and stores them under
 `<data folder>/graphics/nvidia-dlss/<SDK revision>`. Later launches reuse verified

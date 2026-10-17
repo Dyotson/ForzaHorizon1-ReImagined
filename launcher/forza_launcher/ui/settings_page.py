@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBo
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, game, gpu, schema
+from .. import PUBLIC_SERVER, dlss, game, gpu, schema
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .widgets import Switch, card, label
@@ -200,8 +200,7 @@ class SettingsPage(QWidget):
     # --- plumbing -------------------------------------------------------------------
     def set_value(self, key, value):
         self.cfg.settings[key] = schema.coerce(schema.BY_KEY[key], value)
-        if key in ("fh1_upscaler", "fh1_output_resolution") and self.cfg.settings.get("fh1_upscaler", "off") != "off":
-            from .. import dlss
+        if key in ("fh1_upscaler", "fh1_output_resolution") and dlss.enabled(self.cfg):
             resolution, _, _, scale = dlss.output_settings(self.cfg)
             for dep, fixed in (("gpu_backend", "vulkan"), ("resolution", resolution), ("resolution_scale", scale)):
                 self.cfg.settings[dep] = fixed
@@ -232,11 +231,15 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        active = dlss.enabled(self.cfg)
+        for key in ("fh1_upscaler", "fh1_output_resolution"):
+            if key in self.rows:
+                self.rows[key].setVisible(self.cfg.gpu_vendor() == gpu.NVIDIA)
         if "fh1_output_resolution" in self.rows:
-            self.rows["fh1_output_resolution"].control.setEnabled(self.cfg.settings.get("fh1_upscaler", "off") != "off")
+            self.rows["fh1_output_resolution"].control.setEnabled(active)
         for key in ("gpu_backend", "resolution", "resolution_scale", "present_effect"):
             if key in self.rows:
-                self.rows[key].control.setEnabled(self.cfg.settings.get("fh1_upscaler", "off") == "off")
+                self.rows[key].control.setEnabled(not active)
         self._refresh_gpu_warnings()
         for key, dep in DEPENDS.items():
             row = self.rows.get(key)
@@ -370,7 +373,7 @@ class SettingsPage(QWidget):
         vendor = self.cfg.gpu_vendor()
         found = {}
         warning_settings = dict(self.cfg.settings)
-        if (warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
+        if (dlss.enabled(self.cfg) and warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
                 warning_settings.get("fh1_output_resolution") == "4k"):
             # The 3x allocation belongs to the native UI; these modes render
             # the scene at 2x, so the ordinary 3x-scene warning does not apply.

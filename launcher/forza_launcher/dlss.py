@@ -10,7 +10,7 @@ import re
 import uuid
 from pathlib import Path
 
-from . import fetch, paths, pins
+from . import fetch, gpu, paths, pins
 
 SDK_REVISION = "374959484e79a640feaba44c93ac8cfb0a03f5b5"
 _BASE = f"https://raw.githubusercontent.com/NVIDIA/DLSS/{SDK_REVISION}"
@@ -52,7 +52,8 @@ def runtime_dir(cfg) -> Path:
 
 
 def enabled(cfg) -> bool:
-    return cfg.settings.get("fh1_upscaler", "off") != "off"
+    return (cfg.gpu_vendor() == gpu.NVIDIA and
+            cfg.settings.get("fh1_upscaler", "off") != "off")
 
 
 def check_renderer(folder):
@@ -130,6 +131,8 @@ def prepare(cfg, progress=lambda done, total: None, cancelled=lambda: False) -> 
     """Fetch on first use, repair changed files, and reuse verified files offline."""
     if not paths.IS_WINDOWS:
         raise RuntimeError("This DLSS integration currently supports Windows only.")
+    if cfg.gpu_vendor() != gpu.NVIDIA:
+        raise RuntimeError("DLSS runtime setup requires an NVIDIA graphics card.")
     dest = runtime_dir(cfg)
     if ready(cfg):
         _remove_download_copies(cfg)
