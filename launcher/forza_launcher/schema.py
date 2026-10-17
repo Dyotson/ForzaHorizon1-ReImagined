@@ -242,7 +242,8 @@ add("gamertag", "Gamertag", "Profile", "str", "",
     "Up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
     "Identity")
 add("user_language", "Language ID", "Profile", "int", 1,
-    "Xbox language code (1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian).",
+    "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
+    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
     "Identity", lo=0, hi=20)
 add("user_country", "Country ID", "Profile", "int", 103, "Xbox country code.", "Identity",
     lo=0, hi=300)
