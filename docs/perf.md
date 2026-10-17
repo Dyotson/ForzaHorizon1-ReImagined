@@ -598,3 +598,66 @@ eliminate every frame over 25 ms or make native 1440p reach 120 FPS. Validation
 is limited to this NVIDIA system. Other vendors' default queue depth is unchanged,
 but no AMD hardware was tested here. The timing scopes and captures are private
 diagnostic files, not part of the SDK patch.
+## Scaled texture upload cost (#101)
+
+Issue #101 reports about 40 FPS at render scale 2 on an RTX 4060, even when
+lowering output resolution or anisotropic filtering. Scale 2 still renders the
+game at 2560x1440 when the presentation window is lowered to 1920x1080. Output
+resolution alone therefore does not reduce this rendering or texture-upload work.
+
+On an RTX 5060 Ti (driver 617.14, Windows 11, desktop 2560x1440 at 360 Hz), a
+copied TU4 save parked in free roam was GPU-bound at scale 2. The 120 FPS cap,
+DLSS off, 16x anisotropic filtering, Vulkan, and native 1440p scene/HUD were held
+constant. Initial controls measured 119.7 FPS at scale 1, 59.8 at scale 2, 60.3
+with scale 2 and 1080p output/4x filtering, and 58.8 with IMMEDIATE presentation.
+Those four measurement windows compiled no new pipelines. Changing the cap to
+60 also measured about 59 FPS. This did not reproduce a fixed 40 FPS limit.
+
+A three-frame RenderDoc capture attributed 13.34 ms of 47.68 ms of GPU command
+time to buffer-to-image copies. The scaled loader first untiled data into a
+scratch buffer, then copied it into the sampled image. Patch 0071 fuses those
+steps for eligible NVIDIA textures, writing identical bits through an R32_UINT
+storage view. It does not change render scale, texel format, HUD resolution,
+texture filtering, frame pacing, or CPU readbacks.
+
+The final comparison used main `a428cec` plus 0071, the same renderer binary
+with `vulkan_direct_scaled_texture_upload` false/true, the same copied save,
+scripted menu input, and physical controller/keyboard driving excluded by a
+private test harness. Each session warmed for 70 seconds and measured for 45:
+
+| Upload path | Presented FPS | p95 frame time | p99 frame time | Worst frame |
+| --- | ---: | ---: | ---: | ---: |
+| Original scratch buffer + copy | 59.68 | 19.99 ms | 21.38 ms | 41.71 ms |
+| Direct storage image | 68.89 | 17.50 ms | 18.56 ms | 35.60 ms |
+
+That is a 15.4% FPS gain in this scene. The original measurement compiled no new
+pipelines; the direct measurement compiled two at about 77 seconds. Taking the
+same final 30-second window (85-115 seconds) in both runs, with no new pipeline
+compilations, gives 59.73 versus 68.97 FPS, and p99 21.36 versus 18.20 ms. These
+are local measurements on a 5060 Ti, not confirmation of the reporter's 4060
+configuration. Keep #101 open until that configuration has been retested.
+
+The path is limited to tiled, scaled, single-layer 2D base levels in RGBA8,
+packed 10-bit color, or R32 float. Other vendors and texture layouts retain the
+original path. Storage format support is checked, allocation/view failures fall
+back, and `--vulkan_direct_scaled_texture_upload=false` disables it for comparison.
+
+The opt-in GPU check compares the original compiled loader against the new image
+shader for independent X/Y scales 1-7, all four endian modes, aligned and ragged
+extents, a source offset, and canary pixels outside the destination rectangle.
+All 1,176 cases passed on this NVIDIA device. It needs the optional Python
+`vulkan` package and an SDK with the patch series applied:
+
+```sh
+python tools/test_vulkan_scaled_texture_upload.py --sdk /path/to/rexglue-sdk
+```
+
+The final renderer also reached free roam with official NGX Super Resolution
+(1280x720 scene, 2560x1440 HUD/output) and DLAA (2560x1440 scene/HUD/output).
+Both features initialized successfully and the captured output was inspected;
+these were compatibility checks, not additional performance comparisons.
+
+The GLSL source and its precompiled SPIR-V header are included in 0071; no shader
+compiler is required when building the game. To regenerate the shader binary,
+compile `texture_load_32bpb_scaled_image.cs.glsl` with glslang (`-V -S comp`) and
+convert the resulting little-endian uint32 words into the checked-in header.

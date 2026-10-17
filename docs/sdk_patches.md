@@ -90,3 +90,13 @@ depth, motion vectors and NGX jitter into the final color orientation. 0062
 synchronizes unscaled scene resolves into the scaled native HUD cache (1440p
 Performance uses a 1x scene and 2x HUD). All three belong to the DLSS integration
 and apply without the ultrawide patch series.
+
+0071 loads eligible scaled, tiled 32-bit textures directly from the scaled resolve
+buffer into an R32_UINT storage view on NVIDIA. The shader preserves the original
+texel bits and endian conversion, while removing the intermediate untile buffer
+and buffer-to-image copy. It handles single-layer 2D base levels only; other
+formats, mip chains, arrays, 3D layouts, unsupported storage formats, and other
+vendors retain the original path. Image allocation/view failures also fall back.
+`vulkan_direct_scaled_texture_upload=false` restores the original uploads. The
+storage descriptors use the existing frame retirement rules, and image writes
+are ordered before subsequent sampling or uploads. See [Performance](perf.md#scaled-texture-upload-cost-101).
