@@ -283,9 +283,10 @@ class SettingsPage(QWidget):
             if key in self.rows:
                 self.rows[key].control.setEnabled(not active)
         self._refresh_gpu_warnings()
-        if "gpu_backend" in self.rows:
-            self.rows["gpu_backend"].control.setEnabled(not active and not self.cfg.settings.get("forza_ultrawide"))
-        self.rows["resolution_scale"].control.setEnabled(not active and not self.cfg.settings.get("forza_ultrawide"))
+        for key in ("gpu_backend", "resolution_scale"):
+            if key in self.rows:
+                self.rows[key].control.setEnabled(
+                    not active and not self.cfg.settings.get("forza_ultrawide"))
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             if key in self.rows:
                 self.rows[key].control.setEnabled(bool(self.cfg.settings.get("forza_hud_layout")))

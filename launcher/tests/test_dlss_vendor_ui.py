@@ -65,6 +65,21 @@ class VendorControls(unittest.TestCase):
         self.assertEqual(self.cfg.settings["resolution"], "720p")
         self.assertEqual(self.cfg.settings["resolution_scale"], 1)
 
+    def test_ultrawide_toggle_preserves_dlss_control_locks(self):
+        for vendor in ("nvidia", "amd"):
+            self.cfg.gpu["vendor"] = vendor
+            for mode in ("off", "quality", "dlaa"):
+                self.cfg.settings["fh1_upscaler"] = mode
+                for ultrawide in (True, False, True, False):
+                    with self.subTest(vendor=vendor, mode=mode, ultrawide=ultrawide):
+                        self.page.set_value("forza_ultrawide", ultrawide)
+                        active = vendor == "nvidia" and mode != "off"
+                        for key in ("gpu_backend", "resolution_scale"):
+                            self.assertEqual(self.page.rows[key].control.isEnabled(),
+                                             not active and not ultrawide)
+                        for key in ("resolution", "present_effect"):
+                            self.assertEqual(self.page.rows[key].control.isEnabled(), not active)
+
 
 if __name__ == "__main__":
     unittest.main()

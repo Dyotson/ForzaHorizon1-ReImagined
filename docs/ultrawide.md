@@ -71,8 +71,10 @@ and Linux runtime behavior still need testing. Pink highlights remain visible
 on the car and road in the standalone NVIDIA gameplay test as well as some
 paused backgrounds. Fixing square cube allocation does
 not resolve every renderer artifact (issue #47); this remains experimental.
-This PR is independent of DLSS. DLSS integration remains in PR #60; a combined
-mode can be reviewed after the two features land separately.
+DLSS is now part of main through PR #60. Patch 0063 preserves its deferred
+commands and fractional texture-coordinate correction, and the launcher retains
+the DLSS settings locks when ultrawide is toggled. This does not establish
+combined DLSS/ultrawide runtime support; that mode still needs separate validation.
 
 For the standalone math/state test, compile and run
 `forza-recomp/tests/ultrawide_math_test.cpp` with a C++17 compiler. Launcher tests
