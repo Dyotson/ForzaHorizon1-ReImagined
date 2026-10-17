@@ -116,7 +116,8 @@ add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
     restart=True, legacy={"fsr2": "fsr"})
 add("fsr3_mode", "FSR 3 quality", "Display", "choice", "performance",
     "The scene's input size for AMD FSR 3: Quality 1/1.5 of the output per axis, Balanced 1/1.7, "
-    "Performance 1/2 (720p for 1440p), Native AA the output size. Only with the AMD FSR 3 filter.",
+    "Performance 1/2 (720p for 1440p), Native AA the output size; never below the game's native 1280x720, "
+    "so at a 1080p output Balanced and Performance also use 720p. Only with the AMD FSR 3 filter.",
     "AMD FSR 3", choices=[("quality", "Quality"), ("balanced", "Balanced"),
                           ("performance", "Performance"), ("native", "Native AA")], restart=True)
 add("fsr3_output_resolution", "FSR 3 output resolution", "Display", "choice", "1440p",

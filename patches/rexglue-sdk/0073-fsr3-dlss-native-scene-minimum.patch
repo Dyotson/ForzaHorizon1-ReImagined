@@ -1,0 +1,41 @@
+diff --git a/src/graphics/vulkan/fh1_dlss.cpp b/src/graphics/vulkan/fh1_dlss.cpp
+--- a/src/graphics/vulkan/fh1_dlss.cpp
++++ b/src/graphics/vulkan/fh1_dlss.cpp
+@@ -16,6 +16,21 @@
+ #endif
+ 
+ namespace rex::graphics::vulkan {
++namespace {
++// The game's native raster is 1280x720; a scene raster below it crashes the guest (#110: FSR 3
++// Performance at a 1080p output asked for 960x540). Never reconstruct from less than native.
++template <typename T>
++void ClampSceneInput(T& width, T& height, uint32_t output_width, uint32_t output_height,
++                     const std::string& mode) {
++  const uint32_t clamped_width = std::min<uint32_t>(std::max<uint32_t>(width, 1280), output_width);
++  const uint32_t clamped_height = std::min<uint32_t>(std::max<uint32_t>(height, 720), output_height);
++  if (clamped_width == width && clamped_height == height) return;
++  REXGPU_INFO("FH1 {}: input {}x{} is below the native 1280x720; using {}x{}", mode, uint32_t(width),
++              uint32_t(height), clamped_width, clamped_height);
++  width = T(clamped_width);
++  height = T(clamped_height);
++}
++}  // namespace
+ struct Fh1Dlss::State {
+   const ui::vulkan::VulkanDevice* device;
+   uint32_t width = 0, height = 0, output_width = 0, output_height = 0;
+@@ -308,6 +323,7 @@
+     REXGPU_ERROR("DLSS: unsupported output/mode or invalid optimal settings: {:08X}", uint32_t(result));
+     return false;
+   }
++  ClampSceneInput(s.width, s.height, s.output_width, s.output_height, s.mode);
+   REXGPU_INFO("DLSS: optimal {} input={}x{}, output={}x{}", s.mode, s.width, s.height,
+       s.output_width, s.output_height);
+   s.blit = reinterpret_cast<PFN_vkCmdBlitImage>(functions.vkGetDeviceProcAddr(s.device->device(), "vkCmdBlitImage"));
+@@ -435,6 +451,7 @@
+   // ffxFsr3UpscalerGetRenderResolutionFromQualityMode
+   width = uint32_t(float(output_width) / ratio);
+   height = uint32_t(float(output_height) / ratio);
++  ClampSceneInput(width, height, output_width, output_height, mode);
+   const auto& functions = device->vulkan_instance()->functions();
+   blit = reinterpret_cast<PFN_vkCmdBlitImage>(functions.vkGetDeviceProcAddr(device->device(), "vkCmdBlitImage"));
+   update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(functions.vkGetDeviceProcAddr(device->device(), "vkCmdUpdateBuffer"));

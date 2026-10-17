@@ -33,10 +33,13 @@ then sampled into the exact recommended input image. For example:
 | Mode | Scene raster | NGX input | Output / native UI |
 | --- | --- | --- | --- |
 | 1080p Quality | 1280x720 | 1280x720 | 1920x1080 |
-| 1080p Performance | 1280x720 | 960x540 | 1920x1080 |
+| 1080p Performance | 1280x720 | 1280x720 (NGX recommends 960x540; raised, #110) | 1920x1080 |
 | 1440p Performance | 1280x720 | 1280x720 | 2560x1440 |
 | 4K Quality | 2560x1440 | 2560x1440 | 3840x2160 |
 | 4K Performance | 2560x1440 | 1920x1080 | 3840x2160 |
+
+An input below the game's native 1280x720 is raised to 1280x720 (never above the output), logged once: a
+scene raster below native is not safe for the guest (#110).
 
 The runtime may recommend other exact input dimensions. Between-scale modes do
 **not** yet shade only the NGX input pixel count: they pay for the ceiling raster

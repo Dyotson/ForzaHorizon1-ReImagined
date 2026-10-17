@@ -35,4 +35,5 @@ def configure(cfg, args, notes):
     args += [f"--resolution={resolution}", f"--resolution_scale={scale}",
              f"--fh1_output_width={width}", f"--fh1_output_height={height}",
              f"--fh1_upscaler=fsr3_{mode}", "--present_effect=fsr"]
-    notes.append(f"AMD FSR 3 {MODES[mode]}: {resolution} output and native {resolution} UI.")
+    floor = " Input at least 720p." if height < 1440 and mode in ("balanced", "performance") else ""
+    notes.append(f"AMD FSR 3 {MODES[mode]}: {resolution} output and native {resolution} UI.{floor}")

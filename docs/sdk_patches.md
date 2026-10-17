@@ -93,6 +93,10 @@ jitter uses FSR's phase count in FSR modes. The MIT notice is installed under
 `share/licenses/amd-fidelityfx-fsr3` and copied beside the GPU library. See
 [Rendering issues](rendering.md#temporal-upscaling-with-amd-fsr-3-51-2026-10-16).
 
+0073 raises the FSR 3 and DLSS scene input to at least the game's native 1280x720 (never above the
+output), logged once: FSR 3 Performance at a 1080p output (960x540) crashed a player's game (#110).
+See [Rendering issues](rendering.md#temporal-upscaling-with-amd-fsr-3-51-2026-10-16).
+
 0046 adds native Windows Vulkan DLSS/DLAA with separate scene/UI rendering.
 See [Native DLSS](native_dlss.md) for runtime setup, licensing and validation limits.
 

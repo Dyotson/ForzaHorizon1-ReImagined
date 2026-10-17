@@ -271,6 +271,15 @@ script's rule; no other game ran). About 6 % fewer frames at an uncapped rate fo
 input) renders the scene raster at 2x and resamples, like DLSS's between-scale modes, so it
 costs about what render scale 2 does.
 
+**Never below native (#110).** The game's scene raster is 1280x720; a player log showed FSR 3
+Performance at a 1920x1080 output (input 960x540) ending in a guest access violation (read of
+guest 0x4) about 20 s in. It did not reproduce on AMD/Linux (Mesa: free roam for 3 minutes at 1080p
+Performance, 60 fps), but the input is now clamped on every path (patch 0073, FSR 3 and DLSS): each
+dimension is raised to at least 1280x720 (and kept within the output), logged once as `FH1 <mode>:
+input 960x540 is below the native 1280x720; using 1280x720`. At a 1080p output FSR 3 Performance
+and Balanced therefore run a 1280x720 input (Quality 1280x720 as before); 1440p and 4K are
+unchanged. DLSS 1080p Performance asked NGX for 960x540 and had the same hole.
+
 Quality, from the race screenshots (FSR 3 output at 1440p against the 720p FSR 1 input
 enlarged with Lanczos as a stand-in for EASU, so the FSR 1 side is if anything kinder than
 the real filter): the player car's panel lines and the engine cover slats are continuous with
