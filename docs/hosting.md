@@ -76,6 +76,22 @@ or from your LAN: `curl -H "X-Admin-Token: <token>" "http://192.168.1.x:21201/gi
 Without the token variable, remote use is impossible. Do not expose the token on the
 internet side (it travels in plain HTTP).
 
+## Restarting the server (#93)
+
+A restart does not disturb the players. The server writes who is registered (player id,
+token, XUID, gamertag, room, addresses, presence, the sessions each player hosts or is in,
+the id counter and the epoch) to `live_state.json` in the data folder: after a change (at
+most every 2 s), every 30 s while players are on, and on shutdown (Ctrl+C, SIGTERM,
+`docker stop`). A server that starts and finds a file at most 10 minutes old loads it. The
+games send HELLO with the same token every 5 s from the same socket, so they find their
+registration, keep their player id and the epoch, and their lobby or Horizon World goes on
+(the relay, the standby host and the world's host are all restored). Players that do not
+come back are dropped after 30 s as usual. No game update is needed: v0.1.12 and later
+behave the same. Keep the data folder across restarts (`-v ...:/data`); without it, or after
+a crash that left no recent file, the old behaviour applies (the games sign in again under new
+ids and a lobby breaks up). Not kept: a head-to-head challenge in progress, a world event
+that was requested but not taken.
+
 ## Limits (all untrusted input)
 
 - per address (not for `--trusted-proxy` addresses): 16 players, 1500 datagrams/s, 2 new registrations/s, 32 HTTP connections

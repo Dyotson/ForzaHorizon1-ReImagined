@@ -745,10 +745,31 @@ Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_
   about 15-18 KB/s per peer, 7 peers about 100-130 KB/s of the 160 KB/s budget; no packet
   dropped in the run. (The earlier 50 KB/s per peer at 144 fps is too high by a factor of 3.)
 - Not done: head-to-head challenges with a third player nearby (a server restart in the
-  middle of the world split it: A and C each became "the game's host"; a restart is not
-  supported mid-world), 4 to 8 players, 144 fps with three players.
+  middle of the world split it: A and C each became "the game's host"; fixed in #93, see
+  "Server restart" below), 4 to 8 players, 144 fps with three players.
 - `server/test_forza_world_players.py`: placement of the third player, fullest world first,
   full worlds not offered, the standby host after the host left, AI level per human count.
+
+## Server restart in a lobby or a world (#93)
+
+Cause: the server kept its players only in memory. After a restart the games' packets got
+`server error 1: not registered`, they sent HELLO again and were registered under NEW
+player ids, while their lobby (the other game's old id, XNADDR and VIP) and the standby
+records of a world still named the old ids: each game saw the lobby without the other, and
+in a world A and C each became "the game's host" (#12).
+
+Fix (server only): `live_state.json` in the data folder (see docs/hosting.md) holds the
+registrations, presence and session records; a start loads it if it is at most 10 minutes
+old. The choice over "the client asks for its previous id": the games already send the
+same token every 5 s from the same socket, so a restored registration answers the first
+HELLO (or any packet) with the same id and epoch; it works with every released client and
+the epoch in the XNADDR does not change either (punches and forwards check it). A HELLO
+from a new address with the token and XUID of a restored player that was not heard from
+yet moves the registration (a NAT port that changed meanwhile); a live registration is never
+moved. `server/test_forza_live_restart.py`: same ids and epoch, relay continues without a
+HELLO, rooms and presence, a world with its host and joiner (and a second world), the
+standby host, an old or damaged file ignored, ids not reused, restored players that do not
+return time out.
 
 ## Any car class in the Horizon World (#6, checked 2026-10-16)
 

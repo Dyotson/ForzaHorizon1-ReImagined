@@ -54,6 +54,13 @@ SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange
 MAX_PRESENCE_EXTRA = 1024
 
 PEER_TIMEOUT = 30.0  # seconds without a HELLO before a peer is dropped
+# A restarting server keeps its players (#93): registrations are written to
+# DATA_DIR/live_state.json when they change, every STATE_REFRESH seconds and on shutdown,
+# and loaded again if the file is at most STATE_MAX_AGE seconds old.
+STATE_FILE = "live_state.json"
+STATE_MAX_AGE = 600.0
+STATE_REFRESH = 30.0
+STATE_VERSION = 1
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
 # once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
@@ -112,6 +119,10 @@ class Peer:
         self.extra = b""  # slots and QoS data of the hosted session, opaque to the server
         self.invite_times = []  # when its last invites went out (INVITE_LIMIT per INVITE_WINDOW)
         self.features = 0  # HELLO's features byte (FEATURE_*)
+        # Matchmaking: the session it hosts and the one it is in (see ForzaLive.on_match)
+        self.match = None  # (playlist key, record, since)
+        self.standby = None
+        self.standby_host = False
 
 
 def ip_to_u32(ip):
@@ -144,6 +155,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.proxy_http_port = 0
         self.invites = True  # deliver game invites (--no-invites: log and drop them)
         self.dropped_packets = 0  # over a player's rate limit
+        self.state_path = None  # where registrations are kept across a restart (#93)
+        self.state_dirty = False
+        self.state_saved = 0.0  # monotonic time of the last write
+        self.restored = set()  # ids of players loaded from the state file, not heard from yet
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
@@ -182,6 +197,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                     self.error(addr, 1, "not registered")
                 return
             peer.seen = time.monotonic()
+            self.restored.discard(peer.id)
             if kind == BROADCAST:
                 self.on_broadcast(peer, body)
             elif kind == RELAY:
@@ -195,7 +211,10 @@ class ForzaLive(asyncio.DatagramProtocol):
             elif kind == BYE:
                 self.drop(peer, "left")
             elif kind in (MATCH_PUBLISH, MATCH_SEARCH):
+                before = (peer.match, peer.standby, peer.standby_host)
                 self.on_match(peer, kind, body)
+                if (peer.match, peer.standby, peer.standby_host) != before:
+                    self.state_dirty = True
             elif kind == CHALLENGE and body:
                 self.challenges.on_message(peer.id, body)
             elif kind == STATS and body:
@@ -221,6 +240,8 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.drop(peer, "restarted")  # same address, new game process
             peer = None
         if peer is None:
+            peer = self.rebind_restored(addr, token, xuid)
+        if peer is None:
             proxied = limits.is_trusted_proxy(addr[0])
             key = self.limit_key(addr)
             # A trusted proxy has no per-address player cap (its players are many), but the
@@ -240,10 +261,15 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
             self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
+            self.state_dirty = True
             log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s", peer.id, name,
                      xuid, room, addr[0], addr[1], u32_to_ip(local_ip), local_port,
                      " via proxy" if proxied else "")
         peer.seen = time.monotonic()
+        self.restored.discard(peer.id)
+        if ((peer.name, peer.xuid, peer.room, peer.local, peer.features) !=
+                (name, xuid, room, (local_ip, local_port), features)):
+            self.state_dirty = True
         peer.name, peer.xuid, peer.room, peer.local = name, xuid, room, (local_ip, local_port)
         peer.features = features
         # Behind a proxy the observed address is the proxy's local socket, no public address
@@ -310,6 +336,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         extra = body[end:end + MAX_PRESENCE_EXTRA]
         if len(session) != SESSION_INFO_SIZE:
             return
+        if (state, session, status, extra) != (peer.state, peer.session, peer.status, peer.extra):
+            self.state_dirty = True
         if (state, session, status) != (peer.state, peer.session, peer.status):
             log.info("presence #%d %r state %08X session %s %r", peer.id, peer.name, state,
                      session[:8].hex(), status)
@@ -581,9 +609,137 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return bytes(record[1][:8])
         return None
 
+    # --- keeping the players across a server restart (#93) ---
+    # A restart used to forget everyone: the games' next packet got "not registered", they
+    # signed in again under NEW player ids and a lobby's members lost each other (each
+    # game keeps the other's old id), and the two halves of a Horizon World each became a
+    # host. The server now writes who is registered (id, token, XUID, gamertag, room,
+    # addresses, presence, hosted and joined sessions, the id counter and the epoch) to the
+    # data folder, and a server that starts within STATE_MAX_AGE seconds loads it. The games
+    # change nothing: they keep sending HELLO with the same token every 5 s from the same
+    # socket, which finds the restored player and gets the same id and epoch back.
+
+    def snapshot(self):
+        now_m, now_w = time.monotonic(), time.time()
+
+        def wall(mono):  # monotonic timestamps do not survive a restart
+            return now_w - (now_m - mono)
+
+        def sess(s):
+            return None if not s else [s[0], s[1].hex(), wall(s[2])]
+
+        peers = []
+        for p in self.peers.values():
+            peers.append({
+                "id": p.id, "addr": list(p.addr), "token": p.token, "xuid": p.xuid,
+                "name": p.name, "room": p.room, "local": list(p.local), "proxied": p.proxied,
+                "since": p.since, "state": p.state, "session": p.session.hex(),
+                "status": p.status, "extra": p.extra.hex(), "features": p.features,
+                "match": sess(p.match), "standby": sess(p.standby),
+                "standby_host": p.standby_host})
+        return {"version": STATE_VERSION, "saved_at": now_w, "epoch": self.epoch,
+                "next_id": self.next_id, "peers": peers}
+
+    def save_state(self):
+        """Writes the registrations to the state file (atomically). False on failure."""
+        if not self.state_path:
+            return False
+        try:
+            data = json.dumps(self.snapshot())
+            tmp = self.state_path + ".tmp"
+            with open(tmp, "w") as f:
+                f.write(data)
+            os.replace(tmp, self.state_path)
+        except OSError as e:
+            log.warning("cannot write %s: %s", self.state_path, e)
+            return False
+        self.state_dirty = False
+        self.state_saved = time.monotonic()
+        return True
+
+    def maybe_save_state(self):
+        """Every second from the main loop: write after a change (at most every 2 s), and
+        every STATE_REFRESH s while players are on, which keeps the file young."""
+        if not self.state_path:
+            return
+        age = time.monotonic() - self.state_saved
+        if (self.state_dirty and age >= 2) or (self.peers and age >= STATE_REFRESH):
+            self.save_state()
+
+    def load_state(self, max_age=STATE_MAX_AGE):
+        """Restores the players of the state file if it is young enough. Returns how many."""
+        if not self.state_path or self.peers:
+            return 0
+        try:
+            with open(self.state_path) as f:
+                state = json.load(f)
+            age = time.time() - state["saved_at"]
+            if state["version"] != STATE_VERSION or not -60 <= age <= max_age:
+                log.info("state file ignored (%s)", "version" if state["version"] != STATE_VERSION
+                         else "%d s old" % age)
+                return 0
+            now_m, now_w = time.monotonic(), time.time()
+
+            def sess(s):
+                return None if not s else (s[0], bytes.fromhex(s[1]), now_m - (now_w - s[2]))
+
+            for d in state["peers"]:
+                addr = (d["addr"][0], d["addr"][1])
+                if d["id"] in self.peers or addr in self.by_addr:
+                    continue
+                peer = Peer(d["id"], addr, d["token"], d["xuid"], d["name"], d["room"],
+                            tuple(d["local"]))
+                peer.proxied = d["proxied"]
+                peer.since = d["since"]
+                peer.state, peer.session = d["state"], bytes.fromhex(d["session"])
+                peer.status, peer.extra = d["status"], bytes.fromhex(d["extra"])
+                peer.features = d["features"]
+                peer.match, peer.standby = sess(d["match"]), sess(d["standby"])
+                peer.standby_host = d["standby_host"]
+                self.peers[peer.id] = peer
+                self.by_addr[addr] = peer
+                self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
+                self.restored.add(peer.id)
+            self.epoch = state["epoch"]
+            self.next_id = max([state["next_id"]] + [p + 1 for p in self.peers]) & 0xFFFFFF or 1
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
+            if not isinstance(e, FileNotFoundError):
+                log.warning("cannot read %s: %s", self.state_path, e)
+            return 0
+        log.info("restored %d player(s) from %s (%d s old, epoch %04X)", len(self.peers),
+                 self.state_path, age, self.epoch)
+        return len(self.peers)
+
+    def rebind_restored(self, addr, token, xuid):
+        """A HELLO from a new address whose token and XUID match a player restored from the
+        state file that has not been heard from since: its NAT mapping changed during the
+        restart. It keeps its id. (Only restored players: a live registration is never
+        taken over from another address.)"""
+        for pid in list(self.restored):
+            peer = self.peers.get(pid)
+            if peer is None or peer.token != token or peer.xuid != xuid:
+                continue
+            if self.by_addr.get(peer.addr) is peer:
+                del self.by_addr[peer.addr]
+                left = self.per_ip.get(peer.addr[0], 1) - 1
+                if left > 0:
+                    self.per_ip[peer.addr[0]] = left
+                else:
+                    self.per_ip.pop(peer.addr[0], None)
+            log.info("rebind #%d %r %s:%d -> %s:%d", peer.id, peer.name, *peer.addr, *addr)
+            peer.addr = addr
+            self.by_addr[addr] = peer
+            self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
+            self.restored.discard(pid)
+            self.state_dirty = True
+            return peer
+        return None
+
     def drop(self, peer, why):
         self.challenges.drop(peer.id)
         self.peers.pop(peer.id, None)
+        self.restored.discard(peer.id)
+        self.state_dirty = True
         if self.by_addr.get(peer.addr) is peer:
             del self.by_addr[peer.addr]
             left = self.per_ip.get(peer.addr[0], 1) - 1
@@ -775,6 +931,8 @@ async def main():
     loop = asyncio.get_running_loop()
     transport, server = await loop.create_datagram_endpoint(
         lambda: ForzaLive(args.motd, args.max_peers), local_addr=(args.host, args.port))
+    server.state_path = os.path.join(args.data_dir, STATE_FILE)
+    server.load_state()
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
     if args.http_port:
         server.http_port = args.http_port
@@ -794,10 +952,12 @@ async def main():
                 stats.settle()
             if ticks % 5 == 0:
                 server.expire()
+            server.maybe_save_state()
             if ticks % 30 == 0 and discord_status.enabled():
                 # urllib blocks: off the event loop, and never fatal (it catches everything)
                 await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
     finally:
+        server.save_state()  # a restart now keeps the players (#93)
         if discord_status.enabled():
             discord_status.offline(args.data_dir)
         transport.close()
