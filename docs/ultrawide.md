@@ -18,6 +18,14 @@ resolve is uploaded through a 2D array and filtered into 512x512 cube faces,
 including the loaded mip levels. A rectangular image is never exposed as a cube
 view. Layout barriers and cache memory accounting cover both images.
 
+Native ultrawide currently supports physical heights divisible by 720, including
+720, 1440 and 2160. **2560x1080 and other fractional vertical scales are not
+supported.** At those sizes the host leaves native flags unset, disables camera
+widening and logs the reason, retaining ordinary 16:9 rendering instead of the
+broken banded output. This restriction is checked before changing the renderer
+scales; HUD safe-area customization remains available separately. A fractional
+vertical resolve fix is still needed before 1080-line ultrawide can be enabled.
+
 Native ultrawide currently requires Vulkan host render targets. The launcher
 selects Vulkan and disables manual render scaling while it is enabled. Windows
 DPI scaling is included: 2752x1152 logical pixels at 125% gives 3440x1440 physical

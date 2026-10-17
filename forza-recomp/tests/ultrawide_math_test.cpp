@@ -5,6 +5,17 @@
 using namespace forza::ultrawide;
 static bool Near(double a, double b) { return std::abs(a-b) < 1e-6; }
 int main() {
+  assert(NativeSizeSupported(3440, 1440));
+  assert(NativeSizeSupported(5120, 1440));
+  assert(NativeSizeSupported(1720, 720));
+  assert(NativeSizeSupported(5120, 2160));
+  assert(!NativeSizeSupported(2560, 1080));
+  assert(!NativeSizeSupported(1920, 1080));
+  assert(!NativeSizeSupported(3440, 1439));
+  assert(!NativeSizeSupported(0, 1440));
+  assert(!NativeSizeSupported(3440, 0));
+  assert(!NativeSizeSupported(1280 * 7 + 1, 1440));
+  assert(!NativeSizeSupported(3440, 720 * 8));
   auto native = ComputeLayout(2560,1440,100,100,0,0);
   assert(Near(native.aspect_scale,1) && Near(native.hud_scale_x,1));
   auto wide = ComputeLayout(3440,1440,100,100,0,0);

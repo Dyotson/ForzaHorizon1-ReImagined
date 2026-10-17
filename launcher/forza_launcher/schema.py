@@ -70,7 +70,8 @@ add("video_driver", "Video driver", "Display", "choice", "",
 add("forza_ultrawide", "Ultrawide gameplay", "Display", "bool", False,
     "Follow the window's aspect ratio with a wider horizontal view. Menus and map stay 16:9. "
     "Renders at the physical window resolution with proportional HUD. Render scale is automatic. "
-    "Requires Vulkan and the patched SDK; restart after resizing to change render resolution.",
+    "Requires Vulkan, the patched SDK and a physical window height divisible by 720 (720/1440/2160). "
+    "1080-line windows use ordinary 16:9 rendering. Restart after resizing to change render resolution.",
     "Ultrawide and HUD", restart=True)
 add("forza_hud_edges", "Expand HUD to ultrawide edges", "Display", "bool", False,
     "Anchor side HUD elements toward the full window edges while keeping gauges and text proportional. "

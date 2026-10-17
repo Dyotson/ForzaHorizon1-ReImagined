@@ -39,9 +39,11 @@ void Prepare(uint32_t width, uint32_t height) {
 #ifdef _WIN32
   supported &= ForzaGpuBackend() == "vulkan";
 #endif
-  if (!supported || !width || !height || width > 1280*7 || height > 720*7) {
+  if (!supported || !NativeSizeSupported(width, height)) {
     rex::cvar::SetFlagByName("forza_ultrawide", "false");
-    REXLOG_WARN("Native ultrawide requires the patched Vulkan renderer and a supported window size");
+    REXLOG_WARN("Native ultrawide unavailable at {}x{}: requires the patched Vulkan renderer "
+                "and a physical height divisible by 720 (for example 720, 1440 or 2160). "
+                "Using ordinary 16:9 rendering; native resolution flags were not applied.", width, height);
     return;
   }
   // Integer scales describe tiled storage only. Rasterization and sampling use
