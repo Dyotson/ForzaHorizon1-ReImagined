@@ -1,0 +1,637 @@
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -56,6 +56,7 @@
+   enum class SingleTransientDescriptorLayout {
+     kStorageBufferCompute,
+     kStorageBufferPairCompute,
++    kStorageImageCompute,
+     kCount,
+   };
+ 
+@@ -654,9 +655,11 @@
+   static constexpr uint32_t kLinkedTypeDescriptorPoolSetCount = 32768;
+   static const VkDescriptorPoolSize kDescriptorPoolSizeUniformBuffer;
+   static const VkDescriptorPoolSize kDescriptorPoolSizeStorageBuffer;
++  static const VkDescriptorPoolSize kDescriptorPoolSizeStorageImage;
+   static const VkDescriptorPoolSize kDescriptorPoolSizeTextures[2];
+   ui::vulkan::LinkedTypeDescriptorSetAllocator transient_descriptor_allocator_uniform_buffer_;
+   ui::vulkan::LinkedTypeDescriptorSetAllocator transient_descriptor_allocator_storage_buffer_;
++  ui::vulkan::LinkedTypeDescriptorSetAllocator transient_descriptor_allocator_storage_image_;
+   std::deque<UsedSingleTransientDescriptor> single_transient_descriptors_used_;
+   std::array<std::vector<VkDescriptorSet>, size_t(SingleTransientDescriptorLayout::kCount)>
+       single_transient_descriptors_free_;
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -636,6 +636,9 @@
+ const VkDescriptorPoolSize VulkanCommandProcessor::kDescriptorPoolSizeStorageBuffer = {
+     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * kLinkedTypeDescriptorPoolSetCount};
+ 
++const VkDescriptorPoolSize VulkanCommandProcessor::kDescriptorPoolSizeStorageImage = {
++    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kLinkedTypeDescriptorPoolSetCount};
++
+ // 2x descriptors for texture images because of unsigned and signed bindings.
+ const VkDescriptorPoolSize VulkanCommandProcessor::kDescriptorPoolSizeTextures[2] = {
+     {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2 * kLinkedTypeDescriptorPoolSetCount},
+@@ -654,6 +657,10 @@
+           static_cast<const ui::vulkan::VulkanProvider*>(graphics_system->provider())
+               ->vulkan_device(),
+           &kDescriptorPoolSizeStorageBuffer, 1, kLinkedTypeDescriptorPoolSetCount),
++      transient_descriptor_allocator_storage_image_(
++          static_cast<const ui::vulkan::VulkanProvider*>(graphics_system->provider())
++              ->vulkan_device(),
++          &kDescriptorPoolSizeStorageImage, 1, kLinkedTypeDescriptorPoolSetCount),
+       transient_descriptor_allocator_textures_(
+           static_cast<const ui::vulkan::VulkanProvider*>(graphics_system->provider())
+               ->vulkan_device(),
+@@ -1034,6 +1041,14 @@
+         "bound to the compute shader");
+     return false;
+   }
++  descriptor_set_layout_binding_transient.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
++  if (dfn.vkCreateDescriptorSetLayout(
++          device, &descriptor_set_layout_create_info, nullptr,
++          &descriptor_set_layouts_single_transient_[size_t(
++              SingleTransientDescriptorLayout::kStorageImageCompute)]) != VK_SUCCESS) {
++    return false;
++  }
++  descriptor_set_layout_binding_transient.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+   // Transient: two storage buffers for compute shaders.
+   VkDescriptorSetLayoutBinding descriptor_set_layout_bindings_transient_pair[2];
+   descriptor_set_layout_bindings_transient_pair[0] = descriptor_set_layout_binding_transient;
+@@ -3795,15 +3810,19 @@
+     const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
+     [[maybe_unused]] const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+     [[maybe_unused]] const VkDevice device = vulkan_device->device();
++    bool is_storage_image =
++        transient_descriptor_layout == SingleTransientDescriptorLayout::kStorageImageCompute;
+     bool is_storage_buffer =
+         transient_descriptor_layout == SingleTransientDescriptorLayout::kStorageBufferCompute ||
+         transient_descriptor_layout == SingleTransientDescriptorLayout::kStorageBufferPairCompute;
+     ui::vulkan::LinkedTypeDescriptorSetAllocator& transient_descriptor_allocator =
+-        is_storage_buffer ? transient_descriptor_allocator_storage_buffer_
+-                          : transient_descriptor_allocator_uniform_buffer_;
++        is_storage_image    ? transient_descriptor_allocator_storage_image_
++        : is_storage_buffer ? transient_descriptor_allocator_storage_buffer_
++                            : transient_descriptor_allocator_uniform_buffer_;
+     VkDescriptorPoolSize descriptor_count;
+-    descriptor_count.type =
+-        is_storage_buffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
++    descriptor_count.type = is_storage_image    ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
++                            : is_storage_buffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
++                                                : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+     descriptor_count.descriptorCount =
+         transient_descriptor_layout == SingleTransientDescriptorLayout::kStorageBufferPairCompute
+             ? 2
+@@ -6424,6 +6443,7 @@
+     transient_descriptors_free.clear();
+   }
+   single_transient_descriptors_used_.clear();
++  transient_descriptor_allocator_storage_image_.Reset();
+   transient_descriptor_allocator_storage_buffer_.Reset();
+   transient_descriptor_allocator_uniform_buffer_.Reset();
+ }
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -192,6 +192,7 @@
+     enum class Usage {
+       kUndefined,
+       kTransferDestination,
++      kComputeDestination,
+       kGuestShaderSampled,
+       kSwapSampled,
+     };
+@@ -202,6 +203,8 @@
+     ~VulkanTexture();
+ 
+     VkImage image() const { return image_; }
++    VkImageView storage_view() const { return storage_view_; }
++    void set_storage_view(VkImageView view) { storage_view_ = view; }
+ 
+     VulkanTexture* upload_texture() { return cube_upload_ ? cube_upload_.get() : this; }
+     void SetCubeUpload(std::unique_ptr<VulkanTexture> texture) {
+@@ -267,6 +270,7 @@
+       }
+     }
+ 
++    VkImageView storage_view_ = VK_NULL_HANDLE;
+     VkImage image_;
+     VmaAllocation allocation_;
+ 
+@@ -354,6 +358,9 @@
+   static const HostFormatPair kHostFormatDXT5AUnaligned;
+   HostFormatPair host_formats_[64];
+ 
++  bool LoadScaledTextureDirect(VulkanTexture& texture);
++  VkPipelineLayout load_image_pipeline_layout_ = VK_NULL_HANDLE;
++  VkPipeline load_image_pipeline_ = VK_NULL_HANDLE;
+   VkPipelineLayout load_pipeline_layout_ = VK_NULL_HANDLE;
+   std::array<VkPipeline, kLoadShaderCount> load_pipelines_{};
+   std::array<VkPipeline, kLoadShaderCount> load_pipelines_scaled_{};
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -35,10 +35,15 @@
+ 
+ REXCVAR_DEFINE_BOOL(non_seamless_cube_map, false, "GPU", "Use non-seamless cube map sampling");
+ 
++REXCVAR_DEFINE_BOOL(
++    vulkan_direct_scaled_texture_upload, true, "Vulkan",
++    "Load eligible scaled NVIDIA textures directly into images; false uses the copy-buffer path");
++
+ namespace rex::graphics::vulkan {
+ 
+ // Generated with `xb buildshaders`.
+ namespace shaders {
++#include "../shaders/vulkan_spirv/texture_load_32bpb_scaled_image_cs.h"
+ #include "../shaders/vulkan_spirv/texture_load_128bpb_cs.h"
+ #include "../shaders/vulkan_spirv/texture_load_128bpb_scaled_cs.h"
+ #include "../shaders/vulkan_spirv/texture_load_16bpb_cs.h"
+@@ -468,6 +473,10 @@
+       dfn.vkFreeMemory(device, null_images_memory, nullptr);
+     }
+   }
++  if (load_image_pipeline_)
++    dfn.vkDestroyPipeline(device, load_image_pipeline_, nullptr);
++  if (load_image_pipeline_layout_)
++    dfn.vkDestroyPipelineLayout(device, load_image_pipeline_layout_, nullptr);
+   for (VkPipeline load_pipeline : load_pipelines_scaled_) {
+     if (load_pipeline != VK_NULL_HANDLE) {
+       dfn.vkDestroyPipeline(device, load_pipeline, nullptr);
+@@ -1115,7 +1124,7 @@
+ }
+ 
+ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(TextureKey key) {
+-  VkFormat formats[] = {VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED};
++  VkFormat formats[] = {VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, VK_FORMAT_R32_UINT};
+   const HostFormatPair& host_format = GetHostFormatPair(key);
+   if (host_format.format_signed.format == VK_FORMAT_UNDEFINED) {
+     // Only the unsigned format may be available, if at all.
+@@ -1149,12 +1158,34 @@
+   bool is_3d = key.dimension == xenos::DataDimension::k3D;
+   uint32_t depth_or_array_size = key.GetDepthOrArraySize();
+ 
++  // A storage view keeps the 32-bit texels unchanged and avoids the intermediate
++  // scratch-buffer copy. Other texture layouts and vendors keep the old path.
++  const bool separate_view_format = formats[1] != VK_FORMAT_UNDEFINED;
++  bool direct_upload =
++      REXCVAR_GET(vulkan_direct_scaled_texture_upload) && load_image_pipeline_ &&
++      vulkan_device->properties().vendorID == 0x10DE && key.scaled_resolve && key.tiled &&
++      key.dimension == xenos::DataDimension::k2DOrStacked && depth_or_array_size == 1 &&
++      key.mip_max_level == 0 && key.GetWidth() >= 32 && key.GetHeight() >= 32 &&
++      host_format.format_unsigned.load_shader == kLoadShaderIndex32bpb &&
++      (formats[0] == VK_FORMAT_R8G8B8A8_UNORM || formats[0] == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++       formats[0] == VK_FORMAT_R32_SFLOAT);
++  if (direct_upload) {
++    for (VkFormat format : formats) {
++      if (format == VK_FORMAT_UNDEFINED)
++        continue;
++      VkFormatProperties properties;
++      vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceFormatProperties(
++          vulkan_device->physical_device(), format, &properties);
++      if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
++        direct_upload = false;
++    }
++  }
+   VkImageCreateInfo image_create_info;
+   VkImageCreateInfo* image_create_info_last = &image_create_info;
+   image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+   image_create_info.pNext = nullptr;
+   image_create_info.flags = 0;
+-  if (formats[1] != VK_FORMAT_UNDEFINED) {
++  if (direct_upload || formats[1] != VK_FORMAT_UNDEFINED) {
+     image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+   }
+   if (key.dimension == xenos::DataDimension::kCube) {
+@@ -1193,18 +1224,22 @@
+   image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+   image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+   image_create_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
++  if (direct_upload)
++    image_create_info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+   image_create_info.queueFamilyIndexCount = 0;
+   image_create_info.pQueueFamilyIndices = nullptr;
+   image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+   VkImageFormatListCreateInfo image_format_list_create_info;
+-  if (formats[1] != VK_FORMAT_UNDEFINED &&
+-      vulkan_device->extensions().ext_1_2_KHR_image_format_list) {
++  uint32_t format_count = formats[1] != VK_FORMAT_UNDEFINED ? 2 : 1;
++  if (direct_upload)
++    formats[format_count++] = VK_FORMAT_R32_UINT;
++  if (format_count > 1 && vulkan_device->extensions().ext_1_2_KHR_image_format_list) {
+     image_create_info_last->pNext = &image_format_list_create_info;
+     image_create_info_last = reinterpret_cast<VkImageCreateInfo*>(&image_format_list_create_info);
+     image_format_list_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+     image_format_list_create_info.pNext = nullptr;
+-    image_format_list_create_info.viewFormatCount = 2;
++    image_format_list_create_info.viewFormatCount = format_count;
+     image_format_list_create_info.pViewFormats = formats;
+   }
+ 
+@@ -1215,10 +1250,36 @@
+   VmaAllocation allocation;
+   if (vmaCreateImage(vma_allocator_, &image_create_info, &allocation_create_info, &image,
+                      &allocation, nullptr)) {
+-    return nullptr;
++    // Storage usage or format reinterpretation may impose extra device limits.
++    // A failed fast-path allocation must not prevent the original upload path.
++    if (!direct_upload)
++      return nullptr;
++    direct_upload = false;
++    image_create_info.usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
++    if (!separate_view_format) {
++      image_create_info.flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
++      image_create_info.pNext = nullptr;
++    } else if (image_create_info.pNext) {
++      image_format_list_create_info.viewFormatCount = 2;
++    }
++    if (vmaCreateImage(vma_allocator_, &image_create_info, &allocation_create_info, &image,
++                       &allocation, nullptr))
++      return nullptr;
+   }
+ 
+   auto result = std::make_unique<VulkanTexture>(*this, key, image, allocation);
++  if (direct_upload) {
++    VkImageViewCreateInfo info = {};
++    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
++    info.image = image;
++    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
++    info.format = VK_FORMAT_R32_UINT;
++    info.subresourceRange =
++        ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
++    VkImageView view;
++    if (dfn.vkCreateImageView(device, &info, nullptr, &view) == VK_SUCCESS)
++      result->set_storage_view(view);
++  }
+   if (rectangular_cube) {
+     image_create_info.flags &= ~VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+     image_create_info.extent.width = upload_extent.width;
+@@ -1251,10 +1312,77 @@
+   return EnsureScaledResolveBufferAllocated(start_scaled, length_scaled);
+ }
+ 
++// The scaled resolve buffer stores each guest 16-byte quad as scale_x *
++// scale_y quads. The shader writes the same untiled bits through an R32_UINT
++// view; the sampled texture format and all later sampling stay unchanged.
++bool VulkanTextureCache::LoadScaledTextureDirect(VulkanTexture& texture) {
++  const auto key = texture.key();
++  const auto* device = command_processor_.GetVulkanDevice();
++  uint64_t start, length;
++  if (!GetScaledResolveRange(key.base_page << 12, texture.GetGuestBaseSize(), 4, start, length))
++    return false;
++  auto dest = command_processor_.AllocateSingleTransientDescriptor(
++      VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageImageCompute);
++  auto source = command_processor_.AllocateSingleTransientDescriptor(
++      VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBufferCompute);
++  if (!dest || !source)
++    return false;
++  VkDescriptorImageInfo image_info = {};
++  image_info.imageView = texture.storage_view();
++  image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++  VkDescriptorBufferInfo buffer_info = {scaled_resolve_buffer_, start, length};
++  VkWriteDescriptorSet writes[2] = {};
++  for (uint32_t i = 0; i < 2; ++i) {
++    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
++    writes[i].descriptorCount = 1;
++  }
++  writes[0].dstSet = dest;
++  writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
++  writes[0].pImageInfo = &image_info;
++  writes[1].dstSet = source;
++  writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++  writes[1].pBufferInfo = &buffer_info;
++  device->functions().vkUpdateDescriptorSets(device->device(), 2, writes, 0, nullptr);
++  UseScaledResolveBufferForRead();
++  texture.MarkAsUsed();
++  auto old_usage = texture.SetUsage(VulkanTexture::Usage::kComputeDestination);
++  VkPipelineStageFlags src_stage;
++  VkAccessFlags src_access;
++  VkImageLayout old_layout;
++  GetTextureUsageMasks(old_usage, src_stage, src_access, old_layout);
++  command_processor_.PushImageMemoryBarrier(
++      texture.image(), ui::vulkan::util::InitializeSubresourceRange(), src_stage,
++      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, src_access, VK_ACCESS_SHADER_WRITE_BIT, old_layout,
++      VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false);
++  command_processor_.BindExternalComputePipeline(load_image_pipeline_);
++  command_processor_.SubmitBarriers(true);
++  LoadConstants constants = {};
++  uint32_t sx = draw_resolution_scale_x(), sy = draw_resolution_scale_y();
++  constants.is_tiled_3d_endian_scale = 1 | (uint32_t(key.endianness) << 2) | (sx << 4) | (sy << 7);
++  constants.guest_pitch_aligned = texture.guest_layout().base.row_pitch_bytes / 4;
++  constants.size_blocks[0] = key.GetWidth() * sx;
++  constants.size_blocks[1] = key.GetHeight() * sy;
++  constants.size_blocks[2] = 1;
++  auto& commands = command_processor_.deferred_command_buffer();
++  VkDescriptorSet descriptors[] = {dest, source};
++  commands.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, load_image_pipeline_layout_, 0,
++                                   2, descriptors, 0, nullptr);
++  commands.CmdVkPushConstants(load_image_pipeline_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0,
++                              sizeof(constants), &constants);
++  commands.CmdVkDispatch((constants.size_blocks[0] + 127) / 128, (constants.size_blocks[1] + 7) / 8,
++                         1);
++  return true;
++}
++
+ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture, bool load_base,
+                                                                bool load_mips) {
+   VulkanTexture& vulkan_texture = static_cast<VulkanTexture&>(texture);
+   TextureKey texture_key = vulkan_texture.key();
++
++  if (load_base && !texture_key.mip_max_level && !vulkan_texture.force_load_3d_tiling() &&
++      vulkan_texture.storage_view()) {
++    return LoadScaledTextureDirect(vulkan_texture);
++  }
+ 
+   // Get the pipeline.
+   const HostFormatPair& host_format_pair = GetHostFormatPair(texture_key);
+@@ -1935,6 +2063,8 @@
+       vulkan_texture_cache.command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
++  if (storage_view_)
++    dfn.vkDestroyImageView(device, storage_view_, nullptr);
+   for (const auto& view_pair : views_) {
+     dfn.vkDestroyImageView(device, view_pair.second, nullptr);
+   }
+@@ -2841,6 +2971,15 @@
+                                  &load_pipeline_layout_)) {
+     REXGPU_ERROR("VulkanTexture: Failed to create the texture load pipeline layout");
+     return false;
++  }
++
++  load_descriptor_set_layouts[0] = command_processor_.GetSingleTransientDescriptorLayout(
++      VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageImageCompute);
++  if (dfn.vkCreatePipelineLayout(device, &load_pipeline_layout_create_info, nullptr,
++                                 &load_image_pipeline_layout_) == VK_SUCCESS) {
++    load_image_pipeline_ = ui::vulkan::util::CreateComputePipeline(
++        vulkan_device, load_image_pipeline_layout_, shaders::texture_load_image_cs,
++        sizeof(shaders::texture_load_image_cs));
+   }
+ 
+   // Load pipelines, only the ones needed for the formats that will be used.
+@@ -3311,6 +3450,11 @@
+       access_mask = VK_ACCESS_TRANSFER_WRITE_BIT;
+       layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+       break;
++    case VulkanTexture::Usage::kComputeDestination:
++      stage_mask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
++      access_mask = VK_ACCESS_SHADER_WRITE_BIT;
++      layout = VK_IMAGE_LAYOUT_GENERAL;
++      break;
+     case VulkanTexture::Usage::kGuestShaderSampled:
+       stage_mask = guest_shader_pipeline_stages_;
+       access_mask = VK_ACCESS_SHADER_READ_BIT;
+diff --git a/src/graphics/shaders/texture_load_32bpb_scaled_image.cs.glsl b/src/graphics/shaders/texture_load_32bpb_scaled_image.cs.glsl
+new file mode 100644
+--- /dev/null
++++ b/src/graphics/shaders/texture_load_32bpb_scaled_image.cs.glsl
+@@ -0,0 +1,38 @@
++// Direct scaled 32-bit tiled texture upload. See the BSD license in LICENSE.
++#version 450
++layout(local_size_x = 32, local_size_y = 8) in;
++layout(set = 0, binding = 0, r32ui) uniform writeonly uimage2D dest;
++layout(set = 1, binding = 0, std430) readonly buffer Source {
++  uvec4 data[];
++}
++source;
++layout(push_constant, std430) uniform Constants {
++  uint flags, guest_offset, pitch, z_stride;
++  uint width, height, depth, host_offset, host_pitch, height_texels;
++}
++c;
++uint tiled(uvec2 p) {
++  uint macro = ((p.x >> 5) + (p.y >> 5) * (c.pitch >> 5)) << 9;
++  uint micro = ((p.x & 7) + ((p.y & 14) << 2)) << 2;
++  uint offset = macro + ((micro & ~15u) << 1) + (micro & 15) + ((p.y & 1) << 4);
++  return ((offset & ~511u) << 3) + ((p.y & 16) << 7) + ((offset & 448) << 2) +
++         (((((p.y & 8) >> 2) + (p.x >> 3)) & 3) << 6) + (offset & 63);
++}
++void main() {
++  uvec2 p = uvec2(gl_GlobalInvocationID.x * 4, gl_GlobalInvocationID.y);
++  if (p.x >= c.width || p.y >= c.height)
++    return;
++  uvec2 scale = uvec2((c.flags >> 4) & 7, (c.flags >> 7) & 7);
++  uvec2 quad = uvec2(p.x >> 2, p.y) / scale;
++  uint address = c.guest_offset + tiled(uvec2(quad.x << 2, quad.y)) * scale.x * scale.y +
++                 (((p.x >> 2) % scale.x) * scale.y + (p.y % scale.y)) * 16;
++  uvec4 words = source.data[address >> 4];
++  uint endian = (c.flags >> 2) & 3;
++  if (((endian ^ (endian >> 1)) & 1) != 0)
++    words = ((words & 0x00ff00ffu) << 8) | ((words & 0xff00ff00u) >> 8);
++  if ((endian & 2) != 0)
++    words = (words << 16) | (words >> 16);
++  for (uint i = 0; i < 4; ++i)
++    if (p.x + i < c.width)
++      imageStore(dest, ivec2(p + uvec2(i, 0)), uvec4(words[i]));
++}
+diff --git a/src/graphics/shaders/vulkan_spirv/texture_load_32bpb_scaled_image_cs.h b/src/graphics/shaders/vulkan_spirv/texture_load_32bpb_scaled_image_cs.h
+new file mode 100644
+--- /dev/null
++++ b/src/graphics/shaders/vulkan_spirv/texture_load_32bpb_scaled_image_cs.h
+@@ -0,0 +1,203 @@
++// Generated from texture_load_32bpb_scaled_image.cs.glsl with glslang.
++// See the BSD license in LICENSE.
++const uint32_t texture_load_image_cs[] = {
++    0x07230203, 0x00010000, 0x0008000A, 0x00000116, 0x00000000, 0x00020011, 0x00000001, 0x0006000B,
++    0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E, 0x00000000, 0x0003000E, 0x00000000, 0x00000001,
++    0x0006000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000, 0x0000006B, 0x00060010, 0x00000004,
++    0x00000011, 0x00000020, 0x00000008, 0x00000001, 0x00030003, 0x00000002, 0x000001C2, 0x00040005,
++    0x00000004, 0x6E69616D, 0x00000000, 0x00050005, 0x0000000B, 0x656C6974, 0x75762864, 0x00003B32,
++    0x00030005, 0x0000000A, 0x00000070, 0x00040005, 0x0000000E, 0x7263616D, 0x0000006F, 0x00050005,
++    0x00000019, 0x736E6F43, 0x746E6174, 0x00000073, 0x00050006, 0x00000019, 0x00000000, 0x67616C66,
++    0x00000073, 0x00070006, 0x00000019, 0x00000001, 0x73657567, 0x666F5F74, 0x74657366, 0x00000000,
++    0x00050006, 0x00000019, 0x00000002, 0x63746970, 0x00000068, 0x00060006, 0x00000019, 0x00000003,
++    0x74735F7A, 0x65646972, 0x00000000, 0x00050006, 0x00000019, 0x00000004, 0x74646977, 0x00000068,
++    0x00050006, 0x00000019, 0x00000005, 0x67696568, 0x00007468, 0x00050006, 0x00000019, 0x00000006,
++    0x74706564, 0x00000068, 0x00060006, 0x00000019, 0x00000007, 0x74736F68, 0x66666F5F, 0x00746573,
++    0x00060006, 0x00000019, 0x00000008, 0x74736F68, 0x7469705F, 0x00006863, 0x00070006, 0x00000019,
++    0x00000009, 0x67696568, 0x745F7468, 0x6C657865, 0x00000073, 0x00030005, 0x0000001B, 0x00000063,
++    0x00040005, 0x00000025, 0x7263696D, 0x0000006F, 0x00040005, 0x00000031, 0x7366666F, 0x00007465,
++    0x00030005, 0x00000068, 0x00000070, 0x00080005, 0x0000006B, 0x475F6C67, 0x61626F6C, 0x766E496C,
++    0x7461636F, 0x496E6F69, 0x00000044, 0x00040005, 0x00000086, 0x6C616373, 0x00000065, 0x00040005,
++    0x00000091, 0x64617571, 0x00000000, 0x00040005, 0x0000009A, 0x72646461, 0x00737365, 0x00040005,
++    0x000000A3, 0x61726170, 0x0000006D, 0x00040005, 0x000000BF, 0x64726F77, 0x00000073, 0x00040005,
++    0x000000C1, 0x72756F53, 0x00006563, 0x00050006, 0x000000C1, 0x00000000, 0x61746164, 0x00000000,
++    0x00040005, 0x000000C3, 0x72756F73, 0x00006563, 0x00040005, 0x000000C9, 0x69646E65, 0x00006E61,
++    0x00030005, 0x000000F3, 0x00000069, 0x00040005, 0x00000106, 0x74736564, 0x00000000, 0x00050048,
++    0x00000019, 0x00000000, 0x00000023, 0x00000000, 0x00050048, 0x00000019, 0x00000001, 0x00000023,
++    0x00000004, 0x00050048, 0x00000019, 0x00000002, 0x00000023, 0x00000008, 0x00050048, 0x00000019,
++    0x00000003, 0x00000023, 0x0000000C, 0x00050048, 0x00000019, 0x00000004, 0x00000023, 0x00000010,
++    0x00050048, 0x00000019, 0x00000005, 0x00000023, 0x00000014, 0x00050048, 0x00000019, 0x00000006,
++    0x00000023, 0x00000018, 0x00050048, 0x00000019, 0x00000007, 0x00000023, 0x0000001C, 0x00050048,
++    0x00000019, 0x00000008, 0x00000023, 0x00000020, 0x00050048, 0x00000019, 0x00000009, 0x00000023,
++    0x00000024, 0x00030047, 0x00000019, 0x00000002, 0x00040047, 0x0000006B, 0x0000000B, 0x0000001C,
++    0x00040047, 0x000000C0, 0x00000006, 0x00000010, 0x00040048, 0x000000C1, 0x00000000, 0x00000018,
++    0x00050048, 0x000000C1, 0x00000000, 0x00000023, 0x00000000, 0x00030047, 0x000000C1, 0x00000003,
++    0x00040047, 0x000000C3, 0x00000022, 0x00000001, 0x00040047, 0x000000C3, 0x00000021, 0x00000000,
++    0x00040047, 0x00000106, 0x00000022, 0x00000000, 0x00040047, 0x00000106, 0x00000021, 0x00000000,
++    0x00030047, 0x00000106, 0x00000019, 0x00040047, 0x00000115, 0x0000000B, 0x00000019, 0x00020013,
++    0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00040015, 0x00000006, 0x00000020, 0x00000000,
++    0x00040017, 0x00000007, 0x00000006, 0x00000002, 0x00040020, 0x00000008, 0x00000007, 0x00000007,
++    0x00040021, 0x00000009, 0x00000006, 0x00000008, 0x00040020, 0x0000000D, 0x00000007, 0x00000006,
++    0x0004002B, 0x00000006, 0x0000000F, 0x00000000, 0x00040015, 0x00000012, 0x00000020, 0x00000001,
++    0x0004002B, 0x00000012, 0x00000013, 0x00000005, 0x0004002B, 0x00000006, 0x00000015, 0x00000001,
++    0x000C001E, 0x00000019, 0x00000006, 0x00000006, 0x00000006, 0x00000006, 0x00000006, 0x00000006,
++    0x00000006, 0x00000006, 0x00000006, 0x00000006, 0x00040020, 0x0000001A, 0x00000009, 0x00000019,
++    0x0004003B, 0x0000001A, 0x0000001B, 0x00000009, 0x0004002B, 0x00000012, 0x0000001C, 0x00000002,
++    0x00040020, 0x0000001D, 0x00000009, 0x00000006, 0x0004002B, 0x00000012, 0x00000023, 0x00000009,
++    0x0004002B, 0x00000006, 0x00000028, 0x00000007, 0x0004002B, 0x00000006, 0x0000002C, 0x0000000E,
++    0x0004002B, 0x00000006, 0x00000034, 0xFFFFFFF0, 0x0004002B, 0x00000012, 0x00000036, 0x00000001,
++    0x0004002B, 0x00000006, 0x0000003A, 0x0000000F, 0x0004002B, 0x00000012, 0x00000040, 0x00000004,
++    0x0004002B, 0x00000006, 0x00000044, 0xFFFFFE00, 0x0004002B, 0x00000012, 0x00000046, 0x00000003,
++    0x0004002B, 0x00000006, 0x0000004A, 0x00000010, 0x0004002B, 0x00000012, 0x0000004C, 0x00000007,
++    0x0004002B, 0x00000006, 0x00000050, 0x000001C0, 0x0004002B, 0x00000006, 0x00000056, 0x00000008,
++    0x0004002B, 0x00000006, 0x0000005D, 0x00000003, 0x0004002B, 0x00000012, 0x0000005F, 0x00000006,
++    0x0004002B, 0x00000006, 0x00000063, 0x0000003F, 0x00040017, 0x00000069, 0x00000006, 0x00000003,
++    0x00040020, 0x0000006A, 0x00000001, 0x00000069, 0x0004003B, 0x0000006A, 0x0000006B, 0x00000001,
++    0x00040020, 0x0000006C, 0x00000001, 0x00000006, 0x0004002B, 0x00000006, 0x0000006F, 0x00000004,
++    0x00020014, 0x00000074, 0x0004002B, 0x00000012, 0x00000087, 0x00000000, 0x00040017, 0x000000BD,
++    0x00000006, 0x00000004, 0x00040020, 0x000000BE, 0x00000007, 0x000000BD, 0x0003001D, 0x000000C0,
++    0x000000BD, 0x0003001E, 0x000000C1, 0x000000C0, 0x00040020, 0x000000C2, 0x00000002, 0x000000C1,
++    0x0004003B, 0x000000C2, 0x000000C3, 0x00000002, 0x00040020, 0x000000C6, 0x00000002, 0x000000BD,
++    0x0004002B, 0x00000006, 0x000000D7, 0x00FF00FF, 0x0004002B, 0x00000012, 0x000000DA, 0x00000008,
++    0x00040017, 0x000000DB, 0x00000012, 0x00000004, 0x0004002B, 0x00000006, 0x000000DF, 0xFF00FF00,
++    0x0004002B, 0x00000006, 0x000000E6, 0x00000002, 0x0004002B, 0x00000012, 0x000000EC, 0x00000010,
++    0x00090019, 0x00000104, 0x00000006, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000002,
++    0x00000021, 0x00040020, 0x00000105, 0x00000000, 0x00000104, 0x0004003B, 0x00000105, 0x00000106,
++    0x00000000, 0x00040017, 0x0000010C, 0x00000012, 0x00000002, 0x0004002B, 0x00000006, 0x00000114,
++    0x00000020, 0x0006002C, 0x00000069, 0x00000115, 0x00000114, 0x00000056, 0x00000015, 0x00050036,
++    0x00000002, 0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003B, 0x00000008,
++    0x00000068, 0x00000007, 0x0004003B, 0x00000008, 0x00000086, 0x00000007, 0x0004003B, 0x00000008,
++    0x00000091, 0x00000007, 0x0004003B, 0x0000000D, 0x0000009A, 0x00000007, 0x0004003B, 0x00000008,
++    0x000000A3, 0x00000007, 0x0004003B, 0x000000BE, 0x000000BF, 0x00000007, 0x0004003B, 0x0000000D,
++    0x000000C9, 0x00000007, 0x0004003B, 0x0000000D, 0x000000F3, 0x00000007, 0x00050041, 0x0000006C,
++    0x0000006D, 0x0000006B, 0x0000000F, 0x0004003D, 0x00000006, 0x0000006E, 0x0000006D, 0x00050084,
++    0x00000006, 0x00000070, 0x0000006E, 0x0000006F, 0x00050041, 0x0000006C, 0x00000071, 0x0000006B,
++    0x00000015, 0x0004003D, 0x00000006, 0x00000072, 0x00000071, 0x00050050, 0x00000007, 0x00000073,
++    0x00000070, 0x00000072, 0x0003003E, 0x00000068, 0x00000073, 0x00050041, 0x0000000D, 0x00000075,
++    0x00000068, 0x0000000F, 0x0004003D, 0x00000006, 0x00000076, 0x00000075, 0x00050041, 0x0000001D,
++    0x00000077, 0x0000001B, 0x00000040, 0x0004003D, 0x00000006, 0x00000078, 0x00000077, 0x000500AE,
++    0x00000074, 0x00000079, 0x00000076, 0x00000078, 0x000400A8, 0x00000074, 0x0000007A, 0x00000079,
++    0x000300F7, 0x0000007C, 0x00000000, 0x000400FA, 0x0000007A, 0x0000007B, 0x0000007C, 0x000200F8,
++    0x0000007B, 0x00050041, 0x0000000D, 0x0000007D, 0x00000068, 0x00000015, 0x0004003D, 0x00000006,
++    0x0000007E, 0x0000007D, 0x00050041, 0x0000001D, 0x0000007F, 0x0000001B, 0x00000013, 0x0004003D,
++    0x00000006, 0x00000080, 0x0000007F, 0x000500AE, 0x00000074, 0x00000081, 0x0000007E, 0x00000080,
++    0x000200F9, 0x0000007C, 0x000200F8, 0x0000007C, 0x000700F5, 0x00000074, 0x00000082, 0x00000079,
++    0x00000005, 0x00000081, 0x0000007B, 0x000300F7, 0x00000084, 0x00000000, 0x000400FA, 0x00000082,
++    0x00000083, 0x00000084, 0x000200F8, 0x00000083, 0x000100FD, 0x000200F8, 0x00000084, 0x00050041,
++    0x0000001D, 0x00000088, 0x0000001B, 0x00000087, 0x0004003D, 0x00000006, 0x00000089, 0x00000088,
++    0x000500C2, 0x00000006, 0x0000008A, 0x00000089, 0x00000040, 0x000500C7, 0x00000006, 0x0000008B,
++    0x0000008A, 0x00000028, 0x00050041, 0x0000001D, 0x0000008C, 0x0000001B, 0x00000087, 0x0004003D,
++    0x00000006, 0x0000008D, 0x0000008C, 0x000500C2, 0x00000006, 0x0000008E, 0x0000008D, 0x0000004C,
++    0x000500C7, 0x00000006, 0x0000008F, 0x0000008E, 0x00000028, 0x00050050, 0x00000007, 0x00000090,
++    0x0000008B, 0x0000008F, 0x0003003E, 0x00000086, 0x00000090, 0x00050041, 0x0000000D, 0x00000092,
++    0x00000068, 0x0000000F, 0x0004003D, 0x00000006, 0x00000093, 0x00000092, 0x000500C2, 0x00000006,
++    0x00000094, 0x00000093, 0x0000001C, 0x00050041, 0x0000000D, 0x00000095, 0x00000068, 0x00000015,
++    0x0004003D, 0x00000006, 0x00000096, 0x00000095, 0x00050050, 0x00000007, 0x00000097, 0x00000094,
++    0x00000096, 0x0004003D, 0x00000007, 0x00000098, 0x00000086, 0x00050086, 0x00000007, 0x00000099,
++    0x00000097, 0x00000098, 0x0003003E, 0x00000091, 0x00000099, 0x00050041, 0x0000001D, 0x0000009B,
++    0x0000001B, 0x00000036, 0x0004003D, 0x00000006, 0x0000009C, 0x0000009B, 0x00050041, 0x0000000D,
++    0x0000009D, 0x00000091, 0x0000000F, 0x0004003D, 0x00000006, 0x0000009E, 0x0000009D, 0x000500C4,
++    0x00000006, 0x0000009F, 0x0000009E, 0x0000001C, 0x00050041, 0x0000000D, 0x000000A0, 0x00000091,
++    0x00000015, 0x0004003D, 0x00000006, 0x000000A1, 0x000000A0, 0x00050050, 0x00000007, 0x000000A2,
++    0x0000009F, 0x000000A1, 0x0003003E, 0x000000A3, 0x000000A2, 0x00050039, 0x00000006, 0x000000A4,
++    0x0000000B, 0x000000A3, 0x00050041, 0x0000000D, 0x000000A5, 0x00000086, 0x0000000F, 0x0004003D,
++    0x00000006, 0x000000A6, 0x000000A5, 0x00050084, 0x00000006, 0x000000A7, 0x000000A4, 0x000000A6,
++    0x00050041, 0x0000000D, 0x000000A8, 0x00000086, 0x00000015, 0x0004003D, 0x00000006, 0x000000A9,
++    0x000000A8, 0x00050084, 0x00000006, 0x000000AA, 0x000000A7, 0x000000A9, 0x00050080, 0x00000006,
++    0x000000AB, 0x0000009C, 0x000000AA, 0x00050041, 0x0000000D, 0x000000AC, 0x00000068, 0x0000000F,
++    0x0004003D, 0x00000006, 0x000000AD, 0x000000AC, 0x000500C2, 0x00000006, 0x000000AE, 0x000000AD,
++    0x0000001C, 0x00050041, 0x0000000D, 0x000000AF, 0x00000086, 0x0000000F, 0x0004003D, 0x00000006,
++    0x000000B0, 0x000000AF, 0x00050089, 0x00000006, 0x000000B1, 0x000000AE, 0x000000B0, 0x00050041,
++    0x0000000D, 0x000000B2, 0x00000086, 0x00000015, 0x0004003D, 0x00000006, 0x000000B3, 0x000000B2,
++    0x00050084, 0x00000006, 0x000000B4, 0x000000B1, 0x000000B3, 0x00050041, 0x0000000D, 0x000000B5,
++    0x00000068, 0x00000015, 0x0004003D, 0x00000006, 0x000000B6, 0x000000B5, 0x00050041, 0x0000000D,
++    0x000000B7, 0x00000086, 0x00000015, 0x0004003D, 0x00000006, 0x000000B8, 0x000000B7, 0x00050089,
++    0x00000006, 0x000000B9, 0x000000B6, 0x000000B8, 0x00050080, 0x00000006, 0x000000BA, 0x000000B4,
++    0x000000B9, 0x00050084, 0x00000006, 0x000000BB, 0x000000BA, 0x0000004A, 0x00050080, 0x00000006,
++    0x000000BC, 0x000000AB, 0x000000BB, 0x0003003E, 0x0000009A, 0x000000BC, 0x0004003D, 0x00000006,
++    0x000000C4, 0x0000009A, 0x000500C2, 0x00000006, 0x000000C5, 0x000000C4, 0x00000040, 0x00060041,
++    0x000000C6, 0x000000C7, 0x000000C3, 0x00000087, 0x000000C5, 0x0004003D, 0x000000BD, 0x000000C8,
++    0x000000C7, 0x0003003E, 0x000000BF, 0x000000C8, 0x00050041, 0x0000001D, 0x000000CA, 0x0000001B,
++    0x00000087, 0x0004003D, 0x00000006, 0x000000CB, 0x000000CA, 0x000500C2, 0x00000006, 0x000000CC,
++    0x000000CB, 0x0000001C, 0x000500C7, 0x00000006, 0x000000CD, 0x000000CC, 0x0000005D, 0x0003003E,
++    0x000000C9, 0x000000CD, 0x0004003D, 0x00000006, 0x000000CE, 0x000000C9, 0x0004003D, 0x00000006,
++    0x000000CF, 0x000000C9, 0x000500C2, 0x00000006, 0x000000D0, 0x000000CF, 0x00000036, 0x000500C6,
++    0x00000006, 0x000000D1, 0x000000CE, 0x000000D0, 0x000500C7, 0x00000006, 0x000000D2, 0x000000D1,
++    0x00000015, 0x000500AB, 0x00000074, 0x000000D3, 0x000000D2, 0x0000000F, 0x000300F7, 0x000000D5,
++    0x00000000, 0x000400FA, 0x000000D3, 0x000000D4, 0x000000D5, 0x000200F8, 0x000000D4, 0x0004003D,
++    0x000000BD, 0x000000D6, 0x000000BF, 0x00070050, 0x000000BD, 0x000000D8, 0x000000D7, 0x000000D7,
++    0x000000D7, 0x000000D7, 0x000500C7, 0x000000BD, 0x000000D9, 0x000000D6, 0x000000D8, 0x00070050,
++    0x000000DB, 0x000000DC, 0x000000DA, 0x000000DA, 0x000000DA, 0x000000DA, 0x000500C4, 0x000000BD,
++    0x000000DD, 0x000000D9, 0x000000DC, 0x0004003D, 0x000000BD, 0x000000DE, 0x000000BF, 0x00070050,
++    0x000000BD, 0x000000E0, 0x000000DF, 0x000000DF, 0x000000DF, 0x000000DF, 0x000500C7, 0x000000BD,
++    0x000000E1, 0x000000DE, 0x000000E0, 0x00070050, 0x000000DB, 0x000000E2, 0x000000DA, 0x000000DA,
++    0x000000DA, 0x000000DA, 0x000500C2, 0x000000BD, 0x000000E3, 0x000000E1, 0x000000E2, 0x000500C5,
++    0x000000BD, 0x000000E4, 0x000000DD, 0x000000E3, 0x0003003E, 0x000000BF, 0x000000E4, 0x000200F9,
++    0x000000D5, 0x000200F8, 0x000000D5, 0x0004003D, 0x00000006, 0x000000E5, 0x000000C9, 0x000500C7,
++    0x00000006, 0x000000E7, 0x000000E5, 0x000000E6, 0x000500AB, 0x00000074, 0x000000E8, 0x000000E7,
++    0x0000000F, 0x000300F7, 0x000000EA, 0x00000000, 0x000400FA, 0x000000E8, 0x000000E9, 0x000000EA,
++    0x000200F8, 0x000000E9, 0x0004003D, 0x000000BD, 0x000000EB, 0x000000BF, 0x00070050, 0x000000DB,
++    0x000000ED, 0x000000EC, 0x000000EC, 0x000000EC, 0x000000EC, 0x000500C4, 0x000000BD, 0x000000EE,
++    0x000000EB, 0x000000ED, 0x0004003D, 0x000000BD, 0x000000EF, 0x000000BF, 0x00070050, 0x000000DB,
++    0x000000F0, 0x000000EC, 0x000000EC, 0x000000EC, 0x000000EC, 0x000500C2, 0x000000BD, 0x000000F1,
++    0x000000EF, 0x000000F0, 0x000500C5, 0x000000BD, 0x000000F2, 0x000000EE, 0x000000F1, 0x0003003E,
++    0x000000BF, 0x000000F2, 0x000200F9, 0x000000EA, 0x000200F8, 0x000000EA, 0x0003003E, 0x000000F3,
++    0x0000000F, 0x000200F9, 0x000000F4, 0x000200F8, 0x000000F4, 0x000400F6, 0x000000F6, 0x000000F7,
++    0x00000000, 0x000200F9, 0x000000F8, 0x000200F8, 0x000000F8, 0x0004003D, 0x00000006, 0x000000F9,
++    0x000000F3, 0x000500B0, 0x00000074, 0x000000FA, 0x000000F9, 0x0000006F, 0x000400FA, 0x000000FA,
++    0x000000F5, 0x000000F6, 0x000200F8, 0x000000F5, 0x00050041, 0x0000000D, 0x000000FB, 0x00000068,
++    0x0000000F, 0x0004003D, 0x00000006, 0x000000FC, 0x000000FB, 0x0004003D, 0x00000006, 0x000000FD,
++    0x000000F3, 0x00050080, 0x00000006, 0x000000FE, 0x000000FC, 0x000000FD, 0x00050041, 0x0000001D,
++    0x000000FF, 0x0000001B, 0x00000040, 0x0004003D, 0x00000006, 0x00000100, 0x000000FF, 0x000500B0,
++    0x00000074, 0x00000101, 0x000000FE, 0x00000100, 0x000300F7, 0x00000103, 0x00000000, 0x000400FA,
++    0x00000101, 0x00000102, 0x00000103, 0x000200F8, 0x00000102, 0x0004003D, 0x00000104, 0x00000107,
++    0x00000106, 0x0004003D, 0x00000007, 0x00000108, 0x00000068, 0x0004003D, 0x00000006, 0x00000109,
++    0x000000F3, 0x00050050, 0x00000007, 0x0000010A, 0x00000109, 0x0000000F, 0x00050080, 0x00000007,
++    0x0000010B, 0x00000108, 0x0000010A, 0x0004007C, 0x0000010C, 0x0000010D, 0x0000010B, 0x0004003D,
++    0x00000006, 0x0000010E, 0x000000F3, 0x00050041, 0x0000000D, 0x0000010F, 0x000000BF, 0x0000010E,
++    0x0004003D, 0x00000006, 0x00000110, 0x0000010F, 0x00070050, 0x000000BD, 0x00000111, 0x00000110,
++    0x00000110, 0x00000110, 0x00000110, 0x00040063, 0x00000107, 0x0000010D, 0x00000111, 0x000200F9,
++    0x00000103, 0x000200F8, 0x00000103, 0x000200F9, 0x000000F7, 0x000200F8, 0x000000F7, 0x0004003D,
++    0x00000006, 0x00000112, 0x000000F3, 0x00050080, 0x00000006, 0x00000113, 0x00000112, 0x00000036,
++    0x0003003E, 0x000000F3, 0x00000113, 0x000200F9, 0x000000F4, 0x000200F8, 0x000000F6, 0x000100FD,
++    0x00010038, 0x00050036, 0x00000006, 0x0000000B, 0x00000000, 0x00000009, 0x00030037, 0x00000008,
++    0x0000000A, 0x000200F8, 0x0000000C, 0x0004003B, 0x0000000D, 0x0000000E, 0x00000007, 0x0004003B,
++    0x0000000D, 0x00000025, 0x00000007, 0x0004003B, 0x0000000D, 0x00000031, 0x00000007, 0x00050041,
++    0x0000000D, 0x00000010, 0x0000000A, 0x0000000F, 0x0004003D, 0x00000006, 0x00000011, 0x00000010,
++    0x000500C2, 0x00000006, 0x00000014, 0x00000011, 0x00000013, 0x00050041, 0x0000000D, 0x00000016,
++    0x0000000A, 0x00000015, 0x0004003D, 0x00000006, 0x00000017, 0x00000016, 0x000500C2, 0x00000006,
++    0x00000018, 0x00000017, 0x00000013, 0x00050041, 0x0000001D, 0x0000001E, 0x0000001B, 0x0000001C,
++    0x0004003D, 0x00000006, 0x0000001F, 0x0000001E, 0x000500C2, 0x00000006, 0x00000020, 0x0000001F,
++    0x00000013, 0x00050084, 0x00000006, 0x00000021, 0x00000018, 0x00000020, 0x00050080, 0x00000006,
++    0x00000022, 0x00000014, 0x00000021, 0x000500C4, 0x00000006, 0x00000024, 0x00000022, 0x00000023,
++    0x0003003E, 0x0000000E, 0x00000024, 0x00050041, 0x0000000D, 0x00000026, 0x0000000A, 0x0000000F,
++    0x0004003D, 0x00000006, 0x00000027, 0x00000026, 0x000500C7, 0x00000006, 0x00000029, 0x00000027,
++    0x00000028, 0x00050041, 0x0000000D, 0x0000002A, 0x0000000A, 0x00000015, 0x0004003D, 0x00000006,
++    0x0000002B, 0x0000002A, 0x000500C7, 0x00000006, 0x0000002D, 0x0000002B, 0x0000002C, 0x000500C4,
++    0x00000006, 0x0000002E, 0x0000002D, 0x0000001C, 0x00050080, 0x00000006, 0x0000002F, 0x00000029,
++    0x0000002E, 0x000500C4, 0x00000006, 0x00000030, 0x0000002F, 0x0000001C, 0x0003003E, 0x00000025,
++    0x00000030, 0x0004003D, 0x00000006, 0x00000032, 0x0000000E, 0x0004003D, 0x00000006, 0x00000033,
++    0x00000025, 0x000500C7, 0x00000006, 0x00000035, 0x00000033, 0x00000034, 0x000500C4, 0x00000006,
++    0x00000037, 0x00000035, 0x00000036, 0x00050080, 0x00000006, 0x00000038, 0x00000032, 0x00000037,
++    0x0004003D, 0x00000006, 0x00000039, 0x00000025, 0x000500C7, 0x00000006, 0x0000003B, 0x00000039,
++    0x0000003A, 0x00050080, 0x00000006, 0x0000003C, 0x00000038, 0x0000003B, 0x00050041, 0x0000000D,
++    0x0000003D, 0x0000000A, 0x00000015, 0x0004003D, 0x00000006, 0x0000003E, 0x0000003D, 0x000500C7,
++    0x00000006, 0x0000003F, 0x0000003E, 0x00000015, 0x000500C4, 0x00000006, 0x00000041, 0x0000003F,
++    0x00000040, 0x00050080, 0x00000006, 0x00000042, 0x0000003C, 0x00000041, 0x0003003E, 0x00000031,
++    0x00000042, 0x0004003D, 0x00000006, 0x00000043, 0x00000031, 0x000500C7, 0x00000006, 0x00000045,
++    0x00000043, 0x00000044, 0x000500C4, 0x00000006, 0x00000047, 0x00000045, 0x00000046, 0x00050041,
++    0x0000000D, 0x00000048, 0x0000000A, 0x00000015, 0x0004003D, 0x00000006, 0x00000049, 0x00000048,
++    0x000500C7, 0x00000006, 0x0000004B, 0x00000049, 0x0000004A, 0x000500C4, 0x00000006, 0x0000004D,
++    0x0000004B, 0x0000004C, 0x00050080, 0x00000006, 0x0000004E, 0x00000047, 0x0000004D, 0x0004003D,
++    0x00000006, 0x0000004F, 0x00000031, 0x000500C7, 0x00000006, 0x00000051, 0x0000004F, 0x00000050,
++    0x000500C4, 0x00000006, 0x00000052, 0x00000051, 0x0000001C, 0x00050080, 0x00000006, 0x00000053,
++    0x0000004E, 0x00000052, 0x00050041, 0x0000000D, 0x00000054, 0x0000000A, 0x00000015, 0x0004003D,
++    0x00000006, 0x00000055, 0x00000054, 0x000500C7, 0x00000006, 0x00000057, 0x00000055, 0x00000056,
++    0x000500C2, 0x00000006, 0x00000058, 0x00000057, 0x0000001C, 0x00050041, 0x0000000D, 0x00000059,
++    0x0000000A, 0x0000000F, 0x0004003D, 0x00000006, 0x0000005A, 0x00000059, 0x000500C2, 0x00000006,
++    0x0000005B, 0x0000005A, 0x00000046, 0x00050080, 0x00000006, 0x0000005C, 0x00000058, 0x0000005B,
++    0x000500C7, 0x00000006, 0x0000005E, 0x0000005C, 0x0000005D, 0x000500C4, 0x00000006, 0x00000060,
++    0x0000005E, 0x0000005F, 0x00050080, 0x00000006, 0x00000061, 0x00000053, 0x00000060, 0x0004003D,
++    0x00000006, 0x00000062, 0x00000031, 0x000500C7, 0x00000006, 0x00000064, 0x00000062, 0x00000063,
++    0x00050080, 0x00000006, 0x00000065, 0x00000061, 0x00000064, 0x000200FE, 0x00000065, 0x00010038,
++};
