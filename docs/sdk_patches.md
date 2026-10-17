@@ -115,3 +115,14 @@ vendors retain the original path. Image allocation/view failures also fall back.
 `vulkan_direct_scaled_texture_upload=false` restores the original uploads. The
 storage descriptors use the existing frame retirement rules, and image writes
 are ordered before subsequent sampling or uploads. See [Performance](perf.md#scaled-texture-upload-cost-101).
+
+0074 adds a racing wheel input driver (`src/input/wheel/`, issue #4). An SDL joystick that is a wheel (SDL
+type, a wheel-like name, or any controller without a gamepad mapping with `wheel_mode = on`) is presented as
+the Xbox 360 Wireless Racing Wheel: SubType 2 with the force feedback and wireless flags (FH1 checks exactly
+that when it reads the capabilities), steering on thumb LX, pedals on the triggers, buttons and hat on the pad
+buttons. Axes are detected from their resting values, with overrides and curves (`wheel_*` cvars). The
+motors' vibration drives SDL haptic effects (a spring and a sine): approximate, untested on hardware. The
+patch also turns on SDL's haptic subsystem in `thirdparty/CMakeLists.txt` (it was off) and the SDL gamepad
+driver ignores wheels the wheel driver takes. Local builds need `libudev.h` (Homebrew `systemd`, added to
+`tools/build_rexglue_sdk.sh`), otherwise SDL is built without udev and sees no joystick at all.
+Test: a uinput virtual wheel; see [Playing](playing.md#racing-wheels-issue-4).

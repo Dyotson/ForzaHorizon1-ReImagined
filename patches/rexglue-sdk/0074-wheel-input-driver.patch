@@ -1,0 +1,787 @@
+diff --git a/include/rex/input/flags.h b/include/rex/input/flags.h
+index eb2ff98..976988e 100644
+--- a/include/rex/input/flags.h
++++ b/include/rex/input/flags.h
+@@ -17,5 +17,6 @@ REXCVAR_DECLARE(bool, guide_button);
+ REXCVAR_DECLARE(std::string, hid_mappings_file);
+ REXCVAR_DECLARE(std::string, input_backend);
+ REXCVAR_DECLARE(bool, vibration);
++REXCVAR_DECLARE(std::string, wheel_mode);
+ REXCVAR_DECLARE(double, left_stick_deadzone_percentage);
+ REXCVAR_DECLARE(double, right_stick_deadzone_percentage);
+diff --git a/include/rex/input/wheel/wheel_input_driver.h b/include/rex/input/wheel/wheel_input_driver.h
+new file mode 100644
+index 0000000..33d35bd
+--- /dev/null
++++ b/include/rex/input/wheel/wheel_input_driver.h
+@@ -0,0 +1,66 @@
++/**
++ * @file        rex/input/wheel/wheel_input_driver.h
++ * @brief       Racing wheel input driver - presents any SDL joystick that is a wheel as an
++ *              Xbox 360 Wireless Racing Wheel (XINPUT_DEVSUBTYPE_WHEEL), with approximate
++ *              force feedback from the vibration motors.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <chrono>
++#include <cstdint>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <vector>
++
++#include <rex/input/input_driver.h>
++
++#include <SDL3/SDL.h>
++
++namespace rex::input::wheel {
++
++/// True when the wheel driver (not the gamepad driver) takes this SDL joystick: SDL says it is
++/// a wheel, its name looks like one, or wheel_mode is "on" and it has no gamepad mapping.
++/// Microsoft devices (the 360 wheel itself, via XInput) stay with the gamepad driver.
++bool IsWheelDevice(SDL_JoystickID id);
++
++class WheelInputDriver final : public InputDriver {
++ public:
++  explicit WheelInputDriver(rex::ui::Window* window, size_t window_z_order);
++  ~WheelInputDriver() override;
++
++  X_STATUS Setup() override;
++
++  void EnumerateDevices(std::vector<DeviceInfo>& out) override;
++  X_RESULT GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) override;
++  X_RESULT GetDeviceCapabilities(DeviceId id, uint32_t flags,
++                                 X_INPUT_CAPABILITIES* out_caps) override;
++  X_RESULT SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibration) override;
++  X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
++                              X_INPUT_KEYSTROKE* out_keystroke) override;
++
++ private:
++  struct Wheel;
++  void RescanLocked();
++  void PumpLocked();
++  Wheel* FindLocked(DeviceId id);
++  void OpenLocked(SDL_JoystickID jid);
++  void CloseLocked(Wheel& w);
++  void ComputeStateLocked(Wheel& w, uint16_t* buttons, uint8_t* lt, uint8_t* rt, int16_t* lx);
++  void SetupForceFeedbackLocked(Wheel& w);
++  void ApplyForceLocked(Wheel& w, float motor);
++
++  std::mutex mutex_;
++  std::vector<std::unique_ptr<Wheel>> wheels_;
++  bool sdl_ready_ = false;
++  bool logged_none_ = false;
++  bool logged_caps_ = false;
++  uint64_t next_id_ = 1;
++  std::chrono::steady_clock::time_point last_scan_{};
++  std::chrono::steady_clock::time_point last_pump_{};
++};
++
++}  // namespace rex::input::wheel
+diff --git a/src/input/CMakeLists.txt b/src/input/CMakeLists.txt
+index 3ea3535..55c9e2c 100644
+--- a/src/input/CMakeLists.txt
++++ b/src/input/CMakeLists.txt
+@@ -7,6 +7,7 @@ add_library(rexinput OBJECT
+     state_merge.cpp
+     mnk/mnk_input_driver.cpp
+     nop/nop_input_driver.cpp
++    wheel/wheel_input_driver.cpp
+ )
+ add_library(rex::input ALIAS rexinput)
+ 
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 40740ee..daa14c8 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -21,6 +21,7 @@
+ #include <rex/input/mnk/mnk_input_driver.h>
+ #include <rex/input/nop/nop_input_driver.h>
+ #include <rex/input/sdl/sdl_input_driver.h>
++#include <rex/input/wheel/wheel_input_driver.h>
+ #include <rex/input/state_merge.h>
+ #include <rex/input/xinput/xinput_input_driver.h>
+ #include <rex/logging.h>
+@@ -508,6 +509,14 @@ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
+       }
+     }
+ 
++    // Racing wheels: SDL joysticks that are not gamepads, presented as the 360 wheel.
++    if (REXCVAR_GET(wheel_mode) != "off") {
++      auto wheel_driver = std::make_unique<wheel::WheelInputDriver>(nullptr, 0);
++      if (wheel_driver->Setup() == X_STATUS_SUCCESS) {
++        input->AddDriver(std::move(wheel_driver));
++      }
++    }
++
+     // MnK driver (keyboard/mouse -> controller emulation)
+     auto mnk_driver = std::make_unique<mnk::MnkInputDriver>(nullptr, 0);
+     if (mnk_driver->Setup() == X_STATUS_SUCCESS) {
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 57f65c4..779970e 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -20,6 +20,7 @@
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
+ #include <rex/input/sdl/sdl_input_driver.h>
++#include <rex/input/wheel/wheel_input_driver.h>
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
+@@ -589,6 +590,10 @@ void SDLInputDriver::OnJoystickDeviceAddedLocked(const SDL_Event& event) {
+ }
+ 
+ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
++  // A wheel that SDL also maps as a gamepad belongs to the wheel driver.
++  if (wheel::IsWheelDevice(event.gdevice.which)) {
++    return;
++  }
+   const auto controller = SDL_OpenGamepad(event.gdevice.which);
+   if (!controller) {
+     assert_always();
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+new file mode 100644
+index 0000000..0e182fe
+--- /dev/null
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -0,0 +1,623 @@
++/**
++ * @file        rex/input/wheel/wheel_input_driver.cpp
++ * @brief       Racing wheel input driver (see the header).
++ *
++ * A wheel is an SDL joystick that has no gamepad mapping (or whose type SDL reports as a
++ * wheel). The game gets it as the Xbox 360 Wireless Racing Wheel: SubType 2 with the force
++ * feedback and wireless flags, steering on the left stick X, the pedals on the triggers.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++
++#include <algorithm>
++#include <cctype>
++#include <cmath>
++#include <cstring>
++#include <map>
++#include <string_view>
++
++#include <rex/cvar.h>
++#include <rex/input/flags.h>
++#include <rex/input/wheel/wheel_input_driver.h>
++#include <rex/logging.h>
++#include <rex/ui/virtual_key.h>
++
++REXCVAR_DEFINE_STRING(wheel_mode, "auto", "Input",
++                      "Racing wheel support: auto (SDL says it is a wheel), on (every joystick "
++                      "without a gamepad mapping is a wheel), off")
++    .allowed({"auto", "on", "off"});
++REXCVAR_DEFINE_INT32(wheel_rotation, 900, "Input",
++                     "Degrees the wheel turns lock to lock, as set in its driver")
++    .range(90, 2520);
++REXCVAR_DEFINE_INT32(wheel_lock, 900, "Input",
++                     "Degrees of wheel travel (lock to lock) that give the game's full steering; "
++                     "lower than wheel_rotation makes the steering quicker")
++    .range(90, 2520);
++REXCVAR_DEFINE_DOUBLE(wheel_deadzone, 0.0, "Input", "Steering deadzone, 0 to 0.5")
++    .range(0.0, 0.5);
++REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
++REXCVAR_DEFINE_STRING(wheel_pedals, "auto", "Input",
++                      "Pedals: auto/separate (throttle, brake and clutch each on an axis), "
++                      "combined (one axis, throttle one way and brake the other)")
++    .allowed({"auto", "separate", "combined"});
++REXCVAR_DEFINE_BOOL(wheel_invert_throttle, false, "Input",
++                    "Flip the throttle axis detected as released/pressed");
++REXCVAR_DEFINE_BOOL(wheel_invert_brake, false, "Input",
++                    "Flip the brake axis detected as released/pressed");
++REXCVAR_DEFINE_DOUBLE(wheel_throttle_curve, 1.0, "Input",
++                      "Throttle response, a gamma: 1 linear, above 1 softer at the start")
++    .range(0.2, 4.0);
++REXCVAR_DEFINE_DOUBLE(wheel_brake_curve, 1.0, "Input",
++                      "Brake response, a gamma: 1 linear, above 1 softer at the start")
++    .range(0.2, 4.0);
++REXCVAR_DEFINE_STRING(wheel_axes, "", "Input",
++                      "Axis overrides, e.g. steer=0,throttle=2,brake=5,clutch=1 (empty: detected "
++                      "from where each axis rests when the wheel is plugged in)");
++REXCVAR_DEFINE_STRING(wheel_buttons, "", "Input",
++                      "Button overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,"
++                      "rs=10,up=12,down=13,left=14,right=15 (SDL button numbers; -1 unmaps)");
++REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
++                    "Force feedback on the wheel (approximate: a centring spring and a vibration "
++                    "from the game's rumble motors)");
++REXCVAR_DEFINE_INT32(wheel_ffb_strength, 60, "Input", "Force feedback strength, 0 to 100 percent")
++    .range(0, 100);
++
++namespace rex::input::wheel {
++
++namespace {
++
++constexpr uint8_t kSubTypeWheel = 2;  // XINPUT_DEVSUBTYPE_WHEEL
++constexpr auto kScanEvery = std::chrono::milliseconds(500);
++constexpr auto kPumpEvery = std::chrono::milliseconds(2);
++
++bool ContainsCI(const char* name, std::string_view needle) {
++  if (!name) {
++    return false;
++  }
++  const std::string_view h(name);
++  return std::search(h.begin(), h.end(), needle.begin(), needle.end(), [](char a, char b) {
++           return std::tolower(static_cast<unsigned char>(a)) == b;
++         }) != h.end();
++}
++
++bool NameLooksLikeWheel(const char* name) {
++  static constexpr std::string_view kWords[] = {
++      "wheel", "racing", "driving force", "g25", "g27", "g29", "g920", "g923", "t300", "t150",
++      "t248", "t-gt", "tx racing", "fanatec", "moza", "simagic", "csl", "podium", "ts-xw"};
++  for (auto w : kWords) {
++    if (ContainsCI(name, w)) {
++      return true;
++    }
++  }
++  return false;
++}
++
++// "a=0,b=1" to name -> number.
++std::map<std::string, int> ParseKv(const std::string& s) {
++  std::map<std::string, int> out;
++  size_t pos = 0;
++  while (pos < s.size()) {
++    size_t end = s.find(',', pos);
++    if (end == std::string::npos) {
++      end = s.size();
++    }
++    const std::string item = s.substr(pos, end - pos);
++    const size_t eq = item.find('=');
++    if (eq != std::string::npos) {
++      std::string key = item.substr(0, eq);
++      key.erase(std::remove_if(key.begin(), key.end(), [](unsigned char c) { return isspace(c); }),
++                key.end());
++      for (auto& c : key) {
++        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++      }
++      out[key] = std::atoi(item.c_str() + eq + 1);
++    }
++    pos = end + 1;
++  }
++  return out;
++}
++
++float Norm(int16_t v) {
++  return v < 0 ? v / 32768.0f : v / 32767.0f;
++}
++
++const rex::ui::VirtualKey kVk[16] = {
++    rex::ui::VirtualKey::kXInputPadDpadUp,     rex::ui::VirtualKey::kXInputPadDpadDown,
++    rex::ui::VirtualKey::kXInputPadDpadLeft,   rex::ui::VirtualKey::kXInputPadDpadRight,
++    rex::ui::VirtualKey::kXInputPadStart,      rex::ui::VirtualKey::kXInputPadBack,
++    rex::ui::VirtualKey::kXInputPadLThumbPress, rex::ui::VirtualKey::kXInputPadRThumbPress,
++    rex::ui::VirtualKey::kXInputPadLShoulder,  rex::ui::VirtualKey::kXInputPadRShoulder,
++    rex::ui::VirtualKey::kNone,                rex::ui::VirtualKey::kNone,
++    rex::ui::VirtualKey::kXInputPadA,          rex::ui::VirtualKey::kXInputPadB,
++    rex::ui::VirtualKey::kXInputPadX,          rex::ui::VirtualKey::kXInputPadY};
++
++}  // namespace
++
++bool IsWheelDevice(SDL_JoystickID jid) {
++  const std::string mode = REXCVAR_GET(wheel_mode);
++  if (mode == "off" || SDL_GetJoystickVendorForID(jid) == 0x045E) {
++    return false;
++  }
++  return SDL_GetJoystickTypeForID(jid) == SDL_JOYSTICK_TYPE_WHEEL ||
++         NameLooksLikeWheel(SDL_GetJoystickNameForID(jid)) ||
++         (mode == "on" && !SDL_IsGamepad(jid));
++}
++
++struct WheelInputDriver::Wheel {
++  DeviceId id{};
++  SDL_JoystickID jid = 0;
++  SDL_Joystick* joy = nullptr;
++  SDL_Haptic* haptic = nullptr;
++  int spring_fx = -1;
++  int sine_fx = -1;
++  bool sine_running = false;
++  std::string name;
++  std::string guid;
++  int num_axes = 0, num_buttons = 0, num_hats = 0;
++  std::vector<int16_t> rest;  // where each axis sat when the wheel was opened
++  X_INPUT_STATE last_state{};
++  uint32_t packet = 0;
++  uint16_t keystroke_buttons = 0;
++};
++
++WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_order)
++    : InputDriver(window, window_z_order) {}
++
++WheelInputDriver::~WheelInputDriver() {
++  std::lock_guard lock(mutex_);
++  for (auto& w : wheels_) {
++    CloseLocked(*w);
++  }
++  wheels_.clear();
++}
++
++X_STATUS WheelInputDriver::Setup() {
++  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++  if (!SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC)) {
++    // Haptics may be missing on its own; a wheel without force feedback still drives.
++    if (!SDL_InitSubSystem(SDL_INIT_JOYSTICK)) {
++      REXLOG_WARN("Wheel: SDL joystick init failed: {}", SDL_GetError());
++      return X_STATUS_UNSUCCESSFUL;
++    }
++  }
++  sdl_ready_ = true;
++  REXLOG_INFO("Wheel: driver ready (wheel_mode={})", REXCVAR_GET(wheel_mode));
++  return X_STATUS_SUCCESS;
++}
++
++void WheelInputDriver::PumpLocked() {
++  const auto now = std::chrono::steady_clock::now();
++  if (now - last_pump_ < kPumpEvery) {
++    return;
++  }
++  last_pump_ = now;
++  SDL_UpdateJoysticks();
++}
++
++void WheelInputDriver::RescanLocked() {
++  const auto now = std::chrono::steady_clock::now();
++  if (last_scan_.time_since_epoch().count() != 0 && now - last_scan_ < kScanEvery) {
++    return;
++  }
++  last_scan_ = now;
++  const std::string mode = REXCVAR_GET(wheel_mode);
++  PumpLocked();
++  int count = 0;
++  SDL_JoystickID* ids = mode == "off" ? nullptr : SDL_GetJoysticks(&count);
++  std::vector<SDL_JoystickID> wanted;
++  for (int i = 0; ids && i < count; i++) {
++    const SDL_JoystickID jid = ids[i];
++    const bool take = IsWheelDevice(jid);
++    if (take) {
++      wanted.push_back(jid);
++    }
++  }
++  SDL_free(ids);
++  if (wheels_.empty() && wanted.empty() && !logged_none_) {
++    logged_none_ = true;
++    REXLOG_INFO("Wheel: no wheel among {} SDL joystick(s)", count);
++  }
++  for (size_t i = 0; i < wheels_.size();) {
++    if (std::find(wanted.begin(), wanted.end(), wheels_[i]->jid) == wanted.end()) {
++      REXLOG_INFO("Wheel: \"{}\" removed", wheels_[i]->name);
++      CloseLocked(*wheels_[i]);
++      wheels_.erase(wheels_.begin() + i);
++    } else {
++      i++;
++    }
++  }
++  for (SDL_JoystickID jid : wanted) {
++    const bool have = std::any_of(wheels_.begin(), wheels_.end(),
++                                  [&](const auto& w) { return w->jid == jid; });
++    if (!have) {
++      OpenLocked(jid);
++    }
++  }
++}
++
++void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
++  SDL_Joystick* joy = SDL_OpenJoystick(jid);
++  if (!joy) {
++    REXLOG_WARN("Wheel: could not open joystick {}: {}", jid, SDL_GetError());
++    return;
++  }
++  auto w = std::make_unique<Wheel>();
++  w->jid = jid;
++  w->joy = joy;
++  w->id = static_cast<DeviceId>(next_id_++ | (uint64_t(0x57) << 56));
++  const char* name = SDL_GetJoystickName(joy);
++  w->name = name ? name : "Wheel";
++  char guid[33] = {};
++  SDL_GUIDToString(SDL_GetJoystickGUID(joy), guid, sizeof(guid));
++  w->guid = guid;
++  w->num_axes = SDL_GetNumJoystickAxes(joy);
++  w->num_buttons = SDL_GetNumJoystickButtons(joy);
++  w->num_hats = SDL_GetNumJoystickHats(joy);
++  w->rest.assign(static_cast<size_t>(std::max(w->num_axes, 0)), 0);
++  for (int a = 0; a < w->num_axes; a++) {
++    Sint16 v = 0;
++    if (!SDL_GetJoystickAxisInitialState(joy, a, &v)) {
++      v = SDL_GetJoystickAxis(joy, a);
++    }
++    w->rest[a] = v;
++  }
++  REXLOG_INFO(
++      "Wheel: \"{}\" GUID({}) VID(0x{:04X}) PID(0x{:04X}) type({}) axes({}) buttons({}) hats({}); "
++      "presented as an Xbox 360 Wireless Racing Wheel",
++      w->name, w->guid, SDL_GetJoystickVendor(joy), SDL_GetJoystickProduct(joy),
++      static_cast<int>(SDL_GetJoystickType(joy)), w->num_axes, w->num_buttons, w->num_hats);
++  for (int a = 0; a < w->num_axes; a++) {
++    REXLOG_INFO("Wheel:   axis {} rests at {}", a, w->rest[a]);
++  }
++  SetupForceFeedbackLocked(*w);
++  wheels_.push_back(std::move(w));
++}
++
++void WheelInputDriver::CloseLocked(Wheel& w) {
++  if (w.haptic) {
++    SDL_StopHapticEffects(w.haptic);
++    SDL_CloseHaptic(w.haptic);
++    w.haptic = nullptr;
++  }
++  if (w.joy) {
++    SDL_CloseJoystick(w.joy);
++    w.joy = nullptr;
++  }
++}
++
++void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
++  if (!REXCVAR_GET(wheel_ffb) || !SDL_WasInit(SDL_INIT_HAPTIC) || !SDL_IsJoystickHaptic(w.joy)) {
++    REXLOG_INFO("Wheel: no force feedback for \"{}\" (disabled or not supported)", w.name);
++    return;
++  }
++  w.haptic = SDL_OpenHapticFromJoystick(w.joy);
++  if (!w.haptic) {
++    REXLOG_WARN("Wheel: haptic open failed: {}", SDL_GetError());
++    return;
++  }
++  const Uint32 f = SDL_GetHapticFeatures(w.haptic);
++  REXLOG_INFO("Wheel: haptic features 0x{:X} (spring={} sine={} constant={})", f,
++              !!(f & SDL_HAPTIC_SPRING), !!(f & SDL_HAPTIC_SINE), !!(f & SDL_HAPTIC_CONSTANT));
++  if (f & SDL_HAPTIC_GAIN) {
++    SDL_SetHapticGain(w.haptic, 100);
++  }
++  if (f & SDL_HAPTIC_AUTOCENTER) {
++    SDL_SetHapticAutocenter(w.haptic, 0);  // the spring below centres instead
++  }
++  if (f & SDL_HAPTIC_SPRING) {
++    SDL_HapticEffect e{};
++    e.type = SDL_HAPTIC_SPRING;
++    e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
++    e.condition.length = SDL_HAPTIC_INFINITY;
++    for (int i = 0; i < 1; i++) {
++      e.condition.right_sat[i] = e.condition.left_sat[i] = 0xFFFF;
++    }
++    w.spring_fx = SDL_CreateHapticEffect(w.haptic, &e);
++    if (w.spring_fx >= 0) {
++      if (!SDL_RunHapticEffect(w.haptic, w.spring_fx, SDL_HAPTIC_INFINITY)) {
++        REXLOG_WARN("Wheel: spring effect would not start: {}", SDL_GetError());
++      }
++      REXLOG_INFO("Wheel: spring effect uploaded (id {})", w.spring_fx);
++    } else {
++      REXLOG_WARN("Wheel: spring effect rejected: {}", SDL_GetError());
++    }
++  }
++  if (f & SDL_HAPTIC_SINE) {
++    SDL_HapticEffect e{};
++    e.type = SDL_HAPTIC_SINE;
++    e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
++    e.periodic.length = SDL_HAPTIC_INFINITY;
++    e.periodic.period = 40;
++    e.periodic.magnitude = 0;
++    w.sine_fx = SDL_CreateHapticEffect(w.haptic, &e);
++    if (w.sine_fx >= 0) {
++      REXLOG_INFO("Wheel: vibration effect uploaded (id {})", w.sine_fx);
++    } else {
++      REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
++    }
++  }
++}
++
++void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
++  if (!w.haptic) {
++    return;
++  }
++  const float strength = std::clamp(REXCVAR_GET(wheel_ffb_strength), 0, 100) / 100.0f;
++  motor = std::clamp(motor, 0.0f, 1.0f);
++  if (w.spring_fx >= 0) {
++    // Light centring always, firmer while the game drives the motors hard.
++    const float c = strength * (0.2f + 0.6f * motor);
++    SDL_HapticEffect e{};
++    e.type = SDL_HAPTIC_SPRING;
++    e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
++    e.condition.length = SDL_HAPTIC_INFINITY;
++    e.condition.right_sat[0] = e.condition.left_sat[0] = 0xFFFF;
++    e.condition.right_coeff[0] = e.condition.left_coeff[0] = static_cast<Sint16>(c * 32767.0f);
++    SDL_UpdateHapticEffect(w.haptic, w.spring_fx, &e);
++  }
++  if (w.sine_fx >= 0) {
++    const float amp = strength * motor * 0.6f;
++    SDL_HapticEffect e{};
++    e.type = SDL_HAPTIC_SINE;
++    e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
++    e.periodic.length = SDL_HAPTIC_INFINITY;
++    e.periodic.period = 40;
++    e.periodic.magnitude = static_cast<Sint16>(amp * 32767.0f);
++    SDL_UpdateHapticEffect(w.haptic, w.sine_fx, &e);
++    if (amp > 0.0f && !w.sine_running) {
++      w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
++    } else if (amp <= 0.0f && w.sine_running) {
++      SDL_StopHapticEffect(w.haptic, w.sine_fx);
++      w.sine_running = false;
++    }
++  }
++}
++
++WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
++  for (auto& w : wheels_) {
++    if (w->id == id) {
++      return w.get();
++    }
++  }
++  return nullptr;
++}
++
++void WheelInputDriver::ComputeStateLocked(Wheel& w, uint16_t* buttons_out, uint8_t* lt_out,
++                                          uint8_t* rt_out, int16_t* lx_out) {
++  const auto axes = ParseKv(REXCVAR_GET(wheel_axes));
++  auto axis_override = [&](const char* key) {
++    auto it = axes.find(key);
++    return it == axes.end() ? -1 : it->second;
++  };
++
++  // Detect: the steering axis rests near the middle, the pedals at an end.
++  int steer = axis_override("steer");
++  int pedal[3] = {axis_override("throttle"), axis_override("brake"), axis_override("clutch")};
++  if (steer < 0) {
++    for (int a = 0; a < w.num_axes; a++) {
++      if (std::abs(w.rest[a]) < 12000 && a != pedal[0] && a != pedal[1] && a != pedal[2]) {
++        steer = a;
++        break;
++      }
++    }
++    if (steer < 0 && w.num_axes > 0) {
++      steer = 0;
++    }
++  }
++  const bool combined = REXCVAR_GET(wheel_pedals) == "combined";
++  {
++    int next = 0;
++    for (int a = 0; a < w.num_axes; a++) {
++      if (a == steer || a == pedal[0] || a == pedal[1] || a == pedal[2]) {
++        continue;
++      }
++      if (std::abs(w.rest[a]) >= 12000 || (combined && next == 0 && pedal[0] < 0)) {
++        while (next < 3 && pedal[next] >= 0) {
++          next++;
++        }
++        if (next < 3) {
++          pedal[next++] = a;
++        }
++      }
++    }
++  }
++
++  auto pressed = [&](int a, bool invert) -> float {
++    if (a < 0 || a >= w.num_axes) {
++      return 0.0f;
++    }
++    const float v = Norm(SDL_GetJoystickAxis(w.joy, a));
++    const float r = Norm(w.rest[a]);
++    bool high_rest = r > 0.0f;
++    if (invert) {
++      high_rest = !high_rest;
++    }
++    const float rest = invert ? (high_rest ? 1.0f : -1.0f) : r;
++    const float p = high_rest ? (rest - v) / (rest + 1.0f) : (v - rest) / (1.0f - rest);
++    const float d = 0.02f;
++    return std::clamp((p - d) / (1.0f - d), 0.0f, 1.0f);
++  };
++
++  float thr, brk;
++  if (combined) {
++    const float v = pedal[0] >= 0 && pedal[0] < w.num_axes ? Norm(SDL_GetJoystickAxis(w.joy, pedal[0])) : 0.0f;
++    const float flip = REXCVAR_GET(wheel_invert_throttle) ? -1.0f : 1.0f;
++    thr = std::clamp(-v * flip, 0.0f, 1.0f);
++    brk = std::clamp(v * flip, 0.0f, 1.0f);
++  } else {
++    thr = pressed(pedal[0], REXCVAR_GET(wheel_invert_throttle));
++    brk = pressed(pedal[1], REXCVAR_GET(wheel_invert_brake));
++  }
++  thr = std::pow(thr, static_cast<float>(REXCVAR_GET(wheel_throttle_curve)));
++  brk = std::pow(brk, static_cast<float>(REXCVAR_GET(wheel_brake_curve)));
++
++  float s = 0.0f;
++  if (steer >= 0 && steer < w.num_axes) {
++    s = Norm(SDL_GetJoystickAxis(w.joy, steer));
++  }
++  const float gain = static_cast<float>(REXCVAR_GET(wheel_rotation)) /
++                     static_cast<float>(std::max(1, REXCVAR_GET(wheel_lock)));
++  s *= gain * (REXCVAR_GET(wheel_invert_steering) ? -1.0f : 1.0f);
++  const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
++  const float as = std::fabs(s);
++  s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
++
++  // Buttons: SDL numbers to the pad. Defaults suit the usual wheel layout (face buttons
++  // first, then the paddles, then Share and Options).
++  std::map<std::string, int> map = {{"a", 0},  {"b", 1},    {"x", 2},    {"y", 3},
++                                    {"rb", 4}, {"lb", 5},   {"back", 8}, {"start", 9},
++                                    {"rs", 10}, {"ls", 11}, {"up", -1},  {"down", -1},
++                                    {"left", -1}, {"right", -1}};
++  for (auto& [k, v] : ParseKv(REXCVAR_GET(wheel_buttons))) {
++    map[k] = v;
++  }
++  static const std::pair<const char*, uint16_t> kBits[] = {
++      {"a", 0x1000},  {"b", 0x2000},   {"x", 0x4000},    {"y", 0x8000},
++      {"lb", 0x0100}, {"rb", 0x0200},  {"back", 0x0020}, {"start", 0x0010},
++      {"ls", 0x0040}, {"rs", 0x0080},  {"up", 0x0001},   {"down", 0x0002},
++      {"left", 0x0004}, {"right", 0x0008}};
++  uint16_t buttons = 0;
++  for (auto& [key, bit] : kBits) {
++    const int n = map[key];
++    if (n >= 0 && n < w.num_buttons && SDL_GetJoystickButton(w.joy, n)) {
++      buttons |= bit;
++    }
++  }
++  if (w.num_hats > 0) {
++    const Uint8 h = SDL_GetJoystickHat(w.joy, 0);
++    if (h & SDL_HAT_UP) buttons |= 0x0001;
++    if (h & SDL_HAT_DOWN) buttons |= 0x0002;
++    if (h & SDL_HAT_LEFT) buttons |= 0x0004;
++    if (h & SDL_HAT_RIGHT) buttons |= 0x0008;
++  }
++
++  *buttons_out = buttons;
++  *lt_out = static_cast<uint8_t>(std::lround(brk * 255.0f));
++  *rt_out = static_cast<uint8_t>(std::lround(thr * 255.0f));
++  *lx_out = static_cast<int16_t>(std::lround(std::clamp(s, -1.0f, 1.0f) * 32767.0f));
++}
++
++void WheelInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
++  if (!sdl_ready_) {
++    return;
++  }
++  std::lock_guard lock(mutex_);
++  RescanLocked();
++  for (const auto& w : wheels_) {
++    DeviceInfo info;
++    info.id = w->id;
++    info.name = w->name;
++    info.guid = w->guid;
++    info.subtype = kSubTypeWheel;
++    info.synthetic = false;
++    out.push_back(info);
++  }
++}
++
++X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
++  std::lock_guard lock(mutex_);
++  Wheel* w = FindLocked(id);
++  if (!w) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  PumpLocked();
++  X_INPUT_STATE s{};
++  if (is_active()) {
++    uint16_t buttons;
++    uint8_t lt, rt;
++    int16_t lx;
++    ComputeStateLocked(*w, &buttons, &lt, &rt, &lx);
++    s.gamepad.buttons = buttons;
++    s.gamepad.left_trigger = lt;
++    s.gamepad.right_trigger = rt;
++    s.gamepad.thumb_lx = lx;
++  }
++  if (std::memcmp(&s.gamepad, &w->last_state.gamepad, sizeof(s.gamepad)) != 0) {
++    w->packet++;
++    w->last_state = s;
++  }
++  s.packet_number = w->packet;
++  *out_state = s;
++  return X_ERROR_SUCCESS;
++}
++
++X_RESULT WheelInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t, X_INPUT_CAPABILITIES* caps) {
++  if (!caps) {
++    return X_ERROR_BAD_ARGUMENTS;
++  }
++  std::lock_guard lock(mutex_);
++  if (!FindLocked(id)) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  if (!logged_caps_) {
++    logged_caps_ = true;
++    REXLOG_INFO("Wheel: the game asked for capabilities; answering SubType WHEEL");
++  }
++  // What the Xbox 360 Wireless Racing Wheel reports. FH1 takes a pad for a wheel when
++  // SubType is 2 and both the force feedback and wireless flags are set.
++  std::memset(caps, 0, sizeof(*caps));
++  caps->type = XINPUT_DEVTYPE_GAMEPAD;
++  caps->sub_type = kSubTypeWheel;
++  caps->flags = X_INPUT_CAPS_FFB_SUPPORTED | X_INPUT_CAPS_WIRELESS;
++  caps->gamepad.buttons = 0xF3FF;
++  caps->gamepad.left_trigger = 0xFF;
++  caps->gamepad.right_trigger = 0xFF;
++  caps->gamepad.thumb_lx = static_cast<int16_t>(0x7FFF);
++  caps->vibration.left_motor_speed = 0xFFFFu;
++  caps->vibration.right_motor_speed = 0xFFFFu;
++  return X_ERROR_SUCCESS;
++}
++
++X_RESULT WheelInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vib) {
++  std::lock_guard lock(mutex_);
++  Wheel* w = FindLocked(id);
++  if (!w) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  const float motor = std::max(vib->left_motor_speed, vib->right_motor_speed) / 65535.0f;
++  ApplyForceLocked(*w, motor);
++  return X_ERROR_SUCCESS;
++}
++
++X_RESULT WheelInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t, X_INPUT_KEYSTROKE* ks) {
++  std::lock_guard lock(mutex_);
++  Wheel* w = FindLocked(id);
++  if (!w || !ks) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  PumpLocked();
++  uint16_t cur = 0;
++  if (is_active()) {
++    uint8_t lt, rt;
++    int16_t lx;
++    ComputeStateLocked(*w, &cur, &lt, &rt, &lx);
++  }
++  const uint16_t changed = cur ^ w->keystroke_buttons;
++  if (!changed) {
++    return X_ERROR_EMPTY;
++  }
++  for (int pass = 0; pass < 2; pass++) {
++    for (int i = 0; i < 16; i++) {
++      const uint16_t bit = uint16_t(1u << i);
++      if (!(changed & bit) || kVk[i] == rex::ui::VirtualKey::kNone) {
++        continue;
++      }
++      const bool down = cur & bit;
++      if ((pass == 0) == down) {
++        continue;  // releases first
++      }
++      ks->virtual_key = uint16_t(kVk[i]);
++      ks->unicode = 0;
++      ks->user_index = 0;
++      ks->hid_code = 0;
++      ks->flags = down ? X_INPUT_KEYSTROKE_KEYDOWN : X_INPUT_KEYSTROKE_KEYUP;
++      w->keystroke_buttons = down ? (w->keystroke_buttons | bit) : (w->keystroke_buttons & ~bit);
++      return X_ERROR_SUCCESS;
++    }
++  }
++  w->keystroke_buttons = cur;  // only unmapped bits changed
++  return X_ERROR_EMPTY;
++}
++
++}  // namespace rex::input::wheel
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index 01484d9..2b64080 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -268,7 +268,7 @@ else()
+     endif()
+ endif()
+ set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+-set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
++set(SDL_HAPTIC ON CACHE BOOL "" FORCE)  # racing wheel force feedback
+ set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
+ set(SDL_POWER OFF CACHE BOOL "" FORCE)
+ set(SDL_FILESYSTEM OFF CACHE BOOL "" FORCE)

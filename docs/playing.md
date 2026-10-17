@@ -216,3 +216,46 @@ Results by activity:
 SDK patch 0040 (`docs/sdk_patches.md`) adds the stick ramp, the mouse speed model and
 modifier keys as bindings; without it `mnk_stick_ramp` does not exist and the mouse is
 about five times weaker.
+
+## Racing wheels (issue #4)
+
+Any wheel SDL sees as a joystick (Logitech, Thrustmaster, Fanatec, Moza, ...) is presented to the game as the
+**Xbox 360 Wireless Racing Wheel**: the game asks the controller for its capabilities, and a wheel answers
+SubType 2 with the force feedback and wireless flags, which is what FH1 checks for. Steering comes in on the
+left stick X over its full range, throttle and brake on the right and left trigger, the buttons on A B X Y,
+the bumpers, Back and Start, and a hat as the d-pad. Gamepads and keyboard and mouse work as before.
+
+Tested here only with a virtual wheel (Linux uinput, no hardware): SDL detected it as a wheel, the game asked for
+its capabilities, Start and A took it from the title screen into free roam, and throttle, steering and brake
+moved the car. **Real wheels are untested**: please report the model and what works.
+
+Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
+| `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
+| `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
+| `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
+| `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
+| `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
+| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
+| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps) |
+| `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+
+Axis detection reads where each axis rests when the wheel is plugged in: the one near the middle is the steering,
+those resting at an end are the pedals (throttle, brake, clutch in axis order; the clutch is not used by the
+game). **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
+fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
+and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
+8 Back, 9 Start, 10 and 11 stick presses. Wheel buttons differ between models, so check the numbers (for example
+with `jstest-gtk`) and override as needed. Wheels that SDL also maps as a gamepad are taken by the wheel driver
+instead; Xbox (Microsoft) wheels keep using the gamepad path.
+
+**Force feedback is approximate.** The 360 wheel got its force through the vibration motors, and nothing says
+how FH1 uses them (no hardware here to see). So the SDL driver does only this: a centring spring (20 percent
+of the strength, rising to 80 percent while the game drives the motors hard) and a 25 Hz vibration whose size
+follows the larger motor. There is no self-aligning torque from speed or grip, no road detail. Switch it off with
+`wheel_ffb = false` if it fights the steering, or lower the strength. The wheel's own autocentre is turned off
+while the game runs. The SDK's SDL is now built with haptics (Linux and Windows) for this. On Linux the
+wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most wheels).

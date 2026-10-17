@@ -183,6 +183,45 @@ add("input_backend", "Input backend", "Controls", "choice", "sdl",
 add("hid_mappings_file", "Controller mapping file", "Controls", "str", "gamecontrollerdb.txt",
     "SDL game controller mappings.", "Controller")
 
+# Racing wheels (patch 0074): an SDL joystick that is a wheel is presented as the Xbox 360 Wireless
+# Racing Wheel. SDL backend only.
+add("wheel_mode", "Racing wheel", "Controls", "choice", "auto",
+    "Auto: a controller SDL reports as a wheel (or named like one) is used as the 360 racing "
+    "wheel. On: every controller without a gamepad mapping counts as a wheel.", "Racing wheel",
+    choices=[("auto", "Auto"), ("on", "On"), ("off", "Off")], restart=True)
+add("wheel_rotation", "Wheel rotation (degrees)", "Controls", "int", 900,
+    "Lock to lock, as set in the wheel's own driver.", "Racing wheel", lo=90, hi=2520, step=10)
+add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
+    "Wheel travel, lock to lock, that gives the game's full steering. Below the rotation makes "
+    "the steering quicker.", "Racing wheel", lo=90, hi=2520, step=10)
+add("wheel_deadzone", "Steering deadzone", "Controls", "float", 0.0,
+    "Fraction of the wheel's range, 0 to 0.5.", "Racing wheel", lo=0, hi=0.5, step=0.01)
+add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
+add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
+    "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
+    choices=[("auto", "Separate (detected)"), ("separate", "Separate"), ("combined", "Combined")])
+add("wheel_invert_throttle", "Invert throttle", "Controls", "bool", False,
+    "Turn on when the throttle works backwards.", "Racing wheel")
+add("wheel_invert_brake", "Invert brake", "Controls", "bool", False,
+    "Turn on when the brake works backwards.", "Racing wheel")
+add("wheel_throttle_curve", "Throttle curve", "Controls", "float", 1.0,
+    "A gamma: 1 is linear, above 1 is softer at the start.", "Racing wheel",
+    lo=0.2, hi=4, step=0.1)
+add("wheel_brake_curve", "Brake curve", "Controls", "float", 1.0,
+    "A gamma: 1 is linear, above 1 is softer at the start.", "Racing wheel",
+    lo=0.2, hi=4, step=0.1)
+add("wheel_axes", "Axis numbers", "Controls", "str", "",
+    "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty detects them from where each "
+    "axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
+add("wheel_buttons", "Button numbers", "Controls", "str", "",
+    "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
+    "left=14,right=15. The d-pad hat is used as is.", "Racing wheel")
+add("wheel_ffb", "Force feedback", "Controls", "bool", True,
+    "Approximate: a centring spring and a vibration taken from the game's rumble motors. "
+    "Untested on real wheels.", "Racing wheel", restart=True)
+add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
+    "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+
 KEYBINDS = [
     ("a", "A", "Semicolon,Space"), ("b", "B", "Quote,Backspace"), ("x", "X", "L"),
     ("y", "Y", "P"), ("left_trigger", "Left trigger", "Q,I"),

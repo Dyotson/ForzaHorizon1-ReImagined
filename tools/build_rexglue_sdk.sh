@@ -79,12 +79,13 @@ rm -f "$patched_index"
 # Building the SDK needs X11/XCB and Wayland headers (its UI module and SDL3
 # require them). Hosts without them (immutable Fedora) can use Homebrew's:
 #   brew install libx11 libxcb libxext libxfixes libxcursor libxi libxrandr \
-#                libxscrnsaver libxrender libxtst xorgproto wayland
+#                libxscrnsaver libxrender libxtst xorgproto wayland systemd
+#   (systemd supplies libudev.h: without it SDL is built without udev and sees no joystick)
 cmake_args=()
 if [ -d "$BREW/opt/xorgproto/include" ]; then
     xp="$BREW/opt/xorgproto"
     inc=""
-    for pkg in xorgproto wayland libxcb libx11 libxau libxdmcp; do
+    for pkg in xorgproto wayland libxcb libx11 libxau libxdmcp systemd; do
         inc+=" -I$BREW/opt/$pkg/include"
     done
     export PKG_CONFIG_PATH="$BREW/lib/pkgconfig:$BREW/share/pkgconfig:$xp/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
