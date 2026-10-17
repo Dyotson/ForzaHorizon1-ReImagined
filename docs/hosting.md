@@ -113,6 +113,19 @@ party): their invites are dropped, and none are delivered to them. One player's 
 capped at 4 per 30 s. `--no-invites` (env `FORZA_INVITES=0`) drops every invite; a server
 older than this check needs it while v0.1.12 games are around.
 
+Friends (#92) are kept per player (XUID) in `friends.json` in the data folder: each
+player's gamertag, when it was last seen, a SHA-256 of its friends key, and its friends,
+requests both ways and blocks (written at most every 2 s after a change and on shutdown;
+keep the data folder). The first game that uses an XUID's friends binds them to its friends
+key (`friends_key` in the player's `live_identity.txt`); another game claiming that XUID
+gets no list. A player with no friends, requests or blocks is forgotten after 180 days.
+Limits: 200 friends, 50 requests waiting each way, 200 blocks per player; 10 requests a
+minute (bursts of 5), 60 other changes a minute, 30 searches a minute; searches answer at
+most 20 players. A request to a player who blocked the sender looks sent but is dropped,
+and so are invites from a blocked player. The status page shows how many players,
+friendships and open requests there are. Games up to v0.1.14 still see everyone online as a
+friend.
+
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.
 

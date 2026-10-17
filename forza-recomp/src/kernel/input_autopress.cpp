@@ -54,6 +54,7 @@ using forza::GuestPtr;
 namespace forza {
 uint16_t WorldChallengePad(uint16_t buttons);  // hooks/world_challenge.cpp
 uint16_t LiveInvitePad(uint16_t buttons, int left_y, bool& block_all);  // kernel/live_invites.cpp
+uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);  // live_friends.cpp
 }
 
 namespace {
@@ -355,11 +356,16 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
-  // The invite picker and prompt (kernel/live_invites.cpp) and head-to-head challenges
+  // The invite picker and prompt (kernel/live_invites.cpp), the friends screen
+  // (kernel/live_friends.cpp) and head-to-head challenges
   // (hooks/world_challenge.cpp) watch player 1's pad and hide what they use from the game.
   if (user == 0) {
     bool block_all = false;
     state.buttons &= uint16_t(~forza::LiveInvitePad(state.buttons, state.sticks[1], block_all));
+    if (!block_all) {  // the friends screen (kernel/live_friends.cpp)
+      state.buttons &= uint16_t(
+          ~forza::LiveFriendsPad(state.buttons, state.sticks[0], state.sticks[1], block_all));
+    }
     if (block_all) state = PadState{};
     state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
   }

@@ -61,7 +61,7 @@ class HudDialog final : public rex::ui::ImGuiDialog {
     HudKeys keys = keys_;
     keys_.typed.clear();
     keys_.backspace = 0;
-    keys_.enter = keys_.escape = keys_.up = keys_.down = false;
+    keys_.enter = keys_.escape = keys_.up = keys_.down = keys_.left = keys_.right = false;
     return keys;
   }
 
@@ -138,6 +138,8 @@ class HudDialog final : public rex::ui::ImGuiDialog {
     keys_.escape |= ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     keys_.up |= ImGui::IsKeyPressed(ImGuiKey_UpArrow, true);
     keys_.down |= ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    keys_.left |= ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true);
+    keys_.right |= ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
     for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_GamepadStart; ++k) {  // keyboard keys
       if (ImGui::IsKeyDown(ImGuiKey(k))) {
         ++keys_.key_frames;

@@ -222,6 +222,7 @@ enum LiveType : uint8_t {
   kChallenge,    // client <-> server: head-to-head challenges (hooks/world_challenge.cpp)
   kStats,        // client -> server: Xbox LIVE stats written or read (live_xmsg.cpp)
   kStatsRows,    // server -> client: the rows of a read
+  kFriend,       // client <-> server: the friends list (live_friends.cpp, server/forza_friends.py)
 };
 // XNADDR.ina of a player on a Forza Live server: 0xF0000000 | the id the server gave
 // it. 240.0.0.0/8 is reserved, so it never collides with a LAN address.
@@ -927,8 +928,13 @@ class VNet {
     body.insert(body.end(), name.begin(), name.end());
     // Features (older games send none): 0x01, invites go only to players the player picked
     // and an invite asks before joining (live_invites.cpp, #90). The server delivers invites
-    // only between games that have it.
-    body.push_back(0x01);
+    // only between games that have it. 0x02, the game keeps its friends list on the server
+    // (live_friends.cpp, #92), followed by our friends key (u8 length + bytes), which the
+    // server binds our XUID's friends to.
+    body.push_back(0x03);
+    const std::string& key = forza::IdentityFriendsKey();
+    body.push_back(uint8_t(key.size()));
+    body.insert(body.end(), key.begin(), key.end());
     SendLive(server_, kHello, body);
   }
 
@@ -994,6 +1000,7 @@ class VNet {
       if (resolved && now >= next_match) {
         next_match = now + std::chrono::seconds(1);
         forza::LiveMatchTick();
+        forza::LiveFriendsTick();
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -1118,6 +1125,9 @@ class VNet {
         return;
       case kStatsRows:
         if (from_server) forza::LiveStatsRows(p, n);
+        return;
+      case kFriend:
+        if (from_server) forza::LiveFriendMessage(p, n);
         return;
       case kPeers: {
         // Part header: total u16, first index u16, count u16; then the entries.
@@ -1337,6 +1347,10 @@ void LiveSendChallenge(const std::vector<uint8_t>& body) {
 
 void LiveSendStats(const std::vector<uint8_t>& body) {
   if (NetOn()) VNet::Get().SendMatch(kStats, body);
+}
+
+bool LiveSendFriend(const std::vector<uint8_t>& body) {
+  return NetOn() && VNet::Get().SendMatch(kFriend, body);
 }
 }  // namespace forza
 

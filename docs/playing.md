@@ -49,7 +49,22 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   or "Send invites" sends, B or Escape cancels. Only the players picked get an invite. An
   invited player sees "X invited you to their game": hold Back + A (keyboard: Tab + Space,
   or Enter) to join, Back + B or Escape to ignore (that player's invites stay hidden for 2
-  minutes), or let it go away after 20 s. A player in free roam restarts the game to join,
+  minutes), or let it go away after 20 s. The picker lists your friends online first, then
+  everyone else online.
+  **Friends (#92):** the server keeps your friends list; the game's friends list (who is
+  online, what they are doing, joining a friend's game) shows only your friends. Press `F8`
+  (`live_friends_key` in `forza.toml`) or hold the left stick press (`F` with `mnk_mode`)
+  to open the friends screen over the game; B or Escape closes it. Its tabs (LB/RB or
+  Left/Right): **Friends**, **Requests** (asks you, or waiting for an answer), **Add
+  friend** and **Blocked**. On Add friend, type part of a gamertag (keyboard) or press Y
+  for the on-screen keyboard (D-pad moves, A types, X deletes, Y space, B done); it lists
+  the matching players online and those the server knows. A or Enter on a player offers
+  what you can do: send a friend request, accept, decline, take a request back, remove,
+  block, unblock. A request or an accepted one shows a short notice. A blocked player can't
+  invite you or send you requests (they are dropped without telling them). Your friends
+  are tied to `friends_key` in `live_identity.txt`: keep that file (it also holds your
+  XUID) to keep your friends on another computer. With a server older than this, everyone
+  online counts as a friend, as before. A player in free roam restarts the game to join,
   as on the console, which takes a few seconds. `live_accept_invites = false` ignores all
   invites. Games up to v0.1.12 invited everyone online and joined every invite at once
   (#90). The party leader then picks Create Custom Game, sets the game

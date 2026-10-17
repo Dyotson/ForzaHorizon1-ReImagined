@@ -9,11 +9,12 @@
 //   invite picker, a list over the game (platform/hud_overlay.h). The player searches
 //   gamertags (typing on the keyboard), picks up to kMaxPicks players and sends; only those
 //   get an invite. Recipients the game names itself (XInviteSend, XamShowGameInviteUI) are
-//   not invited on their own: the game's friends list is every player in the room. The
-//   picker lists sections: a friends list (none yet; FriendSection is where one plugs in,
-//   above the others) and the players online in our room on the server (LiveRoster, the
-//   server's list of up to 100). The server also drops a player's invites beyond 4 per 30 s
-//   (server/forza_live_server.py, INVITE_LIMIT).
+//   not invited on their own. The picker lists sections: our friends online in the room
+//   (the server's friends list, live_friends.cpp, #92), then everyone else online in our
+//   room (LiveRoster, the server's list of up to 100; players we blocked are left out).
+//   With an older server, which keeps no friends list, there is only the second section.
+//   The server also drops a player's invites beyond 4 per 30 s and those from a player the
+//   invitee blocked (server/forza_live_server.py, INVITE_LIMIT).
 // - Receiving: an invite shows a prompt for kPromptMs; holding Back + A (keyboard: the keys
 //   bound to Back and A, Tab + Space by default) or pressing Enter joins, Back + B or Escape
 //   ignores (and hides that player's invites for kMuteMs), no answer ignores. Only a "join"
@@ -88,14 +89,28 @@ struct Section {
   std::vector<Candidate> players;
 };
 
-// Where a friends list (players the user added, a planned feature) plugs in: the picker's
-// first section. Empty until there is one.
-Section FriendSection() { return {"Friends", {}}; }
-
-Section OnlineSection() {
-  Section s{"Online", {}};
+// The picker's first section: our friends (the server's friends list) online in our room.
+// Empty with an older server (no list) or without friends online.
+Section FriendSection() {
+  Section s{"Friends", {}};
+  if (!LiveFriendsActive()) return s;
   for (const auto& f : LiveRoster()) {
-    if (!f.xuid || f.gamertag.empty()) continue;
+    if (!f.xuid || f.gamertag.empty() || !LiveIsFriend(f.xuid)) continue;
+    s.players.push_back({f.xuid, f.gamertag, f.status});
+  }
+  std::sort(s.players.begin(), s.players.end(), [](const Candidate& a, const Candidate& b) {
+    return Lower(a.gamertag) < Lower(b.gamertag);
+  });
+  return s;
+}
+
+// Everyone else online in our room, but players we blocked.
+Section OnlineSection() {
+  const bool friends = LiveFriendsActive();
+  Section s{friends ? "Everyone online" : "Online", {}};
+  for (const auto& f : LiveRoster()) {
+    if (!f.xuid || f.gamertag.empty() || LiveIsBlocked(f.xuid)) continue;
+    if (friends && LiveIsFriend(f.xuid)) continue;
     s.players.push_back({f.xuid, f.gamertag, f.status});
   }
   std::sort(s.players.begin(), s.players.end(), [](const Candidate& a, const Candidate& b) {
@@ -361,6 +376,10 @@ void LiveOpenInvitePicker(const uint8_t* session_info, const char* from) {
   std::vector<Section> found;
   if (Section f = FriendSection(); !f.players.empty()) found.push_back(std::move(f));
   found.push_back(OnlineSection());
+  if (LiveFriendsScreenOpen()) {
+    REXLOG_INFO("FORZA_LIVE: {}: the friends screen is open", from);
+    return;
+  }
   std::lock_guard<std::mutex> lock(mutex);
   if (picker) return;
   if (prompt) {
@@ -398,9 +417,12 @@ void LiveInviteReceived(const LiveInvite& invite) {
     REXLOG_INFO("FORZA_LIVE: {} invited you (ignored: you ignored their last invite)", invite.inviter);
     return;
   }
-  if (picker || (prompt && prompt_invite.inviter_xuid != invite.inviter_xuid)) {
+  if (picker || LiveFriendsScreenOpen() ||
+      (prompt && prompt_invite.inviter_xuid != invite.inviter_xuid)) {
     REXLOG_INFO("FORZA_LIVE: {} invited you (ignored: {})", invite.inviter,
-                picker ? "the invite picker is open" : "another invite is waiting");
+                picker                   ? "the invite picker is open"
+                : LiveFriendsScreenOpen() ? "the friends screen is open"
+                                          : "another invite is waiting");
     return;
   }
   REXLOG_INFO("FORZA_LIVE: {} invited you; asking", invite.inviter);
@@ -414,6 +436,11 @@ void LiveInviteReceived(const LiveInvite& invite) {
     HudTakeKeys();
   }
   ShowPrompt(now, true);
+}
+
+bool LiveInviteBusy() {
+  std::lock_guard<std::mutex> lock(mutex);
+  return picker || prompt;
 }
 
 bool LiveTakeInvite(LiveInvite& out) {

@@ -756,6 +756,37 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
     driven here: typing a search on a real keyboard (the test games run headless with
     scripted pad input), and the Y "INVITE Xbox LIVE Party" button, which calls none of
     these.
+- 2026-10-16: **Friends (#92, step 1)**: everyone online counted as a friend. The server
+  now keeps a friends list per player (`server/forza_friends.py`, `friends.json`), and the
+  game shows only those friends (`src/kernel/live_friends.cpp`):
+  - Protocol: HELLO features byte `0x02` (`FEATURE_FRIENDS`), then the friends key (u8
+    length + 16 bytes; old servers ignore it). New UDP kind 22 `FRIEND` (op byte): LIST
+    (with the version of the list the game has; the server answers SAME or the list in
+    parts: XUID, relation, a friend's presence state and status, gamertag), SEARCH,
+    REQUEST (by XUID or gamertag), ACCEPT, DECLINE (also takes back our request), REMOVE,
+    BLOCK, UNBLOCK; the server sends NOTICE (a request from, accepted by, or a text). The
+    game asks for the list every 10 s (3 s while the screen shows); the server sends it
+    after every change and when a friend signs in or out. The roster (PEERS) still lists
+    the whole room: matchmaking, QoS and stats need it, and old games keep counting it as
+    their friends. A key that doesn't match the XUID's first one gets no list.
+  - Game: `XFriendsCreateEnumerator` lists the friends (in our room with the roster's
+    presence and joinable session, online elsewhere without one, offline last);
+    `XamUserAreUsersFriends` answers from it. The invite picker's `FriendSection` is the
+    friends online in the room, then "Everyone online" without friends and blocked players.
+    The friends screen (F8 / hold LS; `live_osk.h` has the pad reader and the on-screen
+    keyboard) manages requests; notices show when nothing else is on screen. Before a server
+    answers (an older server) everything stays as it was.
+  - Tests: `server/test_forza_friends.py` (16: request by gamertag, accept, request both
+    ways, decline and take back, remove, block hides requests and drops invites, unknown
+    players, rate limit, caps, 151 entries in parts and SAME, online first, sign-in push,
+    key mismatch, old games, search, the file). Three games (Linux TU4, copies of one save,
+    local server UDP 21590): A opened the screen with LS held, went to Add friend (DriverB,
+    DriverC listed) and sent B a request; B got "DriverA sent you a friend request", held
+    LS (the screen opened on Requests) and accepted; both games' friends lists changed to
+    each other ("the game's friends list: 1 of 1: DriverB" / "DriverA"), C's stayed empty
+    with A and B online. A's Invite Friends picker listed "Friends: DriverB" then "Everyone
+    online: DriverC". C typed "d" with the on-screen keyboard (DriverA, DriverB found), then
+    blocked A; A's invite to C was dropped by the server ("dropped (blocked)").
 
 ## Debugging recipes
 

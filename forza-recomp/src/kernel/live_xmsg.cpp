@@ -6,11 +6,12 @@
 //
 // - XStringVerify (0xFC/0x5000C): the profanity check of user text. Every string is
 //   accepted (the SDK failed it, and the game retried every frame).
-// - XFriendsCreateEnumerator (0xFC/0x58020): the friends list. Every other player in our
-//   room on the server is a friend, with the presence it reported (online, playing,
-//   joinable session), so lobbies show who is online and their joinable games. Invites
-//   never go to this list: the player picks the invitees (live_invites.cpp, #90). The
-//   SDK failed it.
+// - XFriendsCreateEnumerator (0xFC/0x58020): the friends list: our friends on the server
+//   (live_friends.cpp, #92), those in our room with the presence they reported (online,
+//   playing, joinable session), so lobbies show which friends are online and their
+//   joinable games; friends elsewhere or offline after them. With an older server (no
+//   friends list) every other player in our room is a friend, as before. Invites never go
+//   to this list: the player picks the invitees (live_invites.cpp, #90). The SDK failed it.
 // - XSessionCreate (0xFB/0xB0010) for a session we host: the SDK leaves XSESSION_INFO
 //   empty. We fill it (an online peer session id, our XNADDR, a random key) and, for a
 //   presence session, publish it, so friends see it as joinable. Delete and modify
@@ -184,7 +185,7 @@ uint32_t XFriendsCreateEnumerator(uint8_t* base, uint32_t args) {
 
   auto e = make_object<XStaticUntypedEnumerator>(REX_KERNEL_STATE(), count, kFriendSize);
   if (XFAILED(e->Initialize(0xFFFFFFFF, kAppXLiveBase, 0x58021, 0x58022, 0))) return kInvalidArg;
-  const auto roster = forza::LiveRoster();
+  const auto roster = forza::LiveFriendsList();
   const uint64_t now = FileTimeNow();
   for (size_t i = first; i < roster.size() && e->item_count() < count; ++i) {
     const forza::LiveFriend& f = roster[i];
@@ -200,8 +201,18 @@ uint32_t XFriendsCreateEnumerator(uint8_t* base, uint32_t args) {
     for (size_t c = 0; c < chars; ++c) item[0x45 + 2 * c] = uint8_t(f.status[c]);  // UTF-16BE
     Store32(item + 0x40, uint32_t(chars ? chars + 1 : 0));
   }
-  if (Trace()) {
-    REXLOG_INFO("FORZA_LIVE: friends list: {} of {} players", e->item_count(), roster.size());
+  // Logged when it changes (the game asks every few seconds in its lobbies).
+  std::string names;
+  for (const auto& f : roster) {
+    names += (names.empty() ? "" : ", ") + f.gamertag + (f.state ? "" : " (offline)");
+  }
+  static std::mutex logged_mutex;
+  static std::string logged = "-";
+  std::lock_guard<std::mutex> lock(logged_mutex);
+  if (Trace() || names != logged) {
+    REXLOG_INFO("FORZA_LIVE: the game's friends list: {} of {}: {}", e->item_count(),
+                roster.size(), names.empty() ? "(none)" : names);
+    logged = names;
   }
   Store32(GuestPtr(base, handle_out), e->handle());
   return kSuccess;
@@ -1409,7 +1420,7 @@ void LiveRosterChanged(bool membership_changed) {
 
 // DWORD XamUserAreUsersFriends(DWORD user_index, XUID* xuids, DWORD count,
 //                              BOOL* are_friends, XOVERLAPPED* overlapped)
-// Players in our room are friends.
+// Our friends on the server (with an older server: the players in our room).
 extern "C" REX_FUNC(__imp__XamUserAreUsersFriends) {
   static GuestFunc sdk = Sdk("__imp__XamUserAreUsersFriends");
   if (!forza::LiveSignin()) {
@@ -1418,13 +1429,10 @@ extern "C" REX_FUNC(__imp__XamUserAreUsersFriends) {
   }
   const uint32_t xuids = ctx.r4.u32, count = ctx.r5.u32, result = ctx.r6.u32;
   const uint32_t overlapped = ctx.r7.u32;
-  const auto roster = forza::LiveRoster();
   bool all = count > 0;
   for (uint32_t i = 0; i < count && xuids; ++i) {
     const uint64_t xuid = uint64_t(Load32(GuestPtr(base, xuids + 8 * i))) << 32 | Load32(GuestPtr(base, xuids + 8 * i + 4));
-    bool found = false;
-    for (const auto& f : roster) found = found || f.xuid == xuid;
-    all = all && found;
+    all = all && forza::LiveIsFriend(xuid);
   }
   if (result) Store32(GuestPtr(base, result), all ? 1 : 0);
   if (overlapped) {

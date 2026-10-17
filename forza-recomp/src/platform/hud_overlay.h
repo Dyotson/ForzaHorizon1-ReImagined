@@ -7,9 +7,10 @@
 // registered. It is drawn over the presented frame, so tools/live_shot.sh screenshots
 // (the game's output image) don't show it; every text is also logged ("HUD: ...").
 //
-// The invite prompts (src/kernel/live_invites.cpp) also read the keyboard through it: while
-// a prompt wants keys (HudWantKeys), the window's text input is on and each drawn frame
-// collects the typed text and the keys below for HudTakeKeys. A body line starting with
+// The invite prompts (src/kernel/live_invites.cpp) and the friends screen
+// (src/kernel/live_friends.cpp) also read the keyboard through it: while one wants keys
+// (HudWantKeys), the window's text input is on and each drawn frame collects the typed
+// text and the keys below for HudTakeKeys. A body line starting with
 // kHudHighlight is drawn highlighted (the picker's cursor).
 
 #pragma once
@@ -41,7 +42,7 @@ void HudClear();
 struct HudKeys {
   std::string typed;
   int backspace = 0;
-  bool enter = false, escape = false, up = false, down = false;
+  bool enter = false, escape = false, up = false, down = false, left = false, right = false;
   unsigned key_frames = 0;  // a counter: compare two readings
 };
 void HudWantKeys(bool on);  // any thread

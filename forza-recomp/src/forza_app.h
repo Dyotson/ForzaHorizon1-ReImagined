@@ -5,6 +5,7 @@
 #pragma once
 
 #include "debug/frame_stats.h"
+#include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
 #include "platform/vulkan_hooks.h"
@@ -73,6 +74,7 @@ class ForzaApp : public rex::ReXApp {
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
+    forza::InstallFriendsKey();
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }

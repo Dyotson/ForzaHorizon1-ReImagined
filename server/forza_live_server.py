@@ -5,8 +5,9 @@ Adapted from RecompiledHaloReach's Reach Live server (the rendezvous, relay, pre
 session core is game-agnostic). Players point the game at a server with live_server =
 "host[:port]" (or FORZA_SERVER=host[:port]); tools/play.sh starts one on this machine when
 none is set. Everyone connected to the same server (and room) is on one virtual network
-and appears as a LIVE friend, and game traffic flows between them: directly when UDP hole
-punching works, through this server when it doesn't. Nothing here talks to Microsoft or
+and sees the others online (games up to v0.1.14 count them all as LIVE friends; newer ones
+keep a friends list here, forza_friends.py), and game traffic flows between them: directly
+when UDP hole punching works, through this server when it doesn't. Nothing here talks to Microsoft or
 Turn 10 services.
 
     python3 server/forza_live_server.py [--port 21200] [--http-port 21201]
@@ -27,6 +28,7 @@ import urllib.parse
 
 import forza_challenge as challenge
 import forza_discord_status as discord_status
+import forza_friends as friends
 import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
@@ -45,6 +47,11 @@ INVITE_LIMIT, INVITE_WINDOW = 4, 30.0
 # the game sends invites only to players its player picked and asks before joining one
 # (#90). Invites from or to a game without it are dropped.
 FEATURE_INVITE_PICK = 0x01
+# FEATURE_FRIENDS: the game shows the server's friends list (FRIEND messages,
+# forza_friends.py, #92) instead of everyone in the room; its friends key follows the
+# features byte (u8 length + bytes).
+FEATURE_FRIENDS = friends.FEATURE
+FRIEND = friends.KIND  # 22
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
 STATS, STATS_ROWS = 20, 21  # Xbox LIVE stats written and read, the rows (forza_stats.py)
@@ -119,6 +126,7 @@ class Peer:
         self.extra = b""  # slots and QoS data of the hosted session, opaque to the server
         self.invite_times = []  # when its last invites went out (INVITE_LIMIT per INVITE_WINDOW)
         self.features = 0  # HELLO's features byte (FEATURE_*)
+        self.friends_ok = False  # FEATURE_FRIENDS and its friends key owns the XUID's friends
         # Matchmaking: the session it hosts and the one it is in (see ForzaLive.on_match)
         self.match = None  # (playlist key, record, since)
         self.standby = None
@@ -159,6 +167,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.state_dirty = False
         self.state_saved = 0.0  # monotonic time of the last write
         self.restored = set()  # ids of players loaded from the state file, not heard from yet
+        self.friends = friends.Friends(self)
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
@@ -219,6 +228,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.challenges.on_message(peer.id, body)
             elif kind == STATS and body:
                 self.on_stats(peer, body)
+            elif kind == FRIEND and body:
+                self.friends.on_message(peer, body)
         except Exception as e:  # a malformed datagram must never end the server
             log.debug("bad packet from %s: %r", addr, e)
 
@@ -232,6 +243,9 @@ class ForzaLive(asyncio.DatagramProtocol):
         name = body[pos + 1:pos + 1 + name_len].decode()[:MAX_NAME]
         pos += 1 + name_len
         features = body[pos] if pos < len(body) else 0
+        friend_key = b""  # after the features byte: u8 length + the friends key
+        if pos + 1 < len(body):
+            friend_key = body[pos + 2:pos + 2 + body[pos + 1]]
         if version != VERSION:
             self.error(addr, 2, f"server speaks protocol {VERSION}, client {version}")
             return
@@ -241,6 +255,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             peer = None
         if peer is None:
             peer = self.rebind_restored(addr, token, xuid)
+        new = peer is None
         if peer is None:
             proxied = limits.is_trusted_proxy(addr[0])
             key = self.limit_key(addr)
@@ -272,6 +287,12 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.state_dirty = True
         peer.name, peer.xuid, peer.room, peer.local = name, xuid, room, (local_ip, local_port)
         peer.features = features
+        was_ok = peer.friends_ok
+        self.friends.hello(peer, friend_key)
+        if peer.friends_ok != was_ok:
+            self.state_dirty = True
+        if new:
+            self.friends.came_or_went(peer.xuid)
         # Behind a proxy the observed address is the proxy's local socket, no public address
         # of the player: report none (0.0.0.0:0), as in forward_header.
         public = (0, 0) if peer.proxied else (ip_to_u32(addr[0]), addr[1])
@@ -370,6 +391,10 @@ class ForzaLive(asyncio.DatagramProtocol):
                 if len(src.invite_times) >= INVITE_LIMIT:
                     log.info("invite #%d %r -> #%d %r dropped (over %d invites in %d s)", src.id,
                              src.name, peer.id, peer.name, INVITE_LIMIT, INVITE_WINDOW)
+                    return
+                if self.friends.store.blocks(peer.xuid, src.xuid):
+                    log.info("invite #%d %r -> #%d %r dropped (blocked)", src.id, src.name,
+                             peer.id, peer.name)
                     return
                 src.invite_times.append(now)
                 log.info("invite #%d %r -> #%d %r", src.id, src.name, peer.id, peer.name)
@@ -635,6 +660,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 "name": p.name, "room": p.room, "local": list(p.local), "proxied": p.proxied,
                 "since": p.since, "state": p.state, "session": p.session.hex(),
                 "status": p.status, "extra": p.extra.hex(), "features": p.features,
+                "friends_ok": p.friends_ok,
                 "match": sess(p.match), "standby": sess(p.standby),
                 "standby_host": p.standby_host})
         return {"version": STATE_VERSION, "saved_at": now_w, "epoch": self.epoch,
@@ -694,6 +720,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 peer.state, peer.session = d["state"], bytes.fromhex(d["session"])
                 peer.status, peer.extra = d["status"], bytes.fromhex(d["extra"])
                 peer.features = d["features"]
+                peer.friends_ok = d.get("friends_ok", False)
                 peer.match, peer.standby = sess(d["match"]), sess(d["standby"])
                 peer.standby_host = d["standby_host"]
                 self.peers[peer.id] = peer
@@ -748,6 +775,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             else:
                 self.per_ip.pop(peer.addr[0], None)
         log.info("leave #%d %r (%s)", peer.id, peer.name, why)
+        self.friends.came_or_went(peer.xuid)
 
     def expire(self):
         now = time.monotonic()
@@ -778,7 +806,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 "via_proxy": sum(1 for p in self.peers.values() if p.proxied),
                 "relayed_packets": self.relayed_packets,
                 "dropped_packets": self.dropped_packets, "rooms": rooms, "worlds": worlds,
-                **self.challenges.status()}
+                **self.challenges.status(), **self.friends.status()}
 
 
 # How long a kept-alive connection may sit idle between requests. The game opens one
@@ -933,6 +961,8 @@ async def main():
         lambda: ForzaLive(args.motd, args.max_peers), local_addr=(args.host, args.port))
     server.state_path = os.path.join(args.data_dir, STATE_FILE)
     server.load_state()
+    server.friends.store.path = os.path.join(args.data_dir, friends.FILE)
+    server.friends.store.load()
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
     if args.http_port:
         server.http_port = args.http_port
@@ -953,11 +983,14 @@ async def main():
             if ticks % 5 == 0:
                 server.expire()
             server.maybe_save_state()
+            server.friends.store.maybe_save()
             if ticks % 30 == 0 and discord_status.enabled():
                 # urllib blocks: off the event loop, and never fatal (it catches everything)
                 await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
     finally:
         server.save_state()  # a restart now keeps the players (#93)
+        if server.friends.store.dirty:
+            server.friends.store.save()
         if discord_status.enabled():
             discord_status.offline(args.data_dir)
         transport.close()

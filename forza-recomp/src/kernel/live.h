@@ -105,4 +105,47 @@ int OnlineGameIsHost();
 // game its friends' presence changed, or that friends came or went.
 void LiveRosterChanged(bool membership_changed);
 
+// --- Friends (live_friends.cpp, server/forza_friends.py, #92) ---
+// The server keeps each player's friends; a game that has its list shows only those
+// players as friends. Until the server sent one (an older server), every player in the
+// room counts as a friend, as before.
+
+// A player on our friends list, a request either way, or a player we blocked.
+enum class LiveRelationKind : uint8_t { kFriend = 1, kAsksUs = 2, kWeAsked = 3, kBlocked = 4 };
+struct LiveRelation {
+  uint64_t xuid = 0;
+  std::string gamertag;
+  LiveRelationKind kind = LiveRelationKind::kFriend;
+  uint32_t state = 0;  // a friend's X_ONLINE_FRIENDSTATE flags (0: offline)
+  std::string status;  // a friend's presence line
+};
+
+// The server answered with a friends list (else: everyone in the room is a friend).
+bool LiveFriendsActive();
+std::vector<LiveRelation> LiveRelations();
+
+// The game's friends list: with the server's list, our friends (those in our room with the
+// presence of the roster, the others online or offline without a joinable session), online
+// first; else the room's roster.
+std::vector<LiveFriend> LiveFriendsList();
+bool LiveIsFriend(uint64_t xuid);
+bool LiveIsBlocked(uint64_t xuid);
+
+// A FRIEND message to the server (false when it was not sent), and the server's (network
+// thread). LiveFriendsTick: about every second from the network thread (asks for the list).
+bool LiveSendFriend(const std::vector<uint8_t>& body);
+void LiveFriendMessage(const uint8_t* body, size_t size);
+void LiveFriendsTick();
+
+// The friends screen over the game: F8 (live_friends_key) or holding the left stick press.
+// Player 1's pad every XamInputGetState (after LiveInvitePad): returns the buttons to hide
+// from the game; `block_all`: the game gets no input.
+uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);
+bool LiveFriendsScreenOpen();
+// ForzaApp::OnCreateDialogs: registers the keyboard binding.
+void InstallFriendsKey();
+
+// The invite picker or an invite prompt shows (live_invites.cpp).
+bool LiveInviteBusy();
+
 }  // namespace forza
