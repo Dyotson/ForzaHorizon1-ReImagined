@@ -224,9 +224,10 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
         if cancelled():
             raise Cancelled()
         progress(done[0], total, entry.path)
-        real_extract(pkg, entry, outdir)
+        bad = real_extract(pkg, entry, outdir)
         if not entry.is_dir:
             done[0] += entry.size
+        return bad
 
     def copy(src, dst):
         if cancelled():

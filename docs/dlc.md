@@ -262,6 +262,22 @@ Checked 2026-10-14/15 with the TU4 build, offline, a scratch copy of the Xenia c
   (`Races.TrackId`) crashes its resume (read of guest 0x44): the save's Heats in progress
   belongs to its own track.
 
+#### Kettle Hills short zip read (#86): a damaged package, not an extractor rule
+
+The archive copy of the Rally pack (`4D5309C9/00000002/6F6992...4D`, 1,083,125,760 bytes, CRC-32
+`5f8d11e1`, the same bytes the zip in the archive holds) extracts `Media/DLCZips/ColoradoDirt_pri_65.zip`
+with 12 wrong 4 KB blocks (file blocks 22339-22350, data blocks 65865-65876). The STFS layout was
+checked exhaustively: every one of the 262,866 data blocks was mapped with the read-only hash-table
+skipping and compared with the SHA-1 in the package's own level-0 hash table, and exactly those 12
+blocks fail. The correct data (the zip of a player whose copy works matches the table's SHA-1 for
+all 12) does not occur anywhere in the package (no aligned or unaligned match), so no block mapping,
+table choice or chain rule can recover it: the 12 blocks of this copy are damaged. The other 451 files
+of the package extract identically to the known-good install. `xcontent_extract.extract` now
+returns the file blocks that fail their hash and `install_dlc.install` (so the launcher's log)
+prints a `WARNING ... damaged 4 KB block(s)` line naming the file. The fix for a player is a
+different copy of the package; extractions made earlier cannot be told apart without that check,
+so a pack added before this update has to be added again from a good copy.
+
 ### The 1000 Club (#17)
 
 Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam

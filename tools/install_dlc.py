@@ -83,14 +83,20 @@ def install(path, user_data):
     root = os.path.join(user_data, "0000000000000000", f"{h.title_id:08X}")
     dest = os.path.join(root, "00000002", name)
     total = 0
+    damaged = []
     for entry in pkg.entries():
-        xcontent_extract.extract(pkg, entry, dest)
+        bad = xcontent_extract.extract(pkg, entry, dest)
+        if bad:
+            damaged.append((entry.path, len(bad)))
         total += entry.size
     headers = os.path.join(root, "Headers", "00000002")
     os.makedirs(headers, exist_ok=True)
     with open(os.path.join(headers, name + ".header"), "wb") as f:
         f.write(header_bytes(name, h.display_name, h.title_id))
     print(f"{h.display_name}: {total} bytes -> {dest}")
+    for p, n in damaged:
+        print(f"WARNING: {name}: {p} has {n} damaged 4 KB block(s): the package file does not match its "
+              f"own hashes (a bad download or copy), so that content will not work. Get the package again.")
 
 
 def _child(p, name):

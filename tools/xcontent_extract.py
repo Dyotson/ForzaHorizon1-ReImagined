@@ -14,6 +14,7 @@ Usage:
   xcontent_extract.py PACKAGE list
   xcontent_extract.py PACKAGE extract OUTDIR [PATH ...]   (no PATH = everything)
 """
+import hashlib
 import os
 import struct
 import sys
@@ -44,10 +45,12 @@ class Header:
 
 
 class Entry:
-    __slots__ = ("path", "is_dir", "size", "runs")
+    __slots__ = ("path", "is_dir", "size", "runs", "blocks")
 
-    def __init__(self, path, is_dir, size, runs):
+    def __init__(self, path, is_dir, size, runs, blocks=None):
         self.path, self.is_dir, self.size, self.runs = path, is_dir, size, runs
+        # STFS only: the data block numbers of the file, in order (None where there is no hash table)
+        self.blocks = blocks
 
 
 class Xdvdfs:
@@ -225,6 +228,13 @@ class Stfs:
         return self.tables[offset]
 
     def block_hash_info(self, index):
+        return struct.unpack_from(">I", self.block_record(index), 0x14)[0]
+
+    def block_sha1(self, index):
+        """The SHA-1 the hash table holds for data block `index`."""
+        return self.block_record(index)[:20]
+
+    def block_record(self, index):
         secondary = self.BLOCK if self.root_active else 0
         off0 = self.base + (self.hash_block_number(index, 0) << 12)
         if self.read_only:
@@ -244,7 +254,7 @@ class Stfs:
                 secondary = self.BLOCK if info & 0x40000000 else 0
         t0 = self._table(off0 + secondary)
         rec = index % self.PER_LEVEL[0]
-        return struct.unpack_from(">I", t0, rec * 0x18 + 0x14)[0]
+        return t0[rec * 0x18:rec * 0x18 + 0x18]
 
     def entries(self):
         f = self.files[0]
@@ -275,7 +285,7 @@ class Stfs:
             if is_dir:
                 out.append(Entry(path, True, 0, []))
                 continue
-            runs, remaining, b = [], length, start
+            runs, remaining, b, blocks = [], length, start, []
             while remaining and b != self.END_OF_CHAIN:
                 n = min(self.BLOCK, remaining)
                 addr = self.block_to_offset(b)
@@ -284,10 +294,11 @@ class Stfs:
                 else:
                     runs.append([0, addr, n])
                 remaining -= n
+                blocks.append(b)
                 b = self.block_hash_info(b) & 0xFFFFFF
             if remaining:
                 raise SystemExit(f"{path}: block chain ends {remaining} bytes early")
-            out.append(Entry(path, False, length, runs))
+            out.append(Entry(path, False, length, runs, blocks))
         return out
 
 
@@ -299,12 +310,17 @@ def open_package(path):
 
 
 def extract(pkg, entry, outdir):
+    """Extract one entry. Returns the list of file block numbers (4 KB each, counted from the start
+    of the file) whose data does not match the package's own SHA-1 hash table: a damaged package
+    (a bad download or archive copy) extracts with those blocks wrong, which no reader can repair."""
     dest = os.path.join(outdir, *entry.path.split("/"))
     if entry.is_dir:
         os.makedirs(dest, exist_ok=True)
-        return
+        return []
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     remaining = entry.size
+    bad, fb = [], 0
+    check = entry.blocks is not None and hasattr(pkg, "block_sha1")
     with open(dest, "wb") as out:
         for fi, addr, n in entry.runs:
             if not remaining:
@@ -317,8 +333,16 @@ def extract(pkg, entry, outdir):
                 if not chunk:
                     raise SystemExit(f"{entry.path}: short read")
                 out.write(chunk)
+                if check:
+                    # runs start on a block boundary and chunks are whole blocks (but the last)
+                    for i in range(0, len(chunk), pkg.BLOCK):
+                        blk = chunk[i:i + pkg.BLOCK]
+                        if len(blk) == pkg.BLOCK and hashlib.sha1(blk).digest() != pkg.block_sha1(entry.blocks[fb]):
+                            bad.append(fb)
+                        fb += 1
                 take -= len(chunk)
                 remaining -= len(chunk)
+    return bad
 
 
 def main(argv):
@@ -347,7 +371,10 @@ def main(argv):
             low = e.path.lower()
             if wanted and not any(low == w or low.startswith(w + "/") for w in wanted):
                 continue
-            extract(pkg, e, outdir)
+            bad = extract(pkg, e, outdir)
+            if bad:
+                print(f"WARNING: {e.path}: {len(bad)} block(s) do not match the package's hashes "
+                      f"(first {bad[0]}): the package is damaged", file=sys.stderr)
             total += e.size
         print(f"extracted {total} bytes to {outdir}")
         return
