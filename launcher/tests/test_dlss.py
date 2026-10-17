@@ -67,6 +67,13 @@ class RuntimeSetup(unittest.TestCase):
                 dlss.prepare(self.cfg, cancelled=lambda: True)
         self.assertFalse((dlss.runtime_dir(self.cfg) / "nvngx_dlss.dll").exists())
 
+    def test_play_pins_every_setting_prepare_reads(self):
+        # #107: Play hands prepare() a pinned SimpleNamespace; it must carry gpu_vendor too.
+        src = (Path(__file__).resolve().parents[1] / "forza_launcher/ui/window.py").read_text()
+        line = next(l for l in src.splitlines() if "download_cfg = SimpleNamespace(" in l)
+        for attr in ("data_home", "gpu_vendor"):
+            self.assertIn(attr + "=", line)
+
     def test_does_not_attempt_windows_install_on_other_platforms(self):
         with patch.object(dlss.paths, "IS_WINDOWS", False), patch.object(dlss.fetch, "download") as fetch:
             with self.assertRaisesRegex(RuntimeError, "Windows"):

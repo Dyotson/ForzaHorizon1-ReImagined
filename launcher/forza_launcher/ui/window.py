@@ -296,7 +296,9 @@ class MainWindow(QMainWindow):
         # Settings remain editable while the worker runs. Pin this download to
         # the data folder selected when Play was pressed.
         home = self.cfg.data_home()
-        download_cfg = SimpleNamespace(data_home=lambda: home)
+        vendor = self.cfg.gpu_vendor()
+        # prepare() checks the graphics card too (#107): pin it with the folder.
+        download_cfg = SimpleNamespace(data_home=lambda: home, gpu_vendor=lambda: vendor)
 
         preparation = (home, renderer_folder, self.cfg.settings.get("fh1_upscaler"))
 
