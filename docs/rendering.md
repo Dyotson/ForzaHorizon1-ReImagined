@@ -488,6 +488,17 @@ backwards to the diner (`tools/owt_path.py`, autodrive with `AD_PATH_LOAD` and `
 at y -1020 and below). The Viper spins at full throttle: throttle pulses of about half a tick
 keep it on the road. About 13 minutes from boot to the video; nothing saves on the way.
 
+Cold pipeline cache ruled out as the cause (2026-10-17): the boot videos on TU4 with an empty
+`--cache_root` (57 pipelines created during boot, async shader compilation on) played clean in
+12 screenshots from the first video to the title. With async compilation a draw whose pipeline
+is not ready is skipped, but the SDK then does not present that frame at all
+(`vulkan_async_skip_incomplete_frames`, on by default), so a cold cache gives held frames at
+worst, never stale render-target contents on screen. Purple/white frames with the right luma
+and wrong colour planes do not fit that either, so no movie sync window was added. Not tested
+on AMD Windows (#108: the same cutscene was fine on the player's next run, so check whether
+that run had a warm cache and the same settings, and whether `vulkan_async_skip_incomplete_frames`
+was changed).
+
 Open: with Linux clean, Windows or the AMD Windows driver is the likely factor. Asked for a
 run at render scale 1, one with Direct3D 12, and whether the video looked right on their first
 save with v0.1.8.
