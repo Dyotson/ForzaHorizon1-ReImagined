@@ -196,6 +196,11 @@ add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
     "the steering quicker.", "Racing wheel", lo=90, hi=2520, step=10)
 add("wheel_deadzone", "Steering deadzone", "Controls", "float", 0.0,
     "Fraction of the wheel's range, 0 to 0.5.", "Racing wheel", lo=0, hi=0.5, step=0.01)
+add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float", 0.05,
+    "The game has its own inner steering deadzone for wheels; this makes any wheel movement beyond a "
+    "hair already give this fraction of the full steering (0 to 0.3). Lower it if the car twitches "
+    "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
+    lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
 add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
     "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
@@ -211,11 +216,13 @@ add("wheel_brake_curve", "Brake curve", "Controls", "float", 1.0,
     "A gamma: 1 is linear, above 1 is softer at the start.", "Racing wheel",
     lo=0.2, hi=4, step=0.1)
 add("wheel_axes", "Axis numbers", "Controls", "str", "",
-    "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty detects them from where each "
-    "axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
+    "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty uses the built-in profile of a "
+    "known Logitech wheel (G25, G27, G29, G920, G923, Driving Force GT), else detects them from "
+    "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is.", "Racing wheel")
+    "left=14,right=15. The d-pad hat is used as is. G29 and G923 have their own map built in.",
+    "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "Approximate: a centring spring and a vibration taken from the game's rumble motors. "
     "Untested on real wheels.", "Racing wheel", restart=True)

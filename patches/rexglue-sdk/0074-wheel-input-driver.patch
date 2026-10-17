@@ -145,10 +145,10 @@ index 57f65c4..779970e 100644
      assert_always();
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
 new file mode 100644
-index 0000000..0e182fe
+index 0000000..459395c
 --- /dev/null
 +++ b/src/input/wheel/wheel_input_driver.cpp
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,708 @@
 +/**
 + * @file        rex/input/wheel/wheel_input_driver.cpp
 + * @brief       Racing wheel input driver (see the header).
@@ -187,6 +187,11 @@ index 0000000..0e182fe
 +    .range(90, 2520);
 +REXCVAR_DEFINE_DOUBLE(wheel_deadzone, 0.0, "Input", "Steering deadzone, 0 to 0.5")
 +    .range(0.0, 0.5);
++REXCVAR_DEFINE_DOUBLE(wheel_steer_offset, 0.05, "Input",
++                      "Steering pre-compensation, 0 to 0.3: the part of the game's full steering that "
++                      "any wheel movement beyond a hair already gives, to cancel the game's own inner "
++                      "steering deadzone for wheels (0: off)")
++    .range(0.0, 0.3);
 +REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
 +REXCVAR_DEFINE_STRING(wheel_pedals, "auto", "Input",
 +                      "Pedals: auto/separate (throttle, brake and clutch each on an axis), "
@@ -203,8 +208,9 @@ index 0000000..0e182fe
 +                      "Brake response, a gamma: 1 linear, above 1 softer at the start")
 +    .range(0.2, 4.0);
 +REXCVAR_DEFINE_STRING(wheel_axes, "", "Input",
-+                      "Axis overrides, e.g. steer=0,throttle=2,brake=5,clutch=1 (empty: detected "
-+                      "from where each axis rests when the wheel is plugged in)");
++                      "Axis overrides, e.g. steer=0,throttle=2,brake=5,clutch=1 (empty: the "
++                      "built-in profile of a known wheel, else detected from where each axis "
++                      "rests when the wheel is plugged in)");
 +REXCVAR_DEFINE_STRING(wheel_buttons, "", "Input",
 +                      "Button overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,"
 +                      "rs=10,up=12,down=13,left=14,right=15 (SDL button numbers; -1 unmaps)");
@@ -269,6 +275,45 @@ index 0000000..0e182fe
 +  return out;
 +}
 +
++// Known wheels, by USB vendor:product. Their axes and buttons are fixed and their pedals rest at the
++// maximum and read the minimum when pressed (the Logitech wheels), so none of it is guessed from the
++// position the axes happen to have when the wheel is opened: right after opening, an axis can still
++// read 0 (nothing reported yet) or a pedal can be held down, and a guess then turns a pedal around
++// ("phantom throttle"). Axis numbers are SDL's: on Windows (Windows.Gaming.Input racing wheel) they are
++// steering, throttle, brake, clutch; on Linux (evdev) steering, clutch, throttle, brake.
++struct Profile {
++  uint16_t vid, pid;
++  const char* name;
++  bool g29_buttons;  // the G29/G923 button numbers below; else the generic map
++};
++constexpr Profile kProfiles[] = {
++    {0x046D, 0xC24F, "Logitech G29", true},
++    {0x046D, 0xC262, "Logitech G920", false},
++    {0x046D, 0xC266, "Logitech G923", true},
++    {0x046D, 0xC26E, "Logitech G923 (Xbox)", false},
++    {0x046D, 0xC29A, "Logitech Driving Force GT", false},
++    {0x046D, 0xC29B, "Logitech G27", false},
++    {0x046D, 0xC299, "Logitech G25", false},
++};
++#ifdef _WIN32
++constexpr int kProfSteer = 0, kProfThrottle = 1, kProfBrake = 2, kProfClutch = 3;
++#else
++constexpr int kProfSteer = 0, kProfClutch = 1, kProfThrottle = 2, kProfBrake = 3;
++#endif
++// G29/G923 buttons (cross, paddles, triangle, R2/L2, Share/Options, stick presses), tested by a G29 owner.
++constexpr std::pair<const char*, int> kG29Buttons[] = {
++    {"a", 0},  {"b", 4},  {"x", 5},  {"y", 3},  {"lb", 7},  {"rb", 6},
++    {"back", 8}, {"start", 9}, {"ls", 11}, {"rs", 10}};
++
++const Profile* FindProfile(uint16_t vid, uint16_t pid) {
++  for (const auto& p : kProfiles) {
++    if (p.vid == vid && p.pid == pid) {
++      return &p;
++    }
++  }
++  return nullptr;
++}
++
 +float Norm(int16_t v) {
 +  return v < 0 ? v / 32768.0f : v / 32767.0f;
 +}
@@ -306,7 +351,9 @@ index 0000000..0e182fe
 +  std::string name;
 +  std::string guid;
 +  int num_axes = 0, num_buttons = 0, num_hats = 0;
++  const Profile* prof = nullptr;  // known wheel: fixed axes and pedal direction
 +  std::vector<int16_t> rest;  // where each axis sat when the wheel was opened
++  std::vector<uint8_t> armed;  // pedal axes seen at their resting end since the wheel was opened
 +  X_INPUT_STATE last_state{};
 +  uint32_t packet = 0;
 +  uint16_t keystroke_buttons = 0;
@@ -405,13 +452,24 @@ index 0000000..0e182fe
 +  w->num_axes = SDL_GetNumJoystickAxes(joy);
 +  w->num_buttons = SDL_GetNumJoystickButtons(joy);
 +  w->num_hats = SDL_GetNumJoystickHats(joy);
++  w->prof = FindProfile(SDL_GetJoystickVendor(joy), SDL_GetJoystickProduct(joy));
++  if (w->prof && w->num_axes <= std::max({kProfSteer, kProfThrottle, kProfBrake})) {
++    w->prof = nullptr;  // exposed with fewer axes than the profile expects: detect instead
++  }
 +  w->rest.assign(static_cast<size_t>(std::max(w->num_axes, 0)), 0);
++  w->armed.assign(static_cast<size_t>(std::max(w->num_axes, 0)), 0);
 +  for (int a = 0; a < w->num_axes; a++) {
 +    Sint16 v = 0;
 +    if (!SDL_GetJoystickAxisInitialState(joy, a, &v)) {
 +      v = SDL_GetJoystickAxis(joy, a);
 +    }
 +    w->rest[a] = v;
++  }
++  if (w->prof) {
++    REXLOG_INFO("Wheel: known wheel {}: fixed axes (steer {}, throttle {}, brake {}, clutch {}), "
++                "pedals rest at the maximum{}",
++                w->prof->name, kProfSteer, kProfThrottle, kProfBrake, kProfClutch,
++                w->prof->g29_buttons ? ", G29 buttons" : "");
 +  }
 +  REXLOG_INFO(
 +      "Wheel: \"{}\" GUID({}) VID(0x{:04X}) PID(0x{:04X}) type({}) axes({}) buttons({}) hats({}); "
@@ -545,6 +603,12 @@ index 0000000..0e182fe
 +  // Detect: the steering axis rests near the middle, the pedals at an end.
 +  int steer = axis_override("steer");
 +  int pedal[3] = {axis_override("throttle"), axis_override("brake"), axis_override("clutch")};
++  if (w.prof) {
++    if (steer < 0) steer = kProfSteer;
++    if (pedal[0] < 0) pedal[0] = kProfThrottle;
++    if (pedal[1] < 0) pedal[1] = kProfBrake;
++    if (pedal[2] < 0 && kProfClutch < w.num_axes) pedal[2] = kProfClutch;
++  }
 +  if (steer < 0) {
 +    for (int a = 0; a < w.num_axes; a++) {
 +      if (std::abs(w.rest[a]) < 12000 && a != pedal[0] && a != pedal[1] && a != pedal[2]) {
@@ -557,7 +621,7 @@ index 0000000..0e182fe
 +    }
 +  }
 +  const bool combined = REXCVAR_GET(wheel_pedals) == "combined";
-+  {
++  if (!w.prof) {
 +    int next = 0;
 +    for (int a = 0; a < w.num_axes; a++) {
 +      if (a == steer || a == pedal[0] || a == pedal[1] || a == pedal[2]) {
@@ -579,12 +643,22 @@ index 0000000..0e182fe
 +      return 0.0f;
 +    }
 +    const float v = Norm(SDL_GetJoystickAxis(w.joy, a));
-+    const float r = Norm(w.rest[a]);
++    // A known wheel's pedal rests at the maximum; otherwise where the axis sat when it was opened.
++    const float r = w.prof ? 1.0f : Norm(w.rest[a]);
 +    bool high_rest = r > 0.0f;
 +    if (invert) {
 +      high_rest = !high_rest;
 +    }
-+    const float rest = invert ? (high_rest ? 1.0f : -1.0f) : r;
++    const float rest = (invert || w.prof) ? (high_rest ? 1.0f : -1.0f) : r;
++    // Nothing from a pedal until it has been seen at rest: a first reading of 0 (not reported yet)
++    // or a pedal held down while the game starts must not count as a press.
++    if (!w.armed[a]) {
++      if (std::fabs(v - rest) < 0.2f) {
++        w.armed[a] = 1;
++      } else {
++        return 0.0f;
++      }
++    }
 +    const float p = high_rest ? (rest - v) / (rest + 1.0f) : (v - rest) / (1.0f - rest);
 +    const float d = 0.02f;
 +    return std::clamp((p - d) / (1.0f - d), 0.0f, 1.0f);
@@ -613,6 +687,12 @@ index 0000000..0e182fe
 +  const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
 +  const float as = std::fabs(s);
 +  s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
++  // The game has its own inner deadzone for wheels (and a 900 degree wheel turned 50 degrees is only
++  // 5.5 percent of its range): everything beyond a hair already gives `off` of the full steering.
++  const float off = static_cast<float>(REXCVAR_GET(wheel_steer_offset));
++  if (off > 0.0f && std::fabs(s) > 0.001f) {
++    s = std::copysign(off + (1.0f - off) * std::fabs(s), s);
++  }
 +
 +  // Buttons: SDL numbers to the pad. Defaults suit the usual wheel layout (face buttons
 +  // first, then the paddles, then Share and Options).
@@ -620,6 +700,11 @@ index 0000000..0e182fe
 +                                    {"rb", 4}, {"lb", 5},   {"back", 8}, {"start", 9},
 +                                    {"rs", 10}, {"ls", 11}, {"up", -1},  {"down", -1},
 +                                    {"left", -1}, {"right", -1}};
++  if (w.prof && w.prof->g29_buttons) {
++    for (const auto& [k, v] : kG29Buttons) {
++      map[k] = v;
++    }
++  }
 +  for (auto& [k, v] : ParseKv(REXCVAR_GET(wheel_buttons))) {
 +    map[k] = v;
 +  }

@@ -225,9 +225,17 @@ SubType 2 with the force feedback and wireless flags, which is what FH1 checks f
 left stick X over its full range, throttle and brake on the right and left trigger, the buttons on A B X Y,
 the bumpers, Back and Start, and a hat as the d-pad. Gamepads and keyboard and mouse work as before.
 
-Tested here only with a virtual wheel (Linux uinput, no hardware): SDL detected it as a wheel, the game asked for
-its capabilities, Start and A took it from the title screen into free roam, and throttle, steering and brake
-moved the car. **Real wheels are untested**: please report the model and what works.
+Tested here with a virtual wheel (Linux uinput) and by a Logitech G29 owner on Windows (issue #4: steering,
+pedals, buttons and force feedback work). Other wheels are untested: please report the model and what works.
+
+**Known wheels** (Logitech G25, G27, G29, G920, G923, Driving Force GT, by USB vendor and product id) have a
+built-in profile: fixed axes, pedals that rest at the maximum and read the minimum when pressed, and for the
+G29 and G923 the button map below. The axes are never guessed from where they sit at start-up for these wheels.
+The profile numbers are SDL's: on Windows steering 0, throttle 1, brake 2, clutch 3; on Linux steering 0,
+clutch 1, throttle 2, brake 3. If a pedal then works backwards on your system, switch `wheel_invert_throttle`
+or `wheel_invert_brake`; `wheel_axes` and `wheel_buttons` still override the profile. Other wheels are detected
+as described below. A pedal is also ignored until it has been seen at rest once, so a pedal that reads 0 for a
+moment when the game opens it (or is held down at start) no longer presses itself.
 
 Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 
@@ -236,6 +244,7 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
+| `wheel_steer_offset` | 0.05 | Compensates the game's own inner steering deadzone for wheels (below) |
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
@@ -243,12 +252,27 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps) |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
 
-Axis detection reads where each axis rests when the wheel is plugged in: the one near the middle is the steering,
-those resting at an end are the pedals (throttle, brake, clutch in axis order; the clutch is not used by the
-game). **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
+**Steering feels dead for the first degrees (reported on a G29).** The game applies its own inner deadzone to
+wheels (its wheel options carry a steering deadzone), and a 900 degree wheel turned 50 degrees is only 5.5
+percent of its range, so the first part of every turn did nothing. Our own deadzone is 0 and the configured
+rotation is mapped linearly onto the full steering, so the fix is `wheel_steer_offset`: any movement beyond a
+hair (about 1 degree) already gives that share of the full steering (0.05 = 5 percent), which the game's deadzone
+then removes, so small movements register and the rest stays linear. Raise it if the first degrees still do
+nothing, lower it (0 switches it off) if the car twitches when driving straight. It is an estimate taken from the
+report (about 50 degrees of 900), not read from the game.
+
+**Clutch and H-shifter are not supported.** The 360 racing wheel has no clutch (the game asks for none) and no
+H-shifter input, so the clutch pedal axis and the shifter buttons are ignored; use the paddles for gears (turn
+the clutch off in the game's options). G29/G923 paddles are the game's B and X buttons in the built-in map
+(`b=4`, `x=5`).
+
+Axis detection (wheels without a profile) reads where each axis rests when the wheel is plugged in: the one near
+the middle is the steering, those resting at an end are the pedals (throttle, brake, clutch in axis order; the
+clutch is not used by the game). **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
 fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
-8 Back, 9 Start, 10 and 11 stick presses. Wheel buttons differ between models, so check the numbers (for example
+8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=4,x=5,y=3,lb=7,rb=6,back=8,start=9,ls=11,rs=10`
+(cross, right paddle, left paddle, triangle, L2, R2, Share, Options, L3, R3). Wheel buttons differ between models, so check the numbers (for example
 with `jstest-gtk`) and override as needed. Wheels that SDL also maps as a gamepad are taken by the wheel driver
 instead; Xbox (Microsoft) wheels keep using the gamepad path.
 

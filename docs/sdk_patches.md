@@ -120,7 +120,7 @@ are ordered before subsequent sampling or uploads. See [Performance](perf.md#sca
 type, a wheel-like name, or any controller without a gamepad mapping with `wheel_mode = on`) is presented as
 the Xbox 360 Wireless Racing Wheel: SubType 2 with the force feedback and wireless flags (FH1 checks exactly
 that when it reads the capabilities), steering on thumb LX, pedals on the triggers, buttons and hat on the pad
-buttons. Axes are detected from their resting values, with overrides and curves (`wheel_*` cvars). The
+buttons. Known Logitech wheels (by VID:PID) get fixed axes, pedal direction and, for the G29/G923, buttons; other wheels have their axes detected from their resting values (a pedal counts only after it has been seen at rest), with overrides and curves (`wheel_*` cvars). `wheel_steer_offset` pre-compensates the game's inner steering deadzone. The
 motors' vibration drives SDL haptic effects (a spring and a sine): approximate, untested on hardware. The
 patch also turns on SDL's haptic subsystem in `thirdparty/CMakeLists.txt` (it was off) and the SDL gamepad
 driver ignores wheels the wheel driver takes. Local builds need `libudev.h` (Homebrew `systemd`, added to
