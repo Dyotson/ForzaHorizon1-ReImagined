@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -42,6 +43,18 @@ thread_local uint32_t stall_stream = 0;
 thread_local int stalls = 0;
 std::atomic<int> reports{0};
 std::atomic<uint32_t> last_reported{0};
+// The compressed bytes of this thread's last LZX stream, from its first decode step: a ZIPREAD
+// line gives their CRC-32 per 2 KB, to compare with a good copy of the zip member.
+thread_local uint32_t first_stream = 0, first_src = 0;
+
+uint32_t Crc32(const uint8_t* p, uint32_t n) {
+  uint32_t c = ~0u;
+  for (uint32_t i = 0; i < n; i++) {
+    c ^= p[i];
+    for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+  }
+  return ~c;
+}
 
 // FORZA_ZIPREAD_TEST=N (a test): the N-th decode step that wants bytes finds its stream's input
 // used up, as a member whose compressed bytes ran out would (the hang without this hook).
@@ -59,6 +72,10 @@ extern "C" REX_FUNC(sub_82C76508) {
   const uint8_t* s = forza::GuestPtr(base, stream);
   const uint32_t out0 = Load32(s + kOutPos), in0 = Load32(s + kInPos);
   const uint32_t wanted = Load32(forza::GuestPtr(base, wanted_ptr));
+  if (in0 == 0 && Load16(s + kMethod) == 21) {
+    first_stream = stream;
+    first_src = Load32(forza::GuestPtr(base, ctx.r4.u32));
+  }
   if (wanted && test_step.load(std::memory_order_relaxed) > 0 && test_step.fetch_sub(1) == 1) {
     REXLOG_WARN("ZIPREAD: test: stream {:08X} loses its input", stream);
     std::memset(forza::GuestPtr(base, stream + kInLeft), 0, 4);
@@ -86,5 +103,15 @@ extern "C" REX_FUNC(sub_82C76508) {
                  stream, Load16(s + kMethod), Load32(s + kOutPos), Load32(s + kOutSize),
                  Load32(s + kInPos), Load32(s + kInSize), Load32(s + kInLeft), block,
                  b ? b[0x28] : 0, b ? b[0x29] : 0, Load32(s + kBase), Load32(s + kPages));
+    const uint32_t in_size = Load32(s + kInSize);
+    if (first_stream == stream && first_src && in_size <= 0x100000) {
+      std::string crcs;
+      for (uint32_t o = 0; o < in_size; o += 2048) {
+        const uint32_t n = in_size - o < 2048 ? in_size - o : 2048;
+        crcs += fmt::format(" {:08x}", Crc32(forza::GuestPtr(base, first_src + o), n));
+      }
+      REXLOG_ERROR("ZIPREAD: stream {:08X} input at {:08X}, CRC-32 {:08x}, per 2 KB:{}", stream,
+                   first_src, Crc32(forza::GuestPtr(base, first_src), in_size), crcs);
+    }
   }
 }

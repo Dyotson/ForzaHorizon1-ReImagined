@@ -716,6 +716,27 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   Checked with `FORZA_ZIPREAD_TEST=N` (the N-th step loses its input, as in the hang): the
   stream of a 1.9 MB LZX member at the Rally load stopped at 589,824 bytes, the read came
   back, the Rally Heats started and played. The next log of this hang names the member.
+  2026-10-17, v0.1.18 log (Windows, RTX 4070 laptop, Vulkan; a second Windows player has
+  the same): 5 identical `ZIPREAD` lines, method 21, `32768 of 81792 bytes out, input 28426
+  of 28426 read`, at `+D728A` of a different cache block each time, then guest access
+  violations (the loader going on with a short resource). The only member of that size in
+  our DLC is `coloradodirtout.09183.rmb.bin` in the Rally pack's `ColoradoDirt_pri_65.zip`
+  (data at 0x5743A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
+  compressed bytes and a last one of 16,256 bytes out. Not a Windows codegen difference: the
+  game's XMemDecompressStream (TU4 `sub_831AE7D8`) with its 66 callees, cut out of the
+  generated code into a harness (context made as `sub_82D38810` makes it: `sub_831AFBE8` /
+  `sub_831AFBA0`, flags 1 = stream), decodes the member completely, CRC right, built with
+  clang for Linux and with clang-cl for Windows and run under Proton, at any output size per
+  call, with the input given in pieces, and for write-combined output. The log's numbers
+  come out exactly when the compressed bytes after the first frame (from member offset
+  ~15,000, cache block offset ~0xDAF22) are wrong: the decoder takes all the input, gives
+  the first 32 KB and then nothing, no error. So the player's game had other bytes in the
+  cache block there: a different copy of the zip, or a read that put other data into the
+  block on Windows (no read failure is logged). A `ZIPREAD` line now also gives the CRC-32
+  of the stream's compressed bytes in memory, whole and per 2 KB; our copy:
+  `37af238d`, per 2 KB `efca69a3 a66fb47f 199242bd 58a91478 3432a2a6 28fcbdc4 b2f044c8
+  b5577b16 933af614 16178e3f a43058bb 7eed4979 21246ce5 86b86629`, so the next log shows
+  which part differs (a whole page or read chunk, or scattered bytes).
 
 - 2026-10-16: **One press of Invite Friends pulled every player online into that party
   (#90)**, public server, v0.1.12: the party lobby's Invite Friends (`XamShowFriendsUI`)
