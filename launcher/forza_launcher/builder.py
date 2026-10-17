@@ -857,6 +857,9 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
         ngx_license = sdk / "share" / "licenses" / "nvidia-dlss" / "LICENSE.txt"
         if ngx_license.is_file():
             shutil.copy2(ngx_license, rt / "NVIDIA-DLSS-LICENSE.txt")
+        fsr3_license = sdk / "share" / "licenses" / "amd-fidelityfx-fsr3" / "LICENSE.txt"
+        if fsr3_license.is_file():
+            shutil.copy2(fsr3_license, rt / "AMD-FidelityFX-LICENSE.txt")
         capabilities = sdk / "bin" / "fh1-native-dlss.json"
         if capabilities.is_file():
             shutil.copy2(capabilities, rt / capabilities.name)

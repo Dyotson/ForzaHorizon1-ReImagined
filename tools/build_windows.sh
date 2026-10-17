@@ -108,6 +108,9 @@ if [ -f "$PREFIX/bin/fh1-native-dlss.json" ]; then
     cp "$PREFIX/bin/fh1-native-dlss.json" "$DIST/"
     cp "$PREFIX/share/licenses/nvidia-dlss/LICENSE.txt" "$DIST/licenses/NVIDIA-DLSS.txt"
 fi
+if [ -f "$PREFIX/share/licenses/amd-fidelityfx-fsr3/LICENSE.txt" ]; then
+    cp "$PREFIX/share/licenses/amd-fidelityfx-fsr3/LICENSE.txt" "$DIST/licenses/AMD-FidelityFX-FSR3.txt"
+fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/xiso_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 mkdir -p "$DIST/server"
 cp "$ROOT"/server/*.py "$DIST/server/"

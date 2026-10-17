@@ -220,6 +220,11 @@ a free-form "other settings" box for any further `forza.toml` key, a live previe
 generated `forza.toml` and command line). Keys that hold their default are not written.
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
+On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3
+quality (Quality, Balanced, Performance, Native AA) and output (1080p, 1440p, 4K): Play adds
+`--resolution`, `--resolution_scale`, `--fh1_output_width/height`, `--fh1_upscaler=fsr3_<mode>`
+and keeps `--present_effect=fsr` as the presenter filter and fallback (`fsr3.py`; DLSS wins
+when it is on). See [Rendering issues](rendering.md#temporal-upscaling-with-amd-fsr-3-51-2026-10-16).
 Online: public (`forza-reimagined.playit.plus:56677`, written as `live_server` and `FORZA_SERVER`),
 local (the launcher starts the Forza Live server inside its own executable, or reuses one
 on port 21201, like `play.sh`), your own, or offline. The Xenia save logic is `play.sh --xenia`
@@ -238,7 +243,7 @@ package has no header, and, with TU4, when no package in the game's folder holds
 Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Marketplace error (#79).
 `forza-launcher --dry-run` prints what Play would run; it matches `tools/play.sh`
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
-Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` / `fsr3` entries become `fsr`).
+Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` entry becomes `fsr`; `fsr3` is now the temporal upscaler).
 
 ### GPU choice (#52)
 

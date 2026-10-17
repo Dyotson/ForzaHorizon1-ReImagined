@@ -108,9 +108,21 @@ add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
              (5, "16x")])
 add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
     "How the 720p picture is scaled to the window. AMD FSR 1 is the sharp, cheap choice (about the "
-    "cost of bilinear); CAS only sharpens, up to 2x.", "Picture",
-    choices=[("bilinear", "Bilinear"), ("cas", "AMD CAS (sharpen)"), ("fsr", "AMD FSR 1")],
-    restart=True, legacy={"fsr2": "fsr", "fsr3": "fsr"})
+    "cost of bilinear); CAS only sharpens, up to 2x. AMD FSR 3 (temporal) reconstructs the scene "
+    "from several jittered frames at the output resolution below, with the HUD drawn natively; "
+    "any GPU (Vulkan).", "Picture",
+    choices=[("bilinear", "Bilinear"), ("cas", "AMD CAS (sharpen)"), ("fsr", "AMD FSR 1"),
+             ("fsr3", "AMD FSR 3 (temporal)")],
+    restart=True, legacy={"fsr2": "fsr"})
+add("fsr3_mode", "FSR 3 quality", "Display", "choice", "performance",
+    "The scene's input size for AMD FSR 3: Quality 1/1.5 of the output per axis, Balanced 1/1.7, "
+    "Performance 1/2 (720p for 1440p), Native AA the output size. Only with the AMD FSR 3 filter.",
+    "AMD FSR 3", choices=[("quality", "Quality"), ("balanced", "Balanced"),
+                          ("performance", "Performance"), ("native", "Native AA")], restart=True)
+add("fsr3_output_resolution", "FSR 3 output resolution", "Display", "choice", "1440p",
+    "The reconstructed picture and native UI resolution for AMD FSR 3.", "AMD FSR 3",
+    choices=[("1080p", "1920 x 1080"), ("1440p", "2560 x 1440"), ("4k", "3840 x 2160 (4K)")],
+    restart=True)
 if IS_WINDOWS:
     add("fh1_upscaler", "NVIDIA DLSS", "Display", "choice", "off",
         "Reconstruct the scene with NVIDIA's recommended input size for the selected mode, "

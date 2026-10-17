@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBo
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, game, gpu, schema
+from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .widgets import Switch, card, label
@@ -282,11 +282,18 @@ class SettingsPage(QWidget):
         for key in ("gpu_backend", "resolution", "resolution_scale", "present_effect"):
             if key in self.rows:
                 self.rows[key].control.setEnabled(not active)
+        temporal = fsr3.enabled(self.cfg)
+        for key in ("fsr3_mode", "fsr3_output_resolution"):
+            if key in self.rows:
+                self.rows[key].control.setEnabled(temporal)
+        for key in ("resolution", "resolution_scale"):
+            if key in self.rows and temporal:
+                self.rows[key].control.setEnabled(False)
         self._refresh_gpu_warnings()
         for key in ("gpu_backend", "resolution_scale"):
             if key in self.rows:
                 self.rows[key].control.setEnabled(
-                    not active and not self.cfg.settings.get("forza_ultrawide"))
+                    not active and not temporal and not self.cfg.settings.get("forza_ultrawide"))
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             if key in self.rows:
                 self.rows[key].control.setEnabled(bool(self.cfg.settings.get("forza_hud_layout")))

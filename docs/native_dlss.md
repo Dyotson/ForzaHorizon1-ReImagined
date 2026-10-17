@@ -159,3 +159,9 @@ The split of PR #59 moves DLSS-only patches 0057/0058 (projected-geometry jitter
 rotated depth/motion reconstruction and tile-consistent displacement) and 0062
 (1x scene resolves copied into the native HUD cache) here. These operate without
 ultrawide; 0062 depends on the DLSS cache split and is not a general readback fix.
+
+Shared inputs (2026-10-16): AMD FSR 3 (temporal) is a second backend behind the same
+plumbing (`fh1_upscaler=fsr3_*`, SDK patch 0072): the scene/UI split, the colour input, the
+depth and motion-vector pass, the main-scene jitter and the reset rule are the ones described
+here; only the reconstruction step differs, and it needs no NVIDIA runtime. See
+[Rendering issues](rendering.md#temporal-upscaling-with-amd-fsr-3-51-2026-10-16).

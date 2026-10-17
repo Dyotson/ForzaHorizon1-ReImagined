@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, gpu, paths, dlss
+from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -442,6 +442,7 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         dlss.check_renderer(game.dir)
     dlss.configure(cfg, env, args, notes, write)
     dlss_status_file = Path(env["FORZA_DLSS_STATUS_FILE"]) if "FORZA_DLSS_STATUS_FILE" in env else None
+    fsr3.configure(cfg, args, notes)
 
     extra = split_args(cfg.advanced.get("extra_args", ""))
     vendor_arg = gpu_vendor_arg(cfg, extra)

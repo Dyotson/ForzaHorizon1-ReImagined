@@ -190,7 +190,7 @@ def render_toml(cfg: Config) -> str:
     lines = ["# Written by the Forza Horizon 1: ReImagined launcher. Change settings there;",
              "# keys added under 'Other settings' (Advanced) are kept."]
     for s in schema.S:
-        if not s.applies() or s.key == "fh1_output_resolution":
+        if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution"):
             continue
         v = schema.coerce(s, cfg.settings.get(s.key, s.default))
         if v != s.default:

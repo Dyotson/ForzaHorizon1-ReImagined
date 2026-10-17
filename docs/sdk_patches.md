@@ -82,6 +82,17 @@ the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). S
 
 0066 averages supersampled RGBA8 car-thumbnail pixels during readback, keeping other formats and resolves unchanged. Requires the known-thumbnail refresh rule already on main (0053); see [Rendering issues](rendering.md#filter-supersampled-car-thumbnails-50).
 
+0072 adds the AMD FidelityFX FSR 3.1 upscaler (no frame generation) as a second backend of
+0046's scene/UI split: `fh1_upscaler=fsr3_quality|fsr3_balanced|fsr3_performance|fsr3_native`
+on any Vulkan GPU. CMake fetches the FidelityFX SDK v1.1.4 GLSL passes and headers (MIT; pinned
+commit and per-file SHA-256; `REXGLUE_FSR3_SDK`, `REXGLUE_USE_FSR3`) and embeds them; the
+renderer compiles them with its glslang at start-up (`CompileFh1ComputeReflected`, with an
+include handler and reflection for the bindings) and `fh1_fsr3.cpp` dispatches the SDK's pass
+sequence. The DLSS state (inputs, depth/motion pass, jitter, status file) is no longer NGX-only;
+jitter uses FSR's phase count in FSR modes. The MIT notice is installed under
+`share/licenses/amd-fidelityfx-fsr3` and copied beside the GPU library. See
+[Rendering issues](rendering.md#temporal-upscaling-with-amd-fsr-3-51-2026-10-16).
+
 0046 adds native Windows Vulkan DLSS/DLAA with separate scene/UI rendering.
 See [Native DLSS](native_dlss.md) for runtime setup, licensing and validation limits.
 

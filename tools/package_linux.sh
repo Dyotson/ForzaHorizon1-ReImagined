@@ -42,6 +42,9 @@ cp "$ROOT"/server/*.py "$DIST/server/"
 cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
 [ -f "$SDK/share/licenses/SDL3/LICENSE.txt" ] && cp "$SDK/share/licenses/SDL3/LICENSE.txt" "$DIST/licenses/SDL3.txt"
+# AMD FidelityFX FSR 3 sources compiled into the GPU plugin (SDK patch 0072, MIT)
+fsr3_license="$SRC/out/linux-amd64/Release/AMD-FidelityFX-LICENSE.txt"
+[ -f "$fsr3_license" ] && cp "$fsr3_license" "$DIST/licenses/AMD-FidelityFX-FSR3.txt"
 cp "$ROOT/tools/dist/play.linux.sh" "$DIST/play.sh"
 chmod +x "$DIST/play.sh"
 

@@ -191,7 +191,10 @@ screenshots of the final output). CONTENDED: two other game instances ran the wh
 detail (expect about 40 fps at a 60 fps target; 30 fps is fine); stay at or below 2. Not
 tried: guest video modes below 720p for slow GPUs (Steam Deck, #45).
 
-**Temporal upscaling (FSR 2/3, DLSS): feasible, large.** Not started.
+**Temporal upscaling (FSR 2/3, DLSS): feasible, large.** Done since: native DLSS (#60,
+[native_dlss.md](native_dlss.md)) and AMD FSR 3 on the same inputs
+([below](#temporal-upscaling-with-amd-fsr-3-51-2026-10-16)). The notes that follow are the
+original assessment.
 - Depth: the main scene's depth is resolved to a texture for the velocity pass; the Vulkan
   render target cache could export that image to the presenter (new plugin-to-presenter
   interface; the scene pass is found by its shader or target).
@@ -208,6 +211,74 @@ tried: guest video modes below 720p for slow GPUs (Steam Deck, #45).
   Also needs the FidelityFX runtime built (shaders on Linux) and 60 fps or more to look good.
 - DLSS needs NVIDIA's SDK and an NVIDIA GPU; not tested here (AMD only).
 
+
+## Temporal upscaling with AMD FSR 3 (#51, 2026-10-16)
+
+Settings > Display > Upscaling filter > **AMD FSR 3 (temporal)**, with **FSR 3 quality**
+(Quality, Balanced, Performance, Native AA) and **FSR 3 output resolution** (1080p, 1440p, 4K).
+Any GPU with Vulkan; on NVIDIA with DLSS on, DLSS wins. It is the FidelityFX FSR 3.1 upscaler
+only (no frame generation), as a second backend behind the plumbing DLSS added (#60,
+[native_dlss.md](native_dlss.md)): the scene renders at the mode's input size into its own
+render target cache, the HUD, menus and labels render natively at the output size, and the
+reconstruction runs between the two.
+
+**Inputs (shared with DLSS).** Colour: the tonemapped scene (LDR, so no HDR flag, exposure 1).
+Depth: the game's resolved depth/stencil (inverted). Motion vectors: reconstructed from the
+constants of `PPMotionBlurDepthHorizonVel` (camera and per-object reprojection, in render
+pixels, current to previous, jitter-free). Jitter: the Halton(2,3) sequence on main-scene
+draws only, as for DLSS, over FSR's recommended phase count (`8 x ratio^2`: 32 for
+Performance, 18 for Quality, 8 for Native AA; DLSS keeps 16). Reset: the frame after one
+without the motion blur pass (cuts, menus, loading), like DLSS. FSR's view-space depth uses the
+game's own depth reconstruction (`z = B / (1 - A - depth)` from the same constants); the field
+of view is not exposed there, so 60 degrees vertical stands in (it only scales FSR's
+disocclusion thresholds). No reactive or transparency mask (FSR's defaults); RCAS
+sharpening 0.4 after accumulation (`FORZA_FSR3_SHARPNESS`, 0-1, negative turns it off).
+
+**How FSR 3 gets in (route).** SDK patch 0072 fetches the FidelityFX SDK v1.1.4 GPU sources
+(MIT) at configure time, pinned by commit and SHA-256 per file (31 files, the way 0046 fetches
+the NGX headers; `REXGLUE_FSR3_SDK` takes a local checkout, `REXGLUE_USE_FSR3=OFF` builds
+without), and embeds the GLSL passes and their headers in the GPU library. The SDK's own Vulkan
+backend (`ffx_vk.cpp`, 230 KB) and its prebuilt permutation blobs (built by a Windows-only
+shader compiler) are not used: the GPU library already links glslang (the DLSS motion-vector
+pass is compiled with it), so the renderer compiles the one permutation it needs at start-up
+(63-355 ms on this machine) and a compact host dispatcher (`fh1_fsr3.cpp`) replays
+`ffx_fsr3upscaler.cpp`'s sequence: prepare inputs, luma pyramid, shading change pyramid, shading
+change, prepare reactivity, luma instability, accumulate, RCAS, with the SDK's ping-pong
+history, clears and constants. Bindings come from glslang's reflection of each pass. The
+permutation: LDR input, render-size motion vectors, no jitter in the motion vectors, inverted
+depth, no FP16 and no wave operations, so it runs on any Vulkan 1.0 GPU. FSR 3.1 rather than
+FSR 2.2 because its GLSL is published the same way and it ghosts less.
+
+**Fallback.** If the passes cannot be built (a missing storage format, a shader error) the
+renderer logs `FSR 3: upscaler unavailable; this session scales the scene bilinearly` once and
+keeps the scene/UI split with a bilinear scene scale (tested with `FORZA_DLSS_TEST_FAILURE=create`:
+the game reached the menus). If the split itself cannot start (an incompatible render scale or
+render-target path) the game renders natively and presents with FSR 1, which the launcher keeps
+as `present_effect` for that reason.
+
+**Measurements** (Linux, Vulkan, RADV, RX 9060 XT, TU4, the race scenario
+`tools/perf_scenario.sh race` on a copy of the Xenia save, warm cache, 1440p window).
+
+| Path | Scene | HUD | `frame_rate` | fps | p50 / p95 ms |
+| --- | --- | --- | --- | --- | --- |
+| FSR 1, render scale 1 | 1280x720 | 720p, upscaled | 144 | 97.2 | 10.5 / 13.8 |
+| FSR 3 Performance | 1280x720 | native 1440p | 144 | 91.5 | 10.7 / 13.9 |
+| FSR 3 Performance | 1280x720 | native 1440p | 60 | 59.7 | 16.8 / 17.1 |
+
+The FSR 3 run at 144 started with the previous run's load average (2.35, CONTENDED by the
+script's rule; no other game ran). About 6 % fewer frames at an uncapped rate for the same
+720p scene: FSR 3's passes plus the native 1440p HUD; a 60 fps target holds. Quality (1706x960
+input) renders the scene raster at 2x and resamples, like DLSS's between-scale modes, so it
+costs about what render scale 2 does.
+
+Quality, from the race screenshots (FSR 3 output at 1440p against the 720p FSR 1 input
+enlarged with Lanczos as a stand-in for EASU, so the FSR 1 side is if anything kinder than
+the real filter): the player car's panel lines and the engine cover slats are continuous with
+FSR 3 where the 720p image stair-steps them; the speedometer, labels and race text are native
+1440p (the FSR 1 path enlarges the 720p HUD). No ghost trails on the cars or around the HUD in
+the 13 shots taken during the race (the HUD is composited after the upscale, so it cannot
+ghost); stills 1.6 s apart do not show shimmering either way. Not covered: transparencies
+(no reactive mask yet), rain and night, camera cuts beyond the race start.
 
 ## NVIDIA car reflection sampling (2026-10-15)
 
