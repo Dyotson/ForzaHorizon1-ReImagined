@@ -13,8 +13,8 @@ those buffers as textures. A final image blit or a new AA filter alone does not
 replace that renderer. Removing those copies without tracking consumers can
 invalidate reflections, minimap inputs, screenshots and CPU readbacks.
 
-The first implementation in this branch is **development infrastructure**, not
-an enabled replacement renderer:
+This branch contains development infrastructure and an executable native compute
+pass. It is **not yet an enabled replacement renderer**:
 
 - `render_graph.h` assigns resource versions and records RAW, WAR, WAW and alias
   dependencies. A mutable attachment and an independent snapshot are distinct
@@ -26,12 +26,52 @@ an enabled replacement renderer:
 - `native_renderer_report.py` verifies event/dependency ordering and identifies
   small draws worth inspecting. A small draw is not automatically a world pass;
   HUD draws must be distinguished by shader, inputs, viewport and target state.
+- `velocity_pass` owns Vulkan depth, motion and blur attachments. Its authored
+  compute shader decodes packed depth/stencil, reconstructs per-object movement,
+  and keeps unclamped temporal motion separate from shaped blur. It executes in
+  the standalone GPU test; it is not wired into the game's draw stream yet.
 
 The planner currently works at whole-resource granularity. Layout transitions,
 queue ownership, subresources, native allocation and guest EDRAM alias mapping
 are not implemented. Captured resources import their initial replay contents;
 this does not establish how a native frontend will populate them. Exported graphs
 therefore explicitly say `execution_ready: false`.
+
+## Native depth and motion pass
+
+The pass accepts a host parameter block containing 25 preceding-frame transforms,
+projection parameters, blur response, UV orientation and motion scale. The caller
+supplies a point-sampled RGBA8 array view in shader-read layout and reports GPU
+completion using monotonically increasing submission IDs. Those IDs must come
+from waited fences. Enqueuing work does not make its resources reusable.
+
+`Prepare` reserves a free frame slot and updates its descriptors/constants on the
+producer thread. `Record` consumes an immutable dispatch snapshot on the Vulkan
+submission thread. Slots own separate attachments and constants; preparation
+rejects unfinished slots and invalid parameters without recording GPU work.
+Prepared dispatches must be submitted; abandoning a command stream requires an
+idle-device reset of the pass. Consumers must return its images to GENERAL layout
+before reuse. Destruction waits for the device before releasing resources.
+
+Outputs are R32F depth, RGBA32F motion (XY in output pixels) and RGBA8 blur. The
+four-component motion image is intentional during validation: it preserves full
+precision without requiring `shaderStorageImageExtendedFormats`, which the
+existing device setup does not enable. A supplied function table lets the pass
+use the runtime's Vulkan loader. No NVIDIA library is required.
+
+Synthetic fixtures test static and translated cameras, individual car/stencil
+IDs, the world mask, capped object IDs, invalid transforms, singular homogeneous
+coordinates, blur limits, two orientations and output sizes 73x41 and 2560x1440.
+The odd size also exercises partial compute workgroups and readback alignment.
+Every output pixel is compared with a CPU reference; closed-form reference tests
+independently check expected pixel displacements and depth values.
+
+On an RTX 5060 Ti, all three Release tests passed with Khronos synchronization
+validation enabled and zero validation errors. At 2560x1440, depth and quantized
+blur matched exactly; the largest motion difference was 0.000197 pixels. These
+are synthetic correctness measurements, not a comparison with the game's actual
+velocity attachment or a whole-frame performance result. No shader disassembly,
+game textures, saves or generated binaries are included in the implementation.
 
 ## Build the development tools
 
@@ -42,6 +82,21 @@ cmake -S tools/native_renderer -B build/native-renderer-tools
 cmake --build build/native-renderer-tools
 ctest --test-dir build/native-renderer-tools --output-on-failure
 ```
+
+The optional GPU test needs Vulkan headers/loader and `glslangValidator` from a
+Vulkan SDK. Its SPIR-V is generated in the build directory, never committed:
+
+```sh
+cmake -S tools/native_renderer -B build/native-renderer-gpu -DNATIVE_RENDERER_GPU_TESTS=ON
+cmake --build build/native-renderer-gpu
+ctest --test-dir build/native-renderer-gpu --output-on-failure
+```
+
+Add `-DNATIVE_RENDERER_VULKAN_VALIDATION=ON` to require the Khronos validation
+layer and synchronization checks. Set `VK_LAYER_PATH` if it is not installed in
+the loader's standard search location. A requested validation run fails when the
+layer cannot start. An ordinary GPU run returns CTest's skip code 77 if there is
+no compatible device. CPU tests remain available without a Vulkan SDK or GPU.
 
 To also build the capture exporter, supply `RENDERDOC_INCLUDE_DIR` pointing at
 the official `renderdoc/api/replay` headers and `RENDERDOC_LIBRARY` pointing at
@@ -85,9 +140,10 @@ Release builds.
 
 ## Next execution milestone
 
-1. Identify a world pass with its complete inputs and viewport/scissor contract.
-   Check repeated draws across tiles against reflection/camera changes.
-2. Map that pass's guest texture/resolve identities to explicitly owned native
+1. Compare the native depth/motion/blur pass with actual captured velocity output.
+   Establish viewport/scissor orientation, constants and downstream blur encoding
+   before substituting it. Synthetic parity alone does not establish this.
+2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
 3. Implement its layout and queue transitions, format interpretation and CPU
    readback fallback, behind an option that defaults off.
@@ -95,5 +151,6 @@ Release builds.
    the AI benchmark with warmed shaders. Check reflections, labels/HUD, cutscenes
    and menus before extending the path.
 
-A complete native world renderer remains the goal; the current tooling is not
-presented as that renderer or as a performance improvement.
+A complete native world renderer remains the goal. The first pass's GPU test
+does not establish native game rendering, native-HUD integration or a performance
+improvement. Those remain required integration work.
