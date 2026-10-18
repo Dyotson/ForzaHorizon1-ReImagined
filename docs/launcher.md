@@ -139,6 +139,11 @@ the icon on their next rebuild. See `forza-recomp/resources/README.md` to regene
 the icon from the project artwork.
 ## Gamepad navigation
 
+The SDL controller backend leaves process signal handling to the host. On Linux,
+SIGTERM terminates the launcher normally instead of becoming a discarded SDL quit
+event. A subprocess regression test checks this; the CI window smoke test also has
+a forced-kill deadline and a five-minute step limit.
+
 The launcher accepts SDL-mapped controllers on Windows and Linux, including the Steam
 Deck's gamepad mode. Connect a controller, release its buttons/stick, and use:
 

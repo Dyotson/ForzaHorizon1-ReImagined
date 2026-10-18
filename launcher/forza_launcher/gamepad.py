@@ -66,6 +66,9 @@ class SDLController:
         import sdl2
         self.sdl = sdl2
         self.controller = None
+        # Qt owns the event loop. SDL turns SIGTERM into an SDL_QUIT event that
+        # this controller-only backend discards, preventing normal termination.
+        sdl2.SDL_SetHint(sdl2.SDL_HINT_NO_SIGNAL_HANDLERS, b"1")
         sdl2.SDL_SetHint(sdl2.SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, b"1")
         if sdl2.SDL_InitSubSystem(sdl2.SDL_INIT_GAMECONTROLLER) != 0:
             raise RuntimeError(sdl2.SDL_GetError().decode("utf-8", "replace"))

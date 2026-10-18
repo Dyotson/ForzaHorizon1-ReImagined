@@ -55,6 +55,24 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(self.actions.update(State(1, frozenset({"next", "accept"})), 1), ["next"])
 
 
+@unittest.skipUnless(sys.platform == "linux", "POSIX termination behavior")
+class SignalTests(unittest.TestCase):
+    def test_controller_initialization_preserves_sigterm_termination(self):
+        import signal
+        import subprocess
+        code = (
+            "import os, signal, time; "
+            "from forza_launcher.gamepad import SDLController; "
+            "backend = SDLController(); "
+            "os.kill(os.getpid(), signal.SIGTERM); time.sleep(30)"
+        )
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent))
+        env.pop("SDL_NO_SIGNAL_HANDLERS", None)
+        result = subprocess.run([sys.executable, "-c", code], env=env,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, -signal.SIGTERM, result.stderr.decode())
+
+
 class SDLTests(unittest.TestCase):
     """Use SDL's virtual device, exercising the shipped native library on each OS."""
     def setUp(self):
