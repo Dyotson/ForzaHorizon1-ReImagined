@@ -43,9 +43,31 @@ previews where supported. **Open export folder** reveals the result. Loading/exp
 run in a cancellable worker; closing waits for that worker, and a cancelled export
 removes its incomplete output. Close the game before opening a catalog.
 
-This page preserves local collections; it does not download designs, apply them to a
-profile, or unlock ownership. The verified disposable-profile recovery below remains
-a separate manual experiment.
+To import, open the original FH1 **LivCatalog save package**, select a design, and choose
+**Import design**. The confirmation names the destination save folder and offline profile
+identity. **Back up and import** authenticates the source index, livery and storefront
+record using your game executable, verifies the destination career identity, preserves
+creator/lock metadata, and merges the selected design into the destination catalog.
+Your career and garage are not edited. In-game, use the matching car's saved-designs menu
+to apply it. Duplicate designs are refused rather than replaced.
+
+Import requires a previously saved local career and a supported authenticated FH1 package
+with its original index/profile ID. Extracted folders, archival bundles, FM3/FM4 designs
+and vinyl groups remain export-only. The game and Setup must be stopped. A shared OS
+save lock prevents importing while another launcher game session or save operation is
+active. Standalone game launches outside the launcher must be closed manually.
+
+The importer snapshots only `LivCatalog`, the only save directory it changes. Verified
+backups and SHA-256 manifests live under `<launcher data>/save-backups/catalog-imports`;
+**Open catalog backup** reveals the exact backup used. There is no automatic retention
+limit. To restore manually with the game closed, move the current `LivCatalog` aside and
+copy the backup's `LivCatalog` to the manifest's destination; if `existed` is false, there
+was no previous catalog. The importer stages a complete catalog, rechecks the original,
+then publishes with a rollback journal. Cancellation before publication leaves the
+original catalog untouched; publication finishes without cancellation. An interrupted
+publication is rolled back before the next launcher Play/import operation.
+
+No ownership is unlocked and no designs are downloaded by this page.
 
 `launcher/forza_launcher/ugc.py` is independent of Qt. `read_catalog` and `export_catalog`
 accept cancellation callbacks; export also accepts progress updates. Run them in a
@@ -108,12 +130,22 @@ After saving and exiting single player, the runtime was rebuilt without the temp
 crypto probe and launched as a new process. The Sierra and RECARO lettering persisted
 in free roam. No authentication checks were bypassed to load the design.
 
-This demonstrates recovery with an isolated copy of the original save identity; it does
-not establish arbitrary cross-profile import. Preservation bundles remain explicitly
-`installable: false`. Next: validate rebinding on a fresh identity, then integrate a
-backup-protected importer with #139 before serving recovered payloads to other players.
-Keep original creator attribution and distinguish historical content from new uploads;
-never count a successful protocol response alone as an in-game restoration.
+The launcher importer was subsequently exercised with the original FH1 package and a
+separate offline identity on a disposable, progressed profile with the Sierra already
+owned. The private fixture was prepared for that identity before running the game;
+this is not a career migration feature. Import authenticated both identities, created
+a verified catalog backup, and left the career file byte-identical. In-game, selecting
+**Load Recaro Cossie** from My Paint Jobs reported a successful application. The game
+wrote a new garage livery whose authenticated 524-byte plaintext exactly matched the
+source design, while preserving the creator and locked status. After saving and
+exiting single player, a new game process loaded the Sierra and its artwork from disk.
+
+This establishes that design's cross-identity import on the tested offline TU4 runtime.
+Vinyl groups, tunes, other Forza games and archival-bundle import remain unsupported.
+Preservation bundles remain explicitly `installable: false`; importing requires the
+original FH1 package and its authenticated index. Keep original creator attribution
+and distinguish historical content from new uploads; never count a successful protocol
+response alone as an in-game restoration.
 
 Validation: synthetic tests in `launcher/test_ugc.py` cover a constructed STFS package,
 damaged data blocks, wrong game IDs, traversal/links, export rollback, source preservation,

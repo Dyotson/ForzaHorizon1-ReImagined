@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self._last_start_error = None
         self._dlss_session_status = None
         self._busy = False
+        self._close_after_game = False
         self._dlss_task = None
         self._dlss_prepared = None
         self._dlss_result = (False, "")
@@ -221,7 +222,12 @@ class MainWindow(QMainWindow):
         # over migrations made by a newly started Flatpak launcher.
         if not self.about.updates.restarting:
             self.settings.flush()
-        self.stop_game()
+        if self.running():
+            self._close_after_game = True
+            self.stop_game()
+            self.status('Waiting for the game to close before releasing the save lock…')
+            e.ignore()
+            return
         super().closeEvent(e)
 
     def _gallery_idle(self):
@@ -290,6 +296,9 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
+        if self.catalogs.busy():
+            self.play.show_message('Wait for the catalog operation to finish before starting the game.', True)
+            return
         if self.running() or self._dlss_task is not None:
             return
         install, looked = game.find_game(self.cfg)
@@ -310,7 +319,7 @@ class MainWindow(QMainWindow):
             plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t))
             session = game.Session(plan)
             session.start()
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError, ValueError) as e:
             if str(e) != self._last_start_error:   # a player who presses Play again gets the same text, not a log line each time (#124)
                 self._last_start_error = str(e)
                 paths.log_error("start the game", e)
@@ -414,7 +423,7 @@ class MainWindow(QMainWindow):
             try:
                 if self.session.relaunch():
                     return
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 paths.log_error("start the game again", e)
         self.poll.stop()
         stopped = getattr(self.session, "stop_requested", False) is True
@@ -427,6 +436,9 @@ class MainWindow(QMainWindow):
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)
         self.play.refresh()
+        if self._close_after_game:
+            self._close_after_game = False
+            QTimer.singleShot(0, self.close)
 
 
 def run(argv):

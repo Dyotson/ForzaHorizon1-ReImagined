@@ -8,9 +8,9 @@ from PySide6.QtCore import (QAbstractListModel, QBuffer, QIODevice, QModelIndex,
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
                                QLabel, QLineEdit, QListView, QProgressBar, QPushButton, QScrollArea,
-                               QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+                               QSplitter, QStackedWidget, QVBoxLayout, QWidget, QMessageBox)
 
-from .. import paths, ugc
+from .. import TITLE_ID, paths, ugc
 from . import theme
 from .widgets import label
 
@@ -155,7 +155,7 @@ class CatalogsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 12)
         outer.setSpacing(12)
         outer.addWidget(label('Designs & vinyls', 'pageTitle'))
-        outer.addWidget(label('Browse saved designs and vinyl groups. Export an archival copy with the original creator details.', 'pageLead'))
+        outer.addWidget(label('Browse saved designs and vinyl groups. Import an FH1 design or preserve an archival copy.', 'pageLead'))
 
         actions = QHBoxLayout()
         self.open_package = QPushButton('Open save package…')
@@ -242,20 +242,28 @@ class CatalogsPage(QWidget):
         self.preview_note = label('', 'help')
         self.preview_note.setTextFormat(Qt.PlainText)
         dl.addWidget(self.preview_note)
+        self.import_button = QPushButton('Import design…')
+        self.import_button.setToolTip('Import the selected FH1 design into your active local profile, after backing up its catalog.')
+        self.import_button.clicked.connect(self.choose_import)
         dl.addStretch()
         details = QScrollArea()
         details.setWidgetResizable(True)
         details.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         details.setWidget(detail)
         details.setMinimumWidth(240)
-        self.splitter.addWidget(details)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(details, 1)
+        right_layout.addWidget(self.import_button)
+        self.splitter.addWidget(right)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         self.splitter.setSizes([480, 260])
         self.splitter.splitterMoved.connect(lambda *_: self._fit_preview())
         self.content.addWidget(self.splitter)
         outer.addWidget(self.content, 1)
-        outer.addWidget(label('Archival export only. Applying a design to another profile is not available yet.', 'help'))
+        outer.addWidget(label('Import adds a design to your active profile’s saved designs. Apply it to the matching car in-game. Vinyl groups and other Forza games can be exported only.', 'help'))
         self.message = label('', 'muted')
         self.message.setTextFormat(Qt.PlainText)
         outer.addWidget(self.message)
@@ -287,6 +295,10 @@ class CatalogsPage(QWidget):
         self.cancel.setVisible(busy)
         self.cancel.setEnabled(busy)
         self.open_export.setVisible(not busy and self.exported is not None)
+        item = self.grid.currentIndex().data(CatalogModel.ItemRole)
+        self.import_button.setEnabled(not busy and self.catalog is not None and
+            self.catalog.title_id == TITLE_ID and bool(self.catalog.index) and
+            self.catalog.profile_id is not None and item is not None and item.kind == 'livery')
 
     def choose_package(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Open a LivCatalog or LivGroups save', str(self.cfg.data_home()), 'All files (*)')
@@ -337,6 +349,7 @@ class CatalogsPage(QWidget):
         self.preview.clear()
         self.preview_note.clear()
         self.title.setText(item.title if item else 'No matching items')
+        self._controls()
         if not item:
             self.preview.setText('Try another search or choose All content.')
             return
@@ -385,7 +398,55 @@ class CatalogsPage(QWidget):
 
     def _exported(self, manifest):
         self.exported = manifest.parent
+        self.open_export.setText('Open export folder')
         self.message.setText(f'Archival copy saved to {self.exported}')
+
+    def choose_import(self):
+        from .. import catalog_import
+        if self.busy():
+            return
+        if self.window.running() or self.window.setup.busy():
+            self._error('Close the game and finish Setup before importing a design.')
+            return
+        item = self.grid.currentIndex().data(CatalogModel.ItemRole)
+        if item is None:
+            return
+        try:
+            self.window.settings.flush()
+            target = catalog_import.target_for(self.cfg)
+        except (ValueError, OSError) as exc:
+            self._error(str(exc))
+            return
+        text = (f'Import “{item.title}” by {", ".join(item.creators) or "Unknown creator"}?\n\n'
+                f'Destination: {target.folder}\nOffline profile: {target.identity.hex().upper()}\n\n'
+                'The existing design catalog will be backed up first. Creator attribution and locks '
+                'are preserved. Your career and garage will not be edited. Apply the design in-game.')
+        box = QMessageBox(QMessageBox.Question, 'Import design', text,
+                          QMessageBox.Cancel | QMessageBox.Yes, self)
+        box.setTextFormat(Qt.PlainText)
+        box.setDefaultButton(QMessageBox.Cancel)
+        box.button(QMessageBox.Yes).setText('Back up and import')
+        if box.exec() == QMessageBox.Yes:
+            self.import_to(target, item.path, self.cfg.game_files()/'default.xex')
+
+    def import_to(self, target, item_path, executable):
+        from .. import catalog_import
+        if self.busy() or self.window.running() or self.window.setup.busy():
+            self._error('Close the game and finish Setup before importing a design.')
+            return
+        catalog = self.catalog
+        def work(task):
+            try:
+                return catalog_import.import_design(catalog, item_path, target, executable,
+                    task.isInterruptionRequested, task.status.emit)
+            except (ValueError, OSError) as exc:
+                raise ugc.CatalogError(str(exc)) from exc
+        self._start(work, self._imported, 'Authenticating the design and destination…')
+
+    def _imported(self, backup):
+        self.exported = backup
+        self.open_export.setText('Open catalog backup')
+        self.message.setText(f'Design imported. Apply it to the matching car in-game. Catalog backup: {backup}')
 
     def show_export(self):
         if self.exported and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.exported))):

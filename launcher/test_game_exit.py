@@ -141,7 +141,7 @@ class WindowTests(unittest.TestCase):
         session = MagicMock()
         session.poll.return_value = code
         session.stop_requested = stopped
-        win = SimpleNamespace(session=session, session_plan=None, poll=MagicMock(), play=MagicMock())
+        win = SimpleNamespace(_close_after_game=False, session=session, session_plan=None, poll=MagicMock(), play=MagicMock())
         with patch.object(game, "crash_reason", return_value="CRASH BOX"):
             MainWindow._poll(win)
         return win.play.show_message.call_args_list

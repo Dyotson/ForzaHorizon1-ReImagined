@@ -211,11 +211,50 @@ class CatalogUITests(unittest.TestCase):
             self.win.close()
             self.wait_done()
             self.assertTrue(self.win.isVisible())
+
             self.assertFalse(self.page.closing)
             self.page._start(lambda task: None, lambda result: None, 'Working')
             self.wait_done()
             self.assertEqual(question.call_count, 1)
             self.assertTrue(self.win.isVisible())
+
+    def test_import_confirmation_and_worker_use_the_selected_snapshot(self):
+        from dataclasses import replace
+        from forza_launcher import catalog_import as ci
+        self.load()
+        self.assertFalse(self.page.import_button.isEnabled())  # extracted folders lack verified identity
+        self.page.catalog = replace(self.page.catalog, title_id='4D5309C9', profile_id=bytes(8), index=b'index')
+        self.page.search.setText('1293')
+        self.assertTrue(self.page.import_button.isEnabled())
+        target = ci.Target(self.root,self.root/'profile',bytes.fromhex('B13EBABEBABEBABE'))
+        backup=self.root/'backup'
+        with patch.object(ci,'target_for',return_value=target), \
+                patch.object(ci,'import_design',return_value=backup) as imported, \
+                patch.object(QMessageBox,'exec',return_value=QMessageBox.Yes):
+            self.page.import_button.click()
+            self.wait_done()
+        self.assertIs(imported.call_args.args[0],self.page.catalog)
+        self.assertIn('Design imported',self.page.message.text())
+        self.assertEqual(self.page.exported,backup)
+        self.assertEqual(self.page.open_export.text(),'Open catalog backup')
+        with patch.object(ci,'target_for',return_value=target), \
+                patch.object(ci,'import_design') as imported, \
+                patch.object(QMessageBox,'exec',return_value=QMessageBox.Cancel):
+            self.page.import_button.click()
+        imported.assert_not_called()
+
+    def test_catalog_task_blocks_play_and_running_game_blocks_import(self):
+        self.load()
+        with patch.object(self.win,'running',return_value=True), \
+                patch('forza_launcher.catalog_import.import_design') as imported:
+            self.page.import_to(None,'unused',None)
+        imported.assert_not_called()
+        self.assertIn('Close the game',self.page.message.text())
+        self.page._start(lambda task: None,lambda result:None,'Working')
+        with patch('forza_launcher.game.find_game') as find:
+            self.win.start_game()
+        find.assert_not_called()
+        self.wait_done()
 
 
 if __name__ == '__main__':

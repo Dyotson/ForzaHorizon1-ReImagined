@@ -43,7 +43,7 @@ datas += collect_data_files("certifi")
 hidden += ["certifi"] + collect_submodules("truststore")
 
 # The title update step (a Python tool the frozen app runs itself with --run-script).
-for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
 
@@ -51,7 +51,7 @@ a = Analysis(
     [str(root / "main.py")],
     pathex=[str(root), str(repo / "tools")],
     datas=datas,
-    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "xdc_decode", "tomllib"],
+    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "xdc_decode", "livery_codec", "tomllib"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],

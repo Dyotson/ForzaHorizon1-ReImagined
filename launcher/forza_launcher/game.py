@@ -592,33 +592,65 @@ class Session:
         self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
         self.stop_requested = False   # the player stopped it from the launcher: its exit code is no crash
         self.stop_deadline = None
+        self._save_lease = None
+
+    def _release_save_lease(self):
+        if self._save_lease is not None:
+            lease, self._save_lease = self._save_lease, None
+            lease.__exit__(None, None, None)
 
     def start(self):
         plan = self.plan
-        if plan.log_dir:
-            plan.log_dir.mkdir(parents=True, exist_ok=True)
-        flags = 0x08000000 if paths.IS_WINDOWS else 0  # CREATE_NO_WINDOW for the server
-        if plan.server_argv:
-            data_dir = Path(plan.server_argv[plan.server_argv.index("--data-dir") + 1])
-            data_dir.mkdir(parents=True, exist_ok=True)
-            # Popen gives the child its own handle. Close our copy immediately, including
-            # when starting the server fails; otherwise Windows keeps server.log locked.
-            with open(data_dir / "server.log", "ab") as server_log:
-                self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
-                                               stderr=subprocess.STDOUT, creationflags=flags,
-                                               stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
-            self.log("Started a local Forza Live server")
-        self._start_game({})
+        self._acquire_save_lease()
+        try:
+            if plan.log_dir:
+                plan.log_dir.mkdir(parents=True, exist_ok=True)
+            flags = 0x08000000 if paths.IS_WINDOWS else 0  # CREATE_NO_WINDOW for the server
+            if plan.server_argv:
+                data_dir = Path(plan.server_argv[plan.server_argv.index("--data-dir") + 1])
+                data_dir.mkdir(parents=True, exist_ok=True)
+                # Popen gives the child its own handle. Close our copy immediately, including
+                # when starting the server fails; otherwise Windows keeps server.log locked.
+                with open(data_dir / "server.log", "ab") as server_log:
+                    self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
+                                                   stderr=subprocess.STDOUT, creationflags=flags,
+                                                   stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
+                self.log("Started a local Forza Live server")
+            self._start_game({})
+        except BaseException:
+            if self.server and self.server.poll() is None:
+                self.server.terminate()
+            self._release_save_lease()
+            raise
+
+    def _acquire_save_lease(self):
+        plan = self.plan
+        if self._save_lease is None and plan.log_dir is not None:
+            from . import catalog_import
+            target = catalog_import.target_for_plan(plan)
+            lease = catalog_import.locked(target)
+            lease.__enter__()
+            try:
+                catalog_import.recover(target)
+            except BaseException:
+                lease.__exit__(None, None, None)
+                raise
+            self._save_lease = lease
 
     def _start_game(self, extra):
         plan = self.plan
+        self._acquire_save_lease()
         env = cleanenv.clean_environment()
         for k in plan.unset:
             env.pop(k, None)
         env.update(plan.env)
         env["FORZA_LAUNCHER_RELAUNCH"] = "1"
         env.update(extra)
-        self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        try:
+            self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        except BaseException:
+            self._release_save_lease()
+            raise
 
     def relaunch(self):
         """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running.
@@ -637,6 +669,8 @@ class Session:
         if self.proc is None:
             return None
         code = self.proc.poll()
+        if code is not None:
+            self._release_save_lease()
         if code is None and self.stop_deadline is not None and time.monotonic() > self.stop_deadline:
             self.stop_deadline = None
             self.log("The game did not close by itself; ending it")

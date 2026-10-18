@@ -138,7 +138,7 @@ class WindowPollTests(unittest.TestCase):
         session = MagicMock()
         session.poll.return_value = game.RELAUNCH_EXIT_CODE
         session.relaunch.return_value = relaunch_result
-        win = SimpleNamespace(session=session, session_plan=None, poll=MagicMock(), play=MagicMock())
+        win = SimpleNamespace(_close_after_game=False, session=session, session_plan=None, poll=MagicMock(), play=MagicMock())
         MainWindow._poll(win)
         return win, session
 
