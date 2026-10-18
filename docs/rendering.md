@@ -1,5 +1,35 @@
 # Rendering issues
 
+## Minimap icon resolution
+
+The minimap profile requests `MapIconSheetSmall.tga`: a 512x512 BC3 atlas
+with 64x64 cells. The full-screen map already uses `MapIconSheet.tga`, a
+1024x1024 atlas with 128x128 cells. Magnifying the small artwork makes arrows,
+icon outlines and the NEW label visibly soft at higher render scales.
+
+`src/hooks/minimap_icons.cpp` redirects only that small atlas name when the
+native map symbolizer parses its Texture property. It removes `Small` from the
+owned native string before resource lookup, so asynchronous loading and cache
+keys use the full-size path. Language folders, normalized 8x8 UV cells, icon
+sizes, placement and visibility are retained. The full atlas contains the
+original full-screen-map artwork, including its more detailed borders/lettering.
+No replacement images or game XML are shipped or modified.
+
+The property callback is disc `82CE6CD8` / TU4 `82DA8EE0`; its texture string is
+at object + 0xA8. Native string erase is disc `8247EF40` / TU4 `824AE5D8`.
+Both versions' layouts were checked against the executables. Set
+`FORZA_MINIMAP_HD_ICONS=0` before launch to compare the original atlas.
+
+Private asset validation found matching large atlases for all 20 language
+folders, and the 45 minimap / 61 full-screen-map atlas symbolizers use the same
+normalized 8x8 layout. TU4 builds and disc hook compile checks pass on Windows
+and Linux. Windows Vulkan checks on RTX 5060 Ti (617.14), using disposable
+copied saves offline, cover 720p/1x, 1440p/2x and 4K/3x. The 1440p before/after
+captures show sharper icons; opening the full-screen map and returning at 4K
+keeps the correct icons. This changes source artwork, not the HUD render target
+or presentation filter: a HUD rasterized at 720p and enlarged still has that
+resolution limit. D3D12 and a full disc runtime were not tested.
+
 ## Barn-find minimap transparency (#111)
 
 The minimap profile draws a barn-find region twice: an opaque white ellipse for
