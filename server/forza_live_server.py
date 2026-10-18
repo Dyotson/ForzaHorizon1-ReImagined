@@ -798,6 +798,31 @@ class ForzaLive(asyncio.DatagramProtocol):
                 for ip in [ip for ip, (_, last) in buckets.items() if now - last > 60]:
                     del buckets[ip]
 
+    @staticmethod
+    def match_game_type(record):
+        """The game type a custom game's record carries (its property 0x10000030, which Create
+        Custom Game sets and Find Game does not), or None."""
+        if len(record) < SESSION_INFO_SIZE + 5:
+            return None
+        pos = SESSION_INFO_SIZE + 4
+        count, pos = record[pos], pos + 1
+        for _ in range(count):
+            if pos + 13 > len(record):
+                return None
+            pid, = struct.unpack_from(">I", record, pos)
+            if pid == 0x10000030:
+                return struct.unpack_from(">I", record, pos + 5)[0]
+            pos += 13
+        return None
+
+    def match_status(self, match):
+        """A published session for status(): playlist, session id, slots and game type."""
+        if not match:
+            return None
+        filled, free = self.match_slots(match[1])
+        return {"playlist": match[0], "session": match[1][:8].hex(), "players": filled,
+                "slots": filled + free, "game_type": self.match_game_type(match[1])}
+
     def status(self):
         rooms = {}
         for p in self.peers.values():
@@ -806,10 +831,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                  "online_for": int(time.time() - p.since), "relayed_bytes": p.relayed_bytes,
                  "via_proxy": p.proxied,
                  "state": f"{p.state:08X}", "session": p.session[:8].hex(), "status": p.status,
-                 "match": None if not getattr(p, "match", None) else
-                 {"playlist": p.match[0], "session": p.match[1][:8].hex(),
-                  "players": self.match_slots(p.match[1])[0],
-                  "slots": sum(self.match_slots(p.match[1]))}})
+                 "match": self.match_status(getattr(p, "match", None)),
+                 "standby": self.match_status(getattr(p, "standby", None))})
         worlds = {sid.hex(): {"host": host.name, "humans": humans,
                               "event": world.WORLDS.state.get(sid)}
                   for sid, (host, humans) in self.world_sessions().items()}

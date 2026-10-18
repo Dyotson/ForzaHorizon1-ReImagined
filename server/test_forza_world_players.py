@@ -68,6 +68,25 @@ class WorldPlayersTest(unittest.TestCase):
                 pos += 14 + length
         return found
 
+    def test_status_names_each_lobby_s_playlist_and_custom_game_type(self):
+        a, b, c = self.player("A"), self.player("B"), self.player("C")
+        self.publish(a, b"world-01", 1)
+        self.standby(b, b"world-01")
+        # a public custom Street Race: user properties (count, then id u32, type u8, value
+        # 8 bytes) carry 0x10000030 = 4, the game type
+        props = bytes([2]) + struct.pack(">IB", 0x10000039, 1) + struct.pack(">I", 9) + bytes(4) \
+            + struct.pack(">IB", 0x10000030, 1) + struct.pack(">I", 4) + bytes(4)
+        rec = record(b"street01", 3)[:srv.SESSION_INFO_SIZE + 4] + props + bytes(3)
+        self.server.on_match(c, srv.MATCH_PUBLISH, bytes([1]) + struct.pack(">I", 4) + rec)
+        peers = {p["gamertag"]: p for p in self.server.status()["rooms"]["#TU4"]}
+        self.assertEqual(peers["A"]["match"], {"playlist": KEY, "session": b"world-01".hex(),
+                                               "players": 1, "slots": 8, "game_type": None})
+        self.assertEqual(peers["B"]["standby"]["session"], b"world-01".hex())
+        self.assertIsNone(peers["B"]["match"])
+        self.assertEqual(peers["C"]["match"]["game_type"], 4)
+        self.assertEqual(peers["C"]["match"]["players"], 3)
+        self.assertIsNone(srv.ForzaLive.match_game_type(rec[:srv.SESSION_INFO_SIZE + 10]))
+
     def test_third_player_is_placed_into_the_world_with_two(self):
         a, b, c = self.player("A"), self.player("B"), self.player("C")
         self.publish(a, b"\x01" * 8, 2)  # the host and one joiner
