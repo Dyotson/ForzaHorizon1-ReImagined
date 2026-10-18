@@ -90,6 +90,49 @@ native, pooled by frames/time across the four runs documented in
 legacy rendering costs and adds mesh snapshots. Its result is not a prediction
 of either a complete native renderer or Metal performance.
 
+## Windows backend comparison
+
+A separate dual-backend SDK build tested the existing Vulkan and Direct3D 12
+paths on an RTX 5060 Ti 16 GB (driver 617.14) and i9-13900K. Native pass
+replacements, DLSS and FSR were disabled. Both APIs used the same public benchmark
+host, SDK binaries and copied save seed. To avoid a Vulkan-only scene/HUD path,
+both used the original 1280x720 guest coordinates with 2x rasterization, original
+game MSAA, 2560x1440 output, no presentation filter, vsync and a configured 120 FPS
+cap. Presenter readbacks verified 2560x1440 output with the HUD intact.
+
+Both shader caches were warmed first. Four subsequent runs used Vulkan / D3D12 /
+D3D12 / Vulkan order, each with 15 seconds settling and 60 seconds measured.
+Statistics below pool the saved frame intervals across the two runs per API;
+warm-up runs are excluded. The 1% low is the reciprocal mean of the slowest
+ceil(N/100) intervals, as in the benchmark. CSV counts and summed durations agree
+with the reports.
+
+| Backend | Average FPS | 1% low FPS | P99 | Worst | Intervals >50 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Vulkan | 59.39 | 38.71 | 18.82 ms | 36.61 ms | 0 |
+| Direct3D 12 | 51.88 | 22.19 | 22.72 ms | 62.54 ms | 37 |
+
+Individual average rates were 59.38 / 51.53 / 52.22 / 59.39 FPS. Direct3D 12's
+average was 12.65% lower in this comparison, and its slow intervals occurred
+throughout the race. Its repeat log confirms that stored shaders were loaded
+before gameplay. No validation layers, RenderDoc replay or screenshot readbacks
+ran during the measured intervals. A process-table audit found no other FH1
+processes during any timed run. The game was brought into the foreground before
+each run; focus was not continuously monitored. AI traffic varies, so this is a
+matched development comparison, not a deterministic hardware ranking.
+
+These results support retaining Vulkan as the first native backend on this
+machine. They do not measure the proposed shared scene renderer, establish a
+Metal performance result, or attribute the DX12 stalls to a specific cause.
+Separate visual-only sessions captured 12 moving 2560x1440 frames per API, with
+the minimap, car labels and HUD present. Inspection of those rear-view sequences
+did not reproduce the green-reflection or obvious flicker report. This short
+view does not close issue #46 or establish parity in other scenes and angles.
+
+This original-MSAA baseline also differs from the earlier native-1440p SMAA
+geometry comparison. Source shaders, captures, saves and generated outputs stay
+outside the repository.
+
 ## Metal validation
 
 After the shared scene pass works on Vulkan, implement equivalent Metal resource
