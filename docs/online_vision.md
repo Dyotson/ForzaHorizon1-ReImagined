@@ -666,6 +666,25 @@ game's own string/binding functions; temporary guest scratch memory is freed aft
 each update. Incoming UTF-8 is bounded and malformed characters are replaced.
 Ownership resets when the control binds, unbinds, or receives an ordinary notification.
 
+Action messages explicitly request button artwork. The native `MiscIcon` and
+`MailIcon` materials load the game's own `Controller/X_Button.tga` and
+`Controller/B_Button.tga` through the original texture binding; no game artwork
+is distributed. Their model caches place 24-pixel buttons alongside the caption's
+Accept/Decline labels. The native model-property updater uses the same position,
+scale, opacity and dirty fields on disc (`82F22B08`) and TU4 (`82FE3AB8`).
+Original texture references are retained while borrowed, and resources and layout
+are restored on response, expiry, a normal notification, or unbind. Countdown and
+result messages remove the action buttons.
+
+The race uses the native sat-nav route and destination marker. A plausible road
+node alone is insufficient: `SetDestination` must return success. A tutorial can
+lock the sat-nav, so the challenge temporarily borrows the destination and lock,
+resets the tracker using the game's unlock helper, and restores both afterward.
+Failed setup retries at 500 ms intervals. Results, leaving free roam and disabling
+challenges schedule cleanup; the HUD update can finish restoration after the
+world hook stops. A changed manager invalidates the old lease without touching
+its former objects.
+
 | Hook | Disc | Title Update 4 |
 | --- | --- | --- |
 | Bind | 0x827E8000 | 0x8289AF88 |
@@ -674,7 +693,8 @@ Ownership resets when the control binds, unbinds, or receives an ordinary notifi
 | Ordinary notification | 0x827EF050 | 0x828A2980 |
 
 `forza-recomp/tests/challenge_hud_test.cpp` is a standalone C++17 test for message
-lifetime, request/countdown/race/result text, Unicode limits, and concurrent updates.
+lifetime, action-state transitions, request/countdown/race/result layout, Unicode
+limits, and concurrent updates.
 The `challenge-hud-tests` workflow runs it on Windows and Linux without game data.
 
 Validation (2026-10-18): the standalone tests and full TU4 builds passed on Windows
@@ -686,6 +706,18 @@ WSL/Xvfb with Mesa llvmpipe (LLVM 22), asynchronous shader compilation and vsync
 disabled. Game-frame captures show the native request/instructions and race
 distance/direction on both platforms. These checks do not constitute a two-client
 online race or a disc runtime test.
+
+Button-artwork follow-up (2026-10-18): Windows and Linux captures show the actual
+blue X/red B textures, native green sat-nav route and destination marker. Both
+runtimes exercised accept/decline and results, restored the ordinary mail icon,
+and kept that ordinary notification after challenge expiry. Direct guest-memory
+checks on both platforms confirmed the pre-race destination and lock byte match
+exactly after the result. Expanded action-state tests and clean TU4 builds passed
+on both platforms; both changed disc bridges compiled on Windows and passed Linux
+syntax checks. Initial Linux fixture attempts faulted during loading before any
+button message. The successful run used a fresh disposable save and delayed
+fixture activation until free roam loaded; the loading fault's cause was not
+isolated. These remain offline fixture checks, not a two-client race.
 
 ## Likely building blocks
 

@@ -26,8 +26,21 @@ int main() {
   assert(hud.Read(1400)->title == "YOU WIN");
   assert(hud.Read(1400)->second.empty());
   assert(NativeLines(*hud.Read(1400)).caption == "YOU WIN");
+  // Action icons are explicit message state; identical words can still change layout.
+  hud.Show("HEAD-TO-HEAD", "Driver challenges you\n(10)", 2, 1450, Actions::kAnswer);
+  const auto answer = *hud.Read(1451);
+  assert(answer.actions == Actions::kAnswer);
+  assert(NativeLines(answer).caption.find("Accept") != std::string::npos);
+  assert(NativeLines(answer).caption.find("Decline (10)") != std::string::npos);
+  hud.Show(answer.title, answer.first + "\n" + answer.second, 2, 1452, Actions::kAnswer);
+  assert(hud.Read(1453)->revision == answer.revision);
+  hud.Show(answer.title, answer.first + "\n" + answer.second, 2, 1454);
+  assert(hud.Read(1455)->actions == Actions::kNone);
+  assert(hud.Read(1455)->revision != answer.revision);
+  hud.Show("HEAD-TO-HEAD", "Driver ahead", 2, 1456, Actions::kChallenge);
+  assert(NativeLines(*hud.Read(1457)).caption.find("Challenge") != std::string::npos);
   hud.Clear();
-  assert(!hud.Read(1401));
+  assert(!hud.Read(1458));
   hud.Show("Next", "one\ntwo\nthree", 1, 1500);
   assert(hud.Read(1500)->second == "two three");
   hud.Show("Next", "body", std::numeric_limits<double>::quiet_NaN(), 1501);

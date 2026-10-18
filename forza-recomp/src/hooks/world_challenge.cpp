@@ -147,9 +147,15 @@ bool ReadCars(uint8_t* base, Car& own, std::vector<Car>* others) {
 // (0x826E04E8) do it as: components = *sub_825F6FB0() (= *(*(*(0x832DF024) + 4) + 0x4C)),
 // node = sub_82CDC5A0(components[*(0x832FF090)], position in v1) (the road network's node
 // for a position), sub_8299FB40(components[*(0x832FF054)], node) (the sat nav's
-// destination; node 0 clears it). True when the call was made.
+// destination; node 0 clears it). A challenge borrows this route and restores it.
+// The tutorial can lock the destination; preserve that lock while borrowing it.
+// tu_address_map: TU4 addresses
 extern "C" REX_FUNC(__imp__sub_82CDC5A0);
 extern "C" REX_FUNC(__imp__sub_8299FB40);
+struct NavigationLease {
+  uint32_t manager = 0, destination = 0;
+  uint8_t locked = 0;
+} navigation;
 bool SatNav(PPCContext& ctx, uint8_t* base, bool set, float x, float y, float z) {
   const uint32_t root = Load32(forza::GuestPtr(base, kCarRoot));
   if (!Plausible(root)) return false;
@@ -164,28 +170,42 @@ bool SatNav(PPCContext& ctx, uint8_t* base, bool set, float x, float y, float z)
   const uint32_t satnav = Load32(forza::GuestPtr(
       base, table + 4 * Load32(forza::GuestPtr(base, FORZA_ADDR(0x832FF054)))));
   if (!Plausible(roads) || !Plausible(satnav)) return false;
-  PPCContext saved = ctx;
-  ctx.r1.u64 = ctx.r1.u32 - 0x400;  // our frame below the hooked function's
-  uint32_t node = 0;
+  // A different free roam owns different components. Never dereference the old one.
+  if (navigation.manager && navigation.manager != satnav) navigation = {};
+  if (!set && !navigation.manager) return true;
+  PPCContext call = ctx;
+  call.r1.u64 = ctx.r1.u32 - 0x400;
+  uint32_t node = navigation.destination;
   if (set) {
-    ctx.r3.u64 = roads;
-    ctx.v1.f32[3] = x;  // lvx byte-reverses the vector: x is the top lane
-    ctx.v1.f32[2] = y;
-    ctx.v1.f32[1] = z;
-    ctx.v1.f32[0] = 1.0f;
-    __imp__sub_82CDC5A0(ctx, base);
-    node = ctx.r3.u32;
+    call.r3.u64 = roads;
+    call.v1.f32[3] = x;  // lvx byte-reverses the vector: x is the top lane
+    call.v1.f32[2] = y;
+    call.v1.f32[1] = z;
+    call.v1.f32[0] = 1.0f;
+    __imp__sub_82CDC5A0(call, base);
+    node = call.r3.u32;
+    if (!Plausible(node)) return false;
   }
-  if (!set || Plausible(node)) {
-    ctx.r1.u64 = saved.r1.u32 - 0x400;
-    ctx.r3.u64 = satnav;
-    ctx.r4.u64 = set ? node : 0;
-    __imp__sub_8299FB40(ctx, base);
+  auto* locked = forza::GuestPtr(base, satnav + 0x2FC);
+  const NavigationLease previous = navigation.manager ? navigation : NavigationLease{
+      satnav, Load32(forza::GuestPtr(base, satnav + 0x240)), *locked};
+  *locked = 0;
+  // Same tracker reset used by the game's CLockSatNavDestination when unlocking.
+  call.r1.u64 = ctx.r1.u32 - 0x400;
+  call.r3.u64 = satnav;
+  rex::runtime::ResolveIndirectFunction(FORZA_TU4 ? 0x82A4C660 : 0x829980E8)(call, base);
+  call.r1.u64 = ctx.r1.u32 - 0x400;
+  call.r3.u64 = satnav;
+  call.r4.u64 = node;
+  __imp__sub_8299FB40(call, base);
+  const bool accepted = call.r3.u8 != 0;
+  *locked = accepted && set ? 1 : previous.locked;
+  if (accepted) {
+    navigation = set ? previous : NavigationLease{};
+    REXLOG_INFO("CHALLENGE: GPS {} (road node {:08X})",
+                set ? "route to the finish" : "previous route restored", node);
   }
-  ctx = saved;
-  REXLOG_INFO("CHALLENGE: GPS {} (road node {:08X})", set ? "route to the finish" : "cleared",
-              node);
-  return !set || Plausible(node);
+  return accepted;
 }
 
 // Client state. Game thread (frame, pad) and network thread (messages): one mutex.
@@ -195,10 +215,11 @@ State state = State::kIdle;
 uint32_t challenge_id = 0;
 std::string opponent, destination;
 float finish_x = 0, finish_y = 0, finish_z = 0, finish_radius = 0;
-// The game's GPS (sat nav) route to the finish: set on START, cleared at the end, both on
-// the game thread (WorldChallengeFrame).
+// The game's GPS route: borrow it on START and restore it at the end.
+// The HUD update also drains cleanup when the free-roam frame hook stops.
 enum class Gps { kNone, kSet, kShown, kClear };
 Gps gps = Gps::kNone;
+int64_t next_gps_attempt = 0;
 int64_t deadline = 0;      // prompt: answer by; waiting: give up at; racing: the start time
 bool finished = false;
 int64_t last_frame = 0;    // the last frame of the world's free roam
@@ -265,7 +286,7 @@ void LeaveWorld() {
   if (!in_world) return;
   in_world = false;
   forza::ChallengeHudClear();
-  if (gps != Gps::kNone) gps = Gps::kNone;  // a new free roam has a new sat nav
+  if (gps != Gps::kNone) gps = Gps::kClear;
   Send({kLeft});
   REXLOG_INFO("CHALLENGE: out of the world's free roam");
   if (state != State::kIdle) {
@@ -276,6 +297,13 @@ void LeaveWorld() {
 }  // namespace
 
 namespace forza {
+
+// Continue deferred cleanup even when the world's frame hook has stopped.
+void WorldChallengeHudTick(PPCContext& ctx, uint8_t* base) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (in_world && (!REXCVAR_GET(world_challenges) || NowMs() - last_frame > 2000)) LeaveWorld();
+  if (gps == Gps::kClear && SatNav(ctx, base, false, 0, 0, 0)) gps = Gps::kNone;
+}
 
 // Every frame of the Horizon World's free roam (world_events.cpp, sub_825ADB30).
 void WorldChallengeFrame(PPCContext& ctx, uint8_t* base) {
@@ -317,7 +345,7 @@ void WorldChallengeFrame(PPCContext& ctx, uint8_t* base) {
   }
   if (target_ahead && state == State::kIdle && now >= hud_busy_until && now - last_hud >= 1000) {
     last_hud = now;
-    forza::ChallengeHudShow(kTitle, "X: challenge the driver ahead", 1.5, !was_ahead);
+    forza::ChallengeHudShow(kTitle, "Driver ahead", 1.5, !was_ahead, challenge_hud::Actions::kChallenge);
   }
   if (!have_pos && Trace()) REXLOG_INFO("CHALLENGE: car at {:.1f} {:.1f} {:.1f}", p[0], p[1], p[2]);
   have_pos = true;
@@ -334,10 +362,10 @@ void WorldChallengeFrame(PPCContext& ctx, uint8_t* base) {
                   pos[0], pos[1], pos[2], heading[0], heading[1], speed);
     }
   }
-  if (gps == Gps::kSet) {
-    gps = SatNav(ctx, base, true, finish_x, finish_y, finish_z) ? Gps::kShown : Gps::kNone;
-  } else if (gps == Gps::kClear) {
-    SatNav(ctx, base, false, 0, 0, 0);
+  if (gps == Gps::kSet && now >= next_gps_attempt) {
+    next_gps_attempt = now + 500;
+    if (SatNav(ctx, base, true, finish_x, finish_y, finish_z)) gps = Gps::kShown;
+  } else if (gps == Gps::kClear && SatNav(ctx, base, false, 0, 0, 0)) {
     gps = Gps::kNone;
   }
   if (state == State::kRacing) {
@@ -399,9 +427,9 @@ uint16_t WorldChallengePad(uint16_t buttons) {
         Show(kTitle, accept ? "Accepted! Get ready..." : "Declined", accept ? 5 : 3);
       } else if (now - last_hud >= 250) {
         last_hud = now;
-        forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
+        forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\n(" +
                                    std::to_string((deadline - now + 999) / 1000) + ")",
-                       2, false);
+                       2, false, challenge_hud::Actions::kAnswer);
       }
       return kButtonX | kButtonB;
     }
@@ -459,9 +487,9 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       state = State::kPrompt;
       last_hud = 0;
       REXLOG_INFO("CHALLENGE {}: {} challenges us", challenge_id, opponent);
-      forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
+      forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\n(" +
                                  std::to_string(p[5]) + ")",
-                     2);
+                     2, true, challenge_hud::Actions::kAnswer);
       return;
     }
     case kStart: {
@@ -473,6 +501,7 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       finish_z = LoadF(p + 15);
       finish_radius = LoadF(p + 19);
       gps = Gps::kSet;
+      next_gps_attempt = 0;
       size_t at = 23;
       opponent = text8(at);
       destination = text8(at);
@@ -490,7 +519,7 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       const uint8_t outcome = p[5];
       static const char* const kOutcome[] = {"", "YOU WIN", "YOU LOSE", "NO WINNER", kTitle};
       REXLOG_INFO("CHALLENGE {}: over, outcome {}", Load32(p + 1), outcome);
-      gps = gps == Gps::kShown ? Gps::kClear : Gps::kNone;
+      gps = Gps::kClear;
       state = State::kIdle;
       Show(outcome <= 4 ? kOutcome[outcome] : kTitle, text16(6), 6);
       return;

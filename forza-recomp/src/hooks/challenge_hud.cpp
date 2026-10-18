@@ -5,6 +5,7 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <rex/logging.h>
@@ -63,9 +64,7 @@ void Timer(uint8_t* base, uint32_t control, float seconds) {
 // a control binds/unbinds or a normal alert replaces our text.
 uint32_t owner = 0;
 uint64_t bound_revision = 0;
-void Release(uint32_t control) {
-  if (owner == control) { owner = 0; bound_revision = 0; }
-}
+
 
 class Native {
  public:
@@ -73,14 +72,14 @@ class Native {
     ctx_.r1.u64 = ctx.r1.u32 - 0x400;
   }
   ~Native() { if (scratch_) REX_KERNEL_MEMORY()->SystemHeapFree(scratch_); }
-  uint32_t Call(uint32_t address, uint32_t a, uint32_t b = 0, uint32_t c = 0) {
-    ctx_.r3.u64 = a; ctx_.r4.u64 = b; ctx_.r5.u64 = c;
+  uint32_t Call(uint32_t address, uint32_t a, uint32_t b = 0, uint32_t c = 0, uint32_t d = 0) {
+    ctx_.r3.u64 = a; ctx_.r4.u64 = b; ctx_.r5.u64 = c; ctx_.r6.u64 = d;
     rex::runtime::ResolveIndirectFunction(address)(ctx_, base_);
     return ctx_.r3.u32;
   }
   bool Binding(uint32_t binding, const std::string& value) {
     if (!Call(Address(0x82E73BB8, 0x82F355E8), binding)) return false;
-    if (!scratch_) scratch_ = REX_KERNEL_MEMORY()->SystemHeapAlloc(512);
+    if (!scratch_) scratch_ = REX_KERNEL_MEMORY()->SystemHeapAlloc(1024);
     if (!scratch_) return false;
     const auto text = Text(value);
     for (size_t i = 0; i < text.size(); ++i) {
@@ -100,11 +99,121 @@ class Native {
     return true;
   }
 
+  uint32_t Element(uint32_t control, const std::string& path) {
+    if (!scratch_) scratch_ = REX_KERNEL_MEMORY()->SystemHeapAlloc(1024);
+    if (!scratch_ || path.size() >= 400) return 0;
+    const auto native = Read(base_, control + 0x54);
+    const auto scene = Read(base_, native + 8);
+    const auto engine = Call(Read(base_, Read(base_, scene) + 0x1C), scene);
+    std::memcpy(forza::GuestPtr(base_, scratch_ + 544), path.c_str(), path.size() + 1);
+    return Call(Address(0x82E72E68, 0x82F348B8), engine,
+                Read(base_, native + 12), scratch_ + 544);
+  }
+  void Texture(uint32_t control, uint32_t material, const char* uri) {
+    const auto scene = Read(base_, Read(base_, control + 0x54) + 8);
+    Write(base_, scratch_ + 512, 0);
+    Write(base_, scratch_ + 516, material);
+    Write(base_, scratch_ + 520, scene);
+    std::memcpy(forza::GuestPtr(base_, scratch_ + 544), uri, std::strlen(uri) + 1);
+    Call(Address(0x82E773F0, 0x82F38E80), scratch_ + 512, scratch_ + 544, 0, 8);
+  }
+  void Retain(uint32_t resource) {
+    if (resource) Call(Read(base_, Read(base_, resource) + 8), resource);
+  }
+  void Drop(uint32_t resource) {
+    if (resource) Call(Read(base_, Read(base_, resource) + 12), resource);
+  }
+
  private:
   PPCContext ctx_;
   uint8_t* base_;
   uint32_t scratch_ = 0;
 };
+
+// Anark's model runtime: local position/scale and opacity are cached here.
+// Static properties (such as these icons' positions) have no scalar binding.
+// Match the native model-property updater's transform/opacity dirty bits at +FB.
+// Keep the original resource alive and restore it before any normal alert/unbind.
+struct Icon {
+  uint32_t element = 0, model = 0, texture_slot = 0, resource = 0;
+  std::array<uint32_t, 5> saved{};
+};
+std::array<Icon, 2> icons;
+constexpr std::array<uint32_t, 5> icon_fields{0x0C, 0x10, 0x24, 0x28, 0xE0};
+void Dirty(uint8_t* base, uint32_t model) {
+  forza::GuestPtr(base, model + 0xFB)[0] |= 0xA0;
+}
+void RestoreIcons(Native& ui, uint8_t* base) {
+  for (auto& icon : icons) {
+    if (!icon.model) continue;
+    for (size_t i = 0; i < icon_fields.size(); ++i)
+      Write(base, icon.model + icon_fields[i], icon.saved[i]);
+    // The active mode's native opacity may differ from the mode preceding SHOW.
+    // We only override the render cache, so the native property remains authoritative.
+    const auto opacity = ui.Call(Address(0x82F2DDC8, 0x82FEF130), icon.element, 0x0191C315);
+    if (opacity) {
+      uint32_t bits = Read(base, opacity + 4);
+      float value;
+      std::memcpy(&value, &bits, 4);
+      value *= 0.01f;
+      std::memcpy(&bits, &value, 4);
+      Write(base, icon.model + 0xE0, bits);
+    }
+    Dirty(base, icon.model);
+    const auto current = Read(base, icon.texture_slot);
+    if (current != icon.resource) {
+      ui.Retain(icon.resource);
+      Write(base, icon.texture_slot, icon.resource);
+      ui.Drop(current);
+    }
+    ui.Drop(icon.resource);
+    icon = {};
+  }
+}
+void ButtonIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions) {
+  if (actions == Actions::kNone) { RestoreIcons(ui, base); return; }
+  for (size_t i = 0; i < icons.size(); ++i) {
+    auto& icon = icons[i];
+    if (!icon.model) {
+      const std::string path = std::string("parent.State.DoubleTape.Icons.") +
+                               (i ? "MailIcon" : "MiscIcon");
+      const auto element = ui.Element(control, path);
+      const auto material = ui.Element(control, path + ".Material8333");
+      if (!element || !material) { RestoreIcons(ui, base); return; }
+      const auto object = Read(base, Read(base, material + 4));
+      const auto textures = Read(base, object + 0xDC);
+      if (!textures || Read(base, object + 0xE0) <= textures) {
+        RestoreIcons(ui, base); return;
+      }
+      icon.element = element;
+      icon.model = Read(base, element + 4);
+      icon.texture_slot = Read(base, textures) + 0xF4;
+      icon.resource = Read(base, icon.texture_slot);
+      for (size_t n = 0; n < icon_fields.size(); ++n)
+        icon.saved[n] = Read(base, icon.model + icon_fields[n]);
+      ui.Retain(icon.resource);
+      ui.Texture(control, material, i
+        ? "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\B_Button.tga"
+        : "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\X_Button.tga");
+    }
+    const std::array<float, 5> layout{
+        i ? -42.0f : -140.0f, -14.0f, 0.28f, 0.28f,
+        i && actions != Actions::kAnswer ? 0.0f : 1.0f};
+    for (size_t n = 0; n < icon_fields.size(); ++n) {
+      uint32_t value;
+      std::memcpy(&value, &layout[n], 4);
+      Write(base, icon.model + icon_fields[n], value);
+    }
+    Dirty(base, icon.model);
+  }
+}
+void Release(PPCContext& ctx, uint8_t* base, uint32_t control) {
+  if (owner != control) return;
+  Native ui(ctx, base);
+  RestoreIcons(ui, base);
+  owner = 0;
+  bound_revision = 0;
+}
 
 void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
   const auto now = Now();
@@ -113,7 +222,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
   if (!message) {
     if (owner == control) {
       ui.Call(Address(0x827EB0D0, 0x8289E808), control, 0);
-      Release(control);
+      Release(ctx, base, control);
     }
     return;
   }
@@ -137,14 +246,16 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
     bound_revision = message->revision;
     REXLOG_DEBUG("CHALLENGE HUD: native text revision {}", bound_revision);
   }
+  ButtonIcons(ui, base, control, message->actions);
   Timer(base, control, float(message->until - now) / 1000.0f);
 }
 }  // namespace
 
 namespace forza {
-void ChallengeHudShow(const std::string& title, const std::string& body, double seconds, bool log) {
+void WorldChallengeHudTick(PPCContext&, uint8_t*);
+void ChallengeHudShow(const std::string& title, const std::string& body, double seconds, bool log, challenge_hud::Actions actions) {
   if (log) REXLOG_INFO("HUD: {} | {}", title, body);
-  mailbox.Show(title, body, seconds, Now());
+  mailbox.Show(title, body, seconds, Now(), actions);
 }
 void ChallengeHudClear() { mailbox.Clear(); }
 }  // namespace forza
@@ -154,17 +265,18 @@ extern "C" REX_FUNC(HudUpdate) {
   // Expiration belongs to the mailbox's monotonic deadline, not UI frame rate.
   if (owner == control) Timer(base, control, 60);
   OriginalUpdate(ctx, base);
+  forza::WorldChallengeHudTick(ctx, base);
   Tick(ctx, base, control);
 }
 extern "C" REX_FUNC(HudBind) {
-  Release(ctx.r3.u32);
+  Release(ctx, base, ctx.r3.u32);
   OriginalBind(ctx, base);
 }
 extern "C" REX_FUNC(HudUnbind) {
-  Release(ctx.r3.u32);
+  Release(ctx, base, ctx.r3.u32);
   OriginalUnbind(ctx, base);
 }
 extern "C" REX_FUNC(HudNotification) {
-  Release(ctx.r3.u32);
+  Release(ctx, base, ctx.r3.u32);
   OriginalNotification(ctx, base);
 }

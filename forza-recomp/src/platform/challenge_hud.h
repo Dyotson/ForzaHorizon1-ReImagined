@@ -13,7 +13,9 @@
 #include <utility>
 
 namespace forza::challenge_hud {
+enum class Actions { kNone, kChallenge, kAnswer };
 struct Message {
+  Actions actions = Actions::kNone;
   std::string title, first, second;
   int64_t until = 0;
   uint64_t revision = 0;
@@ -24,13 +26,18 @@ inline Lines NativeLines(const Message& message) {
   // The general notification displays LINE_ONE as its headline and TITLE as
   // its small caption. LINE_TWO belongs to the sponsor variants and is hidden
   // here. Give instructions/countdown/distance that visible caption slot.
+  if (message.actions == Actions::kAnswer)
+    return {message.first, "        Accept                   Decline " + message.second};
+  if (message.actions == Actions::kChallenge)
+    return {message.first, "        Challenge"};
   return {message.first.empty() ? message.title : message.first,
           message.second.empty() ? message.title : message.second};
 }
 
 class Mailbox {
  public:
-  void Show(std::string title, std::string body, double seconds, int64_t now) {
+  void Show(std::string title, std::string body, double seconds, int64_t now,
+            Actions actions = Actions::kNone) {
     if (!std::isfinite(seconds) || seconds <= 0) {
       Clear();
       return;
@@ -41,8 +48,10 @@ class Mailbox {
     std::replace(second.begin(), second.end(), '\n', ' ');
     std::lock_guard lock(mutex_);
     // Refresh the deadline without rebinding identical text or replaying SHOW.
-    if (message_.title != title || message_.first != first || message_.second != second)
+    if (message_.title != title || message_.first != first || message_.second != second ||
+        message_.actions != actions)
       ++message_.revision;
+    message_.actions = actions;
     message_.title = std::move(title);
     message_.first = std::move(first);
     message_.second = std::move(second);
@@ -97,6 +106,7 @@ inline std::u16string Text(std::string_view input, size_t limit = 120) {
 
 namespace forza {
 void ChallengeHudShow(const std::string& title, const std::string& body,
-                      double seconds, bool log = true);
+                      double seconds, bool log = true,
+                      challenge_hud::Actions actions = challenge_hud::Actions::kNone);
 void ChallengeHudClear();
 }  // namespace forza
