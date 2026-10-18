@@ -1,7 +1,7 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QTimer, Qt, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
@@ -262,11 +262,19 @@ class SettingsPage(QWidget):
     def _show_search_result(self, target):
         index = schema.GROUPS.index(target.group)
         self.tabs.setCurrentIndex(index)
-        scroll = self.stack.widget(index)
+        # Let the newly shown category finish its wrapped-text layout before scrolling.
+        QTimer.singleShot(0, self, lambda: self._focus_search_target(target))
+
+    def _focus_search_target(self, target):
+        if not any(item is target for item in self.search.targets):
+            return  # Reset/GPU changes may have rebuilt the controls while queued.
+        scroll = self.stack.currentWidget()
+        if self.tabs.tabText(self.tabs.currentIndex()) != target.group:
+            return
         scroll.widget().layout().activate()
-        scroll.ensureWidgetVisible(target.widget, 0, 32)
         if target.focus.isEnabled():
             target.focus.setFocus(Qt.ShortcutFocusReason)
+        scroll.verticalScrollBar().setValue(target.widget.mapTo(scroll.widget(), QPoint()).y() - 32)
         # QScrollArea may pan a wide row sideways even with its horizontal bar hidden.
         scroll.horizontalScrollBar().setValue(0)
 

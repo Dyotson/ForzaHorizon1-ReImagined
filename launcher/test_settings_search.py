@@ -10,7 +10,7 @@ from unittest.mock import Mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from PySide6.QtCore import QCoreApplication, QEvent, Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 except ImportError:
@@ -98,6 +98,7 @@ class SettingsSearchTests(unittest.TestCase):
         QTest.keyClick(self.search.edit, Qt.Key_Down)
         self.assertTrue(self.search.results.hasFocus())
         QTest.keyClick(self.search.results, Qt.Key_Return)
+        self.app.processEvents()
         self.assertTrue(self.page.rows["frame_rate"].control.hasFocus())
         QTest.keyClick(self.page.rows["frame_rate"].control, Qt.Key_F, Qt.ControlModifier)
         self.app.processEvents()
@@ -122,7 +123,7 @@ class SettingsSearchTests(unittest.TestCase):
         self.query("")
         self.assertEqual(self.search.results.count(), 0)
 
-    def test_deep_result_scrolls_into_view_and_dismissal_collapses_results(self):
+    def test_deep_result_scrolls_into_view_after_category_layout(self):
         from forza_launcher import schema
         self.query("extra_env")
         target = self.search.results.item(0).data(Qt.UserRole)
@@ -134,6 +135,27 @@ class SettingsSearchTests(unittest.TestCase):
         self.assertGreaterEqual(top.y(), 0)
         self.assertLess(top.y(), scroll.viewport().height() - target.widget.height())
         self.assertLess(self.search.height(), 90)
+
+    def test_results_overlay_tabs_without_moving_content_and_dismiss_outside(self):
+        tabs = self.page.tabs.geometry()
+        content = self.page.stack.geometry()
+        self.query("resolution")
+        self.assertEqual(self.page.tabs.geometry(), tabs)
+        self.assertEqual(self.page.stack.geometry(), content)
+        self.assertTrue(self.search.results.geometry().intersects(tabs))
+        point = self.search.results.geometry().center()
+        front = self.page.childAt(point)
+        self.assertTrue(front is self.search.results or self.search.results.isAncestorOf(front))
+        self.page.resize(850, 650)
+        self.app.processEvents()
+        self.assertEqual(self.search.results.width(), self.search.width())
+        QTest.mouseClick(self.search.results.viewport(), Qt.LeftButton,
+                         pos=self.search.results.visualItemRect(self.search.results.item(0)).center())
+        self.app.processEvents()
+        self.assertTrue(self.search.results.isHidden())
+        self.query("resolution")
+        QTest.mouseClick(self.page, Qt.LeftButton, pos=QPoint(840, 640))
+        self.assertTrue(self.search.results.isHidden())
 
 
 if __name__ == "__main__":
