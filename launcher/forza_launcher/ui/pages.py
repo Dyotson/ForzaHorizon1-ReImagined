@@ -7,13 +7,13 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
-                               QVBoxLayout, QWidget)
+                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
+                               QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins
 from ..config import Config
 from . import theme, workers
-from .widgets import Hero, StatusRow, card, label
+from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
 
 
 def scroll_page(title, lead):
@@ -22,9 +22,10 @@ def scroll_page(title, lead):
     lay = QVBoxLayout(inner)
     lay.setContentsMargins(0, 0, 12, 24)
     lay.setSpacing(14)
-    t = QLabel(title)
-    t.setObjectName("pageTitle")
-    lay.addWidget(t)
+    if title:
+        t = QLabel(title)
+        t.setObjectName("pageTitle")
+        lay.addWidget(t)
     if lead:
         lay.addWidget(label(lead, "pageLead"))
     sc = QScrollArea()
@@ -71,7 +72,6 @@ class PlayPage(QWidget):
         self.r_online = StatusRow("Online")
         for r in (self.r_files, self.r_build, self.r_dlc, self.r_online):
             cl.addWidget(r)
-        lay.addWidget(c)
 
         row = QHBoxLayout()
         self.play = QPushButton("Play")
@@ -89,7 +89,14 @@ class PlayPage(QWidget):
         row.addWidget(logs)
         lay.addLayout(row)
         self.msg = label("", "muted")
+        self.msg.hide()
         lay.addWidget(self.msg)
+        lay.addWidget(c)
+        self.install_details = Disclosure("Installation details")
+        self.install_paths = label("", "help")
+        self.install_paths.setTextFormat(Qt.PlainText)
+        self.install_details.content.addWidget(self.install_paths)
+        lay.addWidget(self.install_details)
         lay.addStretch(1)
         self.mode = "setup"
         self._keep_warn = False
@@ -106,7 +113,7 @@ class PlayPage(QWidget):
         if (root / "default.xex").is_file():
             files_ok, files_msg = installer.check_game_folder(root)
             if files_ok:
-                files_msg = str(root)
+                files_msg = "Ready"
         else:
             files_ok, files_msg = False, "Not set up yet: open Setup."
         self.r_files.set(files_ok, files_msg)
@@ -114,8 +121,8 @@ class PlayPage(QWidget):
         install, looked = game.find_game(cfg)
         if install is not None:
             self.r_build.set(True if state != "stale" else None,
-                             f"{game.game_version(install)}  -  {install.dir}" +
-                             ("  (a rebuild is available: open Setup)" if state == "stale" else ""))
+                             f"{game.game_version(install)}" +
+                             (" · Update available in Setup" if state == "stale" else " · Ready to play"))
         else:
             self.r_build.set(False if state != "partial" else None, detail + " Open Setup and press Build.")
         n = game.installed_dlc(cfg)
@@ -123,11 +130,17 @@ class PlayPage(QWidget):
                        "None installed (optional): add them in Setup.")
         mode = cfg.online["mode"]
         self.r_online.set(True, {
-            "public": f"Public server, {PUBLIC_SERVER}",
+            "public": "Public server",
             "local": "Local server on this PC (only you)",
             "custom": "Your server: " + (cfg.online.get("custom_server") or "(no address set)"),
             "offline": "Offline",
         }[mode] + "   (Settings > Online)")
+        details = [f"Game files: {root}", f"Saves and data: {cfg.data_home()}"]
+        if install:
+            details.append(f"Game executable: {install.exe}")
+        if mode == "public":
+            details.append(f"Online server: {PUBLIC_SERVER}")
+        self.install_paths.setText("\n".join(details))
         ready = files_ok and install is not None
         if self.window._dlss_task is not None:
             self.play.setText("Preparing DLSS…")
@@ -156,6 +169,7 @@ class PlayPage(QWidget):
         self._keep_warn = False
         self.warn.hide()
         self.msg.setText("")
+        self.msg.hide()
 
     def show_message(self, text, warn=False, keep=False):
         """A warning stays until the next start: refresh() runs right after it and used to hide
@@ -163,10 +177,12 @@ class PlayPage(QWidget):
         if warn:
             self._keep_warn = keep
             self.msg.setText("")
+            self.msg.hide()
             self.warn.setText(text)
             self.warn.show()
         else:
             self.msg.setText(text)
+            self.msg.setVisible(bool(text))
 
 
 # ================================================================== Setup =================
@@ -175,15 +191,16 @@ class StepCard:
     """A numbered card with a title, status line and a body layout."""
 
     def __init__(self, number, title, lead):
-        self.frame, self.lay = card(spacing=10)
+        self.frame, self.lay = card(margins=(24, 24, 24, 24), spacing=20)
         head = QHBoxLayout()
+        head.setSpacing(14)
         n = QLabel(str(number))
         n.setFixedSize(30, 30)
         n.setAlignment(Qt.AlignCenter)
         n.setStyleSheet(f"background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 {theme.ORANGE}, stop:1 {theme.PINK});"
                         f"color: #1a0f33; font-weight: 800; border-radius: 15px;")
         head.addWidget(n)
-        t = QLabel(title)
+        t = label(title)
         t.setObjectName("cardTitle")
         head.addWidget(t)
         head.addStretch(1)
@@ -208,7 +225,7 @@ class WrappedCheck(QWidget):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        lay.setSpacing(12)
         self.box = QCheckBox()
         lay.addWidget(self.box, 0, Qt.AlignTop)
         self.text = label(text, "")
@@ -227,6 +244,7 @@ class WrappedCheck(QWidget):
 
 def path_row(placeholder, on_file=None, on_dir=None, file_title="Choose a file"):
     row = QHBoxLayout()
+    row.setSpacing(12)
     edit = QLineEdit()
     edit.setPlaceholderText(placeholder)
     row.addWidget(edit, 1)
@@ -257,20 +275,38 @@ class SetupPage(QWidget):
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        sc, lay = scroll_page("Setup", "The game is built on this computer from your own copy of Forza Horizon. "
-                              "Nothing from the game is downloaded or shared: no game code or data is included "
-                              "with this launcher.")
-        outer.addWidget(sc)
+        outer.setSpacing(20)
+        outer.addWidget(label("Setup", "pageTitle"))
+        outer.addWidget(label("Build the game from your own copy of Forza Horizon. "
+                              "No game code or data is included with the launcher.", "pageLead"))
+        self.tabs = QTabBar()
+        self.tabs.setExpanding(False)
+        self.tabs.setDrawBase(False)
+        self.tabs.setAccessibleName("Setup stages")
+        self.stack = QStackedWidget()
+        sections = []
+        for title in ("Game files", "Updates && DLC", "Build"):
+            self.tabs.addTab(title)
+            scroll, content = scroll_page("", "")
+            content.setSpacing(20)
+            self.stack.addWidget(scroll)
+            sections.append(content)
+        self.tabs.currentChanged.connect(self.stack.setCurrentIndex)
+        outer.addWidget(self.tabs)
+        outer.addWidget(self.stack, 1)
+        lay = sections[0]
 
         # 0. where --------------------------------------------------------------------
-        f0, l0 = card()
-        t0 = QLabel("Where the game is built")
+        f0, l0 = card(margins=(24, 24, 24, 24), spacing=20)
+        t0 = QLabel("Game and save folder")
         t0.setStyleSheet("font-weight: 700; font-size: 15px;")
         l0.addWidget(t0)
-        l0.addWidget(label("The extracted game, the compiler downloads, the build and your saves all live in this folder "
-                           "(about 15 GB or more). Pick a folder on another drive to keep them off C:. Avoid Documents, "
-                           "Desktop and OneDrive folders: OneDrive or Windows security can block the build there.", "help"))
+        folder_help = "Your game files, downloads, build and saves live here. Allow at least 15 GB of free space."
+        if sys.platform == "win32":
+            folder_help += " Prefer a folder outside Documents, Desktop and OneDrive to avoid sync and permission problems."
+        l0.addWidget(label(folder_help, "help"))
         frow = QHBoxLayout()
+        frow.setSpacing(12)
         self.folder = QLineEdit()
         self.folder.setReadOnly(True)
         frow.addWidget(self.folder, 1)
@@ -313,9 +349,11 @@ class SetupPage(QWidget):
         self.msg1 = label("", "muted")
         self.c1.lay.addWidget(self.msg1)
         lay.addWidget(self.c1.frame)
+        lay.addStretch(1)
+        lay = sections[1]
 
         # 2. title update -----------------------------------------------------------------
-        self.ctu = StepCard(2, "Title Update 4 (recommended)",
+        self.ctu = StepCard(2, "Title Update 4",
                             "Recommended: needed for Horizon Rally and the 1000 Club (the Rally Expansion and the "
                             "1000 Club Expansion). Your Title Update 4 package (the file in 4D5309C9/000B0000, "
                             "update 4000D145), or a zip holding it. It is applied to your default.xex and the game "
@@ -330,7 +368,7 @@ class SetupPage(QWidget):
         lay.addWidget(self.ctu.frame)
 
         # 3. DLC ------------------------------------------------------------------------
-        self.c2 = StepCard(3, "DLC (optional)",
+        self.c2 = StepCard(3, "DLC",
                            "The folder with your DLC: packages (4D5309C9/00000002), or a Xenia content folder (or its "
                            "00000002 folder). They are installed for the game to find; you can add more later. "
                            "Without DLC the extra cars and events are missing.")
@@ -358,34 +396,41 @@ class SetupPage(QWidget):
         self.msg2 = label("", "muted")
         self.c2.lay.addWidget(self.msg2)
         lay.addWidget(self.c2.frame)
+        lay.addStretch(1)
+        lay = sections[2]
 
         # 3. build ----------------------------------------------------------------------
         self.c3 = StepCard(4, "Build the game",
-                           "The launcher compiles the game on this computer: it generates C++ from your "
-                           "default.xex and builds it with a C++ compiler. It takes a while (see below), uses a lot "
-                           "of memory, and is only repeated when the project's version changes.")
+                           "Build the game on this computer from your files. You can cancel and resume. "
+                           "A rebuild is needed after project updates or a change to the game version.")
         self.mem_row = StatusRow("")
         self.mem_row.title.hide()
         self.c3.lay.addWidget(self.mem_row)
         self.checks = QVBoxLayout()
-        self.checks.setSpacing(2)
+        self.checks.setSpacing(10)
         self.c3.lay.addLayout(self.checks)
         self.tools_msg = label("", "muted")
         self.c3.lay.addWidget(self.tools_msg)
+        self.build_options = Disclosure("Build options")
+        self.build_options.content.setSpacing(16)
         jrow = QHBoxLayout()
+        jrow.setSpacing(16)
         jrow.addWidget(QLabel("Parallel jobs"))
-        self.jobs = QSpinBox()
+        self.jobs = SpinBox()
         self.jobs.setRange(1, 64)
         self.jobs.setValue(cfg.advanced.get("build_jobs") or build_env.default_jobs())
         self.jobs.valueChanged.connect(lambda v: (cfg.advanced.__setitem__("build_jobs", v), cfg.save(),
                                                   self._update_mem()))
         jrow.addWidget(self.jobs)
-        jrow.addWidget(label(f"A build needs about {build_env.RAM_BASE_GB:g} GB plus {build_env.RAM_PER_JOB_GB:g} GB "
-                             "per job. More jobs are faster; with little free memory use fewer.", "help"), 1)
-        self.c3.lay.addLayout(jrow)
+        jrow.addStretch(1)
+        self.build_options.content.addLayout(jrow)
+        self.build_options.content.addWidget(label(
+            f"A build needs about {build_env.RAM_BASE_GB:g} GB plus {build_env.RAM_PER_JOB_GB:g} GB "
+            "per job. More jobs are faster; with little free memory use fewer.", "help"))
         self.lowprio = WrappedCheck("Run at low priority (the computer stays usable)")
         self.lowprio.setChecked(True)
-        self.c3.lay.addWidget(self.lowprio)
+        self.build_options.content.addWidget(self.lowprio)
+        self.c3.lay.addWidget(self.build_options)
         self.ms = None
         if sys.platform == "win32":
             self.ms = WrappedCheck("I accept Microsoft's license terms for the C++ runtime and Windows SDK "
@@ -423,7 +468,9 @@ class SetupPage(QWidget):
         self.logview.setMaximumBlockCount(3000)
         self.logview.setFixedHeight(190)
         self.logview.setStyleSheet("font-family: monospace; font-size: 11px;")
-        self.c3.lay.addWidget(self.logview)
+        self.build_details = Disclosure("Build log")
+        self.build_details.content.addWidget(self.logview)
+        self.c3.lay.addWidget(self.build_details)
         lay.addWidget(self.c3.frame)
         lay.addStretch(1)
 
@@ -889,6 +936,7 @@ class SetupPage(QWidget):
     def _start(self, task, bar, cancel_btn, msg, status_to=None):
         if self.busy():
             return
+        self.tabs.setCurrentIndex(2 if bar is self.bar3 else 1 if bar is self.bar2 else 0)
         self.task = task
         self.fail.clear()
         self._bar, self._cancel_btn, self._msg = bar, cancel_btn, msg
@@ -937,7 +985,10 @@ class SetupPage(QWidget):
         if not ok and self._bar is self.bar3 and not blocked:
             message += "  Press Resume build to continue."
         if failed:
+            self.tabs.setCurrentIndex(2 if self._bar is self.bar3 else 1 if self._bar is self.bar2 else 0)
             self._show_fail(key, self._msg, message)
+            if self._bar is self.bar3:
+                self.build_details.set_expanded(True)
         else:
             self._msg.setText(message)
             self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.MUTED};")

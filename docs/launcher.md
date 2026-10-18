@@ -61,6 +61,83 @@ Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCAL
 The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 (`%APPDATA%\ForzaReImagined\launcher.json`).
 
+## Settings search
+
+Use the search field above the Settings categories, or press **Ctrl+F** while in
+Settings. Search matches setting names, help text, option names and configuration
+keys across every category, including the launcher's server, profile and advanced
+options. Select a result or press Enter to open its category and focus the existing
+control. Results overlay the tabs without shifting the page. Down moves into the
+results; Escape clears the search, and clicking outside dismisses the dropdown.
+
+Searching does not change configuration. Disabled settings remain disabled with
+their existing explanations, and unsupported graphics options stay hidden. Search
+indexes descriptions, not personal field values such as paths or server addresses.
+
+## Photo gallery
+
+Open **Photo gallery** in the launcher sidebar to browse locally saved photo-mode
+pictures. The page uses the data folder and profile selected under Settings,
+including the launcher's local copy of an imported Xenia profile. It does not
+copy or modify the original Xenia save. A profile without photos shows instructions
+for taking and saving the first picture.
+
+- **Refresh** discovers newly saved pictures; reopening the page also refreshes it.
+- The grid shows pictures without captions and fits the window width. Sort by newest
+  or oldest; ordering uses the image file's modification time, which can change when
+  saves are copied or restored.
+- Select **View photo**, double-click a tile, or press Enter for a larger preview.
+  Previous/Next and the arrow keys navigate the gallery. Dimensions and the file's
+  modification date are shown in the preview.
+- **Export photo** saves a separate PNG or JPEG. PNG avoids another lossy encoding;
+  JPEG is saved at quality 95. A date-based filename is suggested automatically.
+  Exports cannot overwrite files inside the save folder.
+- **Open save folder** opens the current profile's saved-game directory.
+
+This is a local gallery; it does not download the online photo storefront or upload
+anything. It reads `photo/` or `photos/` content directories under the active
+`B13EBABEBABEBABE/4D5309C9/00000001` save. Standard images, extensionless images,
+and JPEGs embedded after a file header are decoded by Qt. Where a named photo
+folder contains both a preview and a larger image, the larger image is used.
+Encrypted or otherwise unsupported files are reported as unreadable. The gallery
+cannot repair pictures already saved with corrupted pixels by older game builds.
+
+Discovery, image decoding and export run in background threads. Source files are
+read only; exports use an atomic replacement after successful encoding. The decoder
+limits files to 64 MB and decoded images to 40 million pixels. Tests use disposable
+profiles and generated images; a new in-game photo save still needs an end-to-end
+check (the local player profile had no photos, and the isolated game run ended
+before saving one).
+
+## Launcher interface
+
+Play keeps the launch action above the readiness checks. **Installation details**
+expands to show game, save and executable paths; normal status rows stay short.
+Setup's **Build log** is collapsed initially, continues recording while hidden,
+and opens automatically on a build failure. Cancelling a build does not force it open.
+
+Setup has top tabs for **Game files**, **Updates & DLC**, and **Build**. Settings
+has top tabs for its six categories. Each tab switches to a separate page with its
+own scroll position; tabs are not scroll shortcuts. Related settings are grouped
+in padded cards, with space between descriptions and controls. File-location
+controls in Advanced and Profile sit below their descriptions. Setup's **Build
+options** expands to show the parallel-job count and low-priority option. Starting
+a setup task or reporting its failure reveals the corresponding tab.
+Setup checks compiler and build-tool availability in the background, so opening
+it after browsing the gallery does not block navigation while version probes run.
+
+Display settings explain when DLSS/DLAA, FSR 3, ultrawide or HUD customization
+controls an unavailable option. Buttons, expandable sections and switches have
+visible keyboard focus. The Controls introduction reflects the existing keyboard
+and mouse support.
+
+Windows uses the existing ReImagined logo for the launcher, installer and game
+executable. The shared `forza-recomp/resources/forza.ico` includes nine sizes from
+16 to 256 pixels. PyInstaller embeds it in the launcher; CMake compiles a Windows
+resource into both base-game and TU4 builds. Existing game executables receive
+the icon on their next rebuild. See `forza-recomp/resources/README.md` to regenerate
+the icon from the project artwork.
+
 ## Launcher updates
 
 **About > Launcher updates** checks the project's latest stable GitHub release and offers

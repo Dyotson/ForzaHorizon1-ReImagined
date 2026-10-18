@@ -1,11 +1,26 @@
 """Small reusable widgets."""
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap, QPen
-from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QSizePolicy,
+from PySide6.QtWidgets import (QAbstractButton, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QSizePolicy, QSpinBox, QToolButton,
                                QVBoxLayout, QWidget)
 
 from .. import paths
 from . import theme
+
+
+class SpinBox(QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Qt's spin-box editor does not inherit the outer stylesheet's padding.
+        self.lineEdit().setTextMargins(14, 0, 14, 0)
+        self.setMinimumWidth(80)
+
+
+class DoubleSpinBox(QDoubleSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.lineEdit().setTextMargins(14, 0, 14, 0)
+        self.setMinimumWidth(100)
 
 
 class Switch(QAbstractButton):
@@ -14,6 +29,7 @@ class Switch(QAbstractButton):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCheckable(True)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
@@ -33,6 +49,40 @@ class Switch(QAbstractButton):
         p.setBrush(QColor("#fff4e6" if self.isEnabled() else "#8c7fb3"))
         x = 26 if on else 3
         p.drawEllipse(QRectF(x, 4, 18, 18))
+        if self.hasFocus():
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(theme.ORANGE), 1))
+            p.drawRoundedRect(QRectF(0.5, 0.5, 45, 25), 6, 6)
+
+
+class Disclosure(QWidget):
+    """Secondary information stays available without filling the main page."""
+    def __init__(self, title):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.toggle = QToolButton()
+        self.toggle.setObjectName("disclosure")
+        self.toggle.setText(title)
+        self.toggle.setCheckable(True)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(Qt.RightArrow)
+        self.toggle.setFocusPolicy(Qt.StrongFocus)
+        self.body = QWidget()
+        self.content = QVBoxLayout(self.body)
+        self.content.setContentsMargins(0, 0, 0, 0)
+        self.body.hide()
+        self.toggle.toggled.connect(self._toggled)
+        layout.addWidget(self.toggle, 0, Qt.AlignLeft)
+        layout.addWidget(self.body)
+
+    def _toggled(self, expanded):
+        self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.body.setVisible(expanded)
+
+    def set_expanded(self, expanded):
+        self.toggle.setChecked(expanded)
 
 
 def card(layout_cls=QVBoxLayout, margins=(20, 18, 20, 18), spacing=10):
