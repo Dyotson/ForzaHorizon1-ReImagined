@@ -160,12 +160,22 @@ set(FORZA_SOURCES
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
 if(WIN32)
-    enable_language(RC)
-    configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc" @ONLY)
-    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc" PROPERTIES
-        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico")
+    # The icon is optional: a toolchain without a resource compiler (no llvm-rc next to
+    # clang-cl, no rc.exe on PATH) still builds the game, just without it.
+    include(CheckLanguage)
+    check_language(RC)
+    set(FORZA_ICON_RC "")
+    if(CMAKE_RC_COMPILER)
+        enable_language(RC)
+        set(FORZA_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc")
+        configure_file(resources/app.rc.in "${FORZA_ICON_RC}" @ONLY)
+        set_source_files_properties("${FORZA_ICON_RC}" PROPERTIES
+            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico")
+    else()
+        message(STATUS "No resource compiler found: forza.exe is built without its icon")
+    endif()
     list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
-    add_executable(forza WIN32 ${FORZA_SOURCES} "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc")
+    add_executable(forza WIN32 ${FORZA_SOURCES} ${FORZA_ICON_RC})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
 else()
