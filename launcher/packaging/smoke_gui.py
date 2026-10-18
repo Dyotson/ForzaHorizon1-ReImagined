@@ -1,0 +1,73 @@
+"""Verify the frozen launcher loads Qt and renders its window using disposable data.
+
+Run with the build machine's Python: python packaging/smoke_gui.py DIST/forza-launcher.exe
+The child imports the bundled modules, so this also catches missing/incompatible DLLs.
+"""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import traceback
+
+
+def inside(report):
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+        from PySide6.QtWidgets import QApplication
+        from forza_launcher import game, paths
+        from forza_launcher.config import Config
+        from forza_launcher.ui import theme
+        from forza_launcher.ui.window import MainWindow
+
+        # Never discover a player's installation or write their config/forza.toml.
+        paths.config_dir = lambda: report.parent
+        game.find_game = lambda cfg: (None, [])
+        cfg = Config(report.parent / 'launcher.json')
+        cfg.loaded = True
+        cfg.advanced['data_root'] = str(report.parent / 'data')
+        cfg.gpu.update(checked=True, vendor='nvidia')
+        cfg.d['check_updates'] = False
+        app = QApplication([])
+        app.setStyleSheet(theme.QSS)
+        window = MainWindow(cfg)
+        window.show()
+        for page in (0, 1, 2, 3, 4):
+            window.show_page(page)
+            app.processEvents()
+            if window.grab().isNull():
+                raise RuntimeError(f'Page {page} did not render')
+        def finish():
+            # Upstream's read-only probes are daemon threads. Let their child
+            # processes release the disposable working directory before cleanup.
+            if window.setup._probes:
+                QTimer.singleShot(25, finish)
+            else:
+                window.close()
+        QTimer.singleShot(250, finish)
+        app.exec()
+        window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        report.write_text('PASS: bundled Qt loaded and launcher pages rendered\n', encoding='utf-8')
+        return 0
+    except BaseException:
+        report.write_text(traceback.format_exc(), encoding='utf-8')
+        return 1
+
+
+def main():
+    if sys.argv[1:2] == ['--inside']:
+        return inside(Path(sys.argv[2]))
+    executable = Path(sys.argv[1]).resolve()
+    with tempfile.TemporaryDirectory(prefix='forza-gui-smoke-') as directory:
+        report = Path(directory) / 'result.txt'
+        env = dict(os.environ, QT_QPA_PLATFORM='offscreen')
+        result = subprocess.run([str(executable), '--run-script', str(Path(__file__).resolve()),
+                                 '--inside', str(report)], env=env, cwd=directory, timeout=30)
+        message = report.read_text(encoding='utf-8') if report.exists() else 'FAIL: child produced no report\n'
+        print(message, end='')
+        return 0 if result.returncode == 0 and message.startswith('PASS:') else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

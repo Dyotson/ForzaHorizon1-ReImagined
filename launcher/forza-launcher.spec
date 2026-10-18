@@ -30,6 +30,7 @@ datas = [
     (str(root / "forza_launcher" / "update_helper.py"), "forza_launcher"),
     (str(images / "logo.svg"), "assets"),
     (str(images / "logo.png"), "assets"),
+    (str(repo / "forza-recomp" / "resources" / "forza.ico"), "assets"),
     (str(images / "social-preview.png"), "assets"),
     (str(root / "forza_launcher" / "ui" / "down.svg"), "forza_launcher/ui"),
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
@@ -56,12 +57,20 @@ a = Analysis(
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],
     noarchive=False,
 )
+# Recent Qt releases use Windows' ICU API. A tool on the build machine's PATH
+# (for example Poppler) can supply a different icuuc.dll with versioned exports.
+# Bundling it shadows the OS DLL and prevents QtCore from loading at startup.
+# Keep version-suffixed ICU libraries used by older Qt builds; these three names
+# belong to the Windows API and must be resolved on the player's system.
+if sys.platform == "win32":
+    a.binaries = [entry for entry in a.binaries
+                  if Path(entry[0]).name.lower() not in {"icu.dll", "icuuc.dll", "icuin.dll"}]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="forza-launcher",
     console=False,
-    icon=str(images / "logo.png") if sys.platform == "win32" else None,
+    icon=str(repo / "forza-recomp" / "resources" / "forza.ico") if sys.platform == "win32" else None,
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="forza-launcher")

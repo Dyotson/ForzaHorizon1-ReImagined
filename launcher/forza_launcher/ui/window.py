@@ -1,4 +1,4 @@
-"""The main window: a sidebar and the Play, Setup, Settings and About pages."""
+"""The main window: Play, Photo gallery, Setup, Settings and About."""
 import sys
 import threading
 
@@ -12,6 +12,7 @@ from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
+from .gallery_page import GalleryPage
 
 
 class MainWindow(QMainWindow):
@@ -34,7 +35,7 @@ class MainWindow(QMainWindow):
         self._dlss_result = (False, "")
         self._close_after_dlss = False
         self.setWindowTitle(APP_NAME)
-        icon = paths.asset("logo.png")
+        icon = paths.asset("forza.ico" if sys.platform == "win32" else "logo.png")
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))
         self.resize(1040, 760)
@@ -55,20 +56,25 @@ class MainWindow(QMainWindow):
         sl.setSpacing(2)
         brand = QHBoxLayout()
         brand.setContentsMargins(18, 0, 12, 14)
+        brand.setSpacing(10)
         logo = QLabel()
+        logo.setFixedSize(44, 44)
+        logo.setAlignment(Qt.AlignCenter)
         pm = QPixmap(str(paths.asset("logo.png")))
         if not pm.isNull():
             logo.setPixmap(pm.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        brand.addWidget(logo)
-        col = QVBoxLayout()
-        col.setSpacing(0)
+        brand.addWidget(logo, 0, Qt.AlignVCenter)
+        wordmark = QWidget()
+        col = QVBoxLayout(wordmark)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
         a = QLabel("Forza Horizon 1")
         a.setObjectName("brand")
         b = QLabel("ReImagined")
         b.setObjectName("brandSub")
         col.addWidget(a)
         col.addWidget(b)
-        brand.addLayout(col)
+        brand.addWidget(wordmark, 1, Qt.AlignVCenter)
         sl.addLayout(brand)
 
         self.stack = QStackedWidget()
@@ -76,15 +82,24 @@ class MainWindow(QMainWindow):
         self.setup = SetupPage(cfg, self)
         self.settings = SettingsPage(cfg, self)
         self.about = AboutPage(cfg, self)
+        self.gallery = GalleryPage(cfg, self)
+        self._close_after_gallery = False
+        self.gallery.idle.connect(self._gallery_idle)
         self.navs = QButtonGroup(self)
         for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
-                                          ("Settings", self.settings), ("About", self.about))):
+                                          ("Settings", self.settings), ("About", self.about),
+                                          ("Photo gallery", self.gallery))):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self.navs.addButton(btn, i)
-            sl.addWidget(btn)
+            # Keep the existing page IDs used by setup/update links; place Gallery
+            # beside Play in the sidebar without renumbering those destinations.
+            if page is self.gallery:
+                sl.insertWidget(2, btn)
+            else:
+                sl.addWidget(btn)
             self.stack.addWidget(page)
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
@@ -103,10 +118,12 @@ class MainWindow(QMainWindow):
         h.addWidget(side)
         body = QWidget()
         bl = QVBoxLayout(body)
-        bl.setContentsMargins(28, 24, 20, 8)
+        bl.setContentsMargins(28, 24, 20, 0)
         bl.addWidget(self.stack, 1)
         self.footer = QLabel("")
         self.footer.setObjectName("muted")
+        self.footer.setWordWrap(True)
+        self.footer.hide()
         bl.addWidget(self.footer)
         h.addWidget(body, 1)
 
@@ -138,13 +155,16 @@ class MainWindow(QMainWindow):
     def show_page(self, i):
         self.stack.setCurrentIndex(i)
         self.navs.button(i).setChecked(True)
+        self.navs.button(i).setFocus(Qt.OtherFocusReason)
         if i == 0:
             self.play.refresh()
         elif i == 1:
             self.setup.refresh()
         elif i == 3:
             self.about.refresh()
-        self.footer.setText("")
+        elif i == 4:
+            self.gallery.refresh()
+        self.status("")
 
     def refresh_all(self):
         self.play.refresh()
@@ -155,6 +175,7 @@ class MainWindow(QMainWindow):
 
     def status(self, text, error=False):
         self.footer.setText(text)
+        self.footer.setVisible(bool(text))
         self.footer.setStyleSheet(f"color: {theme.ERR if error else theme.MUTED};")
 
     def set_busy(self, busy):
@@ -184,12 +205,21 @@ class MainWindow(QMainWindow):
                 return
             self.setup.task.cancel()
             self.setup.task.wait(15000)
+        if not self.gallery.shutdown():
+            self._close_after_gallery = True
+            self.status("Finishing photo tasks before closing…")
+            e.ignore()
+            return
         # Installation flushed settings before handing off. Avoid writing the old config
         # over migrations made by a newly started Flatpak launcher.
         if not self.about.updates.restarting:
             self.settings.flush()
         self.stop_game()
         super().closeEvent(e)
+
+    def _gallery_idle(self):
+        if self._close_after_gallery:
+            QTimer.singleShot(0, self.close)
 
     # ---- first run ---------------------------------------------------------------------
     def _first_run(self):
