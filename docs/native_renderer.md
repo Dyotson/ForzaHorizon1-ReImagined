@@ -17,7 +17,14 @@ invalidate reflections, minimap inputs, screenshots and CPU readbacks.
 
 This branch contains development infrastructure and an opt-in replacement for
 one motion-effect pass, RGBA8 resolves and a limited rigid-mesh depth pipeline.
-It is **not a complete native world renderer**:
+It is **not a complete native world renderer**.
+
+The separately selected `world-color-transfer` mode also replaces a supported
+R10 scene transfer around [authored world-color composition](native_world_color.md).
+It preserves canonical memory for other consumers; see
+[Native scene transfer](native_scene_transfer.md) for its narrower contract.
+
+The components below remain independently testable:
 
 - `render_graph.h` assigns resource versions and records RAW, WAR, WAW and alias
   dependencies. A mutable attachment and an independent snapshot are distinct

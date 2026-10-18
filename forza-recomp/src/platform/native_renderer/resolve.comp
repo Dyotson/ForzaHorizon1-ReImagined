@@ -6,11 +6,17 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, std430) writeonly buffer Destination { uvec4 words[]; } destination;
 layout(set = 1, binding = 0) uniform texture2D source_image;
+#ifdef FORZA_NATIVE_R10
+layout(set=2,binding=0,r32ui) uniform writeonly uimage2D snapshot_image;
+#endif
 layout(push_constant, std430) uniform Parameters {
   uvec4 source;
   uvec4 dest;
   uvec4 layout_info;
   uvec4 bounds;
+#ifdef FORZA_NATIVE_R10
+  vec4 conversion;
+#endif
 } p;
 
 uint tiled(uvec2 pixel) {
@@ -36,7 +42,17 @@ void main() {
     uvec2 source_pixel = p.source.xy + max(pixel + uvec2(i, 0), first_covered);
     vec4 color = texelFetch(source_image, ivec2(source_pixel), 0);
     if (p.layout_info.w != 0) color = color.bgra;
+    #ifdef FORZA_NATIVE_R10
+    // Match the original packed-buffer unpack and exposure conversion. Using
+    // hardware-normalized samples directly changes rounding at half steps.
+    uvec4 original_bits = uvec4(roundEven(color * vec4(1023, 1023, 1023, 3)));
+    vec4 decoded = vec4(original_bits) * vec4(1.0 / 1023, 1.0 / 1023, 1.0 / 1023, 1.0 / 3);
+    uvec4 packed = uvec4(fma(clamp(decoded * p.conversion.x, 0, 1), vec4(1023, 1023, 1023, 3), vec4(0.5)));
+    uint word = packed.x | (packed.y << 10) | (packed.z << 20) | (packed.w << 30);
+    imageStore(snapshot_image, ivec2(pixel + uvec2(i, 0)), uvec4(word));
+#else
     uint word = packUnorm4x8(color);
+#endif
     uint swap = endian >= 4 ? 2 : endian;
     if (((swap ^ (swap >> 1)) & 1) != 0)
       word = ((word & 0x00ff00ffu) << 8) | ((word & 0xff00ff00u) >> 8);

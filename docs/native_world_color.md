@@ -1,5 +1,10 @@
 # Native world-color composition
 
+The separately selected `world-color-transfer` mode also bypasses the supported
+R10 scene's EDRAM dump and untiling. See [Native scene transfer](native_scene_transfer.md)
+for its conversion, lifetime, fallback and validation contracts. Measurements
+below compare the original composition with `world-color`, without that transfer.
+
 `FORZA_NATIVE_RENDERER=world-color` selects an experimental replacement for the
 world's color finishing pass. It performs the edge-aware scene filter, bloom
 combination, exposure curve, 3D color grading, vignette/tint and output color

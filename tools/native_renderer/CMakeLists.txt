@@ -16,6 +16,8 @@ add_executable(native_vertex_lit_test ../../forza-recomp/tests/native_vertex_lit
 add_test(NAME native_vertex_lit COMMAND native_vertex_lit_test)
 add_executable(native_world_color_test ../../forza-recomp/tests/native_world_color_test.cpp)
 add_test(NAME native_world_color COMMAND native_world_color_test)
+add_executable(native_scene_transfer_test ../../forza-recomp/tests/native_scene_transfer_test.cpp)
+add_test(NAME native_scene_transfer COMMAND native_scene_transfer_test)
 
 option(NATIVE_RENDERER_GPU_TESTS "Build and run synthetic Vulkan pass validation" OFF)
 option(NATIVE_RENDERER_VULKAN_VALIDATION "Require Khronos synchronization validation in the GPU test" OFF)
@@ -96,6 +98,15 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_velocity_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv" ${validation_arguments})
     set_tests_properties(native_velocity_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv"
+        COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1 -DFORZA_NATIVE_R10=1
+            "${native_source}/resolve.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv"
+        DEPENDS "${native_source}/resolve.comp" VERBATIM)
+    add_custom_target(native_r10_resolve_shader DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv")
+    add_dependencies(native_velocity_gpu_test native_r10_resolve_shader)
+    add_test(NAME native_r10_resolve_gpu COMMAND native_velocity_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv" --resolve-r10 ${validation_arguments})
+    set_tests_properties(native_r10_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
     add_test(NAME native_resolve_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv" --resolve-only ${validation_arguments})
     set_tests_properties(native_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)

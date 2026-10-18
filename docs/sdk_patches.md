@@ -238,3 +238,11 @@ unsupported draws and resolves continue through the original path. See
 authored world-color filtering, bloom, exposure, grading and output composition
 with immutable GPU quad snapshots and per-region controls. Unsupported states
 retain the existing draw. See [Native world-color composition](native_world_color.md).
+
+0088 adds `FORZA_NATIVE_RENDERER=world-color-transfer`. A guarded R10 resolve
+reads the tracked scene attachment directly, applying the original exposure
+conversion while writing canonical tiled backing and an immutable packed image.
+A matching texture load copies that image instead of untiling the backing.
+Shared-memory invalidation, waited reader/producer fences and bounded allocations
+protect reuse; unsupported states retain the original path. See
+[Native scene transfer](native_scene_transfer.md) for exact-output and GPU tests.

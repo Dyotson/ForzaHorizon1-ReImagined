@@ -1,0 +1,445 @@
+diff --git a/cmake/ForzaNative.cmake b/cmake/ForzaNative.cmake
+--- a/cmake/ForzaNative.cmake
++++ b/cmake/ForzaNative.cmake
+@@ -3,7 +3,7 @@
+ set(REXGLUE_FH1_NATIVE_SOURCE_DIR "" CACHE PATH "FH1 native renderer source directory")
+ target_sources(rexgpu-xenos PRIVATE vulkan/fh1_native_renderer.cpp vulkan/fh1_native_geometry.cpp vulkan/fh1_native_world_color.cpp)
+ if(REXGLUE_FH1_NATIVE_SOURCE_DIR)
+-    foreach(source velocity.h velocity_pass.h velocity_pass.cpp vulkan_dispatch.h velocity.comp resolve.h resolve.comp resolve-LICENSE.txt geometry.h geometry_pass.h geometry_pass.cpp geometry.vert)
++    foreach(source velocity.h velocity_pass.h velocity_pass.cpp vulkan_dispatch.h velocity.comp resolve.h resolve.comp resolve-LICENSE.txt scene_transfer.h geometry.h geometry_pass.h geometry_pass.cpp geometry.vert)
+         if(NOT EXISTS "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/${source}")
+             message(FATAL_ERROR "Missing native renderer source: ${REXGLUE_FH1_NATIVE_SOURCE_DIR}/${source}")
+         endif()
+@@ -14,6 +14,7 @@
+     file(READ "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/resolve.comp" FH1_NATIVE_RESOLVE_SOURCE)
+     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+         "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/resolve.comp")
++    string(REPLACE "#version 450" "#version 450\n#define FORZA_NATIVE_R10 1" FH1_NATIVE_R10_RESOLVE_SOURCE "${FH1_NATIVE_RESOLVE_SOURCE}")
+     configure_file("${CMAKE_CURRENT_LIST_DIR}/fh1_native_resolve_shader.h.in"
+         "${CMAKE_CURRENT_BINARY_DIR}/fh1_native_resolve_shader.h" @ONLY)
+     install(FILES "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/resolve-LICENSE.txt"
+diff --git a/cmake/fh1_native_resolve_shader.h.in b/cmake/fh1_native_resolve_shader.h.in
+--- a/cmake/fh1_native_resolve_shader.h.in
++++ b/cmake/fh1_native_resolve_shader.h.in
+@@ -2,3 +2,7 @@
+ static constexpr char kFh1NativeResolveSource[] = R"FH1_RESOLVE(
+ @FH1_NATIVE_RESOLVE_SOURCE@
+ )FH1_RESOLVE";
++
++static constexpr char kFh1NativeR10ResolveSource[] = R"FH1_RESOLVE(
++@FH1_NATIVE_R10_RESOLVE_SOURCE@
++)FH1_RESOLVE";
+diff --git a/include/rex/graphics/vulkan/deferred_command_buffer.h b/include/rex/graphics/vulkan/deferred_command_buffer.h
+--- a/include/rex/graphics/vulkan/deferred_command_buffer.h
++++ b/include/rex/graphics/vulkan/deferred_command_buffer.h
+@@ -55,6 +55,12 @@
+     auto& args = *reinterpret_cast<ArgsFh1Dlss*>(
+         WriteCommand(Command::kFh1Dlss, sizeof(ArgsFh1Dlss)));
+     args.effect = effect; args.src = src; args.dst = dst; args.input = effect->input();
++  }
++  mutable PFN_vkCmdCopyImage native_scene_copy_=nullptr;
++  // Packed-color copies must not filter or convert through a blit.
++  void CmdFh1SceneCopy(VkImage src, VkImage dst, const VkImageCopy& region) {
++    auto& args = *reinterpret_cast<ArgsFh1SceneCopy*>(WriteCommand(Command::kFh1SceneCopy, sizeof(ArgsFh1SceneCopy)));
++    args.src=src;args.dst=dst;args.region=region;
+   }
+   mutable PFN_vkCmdBlitImage blit_image_ = nullptr;
+   void CmdVkBlitImage(VkImage src, VkImage dst, const VkImageBlit& region) {
+@@ -434,6 +440,7 @@
+  private:
+   enum class Command {
+     kFh1Dlss,
++    kFh1SceneCopy,
+     kVkBlitImage,
+     kFh1NativeCubeBlit,
+     kVkBeginRenderPass,
+@@ -481,6 +488,7 @@
+     VkImage src, dst;
+     Fh1Dlss::FrameInput input;
+   };
++  struct ArgsFh1SceneCopy {VkImage src,dst;VkImageCopy region;};
+   struct ArgsVkBlitImage {
+     VkImage src, dst;
+     VkImageBlit region;
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -412,6 +412,8 @@
+   VulkanRenderTarget* native_velocity_target_ = nullptr;
+   uint32_t native_velocity_width_ = 0, native_velocity_height_ = 0;
+   VkPipeline native_resolve_pipeline_ = VK_NULL_HANDLE;
++  VkPipeline native_r10_resolve_pipeline_ = VK_NULL_HANDLE;
++  VkPipelineLayout native_r10_resolve_layout_ = VK_NULL_HANDLE;
+   VkPipelineLayout native_resolve_layout_ = VK_NULL_HANDLE;
+   bool native_resolve_failed_ = false;
+   bool TryNativeRgba8Resolve(VulkanRenderTarget* source, uint32_t width, uint32_t height,
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -12,6 +12,7 @@
+
+ #include <array>
+ #include <memory>
++#include <optional>
+ #include <unordered_map>
+ #include <utility>
+ #include <vector>
+@@ -89,6 +90,11 @@
+
+   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
+                                               xenos::FetchOpDimension dimension, bool is_signed);
++
++  struct NativeScenePacket {VkDescriptorSet descriptor;uint32_t slot;};
++  std::optional<NativeScenePacket> PrepareNativeSceneSnapshot(uint32_t address,uint32_t bytes,
++      uint32_t width,uint32_t height,uint32_t pitch,uint32_t endian);
++  void PublishNativeSceneSnapshot(const NativeScenePacket&);
+
+   SamplerParameters GetSamplerParameters(const VulkanShader::SamplerBinding& binding) const;
+
+@@ -325,6 +331,13 @@
+                               VulkanCommandProcessor& command_processor,
+                               VkPipelineStageFlags guest_shader_pipeline_stages);
+
++  struct NativeSceneState;
++  std::unique_ptr<NativeSceneState> native_scene_;
++  SharedMemory::GlobalWatchHandle native_scene_watch_=nullptr;
++  bool LoadNativeSceneSnapshot(VulkanTexture& texture);
++  void ShutdownNativeScene();
++  static void NativeSceneInvalidated(const std::unique_lock<std::recursive_mutex>&,
++      void*,uint32_t first,uint32_t last,bool);
+   bool Initialize();
+   bool InitializeScaledResolveBuffer();
+   void ShutdownScaledResolveBuffer();
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -5207,7 +5207,7 @@
+   // A separately selectable, authored world-color composition pass. Keep the
+   // original path for every unsupported input or state, before native mutation.
+   static bool world_color_failed = false;
+-  if (!world_color_failed && native_mode && std::string_view(native_mode) == "world-color" && pixel_shader &&
++  if (!world_color_failed && native_mode && (std::string_view(native_mode) == "world-color" || std::string_view(native_mode) == "world-color-transfer") && pixel_shader &&
+       vertex_shader->ucode_data_hash() == 0x20A41D46F34D238Eull &&
+       pixel_shader->ucode_data_hash() == 0x614588022744BF6Bull &&
+       prim_type == xenos::PrimitiveType::kRectangleList && index_count == 3 &&
+diff --git a/src/graphics/vulkan/deferred_command_buffer.cpp b/src/graphics/vulkan/deferred_command_buffer.cpp
+--- a/src/graphics/vulkan/deferred_command_buffer.cpp
++++ b/src/graphics/vulkan/deferred_command_buffer.cpp
+@@ -94,6 +94,12 @@
+       case Command::kFh1Dlss: {
+         const auto& args = *reinterpret_cast<const ArgsFh1Dlss*>(stream);
+         args.effect->Execute(command_buffer, args.src, args.dst, args.input);
++      } break;
++      case Command::kFh1SceneCopy: {
++        const auto& args=*reinterpret_cast<const ArgsFh1SceneCopy*>(stream);
++        const auto* device=command_processor_.GetVulkanDevice();
++        if(!native_scene_copy_)native_scene_copy_=reinterpret_cast<PFN_vkCmdCopyImage>(device->vulkan_instance()->functions().vkGetDeviceProcAddr(device->device(),"vkCmdCopyImage"));
++        native_scene_copy_(command_buffer,args.src,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,args.dst,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&args.region);
+       } break;
+       case Command::kVkBlitImage: {
+         const auto& args = *reinterpret_cast<const ArgsVkBlitImage*>(stream);
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -988,7 +988,9 @@
+
+   native_velocity_target_ = nullptr;
+   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device, native_resolve_pipeline_);
++  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device, native_r10_resolve_pipeline_);
+   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device, native_resolve_layout_);
++  ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device, native_r10_resolve_layout_);
+
+   // Destroy all render targets before the descriptor set pool is destroyed -
+   // may happen if shutting down the VulkanRenderTargetCache by destroying it,
+@@ -1176,12 +1178,15 @@
+ #if defined(REXGLUE_FH1_NATIVE_RENDERER)
+   static const bool native_scene_resolve = [] {
+     const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
+-    return mode && (std::string_view(mode) == "rgba8-resolve" || std::string_view(mode) == "combined");
++    return mode && (std::string_view(mode) == "rgba8-resolve" || std::string_view(mode) == "combined" || std::string_view(mode) == "world-color-transfer");
+   }();
++  const char* scene_mode=std::getenv("FORZA_NATIVE_RENDERER");
++  const bool native_r10_scene=scene_mode && std::string_view(scene_mode)=="world-color-transfer";
++  const auto native_scene_format=native_r10_scene?xenos::ColorRenderTargetFormat::k_2_10_10_10:xenos::ColorRenderTargetFormat::k_8_8_8_8;
+   uint32_t scene_width = native_width, scene_height = native_height;
+   if (native_scene_resolve && GetPath() == Path::kHostRenderTargets &&
+       resolve_info.copy_dest_extent_length && !resolve_info.IsCopyingDepth() &&
+-      resolve_info.color_edram_info.format == uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
++      resolve_info.color_edram_info.format == uint32_t(native_scene_format) &&
+       resolve_info.color_edram_info.msaa_samples == xenos::MsaaSamples::k1X) {
+     uint32_t base, row_length, rows, pitch;
+     resolve_info.GetCopyEdramTileSpan(base, row_length, rows, pitch);
+@@ -1190,7 +1195,7 @@
+       const auto& coverage = dump_rectangles_[0];
+       auto* owner = static_cast<VulkanRenderTarget*>(coverage.render_target);
+       const auto key = owner->key();
+-      if (!key.is_depth && key.resource_format == uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
++      if (!key.is_depth && key.resource_format == uint32_t(native_scene_format) &&
+           key.msaa_samples == xenos::MsaaSamples::k1X && key.base_tiles == base && key.GetPitchTiles() == pitch &&
+           !coverage.row_first && coverage.rows == rows && !coverage.row_first_start && coverage.row_last_end == row_length) {
+         native_source = owner;
+@@ -6417,24 +6422,31 @@
+     VulkanSharedMemory& shared_memory, VulkanTextureCache& texture_cache) {
+ #if defined(REXGLUE_FH1_NATIVE_RENDERER)
+   const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
+-  if (!mode || (std::string_view(mode) != "velocity-resolve" && std::string_view(mode) != "rgba8-resolve" && std::string_view(mode) != "combined") ||
++  const bool r10=mode && std::string_view(mode)=="world-color-transfer";
++  const auto source_format=r10?xenos::ColorRenderTargetFormat::k_2_10_10_10:xenos::ColorRenderTargetFormat::k_8_8_8_8;
++  const auto dest_format=r10?xenos::ColorFormat::k_2_10_10_10:xenos::ColorFormat::k_8_8_8_8;
++  if (!mode || (!r10 && std::string_view(mode) != "velocity-resolve" && std::string_view(mode) != "rgba8-resolve" && std::string_view(mode) != "combined") ||
+       !source || native_resolve_failed_ ||
+       GetPath() != Path::kHostRenderTargets || info.IsCopyingDepth() ||
+-      info.color_edram_info.format != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) ||
++      info.color_edram_info.format != uint32_t(source_format) ||
+       info.color_edram_info.msaa_samples != xenos::MsaaSamples::k1X ||
+       info.coordinate_info.edram_offset_x_div_8 ||
+       info.coordinate_info.edram_offset_y_div_8 || info.color_edram_info.base_tiles != info.color_original_base ||
+       source->key().base_tiles != info.color_original_base ||
+       source->key().GetPitchTiles() != info.color_edram_info.pitch_tiles ||
+-      info.copy_dest_info.copy_dest_format != xenos::ColorFormat::k_8_8_8_8 ||
++      info.copy_dest_info.copy_dest_format != dest_format ||
+       info.copy_dest_info.copy_dest_number != xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction ||
+-      info.copy_dest_info.copy_dest_exp_bias || info.copy_dest_info.copy_dest_array ||
++      ((!r10 && info.copy_dest_info.copy_dest_exp_bias) || (r10 && info.copy_dest_info.copy_dest_exp_bias!=0 && info.copy_dest_info.copy_dest_exp_bias!=-2)) || info.copy_dest_info.copy_dest_array ||
+       // The SDK's fast 32-bit resolve only implements endian modes 0..3.
+       // Keep 64/128-bit swaps on its path until their contracts are reconciled.
+       uint32_t(info.copy_dest_info.copy_dest_endian) > 3 ||
+       info.copy_dest_coordinate_info.copy_sample_select != xenos::CopySampleSelect::k0 ||
+       source->key().msaa_samples != xenos::MsaaSamples::k1X || UsesFractionalRaster()) return false;
+   const uint32_t sx = draw_resolution_scale_x(), sy = draw_resolution_scale_y();
++  if (r10 && (sx<1 || sx>2 || sy!=sx || width!=1280*sx || height!=720*sy ||
++      info.copy_dest_base%4096 || info.copy_dest_extent_start!=info.copy_dest_base || info.copy_dest_info.copy_dest_swap ||
++      info.copy_dest_coordinate_info.offset_x_div_8 || info.copy_dest_coordinate_info.offset_y_div_8 ||
++      info.copy_dest_coordinate_info.pitch_aligned_div_32!=40))return false;
+   if ((info.coordinate_info.width_div_8 * 8 * sx) != width || (info.height_div_8 * 8 * sy) != height)
+     return false;
+   uint64_t base = info.copy_dest_base;
+@@ -6461,25 +6473,27 @@
+   // Create the native pipeline before queuing any resource transitions. Failure
+   // leaves the ordinary resolve path available, including its CPU readbacks.
+   const auto& functions = device->functions();
+-  if (!native_resolve_pipeline_) {
++  auto& native_layout=r10?native_r10_resolve_layout_:native_resolve_layout_;
++  auto& native_pipeline=r10?native_r10_resolve_pipeline_:native_resolve_pipeline_;
++  if (!native_pipeline) {
+     std::vector<uint32_t> shader; std::string error;
+-    if (!CompileFh1Compute(kFh1NativeResolveSource, shader, error)) {
++    if (!CompileFh1Compute(r10?kFh1NativeR10ResolveSource:kFh1NativeResolveSource, shader, error)) {
+       native_resolve_failed_ = true;
+       REXGPU_ERROR("FH1 native resolve disabled: {}", error); return false;
+     }
+     VkDescriptorSetLayout layouts[] = {command_processor_.GetSingleTransientDescriptorLayout(
+         VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageBufferCompute),
+-        descriptor_set_layout_sampled_image_};
+-    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters)};
++        descriptor_set_layout_sampled_image_,command_processor_.GetSingleTransientDescriptorLayout(VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageImageCompute)};
++    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, uint32_t(sizeof(parameters)+(r10?16:0))};
+     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+-    layout.setLayoutCount = 2; layout.pSetLayouts = layouts;
++    layout.setLayoutCount = r10?3:2; layout.pSetLayouts = layouts;
+     layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &range;
+-    if (functions.vkCreatePipelineLayout(device->device(), &layout, nullptr, &native_resolve_layout_) != VK_SUCCESS) {
+-      native_resolve_layout_ = VK_NULL_HANDLE; native_resolve_failed_ = true; return false;
+-    }
+-    native_resolve_pipeline_ = ui::vulkan::util::CreateComputePipeline(device, native_resolve_layout_,
++    if (!native_layout && functions.vkCreatePipelineLayout(device->device(), &layout, nullptr, &native_layout) != VK_SUCCESS) {
++      native_layout = VK_NULL_HANDLE; native_resolve_failed_ = true; return false;
++    }
++    native_pipeline = ui::vulkan::util::CreateComputePipeline(device, native_layout,
+         shader.data(), shader.size() * sizeof(uint32_t));
+-    if (!native_resolve_pipeline_) { native_resolve_failed_ = true; return false; }
++    if (!native_pipeline) { native_resolve_failed_ = true; return false; }
+   }
+   const uint32_t unscaled_length = info.copy_dest_extent_start - info.copy_dest_base + info.copy_dest_extent_length;
+   if (IsDrawResolutionScaled() ? !texture_cache.CommitScaledResolveRange(info.copy_dest_base, unscaled_length, 4) :
+@@ -6493,6 +6507,12 @@
+   write.dstSet = destination; write.descriptorCount = 1;
+   write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; write.pBufferInfo = &buffer;
+   functions.vkUpdateDescriptorSets(device->device(), 1, &write, 0, nullptr);
++  std::optional<VulkanTextureCache::NativeScenePacket> snapshot;
++  if(r10){
++    snapshot=texture_cache.PrepareNativeSceneSnapshot(info.copy_dest_base,info.copy_dest_extent_length,
++        width,height,1280,uint32_t(info.copy_dest_info.copy_dest_endian));
++    if(!snapshot)return false;
++  }
+   command_processor_.EndRenderPass();
+   if (IsDrawResolutionScaled()) texture_cache.UseScaledResolveBufferForWrite(use_start, use_length);
+   else shared_memory.Use(VulkanSharedMemory::Usage::kComputeWrite,
+@@ -6502,17 +6522,20 @@
+       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, source->current_access_mask(), VK_ACCESS_SHADER_READ_BIT,
+       source->current_layout(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+   source->SetUsage(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+-  command_processor_.BindExternalComputePipeline(native_resolve_pipeline_);
+-  VkDescriptorSet descriptors[] = {destination, source->GetDescriptorSetTransferSource()};
++  command_processor_.BindExternalComputePipeline(native_pipeline);
++  VkDescriptorSet descriptors[] = {destination, source->GetDescriptorSetTransferSource(),snapshot?snapshot->descriptor:VK_NULL_HANDLE};
+   auto& commands = command_processor_.deferred_command_buffer();
+-  commands.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, native_resolve_layout_, 0, 2, descriptors, 0, nullptr);
+-  commands.CmdVkPushConstants(native_resolve_layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
++  commands.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE, native_layout, 0, r10?3:2, descriptors, 0, nullptr);
++    struct NativeParameters {forza::native_renderer::ResolveParameters resolve;std::array<float,4> conversion;};
++  NativeParameters native_parameters{parameters,{std::ldexp(1.0f,info.copy_dest_info.copy_dest_exp_bias),0,0,0}};
++  commands.CmdVkPushConstants(native_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, r10?sizeof(native_parameters):sizeof(parameters), r10?static_cast<const void*>(&native_parameters):static_cast<const void*>(&parameters));
+   command_processor_.SubmitBarriers(true);
+   commands.CmdVkDispatch((width / 4 + 7) / 8, (height + 7) / 8, 1);
+-  texture_cache.MarkRangeAsResolved(info.copy_dest_extent_start, info.copy_dest_extent_length);
++  if(snapshot)texture_cache.PublishNativeSceneSnapshot(*snapshot);
++  else texture_cache.MarkRangeAsResolved(info.copy_dest_extent_start, info.copy_dest_extent_length);
+   static uint64_t resolves = 0;
+   if (++resolves == 1 || resolves % 120 == 0)
+-    REXGPU_INFO("FH1 native resolve: image to tiled buffer {} ({}x{}, scale {}x{})", resolves, width, height, sx, sy);
++    REXGPU_INFO("FH1 native resolve: image to tiled buffer {} ({}x{}, scale {}x{}, R10={}, snapshot={})", resolves, width, height, sx, sy, r10, bool(snapshot));
+   return true;
+ #else
+   (void)source; (void)width; (void)height; (void)info; (void)shared_memory; (void)texture_cache;
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -39,7 +39,130 @@
+     vulkan_direct_scaled_texture_upload, true, "Vulkan",
+     "Load eligible scaled NVIDIA textures directly into images; false uses the copy-buffer path");
+
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++#include "scene_transfer.h"
++#endif
++
+ namespace rex::graphics::vulkan {
++
++
++struct VulkanTextureCache::NativeSceneState {
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  forza::native_renderer::SceneSnapshotTracker tracker;
++  struct Image {
++    VkImage image=VK_NULL_HANDLE;VmaAllocation allocation=nullptr;VkImageView view=VK_NULL_HANDLE;
++    uint32_t width=0,height=0;uint64_t bytes=0;VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;
++    forza::native_renderer::SceneSnapshotKey key{};
++  };
++  std::array<Image,forza::native_renderer::SceneSnapshotTracker::kSlots> images{};
++  uint64_t allocated_bytes=0;
++  rex::thread::global_critical_region critical;
++#endif
++};
++void VulkanTextureCache::NativeSceneInvalidated(const std::unique_lock<std::recursive_mutex>&,
++    void* context,uint32_t first,uint32_t last,bool) {
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  auto* cache=static_cast<VulkanTextureCache*>(context);
++  if(cache->native_scene_)cache->native_scene_->tracker.Invalidate(first,last);
++#endif
++}
++void VulkanTextureCache::ShutdownNativeScene() {
++  if(native_scene_watch_){shared_memory().UnregisterGlobalWatch(native_scene_watch_);native_scene_watch_=nullptr;}
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  if(native_scene_)for(auto& image:native_scene_->images)if(image.image){
++    command_processor_.GetVulkanDevice()->functions().vkDestroyImageView(command_processor_.GetVulkanDevice()->device(),image.view,nullptr);
++    vmaDestroyImage(vma_allocator_,image.image,image.allocation);
++  }
++#endif
++  native_scene_.reset();
++}
++std::optional<VulkanTextureCache::NativeScenePacket> VulkanTextureCache::PrepareNativeSceneSnapshot(
++    uint32_t address,uint32_t bytes,uint32_t width,uint32_t height,uint32_t pitch,uint32_t endian) {
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  namespace nr=forza::native_renderer;
++  const uint32_t sx=draw_resolution_scale_x(),sy=draw_resolution_scale_y();
++  if(!sx || !sy || width%sx || height%sy)return {};
++  nr::SceneSnapshotKey key{address,bytes,width/sx,height/sy,pitch,endian,sx,sy};
++  if(!nr::Valid(key))return {};
++  if(!native_scene_){
++    native_scene_=std::make_unique<NativeSceneState>();
++    native_scene_watch_=shared_memory().RegisterGlobalWatch(NativeSceneInvalidated,this);
++  }
++  auto& state=*native_scene_;std::optional<uint32_t> slot;
++  {auto lock=state.critical.Acquire();slot=state.tracker.Reserve(command_processor_.GetCurrentSubmission(),command_processor_.GetCompletedSubmission());}
++  if(!slot)return {};
++  auto& image=state.images[*slot];const auto* device=command_processor_.GetVulkanDevice();
++  if(!image.image || image.width!=width || image.height!=height){
++    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};info.imageType=VK_IMAGE_TYPE_2D;
++    info.format=VK_FORMAT_R32_UINT;info.extent={width,height,1};info.mipLevels=info.arrayLayers=1;
++    info.samples=VK_SAMPLE_COUNT_1_BIT;info.tiling=VK_IMAGE_TILING_OPTIMAL;info.usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
++    VmaAllocationCreateInfo memory{};memory.usage=VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
++    VkImage next;VmaAllocation allocation;VmaAllocationInfo allocated{};
++    if(vmaCreateImage(vma_allocator_,&info,&memory,&next,&allocation,&allocated)!=VK_SUCCESS)return {};
++    if(state.allocated_bytes-image.bytes+allocated.size>128ull*1024*1024){vmaDestroyImage(vma_allocator_,next,allocation);return {};}
++    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};view_info.image=next;view_info.viewType=VK_IMAGE_VIEW_TYPE_2D;
++    view_info.format=VK_FORMAT_R32_UINT;view_info.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};VkImageView view;
++    if(device->functions().vkCreateImageView(device->device(),&view_info,nullptr,&view)!=VK_SUCCESS){vmaDestroyImage(vma_allocator_,next,allocation);return {};}
++    if(image.image){device->functions().vkDestroyImageView(device->device(),image.view,nullptr);vmaDestroyImage(vma_allocator_,image.image,image.allocation);}
++    state.allocated_bytes=state.allocated_bytes-image.bytes+allocated.size;
++    image={next,allocation,view,width,height,allocated.size,VK_IMAGE_LAYOUT_UNDEFINED,{}};
++  }
++  auto descriptor=command_processor_.AllocateSingleTransientDescriptor(VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageImageCompute);
++  if(!descriptor)return {};
++  VkDescriptorImageInfo image_info{VK_NULL_HANDLE,image.view,VK_IMAGE_LAYOUT_GENERAL};VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
++  write.dstSet=descriptor;write.descriptorCount=1;write.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;write.pImageInfo=&image_info;
++  device->functions().vkUpdateDescriptorSets(device->device(),1,&write,0,nullptr);
++  command_processor_.EndRenderPass();
++  command_processor_.PushImageMemoryBarrier(image.image,ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1),
++      image.layout==VK_IMAGE_LAYOUT_UNDEFINED?VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT:image.layout==VK_IMAGE_LAYOUT_GENERAL?VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT:VK_PIPELINE_STAGE_TRANSFER_BIT,
++      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,image.layout==VK_IMAGE_LAYOUT_GENERAL?VK_ACCESS_SHADER_WRITE_BIT:image.layout==VK_IMAGE_LAYOUT_UNDEFINED?0:VK_ACCESS_TRANSFER_READ_BIT,
++      VK_ACCESS_SHADER_WRITE_BIT,image.layout,VK_IMAGE_LAYOUT_GENERAL);
++  image.layout=VK_IMAGE_LAYOUT_GENERAL;image.key=key;return NativeScenePacket{descriptor,*slot};
++#else
++  (void)address;(void)bytes;(void)width;(void)height;(void)pitch;(void)endian;return {};
++#endif
++}
++void VulkanTextureCache::PublishNativeSceneSnapshot(const NativeScenePacket& packet) {
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  auto& state=*native_scene_;auto& image=state.images[packet.slot];
++  command_processor_.PushImageMemoryBarrier(image.image,ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1),
++      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,
++      VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++  image.layout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++  // Publish after our own invalidation under the same lock as CPU/GPU writers.
++  {auto lock=state.critical.Acquire();MarkRangeAsResolved(image.key.address,image.key.bytes);state.tracker.Publish(packet.slot,image.key);}
++  static uint64_t count=0;
++  if(++count==1 || count%120==0)REXGPU_INFO("FH1 native scene snapshot: saved {} ({}x{}, guest={:08X}+{}, endian={})",count,image.width,image.height,image.key.address,image.key.bytes,image.key.endian);
++#endif
++}
++bool VulkanTextureCache::LoadNativeSceneSnapshot(VulkanTexture& texture) {
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  if(!native_scene_)return false;
++  const auto key=texture.key();
++  if(key.dimension!=xenos::DataDimension::k2DOrStacked || !key.tiled || key.mip_max_level ||
++      key.GetDepthOrArraySize()!=1 || key.signed_separate || key.format!=xenos::TextureFormat::k_2_10_10_10 ||
++      key.scaled_resolve!=IsDrawResolutionScaled() || GetHostFormatPair(key).format_unsigned.format!=VK_FORMAT_A2B10G10R10_UNORM_PACK32)return false;
++  forza::native_renderer::SceneSnapshotKey identity{uint32_t(key.base_page)<<12,texture.GetGuestBaseSize(),key.GetWidth(),key.GetHeight(),
++      uint32_t(key.pitch)*32,uint32_t(key.endianness),draw_resolution_scale_x(),draw_resolution_scale_y()};
++  std::optional<uint32_t> slot;
++  {auto lock=native_scene_->critical.Acquire();slot=native_scene_->tracker.Find(identity,command_processor_.GetCurrentSubmission());}
++  if(!slot)return false;
++  auto& image=native_scene_->images[*slot];texture.MarkAsUsed();
++  VkPipelineStageFlags stage;VkAccessFlags access;VkImageLayout layout;
++  GetTextureUsageMasks(texture.SetUsage(VulkanTexture::Usage::kTransferDestination),stage,access,layout);
++  command_processor_.EndRenderPass();
++  command_processor_.PushImageMemoryBarrier(texture.image(),ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1),
++      stage,VK_PIPELINE_STAGE_TRANSFER_BIT,access,VK_ACCESS_TRANSFER_WRITE_BIT,layout,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++  command_processor_.SubmitBarriers(true);
++  VkImageCopy copy{};copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.extent={image.width,image.height,1};
++  command_processor_.deferred_command_buffer().CmdFh1SceneCopy(image.image,texture.image(),copy);
++  static uint64_t count=0;
++  if(++count==1 || count%120==0)REXGPU_INFO("FH1 native scene snapshot: sampled {} ({}x{}, original untiling skipped)",count,image.width,image.height);
++  return true;
++#else
++  (void)texture;return false;
++#endif
++}
+
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+@@ -438,6 +561,7 @@
+     false};
+
+ VulkanTextureCache::~VulkanTextureCache() {
++  ShutdownNativeScene();
+   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+@@ -1378,6 +1502,8 @@
+                                                                bool load_mips) {
+   VulkanTexture& vulkan_texture = static_cast<VulkanTexture&>(texture);
+   TextureKey texture_key = vulkan_texture.key();
++
++  if(load_base && !load_mips && LoadNativeSceneSnapshot(vulkan_texture))return true;
+
+   if (load_base && !texture_key.mip_max_level && !vulkan_texture.force_load_3d_tiling() &&
+       vulkan_texture.storage_view()) {
