@@ -45,6 +45,8 @@ jobs:
         run: python -c "from PySide6.QtWidgets import QApplication"
       - name: Launcher unit and Qt tests
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
+      - name: Livery codec tests
+        run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
