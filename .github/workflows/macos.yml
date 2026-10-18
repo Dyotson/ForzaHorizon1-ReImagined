@@ -97,7 +97,7 @@ jobs:
           {
             "$FORZA_MACOS_SDK/bin/rexglue" --version
             for binary in bin/rexglue lib/librexruntime.dylib lib/librexgpu-xenos.dylib lib/libvulkan.1.dylib lib/libMoltenVK.dylib; do
-              lipo -verify_arch arm64 "$FORZA_MACOS_SDK/$binary"
+              lipo "$FORZA_MACOS_SDK/$binary" -verify_arch arm64
               echo "PASS: arm64 $binary"
             done
             test -f "$FORZA_MACOS_SDK/share/vulkan/icd.d/MoltenVK_icd.json"
