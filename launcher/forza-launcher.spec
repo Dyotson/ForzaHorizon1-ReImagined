@@ -7,7 +7,7 @@ import ast
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 root = Path(SPECPATH).resolve()
 repo = root.parent
@@ -41,6 +41,9 @@ datas = [
 # Windows/macOS), both imported lazily and so invisible to the import scan (#85).
 datas += collect_data_files("certifi")
 hidden += ["certifi"] + collect_submodules("truststore")
+# PySDL2 loads SDL through ctypes; retain the wheel's DLL directory and licenses.
+datas += collect_data_files("sdl2dll")
+hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script).
 for _tool in ("apply_title_update.py", "lzx_delta.py"):
@@ -51,6 +54,7 @@ a = Analysis(
     [str(root / "main.py")],
     pathex=[str(root), str(repo / "tools")],
     datas=datas,
+    binaries=collect_dynamic_libs("sdl2dll"),
     hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
