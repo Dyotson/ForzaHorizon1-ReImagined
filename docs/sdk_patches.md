@@ -126,3 +126,19 @@ patch also turns on SDL's haptic subsystem in `thirdparty/CMakeLists.txt` (it wa
 driver ignores wheels the wheel driver takes. Local builds need `libudev.h` (Homebrew `systemd`, added to
 `tools/build_rexglue_sdk.sh`), otherwise SDL is built without udev and sees no joystick at all.
 Test: a uinput virtual wheel; see [Playing](playing.md#racing-wheels-issue-4).
+
+0075 adds an atomic Vulkan graphics-settings transaction. A complete request
+is consumed at a closed frame, after pending submissions finish. Scale-dependent
+render targets, textures, reconstruction and pipelines are replaced together;
+the previous configuration is restored if initialization fails. Active shader
+microcode is transferred before releasing the old cache, and shader storage is
+partitioned by output and scene scale. Native scene scaling is independent of
+the HUD's output size. Scene-to-HUD blits use the actual raster sizes, including
+fractional 1080p output within 2x backing storage. NVIDIA device extensions are
+requested when the device is created so Native sessions can enable DLSS later.
+The vblank worker observes refresh-rate changes without restarting. The native UI is added separately.
+
+0076 initializes DLSS on a private GPU submission before rendering game frames,
+orders NGX scratch/history accesses, enables buffer device addresses when available,
+and ties presentation semaphores to swapchain images. See
+[Rendering](rendering.md#vulkan-dlss-initialization-and-presentation-lifetime).

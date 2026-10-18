@@ -593,3 +593,20 @@ compile-checked; playback on TU0 and AMD hardware was not tested.
 This addresses missing CPU-to-GPU invalidation. The original purple/white striped
 transition has not been independently reproduced with the fix disabled, so the
 related AMD report still needs confirmation on the affected machine.
+
+## Vulkan DLSS initialization and presentation lifetime
+
+Patch 0076 enables the buffer-device-address extension and feature required by
+the NVIDIA runtime. Feature creation and a first evaluation use cleared private
+images in a dedicated initialization submission. Its fence completes before the
+renderer reports the feature ready; the first game frame still resets temporal
+history. This does not add a CPU wait to each game frame or reduce the normal
+frame queue depth.
+
+Evaluation barriers also cover NGX's private history and scratch allocations,
+which are outside the renderer's input/output image barriers. The input clear
+and its first blit have an explicit transfer-write dependency.
+
+Presentation-complete semaphores belong to swapchain images rather than CPU
+frame slots. Reacquiring an image permits reuse of its semaphore. Swapchain
+retirement drains the presentation queue before destroying these resources.
