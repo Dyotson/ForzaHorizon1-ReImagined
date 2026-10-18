@@ -26,6 +26,18 @@ alpha 1. A private fixture registers a transient native barn-find region near
 the player's car, using disposable copied saves; it does not unlock a rumor or
 alter progression. The fixture, captures, game data and saves stay outside Git.
 
+Full TU4 builds and before/after Vulkan runtime checks passed on Windows
+(clang-cl 23, RTX 5060 Ti, driver 617.14) and Linux (clang 22, Fedora WSL/Xvfb,
+Mesa llvmpipe LLVM 22). Both retain normal road/icon opacity and a correct
+full-screen map. The disc hook compiled on Windows and passed Linux syntax
+checks; a full disc runtime was not tested.
+
+The successful Linux fixed run used a fresh shader cache and activated the test
+region after free roam loaded. Several warm-cache loading attempts stopped in a
+guest UI job wait, including a control with the correction disabled; their cause
+was not isolated. RenderDoc pixel-history checks used a capture-compatible SDK
+snapshot, separately from the installed-SDK Windows/Linux runtime checks.
+
 ## Fixed: hard-edged rectangle in the speed blur (2026-10-14)
 
 **Symptom.** At speed the game blurs the edges of the screen. A rectangle around the
