@@ -9,6 +9,7 @@
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
+#include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
@@ -74,6 +75,7 @@ class ForzaApp : public rex::ReXApp {
     }
     graphics_ = config.graphics.get();
     ApplyForzaGpuCvarDefaults();
+    forza::benchmark::PrepareRuntime();
   }
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
@@ -121,6 +123,7 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::benchmark::Initialize(user_data_root());
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),
         [this, last = std::array<double, 6>{-1,-1,-1,-1,-1,-1}]
@@ -157,11 +160,12 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
   // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
   // update_data_root setting; default: tu4 next to the game folder).
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    forza::benchmark::ConfigurePaths(paths);
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
     if (paths.update_data_root.empty()) {
       auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
       if (!game.has_filename()) game = game.parent_path();
@@ -172,7 +176,9 @@ class ForzaApp : public rex::ReXApp {
                    "(tools/apply_title_update.py; set update_data_root)",
                    paths.update_data_root.string());
     }
+#endif
   }
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.
   void OnLoadXexImage(std::string& /*xex_image*/) override {

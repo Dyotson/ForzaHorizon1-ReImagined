@@ -25,6 +25,7 @@
 // "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp).
 
 #include "../platform/guest_memory.h"
+#include "../platform/benchmark.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -352,6 +353,7 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       }
     }
   }
+  if (user == 0 && forza::benchmark::WantsPad()) connected = true;
   if (!connected) {
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
@@ -368,6 +370,12 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     }
     if (block_all) state = PadState{};
     state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
+    if (forza::benchmark::WantsPad()) {
+      bool capture = false;
+      const auto buttons = forza::benchmark::Pad(state.buttons, capture);
+      if (capture) state = PadState{};
+      state.buttons = buttons;
+    }
   }
   if (buffer) {
     // The packet number changes whenever the state does.
@@ -414,7 +422,7 @@ void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, int user_reg, i
   }
   reg(user_reg).u64 = saved;
   reg(flags_reg).u64 = saved_flags;
-  if (scripted) {
+  if (scripted || forza::benchmark::WantsPad()) {
     // A scripted run without hardware: the SDK's answer for slot 0 (its capabilities
     // struct is filled even when nothing is connected), reported as connected.
     if (sdk) sdk(ctx, base);

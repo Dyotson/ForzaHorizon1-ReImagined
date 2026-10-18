@@ -2,6 +2,7 @@
 // tu_address_map: TU4 addresses
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
+#include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
 #include "../platform/guest_addr.h"
@@ -49,6 +50,7 @@ extern "C" REX_FUNC(OriginalSelect);
 namespace forza::graphics_menu {
 namespace {
 constexpr uint32_t kGraphics = 0x7000;
+constexpr uint32_t kBenchmark = 0x7001;
 uint32_t Read(uint8_t *base, uint32_t address) {
   const auto *p = GuestPtr(base, address);
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 |
@@ -875,12 +877,19 @@ extern "C" REX_FUNC(sub_8283CB68) {
     const auto component = Read(base, menu + 0x170);
     title_layout_pending = true;
     ui.AddSource(source, kGraphics, "GRAPHICS");
+    ui.AddSource(source, kBenchmark, "BENCHMARK");
+    forza::benchmark::TitleReady(menu, 10);
     ui.Call(Read(base, Read(base, component + 0x6C) + 0x28), {component + 0x6C});
     REXLOG_INFO("Graphics menu: native main-menu entry added");
   }
 }
 extern "C" REX_FUNC(sub_82836928) {
   using namespace forza::graphics_menu;
+  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kBenchmark &&
+      Read(base, main_menu + 0x260) == 12) {
+    forza::benchmark::Show();
+    return;
+  }
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
       Read(base, main_menu + 0x260) == 12) {
     title_layout_pending = false;
@@ -929,8 +938,8 @@ void Tick(PPCContext& ctx, uint8_t* base) {
             const auto row = Read(base, item);
             const auto node = row ? Read(base, row + 0x2C) : 0;
             if (!node) continue;
-            title_offsets.push_back({row, node, spacing});
-            ShiftTitleRow(base, node, spacing);
+            title_offsets.push_back({row, node, spacing * 2});
+            ShiftTitleRow(base, node, spacing * 2);
           }
           // Refresh each native visual state so static, unfocused tape/text
           // geometry is rebuilt along with the animated selected item.
@@ -943,7 +952,7 @@ void Tick(PPCContext& ctx, uint8_t* base) {
               ui.Call(Read(base, table + 0x80), {row, 1});
           }
           title_layout_pending = false;
-          REXLOG_INFO("Graphics menu: title choices raised by one row ({})", spacing);
+          REXLOG_INFO("Graphics menu: title choices raised by {} units", spacing * 2);
         }
       }
     }

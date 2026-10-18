@@ -27,6 +27,7 @@
 
 #include "frame_time.h"
 #include "../platform/graphics_menu.h"
+#include "../platform/benchmark.h"
 
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
@@ -368,6 +369,7 @@ extern "C" REX_FUNC(sub_8247C168) {
   __imp__sub_8247C168(ctx, base);
   if (lr != kFrameTimeCallReturn) return;
   forza::graphics_menu::Tick(ctx, base);
+  forza::benchmark::Tick(ctx, base);
   if (REXCVAR_GET(frame_rate) <= 30) return;
   double dt;
   const bool timed = FrameTime(base, game_ms, dt);
