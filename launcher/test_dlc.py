@@ -74,7 +74,12 @@ class ShareDlc(unittest.TestCase):
         self.assertEqual(self.share(), "linked")
 
     def test_link_to_a_folder_that_moved_is_repaired(self):
-        os.symlink(Path(self.tmp.name) / "Documents" / "forza" / "0000000000000000", self.root / "0000000000000000")
+        link = self.root / "0000000000000000"
+        target = Path(self.tmp.name) / "Documents" / "forza" / "0000000000000000"
+        # Use the launcher's directory-link fallback: Windows junctions need no
+        # Developer Mode/admin privilege, unlike os.symlink.
+        game._link_dir(link, target)
+        self.assertTrue(game._is_link(link), "the fixture must be a broken directory link")
         self.assertEqual(df.dlc_packages(self.root), set())
         self.assertEqual(self.share(), "linked")
         self.assertEqual(df.dlc_packages(self.root), {RALLY})
@@ -89,7 +94,8 @@ class ShareDlc(unittest.TestCase):
 
     def test_no_link_possible_mirrors(self):
         # Windows without Developer Mode and without a junction (mklink failed): hard links instead.
-        with mock.patch.object(game.os, "symlink", side_effect=OSError(1314, "privilege not held")):
+        with mock.patch.object(game.os, "symlink", side_effect=OSError(1314, "privilege not held")), \
+                mock.patch.object(game.subprocess, "run", return_value=mock.Mock(returncode=1)):
             self.assertEqual(self.share(), "mirrored")
             self.assertEqual(df.dlc_packages(self.root), {RALLY})
             self.assertEqual(df.dlc_without_header(self.root), [])

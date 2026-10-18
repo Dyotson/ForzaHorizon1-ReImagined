@@ -13,13 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from forza_launcher import build_env, cleanenv, game, gpu  # noqa: E402
 from forza_launcher.config import Config  # noqa: E402
 
-INTERNAL = "/opt/ForzaHorizon1-ReImagined/_internal"
-USER_LIBS = "/home/me/lib:/usr/local/lib"
+INTERNAL = str(Path("/opt/ForzaHorizon1-ReImagined/_internal"))
+USER_LIBS = os.pathsep.join([str(Path("/home/me/lib")), str(Path("/usr/local/lib"))])
 
 
 def frozen_env(original=USER_LIBS, **extra):
     """What a PyInstaller bootloader leaves in os.environ."""
-    env = {"PATH": "/usr/bin", "HOME": "/home/me", "LD_LIBRARY_PATH": INTERNAL + (":" + original if original else "")}
+    env = {"PATH": "/usr/bin", "HOME": "/home/me", "LD_LIBRARY_PATH": INTERNAL + (os.pathsep + original if original else "")}
     if original is not None:
         env["LD_LIBRARY_PATH_ORIG"] = original
     env.update(extra)
@@ -62,7 +62,8 @@ class CleanEnvironment(unittest.TestCase):
         self.assertNotIn("LD_LIBRARY_PATH", env)
 
     def test_no_original_keeps_entries_outside_the_bundle(self):
-        with frozen(frozen_env(original=None, LD_LIBRARY_PATH=INTERNAL + ":/opt/cuda/lib:" + INTERNAL + "/PySide6")):
+        with frozen(frozen_env(original=None, LD_LIBRARY_PATH=os.pathsep.join(
+                [INTERNAL, "/opt/cuda/lib", INTERNAL + "/PySide6"]))):
             env = cleanenv.clean_environment()
         self.assertEqual(env["LD_LIBRARY_PATH"], "/opt/cuda/lib")
 
@@ -87,6 +88,7 @@ class CleanEnvironment(unittest.TestCase):
             cleanenv.clean_environment(base)
         self.assertEqual(base, frozen_env())
 
+    @mock.patch.object(sys, "platform", "linux")
     def test_process_environment_restored_for_programs_qt_starts(self):
         with frozen(frozen_env()):
             cleanenv.restore_process_environment()
@@ -95,6 +97,13 @@ class CleanEnvironment(unittest.TestCase):
         with frozen(frozen_env(original=None, LD_LIBRARY_PATH=INTERNAL)):
             cleanenv.restore_process_environment()
             self.assertNotIn("LD_LIBRARY_PATH", os.environ)
+
+    @mock.patch.object(sys, "platform", "win32")
+    def test_windows_process_environment_is_unchanged(self):
+        with frozen(frozen_env()):
+            before = dict(os.environ)
+            cleanenv.restore_process_environment()
+            self.assertEqual(dict(os.environ), before)
 
 
 class EveryLaunchPath(unittest.TestCase):
@@ -149,6 +158,7 @@ class EveryLaunchPath(unittest.TestCase):
             self.assertEqual(rec.read_text().strip(), "/game/lib:" + USER_LIBS)
             self.assertEqual((Path(d) / "srv" / "rec.txt").read_text().strip(), USER_LIBS)
 
+    @mock.patch.object(game.paths, "IS_WINDOWS", False)
     def test_the_game_without_a_saved_library_path(self):
         with frozen(frozen_env(original=None, LD_LIBRARY_PATH=INTERNAL)), tempfile.TemporaryDirectory() as d:
             cfg = Config(Path(d) / "launcher.json")
@@ -156,8 +166,9 @@ class EveryLaunchPath(unittest.TestCase):
             cfg.online["mode"] = "offline"
             install = game.GameInstall(Path(d) / "rt", Path(d) / "rt" / game.EXE, lib_dirs=[Path("/sdk/lib")])
             plan = game.build_plan(cfg, install, write=False, log=lambda _t: None)
-        self.assertEqual(plan.env["LD_LIBRARY_PATH"], f"/sdk/lib:{install.dir}")
+        self.assertEqual(plan.env["LD_LIBRARY_PATH"], f"{Path('/sdk/lib')}:{install.dir}")
 
+    @mock.patch.object(game.paths, "IS_WINDOWS", False)
     def test_the_game_plan_keeps_the_players_path(self):
         with frozen(frozen_env()), tempfile.TemporaryDirectory() as d:
             cfg = Config(Path(d) / "launcher.json")
@@ -165,7 +176,7 @@ class EveryLaunchPath(unittest.TestCase):
             cfg.online["mode"] = "offline"
             install = game.GameInstall(Path(d) / "rt", Path(d) / "rt" / game.EXE, lib_dirs=[Path("/sdk/lib")])
             plan = game.build_plan(cfg, install, write=False, log=lambda _t: None)
-        self.assertEqual(plan.env["LD_LIBRARY_PATH"], f"/sdk/lib:{install.dir}:{USER_LIBS}")
+        self.assertEqual(plan.env["LD_LIBRARY_PATH"], f"{Path('/sdk/lib')}:{install.dir}:{USER_LIBS}")
 
     def test_build_steps_get_a_clean_environment(self):
         from forza_launcher import builder

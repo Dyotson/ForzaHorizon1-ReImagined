@@ -293,7 +293,9 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
 
 ## Release and CI (`.github/workflows/`)
 
-* `release.yml` (tags `v*`, manual): `sdk-linux` (`tools/build_rexglue_sdk.sh` +
+* `release.yml` (PRs to `main`, tags `v*`, manual): `launcher-tests` runs the Python unit
+  and offscreen Qt tests on Windows and Linux without waiting for an SDK build; release
+  publishing requires both test jobs to pass. `sdk-linux` (`tools/build_rexglue_sdk.sh` +
   `tools/package_sdk_overlay.sh`, cached on the patches), `sdk-windows` (clang-cl on a Windows
   runner), then `launcher-linux` (PyInstaller, `launcher/packaging/make_package.py` makes
   `ForzaHorizon1-ReImagined-linux-x86_64.tar.gz` with `install.sh`, `.desktop`, icon) and
@@ -313,6 +315,23 @@ launcher/.venv/bin/python launcher/main.py            # the window (in a checkou
 launcher/.venv/bin/python launcher/main.py --build --root /path --jobs 4   # the same build without the window
 cd launcher && .venv/bin/pyinstaller --noconfirm forza-launcher.spec    # the frozen app
 ```
+
+Run the launcher suite from the repository root after installing `launcher/requirements.txt`:
+`python -m unittest discover -s launcher -p 'test_*.py' -v`. Qt runs offscreen. The tests
+use temporary data and fake child programs; the game-file acceptance tests skip when their
+fixtures are absent, and the Linux archive/shell tests skip on Windows.
+
+Windows baseline (#121): the suite previously had 10 failures and 5 errors. Most were
+host assumptions in the tests: POSIX library paths, extensionless executable fixtures,
+symlinks requiring privileges, or updater text and path spelling. The fixtures now use
+native paths and executable names, explicitly select the platform behavior under test,
+and exercise Windows directory junctions as well as the mirror fallback. Session cleanup
+runs before temporary-directory cleanup. There was also a launcher bug: `Session.start`
+kept the parent's `server.log` handle open. It now closes that copy immediately after
+spawning the server (including on spawn failure); the child keeps its own logging handle.
+Validated with the full 184-test suite on Windows/Python 3.12.10 (161 passed, 23 expected
+skips) and Fedora WSL/Python 3.14.6 (175 passed, 9 missing-game-fixture skips), including
+the offscreen Qt tests on both platforms.
 
 ## Memory check (#32)
 

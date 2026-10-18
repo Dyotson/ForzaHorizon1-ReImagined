@@ -601,10 +601,12 @@ class Session:
         if plan.server_argv:
             data_dir = Path(plan.server_argv[plan.server_argv.index("--data-dir") + 1])
             data_dir.mkdir(parents=True, exist_ok=True)
-            self.server_log = open(data_dir / "server.log", "ab")
-            self.server = subprocess.Popen(plan.server_argv, stdout=self.server_log,
-                                           stderr=subprocess.STDOUT, creationflags=flags,
-                                           stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
+            # Popen gives the child its own handle. Close our copy immediately, including
+            # when starting the server fails; otherwise Windows keeps server.log locked.
+            with open(data_dir / "server.log", "ab") as server_log:
+                self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
+                                               stderr=subprocess.STDOUT, creationflags=flags,
+                                               stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
             self.log("Started a local Forza Live server")
         self._start_game({})
 

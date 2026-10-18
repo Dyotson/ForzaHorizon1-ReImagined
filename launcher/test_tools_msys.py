@@ -13,6 +13,10 @@ from forza_launcher import build_env as be   # noqa: E402
 def fake(root, rel, name):
     d = Path(root, *rel.split("/"))
     d.mkdir(parents=True, exist_ok=True)
+    # shutil.which uses the host's executable rules even when testing the Windows
+    # MSYS filter on Linux (or disabling it on Windows).
+    if os.name == "nt" and not name.endswith(".exe"):
+        name += ".exe"
     f = d / name
     f.write_text("#!/bin/sh\n")
     f.chmod(0o755)
@@ -47,9 +51,9 @@ class MsysSkipped(unittest.TestCase):
         d2, good = fake(self.tmp.name, "Program Files/CMake/bin", "cmake")
         notes = []
         path = os.pathsep.join([d1, d2])
-        self.assertEqual(be.find_tool("cmake", notes, path=path, windows=True), good)
+        self.assertEqual(Path(be.find_tool("cmake", notes, path=path, windows=True)), Path(good))
         self.assertEqual(len(notes), 1)
-        self.assertIn(bad, notes[0])
+        self.assertIn(os.path.normcase(bad), os.path.normcase(notes[0]))
         self.assertIn("msys2", notes[0])
 
     def test_find_tool_only_msys_gives_none(self):
@@ -61,15 +65,15 @@ class MsysSkipped(unittest.TestCase):
     def test_find_tool_version_text(self):
         d1, bad = fake(self.tmp.name, "odd/bin", "git")
         d2, good = fake(self.tmp.name, "Git/cmd", "git")
-        probe = lambda exe: "git version 2 (msys)" if exe == bad else "git version 2"
+        probe = lambda exe: "git version 2 (msys)" if Path(exe) == Path(bad) else "git version 2"
         notes = []
-        self.assertEqual(be.find_tool("git", notes, path=os.pathsep.join([d1, d2]), windows=True,
-                                      version_probe=probe), good)
+        self.assertEqual(Path(be.find_tool("git", notes, path=os.pathsep.join([d1, d2]), windows=True,
+                                           version_probe=probe)), Path(good))
         self.assertIn("--version", notes[0])
 
     def test_linux_unchanged(self):
         d1, exe = fake(self.tmp.name, "msys2/usr/bin", "cmake")
-        self.assertEqual(be.find_tool("cmake", path=d1, windows=False), exe)
+        self.assertEqual(Path(be.find_tool("cmake", path=d1, windows=False)), Path(exe))
 
     @unittest.mock.patch.object(os, "pathsep", ";")
     def test_native_path(self):
