@@ -14,7 +14,7 @@ struct alignas(16) ResolveParameters {
   std::array<uint32_t, 4> source{};       // x, y, width, height
   std::array<uint32_t, 4> destination{};  // guest x, guest y, guest pitch, byte base
   std::array<uint32_t, 4> layout{1, 1, 0, 0}; // scale x/y, Endian128, swap R/B
-  std::array<uint32_t, 4> bounds{};       // buffer bytes, image width/height, reserved
+  std::array<uint32_t, 4> bounds{};       // buffer bytes, image width/height, half-pixel fill (0/1)
 };
 static_assert(sizeof(ResolveParameters) == 64);
 
@@ -37,7 +37,7 @@ inline uint64_t ResolveBufferBytes(const ResolveParameters& p) {
 
 inline bool Valid(const ResolveParameters& p) {
   const auto sx = p.layout[0], sy = p.layout[1];
-  if (!sx || sx > 7 || !sy || sy > 7 || p.layout[2] > 5 || p.layout[3] > 1 || p.bounds[3] ||
+  if (!sx || sx > 7 || !sy || sy > 7 || p.layout[2] > 5 || p.layout[3] > 1 || p.bounds[3] > 1 ||
       !p.source[2] || !p.source[3] || p.source[2] % (4 * sx) || p.source[3] % sy ||
       !p.destination[2] || p.destination[2] > 16384 || p.destination[2] % 32 ||
       p.destination[0] % 8 || p.destination[1] % 8 || p.destination[3] % 16 ||
@@ -49,6 +49,15 @@ inline bool Valid(const ResolveParameters& p) {
       uint64_t(p.destination[1]) + p.source[3] / sy > 16384)
     return false;
   return ResolveBufferBytes(p) <= p.bounds[0];
+}
+
+// A D3D9 half-pixel offset can leave the scaled top/left edge uncovered.
+// Match the SDK resolve's fill from the first surely covered row/column.
+inline std::array<uint32_t, 2> ResolveSourcePixel(const ResolveParameters& p, uint32_t x, uint32_t y) {
+  const uint32_t first_x = p.bounds[3] ? p.layout[0] / 2 : 0;
+  const uint32_t first_y = p.bounds[3] ? p.layout[1] / 2 : 0;
+  return {p.source[0] + (x < first_x ? first_x : x),
+          p.source[1] + (y < first_y ? first_y : y)};
 }
 
 // One invocation writes four consecutive host pixels as a complete 16-byte

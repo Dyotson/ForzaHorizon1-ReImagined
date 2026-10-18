@@ -227,8 +227,9 @@ pitch, scale, endian conversion and R/B swap. Each invocation writes a complete
 is derived from the SDK's 32-bit tiled texture layout under its included BSD
 license. The runtime accepts only a full, immediately preceding native RGBA8
 output, single-sample unsigned normalized RGBA8 destinations, integer scales and
-matching guest base/pitch. Format conversion, exponent bias, half-pixel fill,
-array destinations, MSAA and unsupported layouts use the original resolve.
+matching guest base/pitch. Format conversion, exponent bias, array destinations,
+MSAA and unsupported layouts use the original resolve. Patch 0083 adds the
+half-pixel edge filling described below.
 Intervening draws and cache resets invalidate the candidate. Pipeline creation
 and range validation happen before recording resource transitions, retaining
 the original fallback on failure.
@@ -281,11 +282,55 @@ matched all 921,600 words exactly through three executions, with padding
 preserved and no synchronization errors. Both standalone SDK fallback and
 canonical native build modes compile.
 
-A captured full-scene RGBA8 resolve uses the SDK's half-pixel edge-fill rule.
-A direct texel copy differs there, so that case is deliberately still rejected;
-its original GPU buffer is retained locally for the next implementation. These
-results establish only the two supported resolve passes, not complete native
-world rendering or a performance improvement.
+These results establish only the two supported resolve passes at patch 0082,
+not complete native world rendering or a performance improvement.
+
+## Full-scene half-pixel edge filling
+
+Patch 0083 extends the native resolve to the SDK's half-pixel edge-fill contract.
+When D3D9 pixel-center behavior leaves the first scaled rows or columns uncovered,
+the resolve fills them from the first surely covered texel at `scale / 2`, using
+integer division independently on each axis. This changes source selection only;
+tiled destination addressing, endianness and R/B conversion remain unchanged.
+The flag occupies the fourth bounds word (0 or 1); other values are rejected.
+The mapping is derived from the SDK's BSD-licensed resolve implementation, not
+from a game shader. Destination aliases and source ownership retain the checks
+from patch 0082. The runtime accepts endian modes 0 through 3, matching the
+SDK's fast 32-bit shader; 64/128-bit swaps retain the original path until those
+contracts are reconciled. The standalone encoder also tests those larger swaps.
+
+All five standalone tests pass with Khronos synchronization validation. The 170
+synthetic GPU cases now exercise both edge-fill states at odd/even and asymmetric
+scales, all endian modes and R/B states, source offsets, 1440p and untouched
+padding. CPU checks cover every supported scale pair. A third private fixture
+from the original full-scene resolve matches all 3,686,400 pixel words exactly
+across three native GPU executions; the padded destination is also unchanged
+outside the copied area. GPU synchronization validation reports zero errors.
+
+A complete native-1440p AI race with threaded submission executed over 7,300
+native resolves and completed its measurement with zero Vulkan validation errors.
+The harness terminated the child after saving the report. A separate capture
+contains six full-scene native resolves across three gameplay frames, alongside
+eight smaller RGBA8 resolves across four frames. Push constants identify the
+2560x1440 region and enabled edge-fill flag; the following texture uploads read
+the destination buffer without an EDRAM intermediate. The recovered 2560x1440
+swapchain output retains the HUD, labels and minimap. Native and standalone
+fallback SDK configurations both compile. These checks do not establish native
+geometry, direct texture aliases or a complete world renderer.
+
+A subsequent uninstrumented pair used the same executable, SDK, graphics
+settings and copied-save seed, changing only the native resolve mode. Both runs
+used native 1440p, SMAA, threaded submission, a configured 120 FPS cap, 15 seconds
+settling and 60 seconds measurement:
+
+| Resolve mode | Average FPS | 1% low | P99 | Worst | Stalls over 50 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 69.89 | 52.56 | 15.74 ms | 30.86 ms | 0 |
+| Native RGBA8 with edge fill | 70.46 | 49.96 | 15.93 ms | 29.69 ms | 0 |
+
+This pair does not establish a speedup: average and tail results vary in opposite
+directions, AI traffic is not deterministic, and the earlier foreground-window
+limitation remains. It is a check for a large regression, not a hardware ranking.
 
 ## Build the development tools
 
@@ -359,14 +404,14 @@ Release builds.
    keep unsupported states on the original path until their output is validated.
 2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
-3. Extend the validated RGBA8 resolve beyond the recognized motion output, using
-   actual render-target ownership and complete source coverage. Add other
-   formats and MSAA only with original-GPU comparisons. Longer-term direct
-   texture-view aliases need independent snapshots and consumer-fence lifetimes:
-   the observed resolve clears its source attachment immediately afterward, so
-   retaining that view would be invalid. Keep the option off by default.
-4. Check reflections, labels/HUD, cutscenes and menus before extending the path to
-   more of the world renderer.
+3. Extend the ownership-based resolve to HDR/depth formats and MSAA only with
+   original-GPU comparisons. Longer-term direct texture-view aliases need
+   independent snapshots and consumer-fence lifetimes: a source may be cleared
+   or drawn again immediately after resolving. Keep the option off by default.
+4. Bring a world geometry pass onto explicitly owned native scene attachments,
+   with vertex/index/material inputs and pass dependencies. Compare its shading
+   and depth with the original draw before removing any tiled replay.
+5. Check reflections, labels/HUD, cutscenes and menus as the world path expands.
 
 A complete native world renderer remains the goal. The first pass's gameplay
 validation establishes a limited replacement with the existing native HUD; it

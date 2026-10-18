@@ -30,7 +30,7 @@ int main() {
         CHECK(uint8_t(encoded[i/4]>>((i%4)*8))==original);
       }
     }
-    for(uint32_t sx:{1u,2u,3u,7u}) for(uint32_t sy:{1u,2u,3u}) {
+    for(uint32_t sx=1;sx<=7;++sx) for(uint32_t sy=1;sy<=7;++sy) {
       ResolveParameters p;
       p.source={3,5,32*sx,24*sy};p.destination={8,8,64,32};p.layout={sx,sy,2,1};
       p.bounds={uint32_t(ResolveBufferBytes(p)),p.source[2]+8,p.source[3]+8,0};
@@ -46,6 +46,16 @@ int main() {
       invalid=p;invalid.layout[0]=0;CHECK(!Valid(invalid));
       invalid=p;invalid.layout[2]=6;CHECK(!Valid(invalid));
       invalid=p;invalid.destination[0]=1;CHECK(!Valid(invalid));
+      invalid=p;invalid.bounds[3]=2;CHECK(!Valid(invalid));
+      // Edge filling is relative to the source rectangle, including at odd
+      // scales. Interior texels and the destination mapping are unaffected.
+      p.bounds[3]=1;CHECK(Valid(p));
+      CHECK(ResolveSourcePixel(p,0,0)==(std::array<uint32_t,2>{3+sx/2,5+sy/2}));
+      CHECK(ResolveSourcePixel(p,10,0)==(std::array<uint32_t,2>{13,5+sy/2}));
+      CHECK(ResolveSourcePixel(p,0,12)==(std::array<uint32_t,2>{3+sx/2,17}));
+      CHECK(ResolveSourcePixel(p,10,12)==(std::array<uint32_t,2>{13,17}));
+      p.bounds[3]=0;
+      CHECK(ResolveSourcePixel(p,0,0)==(std::array<uint32_t,2>{3,5}));
     }
     std::cout<<"Native RGBA8 resolve layout checks passed\n";
     return 0;

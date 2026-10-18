@@ -205,3 +205,12 @@ resolve. Mixed ownership, reinterpreted sources and unsupported conversion state
 retain the original path. The original motion draw remains active in this mode
 for independent resolve validation. It is disabled by default and does not
 replace geometry. See [Native renderer](native_renderer.md#resolve-from-tracked-attachment-ownership).
+
+0083 carries the SDK's half-pixel edge-fill flag into the native RGBA8 resolve.
+The top/left gap samples the first surely covered texel at half the integer
+scale, independently on each axis. The native destination mapping and ownership
+checks are unchanged. Runtime endian modes are limited to 0..3 to match the
+existing fast 32-bit SDK shader; 64/128-bit swaps retain its original path. This
+allows the captured full-scene RGBA8 case to bypass EDRAM while preserving the original scaled resolve output. See
+[Native renderer](native_renderer.md#full-scene-half-pixel-edge-filling) for
+original-GPU byte comparisons and synthetic coverage.

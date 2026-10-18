@@ -31,8 +31,10 @@ void main() {
       ((invocation.x % scale.x) * scale.y + pixel.y % scale.y) * 16;
   uvec4 result;
   uint endian = p.layout_info.z;
+  uvec2 first_covered = p.bounds.w != 0 ? scale >> uvec2(1) : uvec2(0);
   for (uint i = 0; i < 4; ++i) {
-    vec4 color = texelFetch(source_image, ivec2(p.source.xy + pixel + uvec2(i, 0)), 0);
+    uvec2 source_pixel = p.source.xy + max(pixel + uvec2(i, 0), first_covered);
+    vec4 color = texelFetch(source_image, ivec2(source_pixel), 0);
     if (p.layout_info.w != 0) color = color.bgra;
     uint word = packUnorm4x8(color);
     uint swap = endian >= 4 ? 2 : endian;

@@ -1,0 +1,31 @@
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -6422,13 +6422,16 @@
+       GetPath() != Path::kHostRenderTargets || info.IsCopyingDepth() ||
+       info.color_edram_info.format != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) ||
+       info.color_edram_info.msaa_samples != xenos::MsaaSamples::k1X ||
+-      info.color_edram_info.fill_half_pixel_offset || info.coordinate_info.edram_offset_x_div_8 ||
++      info.coordinate_info.edram_offset_x_div_8 ||
+       info.coordinate_info.edram_offset_y_div_8 || info.color_edram_info.base_tiles != info.color_original_base ||
+       source->key().base_tiles != info.color_original_base ||
+       source->key().GetPitchTiles() != info.color_edram_info.pitch_tiles ||
+       info.copy_dest_info.copy_dest_format != xenos::ColorFormat::k_8_8_8_8 ||
+       info.copy_dest_info.copy_dest_number != xenos::SurfaceNumberFormat::kUnsignedRepeatingFraction ||
+       info.copy_dest_info.copy_dest_exp_bias || info.copy_dest_info.copy_dest_array ||
++      // The SDK's fast 32-bit resolve only implements endian modes 0..3.
++      // Keep 64/128-bit swaps on its path until their contracts are reconciled.
++      uint32_t(info.copy_dest_info.copy_dest_endian) > 3 ||
+       info.copy_dest_coordinate_info.copy_sample_select != xenos::CopySampleSelect::k0 ||
+       source->key().msaa_samples != xenos::MsaaSamples::k1X || UsesFractionalRaster()) return false;
+   const uint32_t sx = draw_resolution_scale_x(), sy = draw_resolution_scale_y();
+@@ -6451,7 +6454,8 @@
+       info.copy_dest_coordinate_info.pitch_aligned_div_32 * 32u, 0};
+   parameters.layout = {sx, sy, uint32_t(info.copy_dest_info.copy_dest_endian), info.copy_dest_info.copy_dest_swap};
+   parameters.bounds = {uint32_t(length), source->key().GetWidth() * sx,
+-      GetRenderTargetHeight(source->key().pitch_tiles_at_32bpp, source->key().msaa_samples) * sy, 0};
++      GetRenderTargetHeight(source->key().pitch_tiles_at_32bpp, source->key().msaa_samples) * sy,
++      info.color_edram_info.fill_half_pixel_offset};
+   if (!forza::native_renderer::Valid(parameters)) return false;
+ 
+   // Create the native pipeline before queuing any resource transitions. Failure

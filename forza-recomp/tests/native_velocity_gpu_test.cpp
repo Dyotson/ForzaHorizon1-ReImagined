@@ -428,11 +428,11 @@ struct ResolveGpu {
 
 void RunResolve(Context& context,const std::vector<uint32_t>& shader) {
   ResolveGpu gpu(context);gpu.Initialize(shader);
-  auto run=[&](uint32_t sx,uint32_t sy,uint32_t endian,bool swap,uint32_t width,uint32_t height) {
+  auto run=[&](uint32_t sx,uint32_t sy,uint32_t endian,bool swap,uint32_t width,uint32_t height,bool fill) {
     ResolveParameters p;
     p.source={3,5,width,height};p.destination={8,8,((width/sx+8+31)/32)*32,32};
     p.layout={sx,sy,endian,uint32_t(swap)};
-    p.bounds={uint32_t(ResolveBufferBytes(p)),width+8,height+8,0};CHECK(Valid(p));
+    p.bounds={uint32_t(ResolveBufferBytes(p)),width+8,height+8,uint32_t(fill)};CHECK(Valid(p));
     Input input(context,p.bounds[1],p.bounds[2],endian%2!=0);
     struct View {
       VkDevice device;VkImageView value{};
@@ -448,7 +448,10 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader) {
     std::vector<uint32_t> expected(p.bounds[0]/4,0xA7A7A7A7);
     for(uint32_t y=0;y<height;++y) for(uint32_t q=0;q<width/4;++q) {
       std::array<std::array<uint8_t,4>,4> texels;
-      for(uint32_t lane=0;lane<4;++lane) texels[lane]=input.Read(p.source[0]+q*4+lane,p.source[1]+y);
+      for(uint32_t lane=0;lane<4;++lane) {
+        const auto xy=ResolveSourcePixel(p,q*4+lane,y);
+        texels[lane]=input.Read(xy[0],xy[1]);
+      }
       const auto encoded=EncodeResolveQuad(texels,endian,swap);
       std::memcpy(expected.data()+ResolveQuadOffset(p,q,y)/4,encoded.data(),16);
     }
@@ -479,12 +482,12 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader) {
     context.Submit();
     CHECK(std::memcmp(expected.data(),output.mapped,p.bounds[0])==0);
     std::cout<<"Resolve "<<width<<'x'<<height<<", scale="<<sx<<'x'<<sy<<", endian="<<endian
-             <<", swap="<<swap<<": exact output and preserved padding\n";
+             <<", swap="<<swap<<", half-pixel fill="<<fill<<": exact output and preserved padding\n";
   };
-  for(const auto& scale:std::array<std::array<uint32_t,2>,4>{{{1,1},{2,2},{3,2},{7,3}}})
-    for(uint32_t endian=0;endian<6;++endian) for(bool swap:{false,true})
-      run(scale[0],scale[1],endian,swap,32*scale[0],24*scale[1]);
-  run(2,2,2,true,2560,1440);
+  for(const auto& scale:std::array<std::array<uint32_t,2>,7>{{{1,1},{2,2},{3,2},{7,3},{4,6},{5,7},{1,4}}})
+    for(uint32_t endian=0;endian<6;++endian) for(bool swap:{false,true}) for(bool fill:{false,true})
+      run(scale[0],scale[1],endian,swap,32*scale[0],24*scale[1],fill);
+  for(bool fill:{false,true}) run(2,2,2,true,2560,1440,fill);
 }
 
 int main(int argc, char** argv) {
