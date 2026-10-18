@@ -67,18 +67,22 @@ class HdrSettings(unittest.TestCase):
         page = SettingsPage(cfg, window)
         self.addCleanup(page.close)
         self.assertFalse(page.rows["present_hdr_peak_nits"].control.isEnabled())
+        self.assertIn("Enable HDR", page.rows["present_hdr_peak_nits"].dependency.text())
         page.set_value("present_hdr", True)
         self.assertTrue(page.rows["present_hdr_peak_nits"].control.isEnabled())
+        self.assertEqual(page.rows["present_hdr_peak_nits"].dependency.text(), "")
         # The Direct3D setting exists only on Windows.
         cfg.settings["gpu_backend"] = "d3d12"
         page._apply_dependencies()
         self.assertFalse(page.rows["present_hdr"].control.isEnabled())
+        self.assertIn("Vulkan", page.rows["present_hdr"].dependency.text())
         self.assertFalse(page.rows["present_hdr_peak_nits"].control.isEnabled())
         self.assertTrue(cfg.settings["present_hdr"])
         self.assertEqual(cfg.settings["present_hdr_peak_nits"], 400.0)
         cfg.settings["gpu_backend"] = "vulkan"
         page._apply_dependencies()
         self.assertTrue(page.rows["present_hdr_peak_nits"].control.isEnabled())
+        self.assertEqual(page.rows["present_hdr_peak_nits"].dependency.text(), "")
         page.flush()
         app.processEvents()
 
