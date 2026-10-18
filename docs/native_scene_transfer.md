@@ -79,3 +79,51 @@ ABI is unchanged.
 
 These checks establish the captured contract and tested race, not every scene
 or render scale. Keep this mode disabled by default pending broader coverage.
+
+Fresh baseline and native presenter captures both show the full native HUD and
+car/environment reflections at 2560x1440. They are nearby race moments, not a
+frame-identical visual comparison. Neither capture session reports Vulkan
+validation or synchronization errors. Both log one `native_hud_seed` rejected
+draw during startup; this also occurs with the transfer disabled, and the
+gameplay HUD subsequently renders. That separate startup issue is unresolved.
+
+## Warmed native-1440p comparison
+
+The RTX 5060 Ti 16 GB / i9-13900K machine used the same host, runtime/GPU DLLs,
+copied save seed, shader cache and AI race for both modes. Scene and HUD were
+2560x1440, with SMAA, no temporal upscaling, vsync, threaded Vulkan submission
+and a configured 120 FPS cap. The original scene's multisampling remains active.
+Only `FORZA_NATIVE_RENDERER` changed between runs.
+
+One warm-up for each mode is excluded. Four measured runs used baseline /
+transfer / transfer / baseline order, with 15 seconds settling and 60 seconds
+measured each. Baseline means the already-authored `world-color` pass; this
+is an incremental transfer comparison, not an original-renderer comparison.
+Validation and RenderDoc layers, presenter readbacks and GPU replays were absent
+from the timed runs. Per-second audits found no other FH1 process.
+
+| Run | Scene transfer | Average FPS | 1% low FPS | P99 | Worst | >50 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Baseline | 58.99 | 39.63 | 19.92 ms | 36.46 ms | 0 |
+| 2 | Native snapshot | 55.32 | 37.10 | 21.16 ms | 36.81 ms | 0 |
+| 3 | Native snapshot | 57.84 | 37.82 | 19.15 ms | 37.12 ms | 0 |
+| 4 | Baseline | 59.86 | 38.88 | 18.87 ms | 34.97 ms | 0 |
+| Pooled | Baseline | 59.42 | 39.09 | 19.45 ms | 36.46 ms | 0 |
+| Pooled | Native snapshot | 56.58 | 36.92 | 20.68 ms | 37.12 ms | 0 |
+
+The native snapshot path is **4.78% slower on average** in this comparison,
+with a lower 1% low. This does not establish a performance improvement. It
+remains opt-in, and the normal renderer is unchanged. The remaining canonical
+writes and image copies need profiling before further optimization; these
+end-to-end results do not attribute the regression to one GPU operation.
+
+Pooled statistics use saved frame intervals: 7,130 baseline intervals over
+119.985673 seconds and 6,789 native intervals over 119.983235 seconds. CSV counts
+and summed times agree with the reports, and binary hashes match across all
+four runs. The 1% low is the reciprocal mean of the slowest ceil(N/100) intervals.
+
+Parsec streaming was active during the measured set, and one desktop inspection
+occurred during the first baseline. AI traffic varies, and focus was not
+continuously monitored. These are development results for this machine/scene,
+not isolated GPU costs or a deterministic hardware ranking. Earlier shared-load
+runs and both warm-ups are excluded.
