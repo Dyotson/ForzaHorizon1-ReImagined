@@ -87,6 +87,15 @@ validation or synchronization errors. Both log one `native_hud_seed` rejected
 draw during startup; this also occurs with the transfer disabled, and the
 gameplay HUD subsequently renders. That separate startup issue is unresolved.
 
+A separate instrumented test host, using the same GPU DLL as the timed runs,
+restored an offline pre-story checkpoint and requested the complete `FMV_02`
+sequence through the native career state machine. Three distinct video frames
+were captured at 2560x1440 output. The pre-movie, movie-entry, movie-exit and
+post-movie-completion markers all fired; the map and subsequent car-selection
+screen rendered after the transition. No Vulkan validation/synchronization
+errors were reported. The movie itself retains its original video resolution;
+1440p here describes the presenter output. This does not cover every cutscene.
+
 ## Warmed native-1440p comparison
 
 The RTX 5060 Ti 16 GB / i9-13900K machine used the same host, runtime/GPU DLLs,
