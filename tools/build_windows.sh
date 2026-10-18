@@ -77,6 +77,7 @@ STEP="${1:-all}"
 if [ "$STEP" != --game-only ]; then
 # 1. The SDK for Windows: runtime, Xenos plugin (D3D12 and Vulkan), codegen tool.
 cmake -S "$SRC" -B "$SRC/out/build/win-cross" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DREXGLUE_FH1_NATIVE_SOURCE_DIR="$ROOT/forza-recomp/src/platform/native_renderer" \
     -DCMAKE_CXX_STANDARD=23 -DREXGLUE_USE_VULKAN=ON -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/cmake/windows-clang.cmake" > /dev/null
 ninja -C "$SRC/out/build/win-cross" -j "$JOBS"

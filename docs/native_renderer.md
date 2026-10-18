@@ -13,8 +13,8 @@ those buffers as textures. A final image blit or a new AA filter alone does not
 replace that renderer. Removing those copies without tracking consumers can
 invalidate reflections, minimap inputs, screenshots and CPU readbacks.
 
-This branch contains development infrastructure and an executable native compute
-pass. It is **not yet an enabled replacement renderer**:
+This branch contains development infrastructure and an opt-in replacement for
+one motion-effect pass. It is **not a complete native world renderer**:
 
 - `render_graph.h` assigns resource versions and records RAW, WAR, WAW and alias
   dependencies. A mutable attachment and an independent snapshot are distinct
@@ -29,8 +29,9 @@ pass. It is **not yet an enabled replacement renderer**:
 - `velocity_pass` owns Vulkan depth, motion and blur attachments. Its authored
   compute shader decodes packed depth/stencil, reconstructs per-object movement,
   and keeps unclamped temporal motion separate from shaped blur. It executes in
-  the standalone GPU test. A private SDK integration prototype also executes it
-  in the game's draw stream; that bridge is not published in this branch yet.
+  the standalone GPU test and, through SDK patch 0079, in the game's draw stream.
+  Geometry, reflections, other effects and HUD composition retain the existing
+  renderer. The resource planner does not schedule this runtime pass yet.
 
 The planner currently works at whole-resource granularity. Layout transitions,
 queue ownership, subresources, native allocation and guest EDRAM alias mapping
@@ -110,7 +111,7 @@ validation and zero errors. A private integration subsequently executed the
 native pass before the original draw across four captured race frames: each
 comparison had maximum error [1,1,1,0] and no pixels outside that tolerance.
 
-The private replacement prototype then removed the original motion draw. Its
+The replacement prototype then removed the original motion draw. Its
 capture shows a native dispatch, an image copy into the existing target, and the
 usual resolve consumers. All four copies matched the native output exactly.
 The recovered game output is 2560x1440 with the original HUD. This still uses the
@@ -121,14 +122,67 @@ Capture startup required a private runtime workaround: RenderDoc 1.46 on Windows
 advertises `VK_KHR_portability_enumeration`, then rejects instance creation when it
 is enabled. A standalone extension probe isolated that extension; omitting it
 when RenderDoc is attached allowed the AI race capture. Validation reported
-swapchain and queue-use errors at the capture boundary. A run without RenderDoc
-is still required before claiming clean integration validation or performance.
-Threaded submission and fractional scene inputs also remain integration checks.
+swapchain and queue-use errors at the capture boundary, so that run cannot establish
+integration validation or performance. The workaround is not included in patch 0079.
+
+A subsequent race ran without RenderDoc at native 2560x1440 scene/HUD resolution,
+120 FPS cap and SMAA, with threaded submission and Khronos synchronization
+validation enabled. The guarded bridge replaced over 1,300 draws, completed the
+15-second settling and 60-second measurement stages, and exited normally with
+zero Vulkan validation errors. An earlier prototype reported an occlusion-query
+scope error; the bridge now leaves draws inside active queries on the original
+path. A transition-time `native_hud_seed` warning also occurs with the original
+renderer. Validation substantially reduces frame rate; those results are not
+performance measurements. Fractional scene inputs remain on the original path.
+
+The complete patched Windows SDK also built with DLSS and FSR disabled, and its
+GPU plugin executed the replacement in a freshly rebuilt public TU4 host. No NGX
+runtime was loaded. A single uninstrumented control pair, with native 1440p,
+SMAA, threaded submission and the cap configured to 120, measured:
+
+| Pass | Average FPS | 1% low | P99 | Worst | Stalls over 50 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 69.63 | 44.73 | 16.73 ms | 30.10 ms | 0 |
+| Native | 69.37 | 42.22 | 17.22 ms | 30.38 ms | 0 |
+
+These are functional comparison results, not a demonstrated speedup. The window
+was covered by a pending Windows Firewall prompt, and AI traffic varies. More
+runs with normal foreground conditions are required for performance conclusions.
+Earlier local scores were invalidated: a stale development object counted each
+benchmark frame twice. After rebuilding all public host sources and regenerating
+the build, the CSV contains one interval per frame and agrees with renderer frame
+counts. The figures above use only that verified executable.
 
 The local fixtures, captures and screenshots remain volatile files outside the
 repository. The benchmark preview runtime was restored after the experiments.
-The SDK bridge, build integration and a reviewable runtime patch remain work in
-progress; this branch does not enable the replacement in normal game builds.
+The SDK bridge and build integration are published in this branch. The feature
+remains disabled by default.
+
+## Enable the experimental runtime pass
+
+The project SDK build scripts and release CI pass
+`-DREXGLUE_FH1_NATIVE_SOURCE_DIR=<repo>/forza-recomp/src/platform/native_renderer`.
+This compiles the canonical pass implementation and generates its shader header
+in the SDK build directory. SDK configuration fails for an incomplete nonempty
+source directory. Without this argument, the SDK builds a fallback bridge that
+retains the original renderer. The native bridge and the fallback both compile
+with NVIDIA DLSS and AMD FSR support disabled.
+
+Set `FORZA_NATIVE_RENDERER=velocity` in the game's environment to replace the
+recognized motion draw. Set it to `validate` to execute the native pass before
+the original draw for GPU comparisons. With the variable unset, the original
+renderer runs. These are developer options, not a launcher setting or a user
+performance recommendation.
+
+The bridge checks the shader pair, primitive, constants, blend/depth/stencil
+state, full viewport/scissor and attachment format/sample count. It leaves
+unsupported states, active occlusion queries, fractional rasters and unavailable
+frame slots on the original path. Three native slots per extent and at most four
+extents are retained until shutdown; extent changes never destroy in-flight
+resources. Recording uses an immutable packet on the submission thread. Shutdown
+drains recording and GPU work before releasing the pass. The current bridge
+copies native blur output into the existing target for its ordinary resolve
+consumers; eliminating that copy needs guest-resource alias mapping.
 
 ## Build the development tools
 
@@ -197,17 +251,16 @@ Release builds.
 
 ## Next execution milestone
 
-1. Finish the runtime bridge after the moving-frame comparisons. Validate it
-   without capture instrumentation, with threaded submission, and across scene
-   resolution changes. Keep unsupported draw states on the original path.
+1. Compare warmed, uninstrumented performance at native 1440p and exercise live
+   scene resolution changes. Add explicit contracts for fractional scene inputs;
+   keep unsupported states on the original path until their output is validated.
 2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
-3. Implement its layout and queue transitions, format interpretation and CPU
-   readback fallback, behind an option that defaults off.
-4. Execute the replacement pass, compare actual output at native 1440p, then run
-   the AI benchmark with warmed shaders. Check reflections, labels/HUD, cutscenes
-   and menus before extending the path.
+3. Extend layout/queue and alias tracking to remove the compatibility copy and
+   EDRAM round trip while preserving CPU readbacks. Keep the option off by default.
+4. Check reflections, labels/HUD, cutscenes and menus before extending the path to
+   more of the world renderer.
 
-A complete native world renderer remains the goal. The first pass's GPU test
-does not establish native game rendering, native-HUD integration or a performance
-improvement. Those remain required integration work.
+A complete native world renderer remains the goal. The first pass's gameplay
+validation establishes a limited replacement with the existing native HUD; it
+does not establish native geometry rendering or a performance improvement.

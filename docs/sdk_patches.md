@@ -161,3 +161,19 @@ a public member or virtual function. The game compiles with the stock nightly
 headers; older runtimes without the export safely retain continuous repainting.
 Linux SDK CI compiles the actual HUD adapter against those stock headers, even
 on an SDK cache hit, and tests passive/mixed dialog policy and hint cleanup.
+
+0079 adds an opt-in native Vulkan depth/motion/blur pass to the draw stream.
+`FORZA_NATIVE_RENDERER=velocity` replaces the recognized full-screen motion draw;
+`validate` executes the native pass alongside the original. Unsupported states,
+active occlusion queries and fractional scene rasters retain the original draw.
+The deferred command carries an immutable descriptor/image snapshot, with slots
+reused only after their submission fences complete. Shutdown drains recording and
+GPU work before releasing the pass. The HUD continues through the existing path.
+
+The SDK's `REXGLUE_FH1_NATIVE_SOURCE_DIR` points at the canonical implementation in
+`forza-recomp/src/platform/native_renderer`; project build scripts and release CI
+set it explicitly. An empty path builds a standalone SDK with a fallback bridge,
+and a nonempty but incomplete path fails configuration. The shader header is
+generated in the build directory. Native rendering is disabled by default and
+does not require NVIDIA libraries. See [Native renderer](native_renderer.md) for
+the deliberately limited replacement scope and validation evidence.

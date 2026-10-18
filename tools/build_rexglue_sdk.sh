@@ -96,7 +96,8 @@ if [ -d "$BREW/opt/xorgproto/include" ]; then
                  "-DCMAKE_CXX_FLAGS=-march=x86-64-v2 $inc"
                  "-DCMAKE_SHARED_LINKER_FLAGS=-L$BREW/lib")
 fi
-( cd "$SRC" && cmake --preset linux-amd64 "${cmake_args[@]}" > /dev/null )
+( cd "$SRC" && cmake --preset linux-amd64 "${cmake_args[@]}" \
+    -DREXGLUE_FH1_NATIVE_SOURCE_DIR="$ROOT/forza-recomp/src/platform/native_renderer" > /dev/null )
 nice -n 15 cmake --build "$SRC/out/build/linux-amd64" --config Release --target rexgpu-xenos rexglue rexruntime \
     --parallel "${REXSDK_JOBS:-4}"
 
