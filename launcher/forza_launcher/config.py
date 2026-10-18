@@ -18,6 +18,7 @@ def _default():
     return {
         "version": 1,
         "haptics": dict(HAPTICS_DEFAULTS),
+        "save_manager": {"automatic": True, "keep_automatic": 10},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
@@ -78,6 +79,14 @@ class Config:
             _merge(self.d, data)
             self.loaded = True
         self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
+        prefs = self.d.get('save_manager')
+        if not isinstance(prefs, dict):
+            prefs = {}
+        try:
+            keep = max(1, min(50, int(prefs.get('keep_automatic', 10))))
+        except (TypeError, ValueError, OverflowError):
+            keep = 10
+        self.d['save_manager'] = dict(automatic=prefs.get('automatic', True) is True, keep_automatic=keep)
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
         online = self.d["online"]

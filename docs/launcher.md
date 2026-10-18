@@ -224,6 +224,40 @@ An archive helper that cannot observe the old launcher exiting within 60 seconds
 without replacing it.
 
 Settings, saves, DLC and the player's game files remain in their existing user folders.
+
+### Save manager
+
+**Saves** manages the profile chosen in **Settings > Profile**: the local profile or the
+launcher's copy of a Xenia profile. It never restores into the original Xenia content
+folder. The displayed path is the managed save folder; an advanced `--user_data_root`
+override is honoured too. Save contents are treated as opaque files, without editing the
+game's format. The entire `B13EBABEBABEBABE/4D5309C9/00000001` directory is included,
+including photos stored there; DLC, caches and game files are excluded.
+
+* **Create backup** accepts an optional name. Backups live under
+  `<launcher data folder>/save-backups/<profile>/`, with a file list and SHA-256 hashes.
+* **Back up before Play** is enabled by default. Play waits for the backup to finish;
+  failures block launch with a visible error. An unchanged save reuses the latest valid
+  backup. Keep between 1 and 50 automatic backups (default 10). Named backups and backups
+  made before restores are never automatically removed. Open the backup folder to manage
+  those manually.
+* **Restore selected** asks for confirmation, validates the full backup, stages it beside
+  the current save, then backs up the current save before replacing it. A journal allows
+  the launcher to recover an interrupted directory replacement on the next backup,
+  restore or Play. Cancelling before replacement leaves the current save in place.
+
+Scans, hashing and copies run in a cancellable background worker. The page blocks writes
+while this launcher has a game running; an OS lock also excludes another launcher using
+the same data folder. The lock stays held across game relaunches and until shutdown has
+finished stopping the game. Games started directly or by older launchers do not take
+this lock: close them before managing saves. Backup storage should also be copied to
+another drive if protection against drive failure is needed.
+
+Validation uses disposable fixtures only: hash corruption, missing/extra files, path
+traversal, retention, cancellation, disk space failures, replacement rollback, journal
+recovery, Xenia source isolation, Qt actions, worker shutdown and session locking.
+`cd launcher && python -m unittest test_saves test_saves_ui -v` runs these checks;
+link rejection is skipped on Windows when symlink creation is unavailable.
 The existing build ID logic marks the game stale when the launcher/project version changes;
 use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
 checks and can open a downloaded package, but never replace the checkout or run Git commands.
