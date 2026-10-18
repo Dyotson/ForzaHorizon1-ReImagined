@@ -1,5 +1,5 @@
-// forza - a text box over the game for the Horizon World's head-to-head challenges
-// (src/hooks/world_challenge.cpp): prompts, countdowns, the race's distance and results.
+// forza - an overlay for friends, chat and invite screens. Head-to-head challenges
+// use the game's native HUD instead (platform/challenge_hud.h).
 //
 // Drawn with the SDK's ImGui drawer at the top centre of the window, without taking input,
 // and registered with the drawer only while it shows (as the achievement toasts are,

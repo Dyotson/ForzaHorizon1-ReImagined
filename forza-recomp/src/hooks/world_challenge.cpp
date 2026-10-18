@@ -7,7 +7,7 @@
 // km away (picked by the server) from a 3 s countdown, inside the free roam: nobody leaves
 // the world and the other players are not disturbed. The first car within the finish
 // radius wins. The prompts, the countdown, the distance and direction to the finish and
-// the result show in a text box over the game (src/platform/hud_overlay.h).
+// the result use the game's native HUD notification control (challenge_hud.cpp).
 //
 // Client side:
 // - Every frame of the world's free roam (WorldChallengeFrame, called from the
@@ -19,7 +19,7 @@
 //   challenge and is kept from the game (X opens the leaderboards in free roam);
 //   otherwise the game gets it. While a prompt shows, X accepts and B declines (both kept
 //   from the game).
-// - The server's messages (LiveChallenge, network thread) drive the text box.
+// - The server's messages (LiveChallenge, network thread) publish native HUD text.
 //
 // The car: CStoreRestorePlayerCarPosition (sub_82983A90) reads the player's car as
 // root = *(0x832DF024), list = *(*(root + 4) + 4), slot = sub_8248BAE8(list) (the
@@ -31,7 +31,7 @@
 #include "../kernel/live.h"
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
-#include "../platform/hud_overlay.h"
+#include "../platform/challenge_hud.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -218,10 +218,11 @@ int64_t hud_busy_until = 0;  // a message shows that the hint must not replace
 
 void Send(std::vector<uint8_t> body) { forza::LiveSendChallenge(body); }
 
-// A message in the text box for `seconds`. Needs the mutex.
+// Publish a native HUD message for `seconds`. Needs the mutex; guest UI calls
+// are deferred to the native control's own update thread.
 void Show(const std::string& title, const std::string& body, double seconds) {
   hud_busy_until = NowMs() + int64_t(seconds * 1000);
-  forza::HudShow(title, body, seconds);
+  forza::ChallengeHudShow(title, body, seconds);
 }
 
 std::string Distance(float metres) {
@@ -245,7 +246,7 @@ const char* Direction(float dx, float dz) {
 void RaceHud(int64_t now) {
   if (now < deadline) {
     const int64_t left = (deadline - now + 999) / 1000;
-    forza::HudShow(kTitle, "vs " + opponent + ": race to " + destination + "\n" +
+    forza::ChallengeHudShow(kTitle, "vs " + opponent + ": race to " + destination + "\n" +
                                std::to_string(left) + "...", 2, false);
     return;
   }
@@ -257,12 +258,13 @@ void RaceHud(int64_t now) {
   static int64_t traced = 0;
   const bool log = Trace() && now - traced >= 3000;
   if (log) traced = now;
-  forza::HudShow(kTitle, body, 3, log);
+  forza::ChallengeHudShow(kTitle, body, 3, log);
 }
 
 void LeaveWorld() {
   if (!in_world) return;
   in_world = false;
+  forza::ChallengeHudClear();
   if (gps != Gps::kNone) gps = Gps::kNone;  // a new free roam has a new sat nav
   Send({kLeft});
   REXLOG_INFO("CHALLENGE: out of the world's free roam");
@@ -315,7 +317,7 @@ void WorldChallengeFrame(PPCContext& ctx, uint8_t* base) {
   }
   if (target_ahead && state == State::kIdle && now >= hud_busy_until && now - last_hud >= 1000) {
     last_hud = now;
-    forza::HudShow(kTitle, "X: challenge the driver ahead", 1.5, !was_ahead);
+    forza::ChallengeHudShow(kTitle, "X: challenge the driver ahead", 1.5, !was_ahead);
   }
   if (!have_pos && Trace()) REXLOG_INFO("CHALLENGE: car at {:.1f} {:.1f} {:.1f}", p[0], p[1], p[2]);
   have_pos = true;
@@ -397,7 +399,7 @@ uint16_t WorldChallengePad(uint16_t buttons) {
         Show(kTitle, accept ? "Accepted! Get ready..." : "Declined", accept ? 5 : 3);
       } else if (now - last_hud >= 250) {
         last_hud = now;
-        forza::HudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
+        forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
                                    std::to_string((deadline - now + 999) / 1000) + ")",
                        2, false);
       }
@@ -457,7 +459,7 @@ void LiveChallenge(const uint8_t* p, size_t n) {
       state = State::kPrompt;
       last_hud = 0;
       REXLOG_INFO("CHALLENGE {}: {} challenges us", challenge_id, opponent);
-      forza::HudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
+      forza::ChallengeHudShow(kTitle, opponent + " challenges you to a race\nX accept    B decline    (" +
                                  std::to_string(p[5]) + ")",
                      2);
       return;

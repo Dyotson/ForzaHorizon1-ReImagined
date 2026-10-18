@@ -129,6 +129,7 @@ set(FORZA_SOURCES
     src/hooks/resource_data_release.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/challenge_hud.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/kernel/critical_section.cpp

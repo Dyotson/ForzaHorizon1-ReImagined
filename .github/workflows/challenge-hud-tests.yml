@@ -1,0 +1,28 @@
+name: challenge-hud-tests
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-message-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX forza-recomp/tests/challenge_hud_test.cpp /Fe:challenge-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\challenge-hud-test.exe
+      - if: runner.os == 'Linux'
+        run: |
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/challenge_hud_test.cpp -o challenge-hud-test
+          ./challenge-hud-test

@@ -1,4 +1,4 @@
-// forza - the challenge text box over the game; see hud_overlay.h.
+// forza - the friends, chat and invite overlay; see hud_overlay.h.
 
 #include "hud_overlay.h"
 

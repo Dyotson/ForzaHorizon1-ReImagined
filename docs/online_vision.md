@@ -589,14 +589,21 @@ session changes.
   `sub_8299FB40(components[*(0x832FF054)], node)` (the sat nav's destination; node 0
   clears it). Set on the game thread when START arrives (the destinations carry their
   height for the node search), cleared at the end.
-- **The text box** (`src/platform/hud_overlay.cpp`): an ImGui window drawn by the SDK's
-  drawer over the game, registered only while it shows (like the achievement toasts).
-  It is drawn on the window, not into the game's frame, so `tools/live_shot.sh`
-  screenshots don't show it; every message is logged (`HUD: title | text`).
+- **Native HUD** (#10, `src/hooks/challenge_hud.cpp`): the game's existing
+  `CHudCombinedNotificationControl` carries a headline and caption for requests,
+  countdowns, distance/direction and results. Its original fonts, placement and
+  SHOW/HIDE animations render into the game frame, so `tools/live_shot.sh` captures
+  include the prompts. Every message is still logged (`HUD: title | text`). Friends,
+  chat and invite screens continue to use their separate overlay.
+  Network/input threads publish a bounded message with a monotonic deadline; the
+  native UI update copies it before calling any guest code. Repeated updates to the
+  same message refresh its lifetime without replaying its animation. An ordinary
+  game notification has priority; challenge text can resume after the control is idle,
+  and expiry never hides a notification that replaced it.
 - Settings: client cvar `world_challenges` (on); server `--challenge-range M`, tests:
   `--challenge-any-direction`, `--challenge-test-finish M` (the finish M ahead of the
   challenged car instead of a landmark), `--challenge-finish-radius M`.
-  `FORZA_CHALLENGE_TRACE=1` logs the car position every 5 s and the race's text box every
+  `FORZA_CHALLENGE_TRACE=1` logs the car position every 5 s and the race's HUD text every
   3 s.
 
 ### Tests (two consoles, B jumped into A's world; script `t11.sh`)
@@ -648,8 +655,37 @@ of the first run), hence X is taken from the game only with a car ahead.
   the forward vector turned from +x through +z to -x (`t10.sh` step `steer`).
 - The default range of 40 m was not used in a test (the cars start 90-140 m apart at the
   festival); test 5 used 150 m with the same rule.
-- The text box is ImGui, not the game's HUD; the game has a challenge alert of its own
-  (`IDS_RivalsAlerts_Challenge_MsgTitle/MsgBody/HudPopup`) that could carry it.
+### Native HUD implementation (#10)
+
+The general notification layout uses `TEXT_NOTIFICATION_LINE_ONE` (offset 0x78)
+as its large headline and `TEXT_NOTIFICATION_TITLE` (0x6C) as its small caption.
+The second body line is hidden in this layout, so accept/decline instructions,
+countdown and distance/direction go into the visible caption; single-line notices
+and results use their title there. Native UTF-16 reference objects are constructed and retained through the
+game's own string/binding functions; temporary guest scratch memory is freed after
+each update. Incoming UTF-8 is bounded and malformed characters are replaced.
+Ownership resets when the control binds, unbinds, or receives an ordinary notification.
+
+| Hook | Disc | Title Update 4 |
+| --- | --- | --- |
+| Bind | 0x827E8000 | 0x8289AF88 |
+| Update | 0x827ED4D8 | 0x828A0608 |
+| Unbind | 0x827E8098 | 0x8289B020 |
+| Ordinary notification | 0x827EF050 | 0x828A2980 |
+
+`forza-recomp/tests/challenge_hud_test.cpp` is a standalone C++17 test for message
+lifetime, request/countdown/race/result text, Unicode limits, and concurrent updates.
+The `challenge-hud-tests` workflow runs it on Windows and Linux without game data.
+
+Validation (2026-10-18): the standalone tests and full TU4 builds passed on Windows
+(clang-cl 23) and Fedora Linux (clang 22); the disc bridge compiled on Windows and
+passed a Linux syntax check. Runtime tests used disposable copied saves and a
+private packet/input fixture in offline free roam, exercising the unchanged
+challenge state machine. Windows ran on an RTX 5060 Ti (617.14); Linux ran under
+WSL/Xvfb with Mesa llvmpipe (LLVM 22), asynchronous shader compilation and vsync
+disabled. Game-frame captures show the native request/instructions and race
+distance/direction on both platforms. These checks do not constitute a two-client
+online race or a disc runtime test.
 
 ## Likely building blocks
 
