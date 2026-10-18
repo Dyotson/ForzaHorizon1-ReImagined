@@ -25,6 +25,7 @@ class LauncherUITests(unittest.TestCase):
 
     def setUp(self):
         from forza_launcher.config import Config
+        from forza_launcher import build_env
         from forza_launcher.ui.window import MainWindow
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -35,8 +36,10 @@ class LauncherUITests(unittest.TestCase):
         self.cfg.d["check_updates"] = False
         self.log_patch = patch("forza_launcher.paths.config_dir", return_value=self.root)
         self.find_patch = patch("forza_launcher.game.find_game", return_value=(None, []))
+        self.tools_patch = patch("forza_launcher.build_env._detect_tools", return_value=build_env.Tools())
         self.log_patch.start()
         self.find_patch.start()
+        self.tools_patch.start()
         self.window = MainWindow(self.cfg)
         self.wait_for(lambda: not self.window.setup._probes)
 
@@ -47,6 +50,7 @@ class LauncherUITests(unittest.TestCase):
         self.app.processEvents()
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         self.find_patch.stop()
+        self.tools_patch.stop()
         self.log_patch.stop()
         self.temp.cleanup()
 
