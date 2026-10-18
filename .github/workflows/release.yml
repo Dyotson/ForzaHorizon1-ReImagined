@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -75,6 +75,9 @@ jobs:
           clang++ -std=c++23 -fsyntax-only -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             -I"$HOME/rexglue-sdk-src-forza/sdk/thirdparty/fmt/include" \
             tools/test_sdk_clock_conversions.cpp
+          clang++ -std=c++20 -pthread -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            tools/test_driver_pipeline_cache.cpp -o "$RUNNER_TEMP/driver-cache-test"
+          "$RUNNER_TEMP/driver-cache-test"
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +97,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-windows-amd64.tar.gz
-          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -135,6 +138,9 @@ jobs:
             exit 1
           fi
           tail -n 3 "$RUNNER_TEMP/build.log"
+          clang++ -std=c++20 -I"$SRC/include" tools/test_driver_pipeline_cache.cpp \
+            -o "$RUNNER_TEMP/driver-cache-test.exe"
+          "$RUNNER_TEMP/driver-cache-test.exe"
           cmake --install "$SRC/out/build/win"
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .

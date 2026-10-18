@@ -327,6 +327,9 @@ add("vulkan_allow_present_mode_fifo_latest_ready", "Use FIFO latest ready", "Adv
     "refresh rate, if the driver offers it. Off: plain FIFO.", "GPU")
 add("store_shaders", "Keep a shader cache", "Advanced", "bool", True,
     "Fewer stutters the second time you play.", "GPU")
+add("vulkan_store_pipeline_cache", "Keep compiled Vulkan pipelines", "Advanced", "bool", True,
+    "Reuse local GPU driver data when preparing cached shaders at startup. Requires the shader "
+    "cache and Vulkan. New scenes may still compile shaders; driver changes rebuild the cache.", "GPU", restart=True)
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,
     "", "GPU")
 add("present_safe_area_x", "Safe area width %", "Advanced", "int", 90, "", "GPU",
