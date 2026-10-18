@@ -570,3 +570,26 @@ each axis, point/center/box modes, source offsets 0/16/256 bytes, one or two
 tiles and a deliberately excess workgroup with guarded output. Before: 57/81
 cases pass, with all 24 nontrivial box-filter cases failing. After: 81/81 pass,
 including the output guards. No game assets are part of the test inputs.
+
+## Windows WMV texture updates
+
+The WMV player writes Y/U/V planes on the CPU, then calls the guest cache-clean
+primitive for each plane. The recompiled cache instructions do not notify the
+renderer. `movie_texture.cpp` forwards only these three WMV call sites to the
+physical-memory write watches, allowing reused video textures to be uploaded again.
+Other callers retain their original behavior. TU0 and TU4 have separate addresses.
+
+`FORZA_MOVIE_CACHE_FLUSH=0` disables this invalidation for comparison. It is enabled
+by default and does not require the graphics-menu or save-lab branches.
+
+Validation: the TU4 Windows host built and played the original festival conversation
+at native 2560x1440 output on an RTX 5060 Ti, with native HUD, SMAA and a 120 FPS cap.
+A disposable profile created from empty user data was saved and restored; a private
+test harness entered the original career graph, including the normal pre/post-movie
+behaviors. The complete parent sequence restored the map and continued into car
+selection. These harness changes and captures are not part of this fix. TU0 was
+compile-checked; playback on TU0 and AMD hardware was not tested.
+
+This addresses missing CPU-to-GPU invalidation. The original purple/white striped
+transition has not been independently reproduced with the fix disabled, so the
+related AMD report still needs confirmation on the affected machine.
