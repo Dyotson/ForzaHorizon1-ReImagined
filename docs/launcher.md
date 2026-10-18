@@ -83,6 +83,8 @@ and driver details are also collected from the first 32 KiB. Collection runs in 
 background; Play waits until collection finishes so another launch cannot replace
 the log being read. Navigation remains available. Normal closes, launcher Stop and
 successful game relaunches do not offer a crash report.
+If startup fails before writing a new log, the previous run's log is excluded from
+both crash classification and the report.
 
 Known folders, profile IDs, custom server addresses and common secret fields are
 removed on a best-effort basis. Arbitrary environment variables, command lines,

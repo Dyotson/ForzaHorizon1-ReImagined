@@ -86,13 +86,16 @@ def collect(plan, code, context):
     private = context["private"]
     clean = lambda text: redact(text, private)
     log = game.log_path_of(plan)
+    current = game.log_is_current(plan)
     try:
-        tail = game.read_log_tail(log) if log is not None else []
+        tail = game.read_log_tail(log) if log is not None and current else []
         note = "" if tail else "The log is empty or no log path was configured."
     except OSError:
         tail, note = [], "The game log could not be read."
     startup = ""
-    if log is not None:
+    if not current:
+        note = "No new log output was written. The previous run's log has been excluded."
+    if log is not None and current:
         try:
             with log.open("rb") as f:
                 startup = f.read(32768).decode("utf-8", errors="replace")

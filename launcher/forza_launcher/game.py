@@ -280,6 +280,7 @@ class LaunchPlan:
     notes: list = field(default_factory=list)
     log_dir: Path | None = None
     dlss_status_file: Path | None = None
+    log_before_start: tuple | None = None  # identify a leftover log if this process never writes one
 
     def command_line(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -497,11 +498,26 @@ CLEAN_CLOSE_MARKERS = ("Title terminated; hard-exiting process", "Execution comp
 def _log_tail(plan: "LaunchPlan", lines=200):
     log = log_path_of(plan)
     try:
-        if log is not None:
+        if log is not None and log_is_current(plan):
             return read_log_tail(log, lines)
     except OSError:
         pass
     return []
+
+
+def log_signature(plan):
+    log = log_path_of(plan)
+    try:
+        st = log.stat() if log is not None else None
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns) if st else None
+    except OSError:
+        return None
+
+
+def log_is_current(plan):
+    """An early startup failure must not inherit a previous run's clean close or fault."""
+    before = getattr(plan, "log_before_start", None)
+    return before is None or log_signature(plan) != before
 
 
 def read_log_tail(log: Path, lines=200, max_bytes=65536):
@@ -628,6 +644,7 @@ class Session:
 
     def _start_game(self, extra):
         plan = self.plan
+        plan.log_before_start = log_signature(plan)
         env = cleanenv.clean_environment()
         for k in plan.unset:
             env.pop(k, None)

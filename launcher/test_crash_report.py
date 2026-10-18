@@ -90,6 +90,16 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("private/game", result)
         self.assertNotIn(r"private\game", result)
 
+    def test_startup_failure_does_not_reuse_previous_runs_close_or_fault(self):
+        self.log.write_text(FAULT + "\n[info] Execution complete\n")
+        self.plan.log_before_start = game.log_signature(self.plan)
+        self.assertTrue(game.exit_is_crash(self.plan, 1))
+        report = self.report()
+        self.assertIn("previous run's log has been excluded", report.body)
+        self.assertNotIn("0x0AF048B8", report.body)
+        self.log.write_text("New run\n" + FAULT + "\n" + CHAIN)
+        self.assertIn("0x0AF048B8", self.report().body)
+
     def test_issue_link_roundtrips_unicode_and_query_characters(self):
         body = "GPU & settings = test\nsteps: café + 日本語 #fragment"
         url = crash_report.issue_url("Crash: test & check", body)
