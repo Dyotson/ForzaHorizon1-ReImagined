@@ -51,6 +51,7 @@ C++ is generated from your copy on your machine; no binaries are published here.
 - [Playing](#playing)
   - [Playing online](#playing-online)
 - [More documentation](#more-documentation)
+- [Roadmap](#roadmap)
 - [Community](#community)
 - [Legal](#legal)
 
@@ -259,6 +260,17 @@ own server, see [`docs/hosting.md`](docs/hosting.md).
 [`docs/perf.md`](docs/perf.md), [`docs/framerate.md`](docs/framerate.md),
 and the [issue tracker](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues)
 (known bugs and planned work).
+
+## Roadmap
+
+Where the project is heading, on the [ReImagined Roadmap](https://github.com/users/Dyotson/projects/3) board:
+
+1. **Stable everywhere**: the game runs well on any PC, GPU and the Steam Deck.
+2. **Multiplayer as cool as possible**: Horizon World, challenges, ranked, clubs, sharing tunes and liveries.
+3. **Modding, and more multiplayer**: a mod loader, car and tuning mods, custom events, mod sync online.
+4. **Decompilation and custom game**: readable C++ game systems, new modes, decoupled physics, better AI.
+
+Every card is an issue: comment there to discuss an item or help with it.
 
 ## Community
 
