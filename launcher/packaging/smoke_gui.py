@@ -15,6 +15,7 @@ def inside(report):
     try:
         from PySide6.QtCore import QCoreApplication, QEvent, QTimer
         from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPixmap
         from forza_launcher import game, paths
         from forza_launcher.config import Config
         from forza_launcher.ui import theme
@@ -33,6 +34,8 @@ def inside(report):
         cfg.d['check_updates'] = False
         app = QApplication([])
         app.setStyleSheet(theme.QSS)
+        if QPixmap(theme.CHECK).isNull():
+            raise RuntimeError('Checkbox checkmark asset did not load')
         window = MainWindow(cfg)
         window.show()
         for page in (0, 1, 2, 3, 4, 5):

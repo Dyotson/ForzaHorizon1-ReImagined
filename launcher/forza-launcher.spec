@@ -33,6 +33,7 @@ datas = [
     (str(repo / "forza-recomp" / "resources" / "forza.ico"), "assets"),
     (str(images / "social-preview.png"), "assets"),
     (str(root / "forza_launcher" / "ui" / "down.svg"), "forza_launcher/ui"),
+    (str(root / "forza_launcher" / "ui" / "check.svg"), "forza_launcher/ui"),
     (str(root / "forza_launcher" / "ui" / "controller_art"), "forza_launcher/ui/controller_art"),
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
     (str(repo / "tools" / "xiso_extract.py"), "tools"),
