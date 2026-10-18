@@ -2,6 +2,7 @@
 // native bindings and SHOW/HIDE animations. Never register an ImGui dialog.
 // tu_address_map: TU4 addresses
 #include "../platform/challenge_hud.h"
+#include "../platform/achievement_toast.h"
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
@@ -64,6 +65,7 @@ void Timer(uint8_t* base, uint32_t control, float seconds) {
 // a control binds/unbinds or a normal alert replaces our text.
 uint32_t owner = 0;
 uint64_t bound_revision = 0;
+bool owner_achievement = false;
 
 
 class Native {
@@ -139,6 +141,7 @@ struct Icon {
   std::array<uint32_t, 5> saved{};
 };
 std::array<Icon, 2> icons;
+bool trophy_icons = false;
 constexpr std::array<uint32_t, 5> icon_fields{0x0C, 0x10, 0x24, 0x28, 0xE0};
 void Dirty(uint8_t* base, uint32_t model) {
   forza::GuestPtr(base, model + 0xFB)[0] |= 0xA0;
@@ -170,9 +173,11 @@ void RestoreIcons(Native& ui, uint8_t* base) {
     icon = {};
   }
 }
-void ButtonIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions) {
-  if (actions == Actions::kNone) { RestoreIcons(ui, base); return; }
+void NoticeIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions, bool trophy) {
+  if (trophy_icons != trophy) { RestoreIcons(ui, base); trophy_icons = trophy; }
+  if (actions == Actions::kNone && !trophy) { RestoreIcons(ui, base); return; }
   for (size_t i = 0; i < icons.size(); ++i) {
+    if (trophy && i != 0) break;
     auto& icon = icons[i];
     if (!icon.model) {
       const std::string path = std::string("parent.State.DoubleTape.Icons.") +
@@ -192,16 +197,18 @@ void ButtonIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions) {
       for (size_t n = 0; n < icon_fields.size(); ++n)
         icon.saved[n] = Read(base, icon.model + icon_fields[n]);
       ui.Retain(icon.resource);
-      ui.Texture(control, material, i
+      ui.Texture(control, material, trophy
+        ? "GAME:\\Media\\UI\\Textures\\Horizon\\Hud\\Trophy.tga" : i
         ? "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\B_Button.tga"
         : "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\X_Button.tga");
     }
-    const std::array<float, 5> layout{
+    const std::array<float, 5> buttons{
         i ? -42.0f : -140.0f, -14.0f, 0.28f, 0.28f,
         i && actions != Actions::kAnswer ? 0.0f : 1.0f};
     for (size_t n = 0; n < icon_fields.size(); ++n) {
       uint32_t value;
-      std::memcpy(&value, &layout[n], 4);
+      std::memcpy(&value, &buttons[n], 4);
+      if (trophy) value = n == 4 ? 0x3F800000 : icon.saved[n];
       Write(base, icon.model + icon_fields[n], value);
     }
     Dirty(base, icon.model);
@@ -209,6 +216,8 @@ void ButtonIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions) {
 }
 void Release(PPCContext& ctx, uint8_t* base, uint32_t control) {
   if (owner != control) return;
+  if (owner_achievement) forza::achievement_hud::Notifications().Pause(Now());
+  owner_achievement = false;
   Native ui(ctx, base);
   RestoreIcons(ui, base);
   owner = 0;
@@ -217,8 +226,30 @@ void Release(PPCContext& ctx, uint8_t* base, uint32_t control) {
 
 void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
   const auto now = Now();
-  const auto message = mailbox.Read(now);
+  auto message = mailbox.Read(now);
+  auto& achievements = forza::achievement_hud::Notifications();
   Native ui(ctx, base);
+  bool achievement = false;
+  if (message) {
+    achievements.Pause(now);  // answering a race request takes priority over an unlock
+  } else {
+    if (owner == control && !owner_achievement) {
+      ui.Call(Address(0x827EB0D0, 0x8289E808), control, 0);
+      Release(ctx, base, control);
+      return;
+    }
+    if (owner != control && Read(base, control + 0xA0) != 0) return;
+    if (const auto notice = achievements.Read(now)) {
+      Message unlocked;
+      unlocked.title = "ACHIEVEMENT UNLOCKED";
+      unlocked.first = notice->name;
+      unlocked.second = "ACHIEVEMENT UNLOCKED  " + std::to_string(notice->gamerscore) + " G";
+      unlocked.until = now + notice->remaining;
+      unlocked.revision = notice->revision;
+      message = std::move(unlocked);
+      achievement = true;
+    }
+  }
   if (!message) {
     if (owner == control) {
       ui.Call(Address(0x827EB0D0, 0x8289E808), control, 0);
@@ -230,7 +261,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
   // expires; the current challenge can resume once that control is idle again.
   if (owner != control && Read(base, control + 0xA0) != 0) return;
   const bool start = owner != control;
-  if (start || bound_revision != message->revision) {
+  if (start || owner_achievement != achievement || bound_revision != message->revision) {
     const auto lines = NativeLines(*message);
     if (!ui.Binding(control + 0x6C, lines.caption) ||
         !ui.Binding(control + 0x78, lines.headline)) return;
@@ -243,10 +274,13 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t control) {
       Write(base, control + 0xAC, 0);
       owner = control;
     }
+    if (achievement) REXLOG_INFO("ACHIEVEMENT HUD: displaying {}", message->first);
+    owner_achievement = achievement;
     bound_revision = message->revision;
     REXLOG_DEBUG("CHALLENGE HUD: native text revision {}", bound_revision);
   }
-  ButtonIcons(ui, base, control, message->actions);
+  NoticeIcons(ui, base, control, message->actions, achievement);
+  if (achievement) achievements.Resume(now);
   Timer(base, control, float(message->until - now) / 1000.0f);
 }
 }  // namespace
