@@ -115,7 +115,7 @@ screen rendered after the transition. No Vulkan validation/synchronization
 errors were reported. The movie itself retains its original video resolution;
 1440p here describes the presenter output. This does not cover every cutscene.
 
-## Warmed native-1440p comparison
+## Earlier snapshot-only native-1440p comparison
 
 The RTX 5060 Ti 16 GB / i9-13900K machine used the same host, runtime/GPU DLLs,
 copied save seed, shader cache and AI race for both modes. Scene and HUD were
@@ -156,3 +156,85 @@ occurred during the first baseline. AI traffic varies, and focus was not
 continuously monitored. These are development results for this machine/scene,
 not isolated GPU costs or a deterministic hardware ranking. Earlier shared-load
 runs and both warm-ups are excluded.
+
+## Direct cached-image retest
+
+The direct cached-image build at 1377c1f was tested with the same executable,
+runtime/GPU DLLs, copied save seed, warmed shader cache, Recaro Rush AI race,
+native 2560x1440 scene and HUD, SMAA and configured 120 FPS cap. Baseline is
+`world-color`; transfer is `world-color-transfer`. This measures the incremental
+transfer experiment, not the full original renderer against a native renderer.
+Each run settles for 15 seconds and measures 60 seconds. The original scene's
+multisampling remains active. Frame CSV counts and summed times agree with the
+reports; binary hashes match across the runs in each set.
+
+The other testing task paused FH1 sessions, GPU tests and heavy builds for the
+completed sets. A once-per-second Windows process check rejected competing FH1
+sessions. The earlier interrupted set, both excluded warm-ups, and startup/focus
+probe failures are not included below. A competing session was closed before the
+last immediate-mode baseline, which then completed without another FH1 session.
+
+### VSync enabled
+
+| Run | Scene transfer | Average FPS | 1% low FPS | P99 | Worst | >50 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Baseline | 69.89 | 41.57 | 18.81 ms | 29.99 ms | 0 |
+| 2 | Direct cached image | 63.93 | 39.99 | 22.96 ms | 32.14 ms | 0 |
+| 3 | Direct cached image | 57.60 | 36.54 | 25.47 ms | 31.53 ms | 0 |
+| 4 | Baseline | 60.01 | 39.65 | 23.33 ms | 28.48 ms | 0 |
+| Pooled | Baseline | 64.95 | 39.41 | 22.58 ms | 29.99 ms | 0 |
+| Pooled | Direct cached image | 60.77 | 37.64 | 24.45 ms | 32.14 ms | 0 |
+
+The observed pooled difference is -6.44%. Baseline itself falls from 69.89 to
+60.01 FPS. Foreground activation was not explicitly checked in this set, so it
+does not establish that the copy removal caused the difference.
+
+Windows reported the active NVIDIA output as 2560x1440 at 59 Hz during a display
+query. This does not establish the physical panel's refresh rate or explain the
+run variation; remote/virtual display involvement was not isolated. No Windows
+display settings were changed. The VSync-enabled presenter selected
+`FIFO_LATEST_READY`. Disabling guest VSync alone still selected FIFO because the
+game defaults prohibit immediate presentation, so the following set explicitly
+allowed it and verified the actual presenter mode.
+
+### Foreground, VSync disabled, immediate presentation
+
+These runs add `--vsync=false --vulkan_allow_present_mode_immediate=true` to
+both modes. Every log confirms `IMMEDIATE` presentation, native 1440p scene/HUD
+and a configured 120 FPS cap. The game window was explicitly activated and
+observed before measurement; focus was not continuously monitored. A startup
+focus-gate timeout produced no measurement and was excluded before retrying
+the final baseline.
+
+| Run | Scene transfer | Average FPS | 1% low FPS | P99 | Worst | >50 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Baseline | 48.83 | 29.49 | 32.30 ms | 36.05 ms | 0 |
+| 2 | Direct cached image | 55.26 | 30.04 | 30.85 ms | 37.65 ms | 0 |
+| 3 | Direct cached image | 44.31 | 26.60 | 35.69 ms | 41.44 ms | 0 |
+| 4 | Baseline | 63.82 | 43.86 | 18.28 ms | 32.99 ms | 0 |
+| Pooled | Baseline | 56.33 | 30.79 | 30.46 ms | 36.05 ms | 0 |
+| Pooled | Direct cached image | 49.78 | 27.54 | 34.61 ms | 41.44 ms | 0 |
+
+The observed pooled difference is **-11.62%**, with 6,758 baseline intervals
+over 119.971199 seconds and 5,973 transfer intervals over 119.977548 seconds.
+Pooled 1% lows use the slowest ceil(N/100) intervals across both runs. This set
+also varies substantially within each mode: the two transfer runs drop from
+55.26 to 44.31 FPS, while baseline rises from 48.83 to 63.82 FPS. Selecting the
+faster transfer run alone would misrepresent the result.
+
+Per-second NVIDIA telemetry during measurement shows 52-65 C GPU temperature,
+2797-2827 MHz core clocks and 14001 MHz memory clocks. GPU utilization averages
+range from 68.5% to 97.8% between runs. These samples show no GPU clock collapse,
+but do not rule out CPU/driver scheduling, scene variation or other host load.
+Process/thread CPU times were recorded without injecting GPU timestamps.
+
+Validation and capture layers, presenter readbacks and GPU replay were absent
+during timing. Screenshots were taken before measurement only in the foreground
+set. Parsec remained active, AI traffic is not deterministic, and this was not
+a controlled whole-machine CPU/driver profile. The VSync and immediate sets
+must not be compared as a causal VSync experiment.
+
+The direct path removes repeated snapshot copies and passes correctness tests,
+but these end-to-end measurements do **not** demonstrate a performance fix.
+Keep it opt-in and the PR in draft. A repeatable scene/workload and CPU/driver
+attribution are needed before further optimization or enabling it by default.
