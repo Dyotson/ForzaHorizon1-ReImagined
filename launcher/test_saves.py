@@ -197,7 +197,7 @@ class SaveTests(unittest.TestCase):
         self.cfg.advanced['extra_args'] = '"--user_data_root='+str(self.root/'custom saves')+'"'
         custom = saves.profile_for(self.cfg)
         self.assertTrue(custom.key.startswith('custom-'))
-        self.assertEqual(custom.root, self.root/'custom saves')
+        self.assertEqual(custom.root, (self.root/'custom saves').resolve())
 
     def test_explicit_root_does_not_fall_back_to_the_legacy_save(self):
         legacy = self.root/'unused-legacy'/game.LOCAL_PROFILE/TITLE_ID/'00000001'
