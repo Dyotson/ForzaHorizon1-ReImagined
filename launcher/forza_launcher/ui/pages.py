@@ -91,6 +91,11 @@ class PlayPage(QWidget):
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
+        self.crash_report = QPushButton("Review crash report…")
+        self.crash_report.setObjectName("link")
+        self.crash_report.hide()
+        self.crash_report.clicked.connect(window.review_crash_report)
+        lay.addWidget(self.crash_report, 0, Qt.AlignLeft)
         lay.addWidget(c)
         self.install_details = Disclosure("Installation details")
         self.install_paths = label("", "help")
@@ -142,7 +147,11 @@ class PlayPage(QWidget):
             details.append(f"Online server: {PUBLIC_SERVER}")
         self.install_paths.setText("\n".join(details))
         ready = files_ok and install is not None
-        if self.window._dlss_task is not None:
+        if self.window._crash_probe is not None:
+            self.play.setText("Reading crash report…")
+            self.play.setEnabled(False)
+            self.stop.hide()
+        elif self.window._dlss_task is not None:
             self.play.setText("Preparing DLSS…")
             self.play.setEnabled(False)
             self.stop.setText("Cancel")

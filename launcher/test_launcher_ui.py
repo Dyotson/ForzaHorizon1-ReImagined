@@ -61,6 +61,68 @@ class LauncherUITests(unittest.TestCase):
             time.sleep(.005)
         self.assertTrue(predicate())
 
+    def test_crashing_child_offers_review_and_preserves_report_after_log_changes(self):
+        import sys
+        from forza_launcher import crash_report, game
+        from test_crash_report import FAULT, CHAIN
+        log = self.root / "fixture-crash.log"
+        (self.root / "version.txt").write_text("fixture-game")
+        script = "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2]); sys.exit(134)"
+        plan = game.LaunchPlan(game.GameInstall(self.root, Path(sys.executable)), self.root,
+                              [sys.executable, "-c", script, str(log), FAULT + "\n" + CHAIN,
+                               f"--log_file={log}"], {}, [], self.root / "forza.toml", "frame_rate = 120")
+        win = self.window
+        with patch.object(game, "find_game", return_value=(plan.game, [])), \
+                patch("forza_launcher.installer.check_game_folder", return_value=(True, "Ready")), \
+                patch.object(game, "build_plan", return_value=plan):
+            win.start_game()
+            self.assertIsNotNone(win.session)
+            self.wait_for(lambda: win.session.poll() is not None)
+            win._poll()
+            self.wait_for(lambda: win._crash_probe is None)
+        self.assertIsNone(win.session)
+        self.assertFalse(win.play.crash_report.isHidden())
+        self.assertIn("82056780", win._crash_report.body)
+        log.write_text("Another run replaced the log")
+        win.review_crash_report()
+        dialog = win._crash_dialog
+        self.assertIn("82056780", dialog.body.toPlainText())
+        dialog.body.setPlainText("My reviewed report")
+        dialog.reject()
+        win.review_crash_report()
+        self.assertEqual(win._crash_dialog.body.toPlainText(), "My reviewed report")
+        win._crash_dialog.reject()
+
+    def test_slow_crash_collection_keeps_ui_responsive_and_prevents_log_overwrite(self):
+        from forza_launcher import crash_report, game
+        from PySide6.QtCore import QTimer
+        entered, release = threading.Event(), threading.Event()
+        plan = game.LaunchPlan(None, self.root, ["forza"], {}, [], self.root / "t.toml", "")
+
+        def collect(*_args):
+            entered.set()
+            release.wait(3)
+            return crash_report.CrashReport("Fixture", "Fixture report", None)
+
+        with patch.object(crash_report, "collect", side_effect=collect):
+            try:
+                self.window._prepare_crash_report(plan, 134)
+                self.window.play.refresh()
+                self.assertTrue(entered.wait(1))
+                self.assertFalse(self.window.play.play.isEnabled())
+                self.window.start_game()
+                self.assertIsNone(self.window.session)
+                self.window.show_page(2)
+                heartbeat = []
+                QTimer.singleShot(0, lambda: heartbeat.append(True))
+                self.wait_for(lambda: bool(heartbeat))
+                self.assertFalse(release.is_set())
+                self.window.close()
+                self.assertFalse(self.window.isVisible())
+            finally:
+                release.set()
+                self.wait_for(lambda: self.window._crash_probe is None)
+
     def test_slow_tool_probe_does_not_block_navigation_or_event_loop(self):
         from forza_launcher import build_env
         entered, release = threading.Event(), threading.Event()

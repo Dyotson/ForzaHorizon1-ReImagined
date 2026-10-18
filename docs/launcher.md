@@ -74,6 +74,30 @@ Searching does not change configuration. Disabled settings remain disabled with
 their existing explanations, and unsupported graphics options stay hidden. Search
 indexes descriptions, not personal field values such as paths or server addresses.
 
+## Crash reports
+
+After an unexpected game exit, **Play > Review crash report…** shows an editable report
+with the fault, host/guest call chain when logged, launcher/game versions, OS, GPU,
+launch-time graphics settings and the last 200 log lines (at most 64 KiB). Startup GPU
+and driver details are also collected from the first 32 KiB. Collection runs in the
+background; Play waits until collection finishes so another launch cannot replace
+the log being read. Navigation remains available. Normal closes, launcher Stop and
+successful game relaunches do not offer a crash report.
+
+Known folders, profile IDs, custom server addresses and common secret fields are
+removed on a best-effort basis. Arbitrary environment variables, command lines,
+profile data and game files are excluded. Review the text for anything else personal
+and add reproduction steps. **Copy report** and **Save report…** work without a browser.
+The report stays in memory until the next successful launch or launcher exit; saving
+is explicit. The original log is unchanged.
+
+**Open GitHub issue** opens a prefilled draft on this project's Issues page. It does
+not submit an issue. If the reviewed report exceeds the browser link limit, the full
+text is copied and the launcher asks you to paste it into the draft description.
+Nothing is uploaded automatically. `test_crash_report.py`, `test_game_exit.py` and
+`test_launcher_ui.py` cover bounded reads, missing logs, redaction, report actions,
+unexpected/normal exits, and background collection with a disposable child process.
+
 ## Photo gallery
 
 Open **Photo gallery** in the launcher sidebar to browse locally saved photo-mode

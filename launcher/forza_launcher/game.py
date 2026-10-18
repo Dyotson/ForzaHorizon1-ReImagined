@@ -466,9 +466,14 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
 
 
 def log_path_of(plan: "LaunchPlan"):
-    for a in (plan.argv if plan is not None else ()):
+    args = plan.argv if plan is not None else ()
+    for i, a in enumerate(args):
         if str(a).startswith("--log_file="):
-            return Path(str(a).split("=", 1)[1])
+            log = Path(str(a).split("=", 1)[1])
+            return log if log.is_absolute() else plan.cwd / log
+        if a == "--log_file" and i + 1 < len(args):
+            log = Path(args[i + 1])
+            return log if log.is_absolute() else plan.cwd / log
     return None
 
 
@@ -492,12 +497,23 @@ CLEAN_CLOSE_MARKERS = ("Title terminated; hard-exiting process", "Execution comp
 def _log_tail(plan: "LaunchPlan", lines=200):
     log = log_path_of(plan)
     try:
-        if log is not None and log.is_file():
-            with open(log, "r", encoding="utf-8", errors="replace") as f:
-                return f.readlines()[-lines:]
+        if log is not None:
+            return read_log_tail(log, lines)
     except OSError:
         pass
     return []
+
+
+def read_log_tail(log: Path, lines=200, max_bytes=65536):
+    """Bound both I/O and memory, even when a fault loop produced a multi-GB log."""
+    with log.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        start = max(0, size - max_bytes)
+        f.seek(start)
+        raw = f.read(max_bytes)
+    if start:
+        raw = raw.partition(b"\n")[2]  # discard an incomplete first line
+    return raw.decode("utf-8", errors="replace").splitlines()[-lines:]
 
 
 def last_errors(tail, count=3):
