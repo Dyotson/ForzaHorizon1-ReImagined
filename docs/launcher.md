@@ -230,8 +230,8 @@ Settings, saves, DLC and the player's game files remain in their existing user f
 **Saves** manages the profile chosen in **Settings > Profile**: the local profile or the
 launcher's copy of a Xenia profile. It never restores into the original Xenia content
 folder. The displayed path is the managed save folder; an advanced `--user_data_root`
-override is honoured too. Save contents are treated as opaque files, without editing the
-game's format. The entire `B13EBABEBABEBABE/4D5309C9/00000001` directory is included,
+override is honoured too. Backups preserve the game's files without changing their
+format. The entire `B13EBABEBABEBABE/4D5309C9/00000001` directory is included,
 including photos stored there; DLC, caches and game files are excluded.
 
 * **Create backup** accepts an optional name. Backups live under
@@ -239,7 +239,7 @@ including photos stored there; DLC, caches and game files are excluded.
 * **Back up before Play** is enabled by default. Play waits for the backup to finish;
   failures block launch with a visible error. An unchanged save reuses the latest valid
   backup. Keep between 1 and 50 automatic backups (default 10). Named backups and backups
-  made before restores are never automatically removed. Open the backup folder to manage
+  made before restores or edits are never automatically removed. Open the backup folder to manage
   those manually.
 * **Restore selected** asks for confirmation, validates the full backup, stages it beside
   the current save, then backs up the current save before replacing it. A journal allows
@@ -258,6 +258,31 @@ traversal, retention, cancellation, disk space failures, replacement rollback, j
 recovery, Xenia source isolation, Qt actions, worker shutdown and session locking.
 `cd launcher && python -m unittest test_saves test_saves_ui -v` runs these checks;
 link rejection is skipped on Windows when symlink creation is unavailable.
+
+**Edit profile…** opens an offline editor for credits (0–999,999,999) and career XP
+(0–2,147,483,647). Level and wristband values are shown for context. Changing XP only
+changes the stored total: level, wristbands, event flags and garage records are preserved.
+The editor authenticates and decrypts `ForzaProfile/ForzaProfile` using the selected
+profile's XUID and key tables read from the player's own `default.xex` in the game-files
+folder. It supports the known disc and TU4 layouts; no game key bytes are bundled or
+written to the launcher config. First open may take a few seconds to decode the XEX.
+
+**Back up and apply** verifies the loaded file has not changed, edits only the allowed
+four-byte fields, re-encrypts and verifies the output, and creates a full **Before edit**
+backup before atomically replacing the profile file. It preserves the opaque class-state
+tail, AES padding, unused file capacity and companion files. Unknown layouts, incorrect
+XUIDs, failed MACs, out-of-range values, active game locks and stale editor sessions are
+rejected without replacing the save. The work uses the same cancellable worker and
+shutdown handling as backups. Run `python -m unittest test_save_editor test_saves_ui -v`
+for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
+or game-generated saves.
+
+Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
+The editor's profile-table addresses and XUID derivation were checked against the local
+executables and a disposable game-generated profile. A no-edit round trip reproduced the
+entire file byte for byte; changing credits preserved every other body byte and companion
+file. The original fixture and real user save were not modified.
+
 The existing build ID logic marks the game stale when the launcher/project version changes;
 use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
 checks and can open a downloaded package, but never replace the checkout or run Git commands.

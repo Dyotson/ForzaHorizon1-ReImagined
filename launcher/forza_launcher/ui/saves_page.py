@@ -46,10 +46,16 @@ class SavesPage(QWidget):
 
         c, cl = card(spacing=14)
         self.profile_label = label('Selected profile', 'cardTitle')
+        row = QHBoxLayout()
+        row.setSpacing(20)
+        row.addWidget(self.profile_label, 1)
+        self.edit_button = QPushButton('Edit profile…')
+        self.edit_button.clicked.connect(self.edit_profile)
+        row.addWidget(self.edit_button)
         self.location = FolderLabel()
         self.location.setObjectName('muted')
         self.location.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        cl.addWidget(self.profile_label)
+        cl.addLayout(row)
         cl.addWidget(self.location)
         cl.addWidget(label('Uses the profile selected in Settings. Xenia backups use the launcher’s copy; '
                            'your original Xenia save stays untouched.', 'muted'))
@@ -81,7 +87,7 @@ class SavesPage(QWidget):
         row.addWidget(self.retention)
         row.addStretch()
         cl.addLayout(row)
-        cl.addWidget(label('Named backups and backups made before a restore are always kept.', 'muted'))
+        cl.addWidget(label('Named backups and backups made before a restore or edit are always kept.', 'muted'))
         lay.addWidget(c)
         self.automatic.toggled.connect(self._preferences)
         self.retention.valueChanged.connect(self._preferences)
@@ -171,6 +177,7 @@ class SavesPage(QWidget):
         changed = self._profile_config != (self.cfg.profile, self.cfg.advanced)
         idle = not self.busy() and not self.window.running() and not self.window._busy
         self.create_button.setEnabled(idle and self.profile is not None and not changed)
+        self.edit_button.setEnabled(idle and self.profile is not None and not changed)
         self.restore_button.setEnabled(idle and not changed and self.table.currentRow() >= 0)
         self.refresh_button.setEnabled(not self.busy())
         self.folder_button.setEnabled(not self.busy() and self.profile is not None and not changed)
@@ -180,7 +187,7 @@ class SavesPage(QWidget):
         if changed and self.profile is not None and not self.busy():
             self.message.setText('Profile settings changed. Refresh to load this profile’s backups.')
 
-    def _run(self, title, fn, complete, abort_on_cancel=False):
+    def _run(self, title, fn, complete, abort_on_cancel=False, failed=None):
         if self.busy() or self.closing:
             return
         box = {}
@@ -223,6 +230,8 @@ class SavesPage(QWidget):
             else:
                 self.message.setText(message)
                 self.window.play.show_message(message, True, keep=True)
+                if failed is not None:
+                    failed(message)
 
         self.task.finished.connect(finished)
         self._enable()
@@ -271,7 +280,8 @@ class SavesPage(QWidget):
             self.table.setRowCount(len(self.entries))
             for row, snap in enumerate(self.entries):
                 date = datetime.fromisoformat(snap.created).astimezone().strftime('%d %b %Y, %H:%M')
-                kind = {'manual': 'Named', 'automatic': 'Automatic', 'before-restore': 'Before restore'}[snap.kind]
+                kind = {'manual': 'Named', 'automatic': 'Automatic', 'before-restore': 'Before restore',
+                        'before-edit': 'Before edit'}[snap.kind]
                 size = f'{snap.size / 2**20:.1f} MB' if snap.size >= 2**20 else f'{max(1, snap.size / 1024):.0f} KB'
                 for col, text in enumerate((snap.label, date, kind, size)):
                     item = QTableWidgetItem(text)
@@ -317,6 +327,15 @@ class SavesPage(QWidget):
                 open_folder(self.profile.backups)
             except OSError as exc:
                 self.message.setText(str(exc))
+
+    def edit_profile(self):
+        if not self.edit_button.isEnabled():
+            return
+        from .save_editor import ProfileEditor
+        self.editor = ProfileEditor(self)
+        self.editor.finished.connect(lambda _: self.refresh())
+        self.editor.show()
+        self.editor.reload()
 
     def before_launch(self, plan, launch):
         profile = plan.save_profile

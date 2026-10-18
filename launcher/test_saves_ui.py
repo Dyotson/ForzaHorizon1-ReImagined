@@ -145,6 +145,49 @@ class SaveUITests(unittest.TestCase):
         session.cleanup.assert_called_once()
         self.assertIsNone(self.win.session)
 
+    def test_editor_load_apply_and_backup_restore_from_the_saves_page(self):
+        from forza_launcher import save_editor
+        from test_save_editor import KEYS, profile_bytes
+        path = self.profile.folder/'ForzaProfile/ForzaProfile'
+        path.parent.mkdir()
+        original = profile_bytes()
+        path.write_bytes(original)
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.refresh()
+            self.wait_done()
+            self.page.edit_button.click()
+            self.wait_done()
+            dialog = self.page.editor
+            self.assertIsNotNone(dialog.document)
+            self.assertEqual(dialog.controls['Main/Credits'].value(), 500)
+            dialog.controls['Main/Credits'].setValue(1500)
+            dialog.controls['Main/XP'].setValue(5000)
+            dialog.apply_button.click()
+            self.wait_done()
+            self.assertIn('Changes saved', dialog.message.text())
+            self.assertEqual(dialog.document.values['Main/XP'].value, 5000)
+            backup = saves.snapshots(self.profile)[0][0]
+            self.assertEqual(backup.kind, 'before-edit')
+            self.assertEqual((backup.path/'save/ForzaProfile/ForzaProfile').read_bytes(), original)
+            dialog.close()
+            self.wait_done()
+            self.assertEqual(self.page.table.item(0, 2).text(), 'Before edit')
+            saves.restore(self.profile, backup)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_editor_failure_is_visible_and_leaves_no_enabled_apply_action(self):
+        self.page.refresh()
+        self.wait_done()
+        self.page.edit_button.click()
+        self.wait_done()
+        dialog = self.page.editor
+        self.assertIsNone(dialog.document)
+        self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertTrue(dialog.reload_button.isEnabled())
+        self.assertTrue(dialog.message.text())
+        dialog.close()
+        self.wait_done()
+
 
 class SaveSessionTests(unittest.TestCase):
     def test_session_lock_survives_relaunch_and_releases_on_cleanup_or_start_failure(self):

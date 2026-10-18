@@ -266,7 +266,7 @@ def _manifest(path, profile):
             raise SaveError('Invalid or unsafe backup file entry.')
         seen.add(name.casefold())
         size += count
-    if size > MAX_BYTES or data.get('kind') not in ('manual', 'automatic', 'before-restore'):
+    if size > MAX_BYTES or data.get('kind') not in ('manual', 'automatic', 'before-restore', 'before-edit'):
         raise SaveError('Invalid backup metadata.')
     if not isinstance(data.get('label'), str) or len(data['label']) > 80:
         raise SaveError('Invalid backup name.')
@@ -385,7 +385,7 @@ def _create(profile, label, kind, cancelled, progress, keep):
 
 
 def create(profile, label='', kind='manual', cancelled=lambda: False, progress=lambda *_: None, keep=10):
-    if kind not in ('manual', 'automatic', 'before-restore'):
+    if kind not in ('manual', 'automatic', 'before-restore', 'before-edit'):
         raise SaveError('Unknown backup type.')
     with locked(profile):
         _recover(profile)
