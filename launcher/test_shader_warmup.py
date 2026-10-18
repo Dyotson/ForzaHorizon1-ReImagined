@@ -89,6 +89,7 @@ class WarmupUITests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         cfg = Config(Path(self.temp.name) / "launcher.json")
+        cfg.advanced["data_root"] = str(Path(self.temp.name) / "data")
         cfg.gpu["checked"] = True
         cfg.loaded = True
         cfg.d["check_updates"] = False
@@ -99,6 +100,8 @@ class WarmupUITests(unittest.TestCase):
         page = self.win.play
         page.show_message("A DLC package is missing", warn=True, keep=True)
         page.set_shader_warmup(Status("Vulkan", True))
+        self.assertIsNotNone(page.install_details.parentWidget())
+        self.assertIsNotNone(page.install_paths.parentWidget())
         self.assertFalse(page.shader_progress.isHidden())
         self.assertEqual(page.shader_progress.maximum(), 0)
         page.set_shader_warmup(Status("Vulkan", True, 16, 32))
@@ -118,6 +121,10 @@ class WarmupUITests(unittest.TestCase):
             self.win.cfg.settings.update(gpu_backend=backend, store_shaders=stored)
             page._apply_dependencies()
             self.assertEqual(row.control.isEnabled(), enabled)
+            if enabled:
+                self.assertEqual(row.dependency.text(), "")
+            else:
+                self.assertIn("Vulkan", row.dependency.text())
 
 
 if __name__ == "__main__":
