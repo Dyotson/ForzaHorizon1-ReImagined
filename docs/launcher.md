@@ -225,6 +225,30 @@ without replacing it.
 
 Settings, saves, DLC and the player's game files remain in their existing user folders.
 
+The existing build ID logic marks the game stale when the launcher/project version changes;
+use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
+checks and can open a downloaded package, but never replace the checkout or run Git commands.
+
+Validation: `python3 -m unittest discover -s launcher -p 'test_*.py'` covers release selection,
+version comparison, download integrity, cancellation/retries, real archive replacement and
+rollback with fixture launchers, and the detached helper waiting for its parent to exit.
+With PySide6 installed, offscreen UI tests cover automatic archive download/install,
+restart, install failure recovery, shutdown during a request or installation, and Windows
+installer invocation. Flatpak UI tests cover the Downloads destination, shell quoting,
+manual instructions, failed integrity checks, and preservation of the instructions when
+opening the folder fails. They assert that downloading and opening the folder never invokes
+host commands, installs the bundle, or closes the launcher. The suite passes 72 tests with
+9 game-fixture tests skipped. Native Windows installation still requires platform testing.
+
+Linux archive platform validation used an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb and
+real PyInstaller packages. Test releases used versions 0.1.0 and 0.1.1 with local HTTP release
+metadata/downloads and normal integrity checks. The game itself was not included. Tests
+verified a custom installation path with spaces, a visible replacement GUI, retained
+settings/save data, and restoration of the previous working GUI after a deliberately broken
+replacement. The current Flatpak manual-download flow is also exercised with local HTTP
+fixtures and rendered Qt UI; no native Flatpak sandbox rerun has been performed since
+removing host execution.
+
 ### Save manager
 
 **Saves** manages the profile chosen in **Settings > Profile**: the local profile or the
@@ -239,8 +263,8 @@ including photos stored there; DLC, caches and game files are excluded.
 * **Back up before Play** is enabled by default. Play waits for the backup to finish;
   failures block launch with a visible error. An unchanged save reuses the latest valid
   backup. Keep between 1 and 50 automatic backups (default 10). Named backups and backups
-  made before restores or edits are never automatically removed. Open the backup folder to manage
-  those manually.
+  made before restores or edits are never automatically removed. Open the backup folder to
+  manage those manually.
 * **Restore selected** asks for confirmation, validates the full backup, stages it beside
   the current save, then backs up the current save before replacing it. A journal allows
   the launcher to recover an interrupted directory replacement on the next backup,
@@ -281,31 +305,9 @@ Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.i
 The editor's profile-table addresses and XUID derivation were checked against the local
 executables and a disposable game-generated profile. A no-edit round trip reproduced the
 entire file byte for byte; changing credits preserved every other body byte and companion
-file. The original fixture and real user save were not modified.
-
-The existing build ID logic marks the game stale when the launcher/project version changes;
-use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
-checks and can open a downloaded package, but never replace the checkout or run Git commands.
-
-Validation: `python3 -m unittest discover -s launcher -p 'test_*.py'` covers release selection,
-version comparison, download integrity, cancellation/retries, real archive replacement and
-rollback with fixture launchers, and the detached helper waiting for its parent to exit.
-With PySide6 installed, offscreen UI tests cover automatic archive download/install,
-restart, install failure recovery, shutdown during a request or installation, and Windows
-installer invocation. Flatpak UI tests cover the Downloads destination, shell quoting,
-manual instructions, failed integrity checks, and preservation of the instructions when
-opening the folder fails. They assert that downloading and opening the folder never invokes
-host commands, installs the bundle, or closes the launcher. The suite passes 72 tests with
-9 game-fixture tests skipped. Native Windows installation still requires platform testing.
-
-Linux archive platform validation used an isolated Ubuntu 24.04.4 x86_64 VM, X11/Xvfb and
-real PyInstaller packages. Test releases used versions 0.1.0 and 0.1.1 with local HTTP release
-metadata/downloads and normal integrity checks. The game itself was not included. Tests
-verified a custom installation path with spaces, a visible replacement GUI, retained
-settings/save data, and restoration of the previous working GUI after a deliberately broken
-replacement. The current Flatpak manual-download flow is also exercised with local HTTP
-fixtures and rendered Qt UI; no native Flatpak sandbox rerun has been performed since
-removing host execution.
+file. A separate copy loaded in the native TU4 game, which then saved normally with
+1,000,000 credits and 12,345 XP intact and exited cleanly. The original fixture and real
+user save were not modified.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 

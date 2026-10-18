@@ -52,7 +52,7 @@ class EditorTests(unittest.TestCase):
         iv = bytes.fromhex('000102030405060708090a0b0c0d0e0f')
         data = bytes.fromhex('6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51')
         expected = bytes.fromhex('7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2')
-        with patch.dict('sys.modules', {'cryptography': None}):
+        with patch.dict('sys.modules', {'cryptography.hazmat.primitives.ciphers': None}):
             self.assertEqual(editor._encrypt_cbc(key, data, iv), expected)
 
     def test_no_edit_round_trip_is_byte_identical(self):
