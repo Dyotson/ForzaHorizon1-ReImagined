@@ -3,15 +3,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
-                               QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPlainTextEdit,
-                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QSpinBox, QStackedWidget,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
+                               QFrame, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
+                               QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
 from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
 from ..config import Config, render_toml, validate_extras
 from . import theme
-from .widgets import Switch, card, label
+from .widgets import DoubleSpinBox, SpinBox, Switch, card, label
 
 NO_WHEEL = Qt.StrongFocus
 
@@ -27,14 +27,17 @@ class _Wheelless:
 
 
 class Combo(_Wheelless, QComboBox):
+    def __init__(self):
+        super().__init__()
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(18)
+
+
+class Spin(_Wheelless, SpinBox):
     pass
 
 
-class Spin(_Wheelless, QSpinBox):
-    pass
-
-
-class DSpin(_Wheelless, QDoubleSpinBox):
+class DSpin(_Wheelless, DoubleSpinBox):
     pass
 
 
@@ -53,7 +56,7 @@ class HudSlider(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(int(low), int(high))
-        self.number = QSpinBox()
+        self.number = SpinBox()
         self.number.setRange(int(low), int(high))
         self.number.setSuffix(" %")
         layout.addWidget(self.slider, 1)
@@ -162,10 +165,10 @@ class SettingRow(QWidget):
         super().__init__()
         self.s = s
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 6, 0, 6)
-        lay.setSpacing(24)
+        lay.setContentsMargins(0, 14, 0, 14)
+        lay.setSpacing(32)
         col = QVBoxLayout()
-        col.setSpacing(2)
+        col.setSpacing(8)
         title = QLabel(s.label)
         title.setStyleSheet("font-weight: 600;")
         col.addWidget(title)
@@ -175,6 +178,9 @@ class SettingRow(QWidget):
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
         col.addWidget(self.warning)
+        self.dependency = label("", "help")
+        self.dependency.hide()
+        col.addWidget(self.dependency)
         lay.addLayout(col, 1)
         vendor = cfg.gpu_vendor()
         self.control = make_control(s, cfg.settings.get(s.key, s.default),
@@ -189,12 +195,10 @@ class SettingRow(QWidget):
         self.warning.setText(text)
         self.warning.setVisible(bool(text))
 
-
-def heading(text):
-    lb = QLabel(text.upper())
-    lb.setObjectName("section")
-    lb.setContentsMargins(0, 14, 0, 2)
-    return lb
+    def set_available(self, available, reason=""):
+        self.control.setEnabled(available)
+        self.dependency.setText(reason if not available else "")
+        self.dependency.setVisible(not available and bool(reason))
 
 
 def hline():
@@ -202,6 +206,16 @@ def hline():
     f.setFixedHeight(1)
     f.setStyleSheet(f"background: {theme.BORDER};")
     return f
+
+
+def section_card(lay, title, index=None):
+    frame, content = card(margins=(24, 20, 24, 20), spacing=16)
+    content.addWidget(label(title, "cardTitle"))
+    if index is None:
+        lay.addWidget(frame)
+    else:
+        lay.insertWidget(index, frame)
+    return content
 
 
 class SettingsPage(QWidget):
@@ -217,20 +231,21 @@ class SettingsPage(QWidget):
         self._save_timer.setInterval(350)
         self._save_timer.timeout.connect(self.flush)
 
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(16)
-        self.groups = QListWidget()
-        self.groups.setObjectName("groups")
-        self.groups.setFixedWidth(150)
+        self.tabs = QTabBar()
+        self.tabs.setExpanding(False)
+        self.tabs.setDrawBase(False)
+        self.tabs.setAccessibleName("Settings categories")
         self.stack = QStackedWidget()
-        root.addWidget(self.groups)
+        root.addWidget(self.tabs)
         root.addWidget(self.stack, 1)
         for g in schema.GROUPS:
-            self.groups.addItem(g)
+            self.tabs.addTab(g)
             self.stack.addWidget(self._build_group(g))
-        self.groups.currentRowChanged.connect(self.stack.setCurrentIndex)
-        self.groups.setCurrentRow(0)
+        self.tabs.currentChanged.connect(self.stack.setCurrentIndex)
+        self.tabs.setCurrentIndex(0)
         self._apply_dependencies()
 
     # --- plumbing -------------------------------------------------------------------
@@ -274,37 +289,36 @@ class SettingsPage(QWidget):
 
     def _apply_dependencies(self):
         active = dlss.enabled(self.cfg)
+        temporal = fsr3.enabled(self.cfg)
+        ultrawide = bool(self.cfg.settings.get("forza_ultrawide"))
+        states = {}
         for key in ("fh1_upscaler", "fh1_output_resolution"):
             if key in self.rows:
                 self.rows[key].setVisible(self.cfg.gpu_vendor() == gpu.NVIDIA)
-        if "fh1_output_resolution" in self.rows:
-            self.rows["fh1_output_resolution"].control.setEnabled(active)
+        states["fh1_output_resolution"] = (active, "Choose a DLSS or DLAA mode to set its output resolution.")
         for key in ("gpu_backend", "resolution", "resolution_scale", "present_effect"):
-            if key in self.rows:
-                self.rows[key].control.setEnabled(not active)
-        temporal = fsr3.enabled(self.cfg)
+            states[key] = (not active, "Controlled by NVIDIA DLSS / DLAA. Turn it off to change this setting.")
         for key in ("fsr3_mode", "fsr3_output_resolution"):
-            if key in self.rows:
-                self.rows[key].control.setEnabled(temporal)
+            states[key] = (temporal, "Select AMD FSR 3 as the upscaling filter to use this setting.")
         for key in ("resolution", "resolution_scale"):
-            if key in self.rows and temporal:
-                self.rows[key].control.setEnabled(False)
-        self._refresh_gpu_warnings()
+            if temporal:
+                states[key] = (False, "Controlled by AMD FSR 3. Use the FSR 3 output resolution setting.")
         for key in ("gpu_backend", "resolution_scale"):
-            if key in self.rows:
-                self.rows[key].control.setEnabled(
-                    not active and not temporal and not self.cfg.settings.get("forza_ultrawide"))
+            if temporal:
+                states[key] = (False, "Controlled by AMD FSR 3. Choose another upscaling filter to change this setting.")
+            elif ultrawide and not active:
+                states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
-            if key in self.rows:
-                self.rows[key].control.setEnabled(bool(self.cfg.settings.get("forza_hud_layout")))
-
+            states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
         for key, dep in DEPENDS.items():
-            row = self.rows.get(key)
-            if row:
-                row.control.setEnabled(bool(self.cfg.settings.get(dep)))
+            states[key] = (bool(self.cfg.settings.get(dep)), "")
         for s in schema.S:
-            if s.key.startswith("keybind_") and s.key in self.rows:
-                self.rows[s.key].control.setEnabled(bool(self.cfg.settings.get("mnk_mode")))
+            if s.key.startswith("keybind_"):
+                states[s.key] = (bool(self.cfg.settings.get("mnk_mode")), "")
+        for key, (available, reason) in states.items():
+            if key in self.rows:
+                self.rows[key].set_available(available, reason)
+        self._refresh_gpu_warnings()
 
     def _rows(self, lay, group, skip=()):
         section = None
@@ -313,16 +327,19 @@ class SettingsPage(QWidget):
                 continue
             if s.section != section:
                 section = s.section
-                lay.addWidget(heading(section))
+                content = section_card(lay, section)
+                content.setSpacing(0)
+            else:
+                content.addWidget(hline())
             row = SettingRow(s, self.cfg, self.set_value)
             self.rows[s.key] = row
-            lay.addWidget(row)
+            content.addWidget(row)
 
     def _page(self, title, lead):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 14, 20)
-        lay.setSpacing(2)
+        lay.setSpacing(20)
         t = QLabel(title)
         t.setObjectName("pageTitle")
         t.setStyleSheet("font-size: 22px;")
@@ -339,7 +356,7 @@ class SettingsPage(QWidget):
     def _build_group(self, g):
         leads = {
             "Display": "Window, frame rate and picture.",
-            "Controls": "Controllers work out of the box; keyboard and mouse is available but untested.",
+            "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
             "Audio": "",
             "Online": "Xbox LIVE is gone, so the game signs in to a Forza Live server instead.",
             "Profile": "Your saves live in the game's data folder. You can also continue a Xenia Canary save.",
@@ -365,7 +382,7 @@ class SettingsPage(QWidget):
 
     # --- graphics card (#52) --------------------------------------------------------
     def _gpu_block(self, lay):
-        lay.addWidget(heading("Graphics card"))
+        lay = section_card(lay, "Graphics card")
         vendor = self.cfg.gpu_vendor()
         self.gpu_combo = Combo()
         for v in gpu.VENDORS:
@@ -374,9 +391,9 @@ class SettingsPage(QWidget):
         self.gpu_combo.setCurrentIndex(max(self.gpu_combo.findData(vendor), 0))
         self.gpu_combo.setMinimumWidth(190)
         row = QHBoxLayout()
-        row.setSpacing(24)
+        row.setSpacing(32)
         col = QVBoxLayout()
-        col.setSpacing(2)
+        col.setSpacing(8)
         t = QLabel("Your graphics card")
         t.setStyleSheet("font-weight: 600;")
         col.addWidget(t)
@@ -441,12 +458,14 @@ class SettingsPage(QWidget):
             row.set_warning(" ".join(found.get(key, [])))
 
     def _pad_block(self, lay):
-        lay.insertWidget(2, heading("Players"))
+        lay = section_card(lay, "Players", 2)
         row = QHBoxLayout()
+        row.setSpacing(32)
         sw = Switch()
         sw.setChecked(bool(self.cfg.advanced.get("pad_per_user")))
         sw.toggled.connect(lambda v: self._adv("pad_per_user", v))
         col = QVBoxLayout()
+        col.setSpacing(8)
         t = QLabel("Each controller is its own player")
         t.setStyleSheet("font-weight: 600;")
         col.addWidget(t)
@@ -456,7 +475,7 @@ class SettingsPage(QWidget):
         row.addWidget(sw)
         w = QWidget()
         w.setLayout(row)
-        lay.insertWidget(3, w)
+        lay.addWidget(w)
 
     def _adv(self, key, value):
         self.cfg.advanced[key] = value
@@ -464,7 +483,7 @@ class SettingsPage(QWidget):
 
     # Online
     def _online_block(self, lay):
-        lay.addWidget(heading("Server"))
+        lay = section_card(lay, "Server")
         self.mode_group = QButtonGroup(self)
         modes = [
             ("public", f"Public server", f"{PUBLIC_SERVER}: the shared online world, leaderboards and "
@@ -503,7 +522,7 @@ class SettingsPage(QWidget):
 
     # Profile
     def _profile_block(self, lay):
-        lay.addWidget(heading("Save"))
+        lay = section_card(lay, "Save")
         self.own = QRadioButton("My own profile")
         self.own.setStyleSheet("font-weight: 600;")
         lay.addWidget(self.own)
@@ -517,21 +536,26 @@ class SettingsPage(QWidget):
                   "with that profile's XUID. The Xenia original is never modified.", "help")
         h.setContentsMargins(26, 0, 0, 6)
         lay.addWidget(h)
-        form, f = card(QVBoxLayout, (14, 12, 14, 12), 8)
+        form = QWidget()
+        f = QVBoxLayout(form)
+        f.setContentsMargins(0, 8, 0, 0)
+        f.setSpacing(16)
+        f.addWidget(QLabel("Xenia content folder"))
         row = QHBoxLayout()
+        row.setSpacing(12)
         self.xcontent = QLineEdit(self.cfg.profile.get("xenia_content", ""))
         self.xcontent.setPlaceholderText(str(game.default_xenia_content()))
         b = QPushButton("Browse")
         b.clicked.connect(self._browse_xenia)
-        row.addWidget(QLabel("Xenia content folder"))
         row.addWidget(self.xcontent, 1)
         row.addWidget(b)
         f.addLayout(row)
+        f.addWidget(QLabel("Profile (XUID)"))
         row = QHBoxLayout()
+        row.setSpacing(12)
         self.xuid = Combo()
         self.xuid.setEditable(True)
         self.xuid.setMinimumWidth(240)
-        row.addWidget(QLabel("Profile (XUID)"))
         row.addWidget(self.xuid, 1)
         scan = QPushButton("Find profiles")
         scan.clicked.connect(self._scan_xenia)
@@ -586,20 +610,23 @@ class SettingsPage(QWidget):
     # Advanced
     def _advanced_block(self, lay):
         adv = self.cfg.advanced
-        lay.insertWidget(2, heading("Launcher"))
+        launcher = section_card(lay, "Launcher", 2)
 
         def line(title, help_, key, placeholder="", browse=False):
             w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 6, 0, 6)
-            h.setSpacing(16)
+            body = QVBoxLayout(w)
+            body.setContentsMargins(0, 8, 0, 8)
+            body.setSpacing(14)
+            h = QHBoxLayout()
+            h.setSpacing(12)
             col = QVBoxLayout()
-            col.setSpacing(2)
+            col.setSpacing(8)
             t = QLabel(title)
             t.setStyleSheet("font-weight: 600;")
             col.addWidget(t)
             col.addWidget(label(help_, "help"))
-            h.addLayout(col, 1)
+            body.addLayout(col)
+            body.addLayout(h)
             e = QLineEdit(adv.get(key, ""))
             e.setPlaceholderText(placeholder)
             e.setMinimumWidth(280)
@@ -634,9 +661,10 @@ class SettingsPage(QWidget):
             line("Extra command-line flags", "Added to the game's command line, for example "
                  "--resolution_scale=2.", "extra_args", "--flag=value"),
         ]
-        for i, w in enumerate(items):
-            lay.insertWidget(3 + i, w)
-        lay.addWidget(heading("Other settings"))
+        for w in items:
+            launcher.addWidget(w)
+        page = lay
+        lay = section_card(page, "Other settings")
         lay.addWidget(label("Any other forza.toml key, one per line (key = value). They are written "
                             "to forza.toml as they are.", "help"))
         self.extras = QPlainTextEdit(adv.get("extras_toml", ""))
@@ -646,13 +674,13 @@ class SettingsPage(QWidget):
         self.extras.textChanged.connect(self._extras_changed)
         lay.addWidget(self.extras)
         lay.addWidget(self.extras_err)
-        lay.addWidget(heading("Environment variables"))
+        lay = section_card(page, "Environment variables")
         lay.addWidget(label("NAME=value, one per line, set for the game (for example FORZA_NETTRACE=1).", "help"))
         self.envs = QPlainTextEdit(adv.get("extra_env", ""))
         self.envs.setFixedHeight(70)
         self.envs.textChanged.connect(lambda: self._adv("extra_env", self.envs.toPlainText()))
         lay.addWidget(self.envs)
-        lay.addWidget(heading("What Play runs"))
+        lay = section_card(page, "What Play runs")
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setFixedHeight(170)
@@ -660,7 +688,7 @@ class SettingsPage(QWidget):
         lay.addWidget(self.preview)
         reset = QPushButton("Reset all settings to defaults")
         reset.clicked.connect(self.window.reset_settings)
-        lay.addWidget(reset, 0, Qt.AlignLeft)
+        page.addWidget(reset, 0, Qt.AlignLeft)
         self.refresh_preview()
 
     def _browse_into(self, edit, title, key):
@@ -684,12 +712,12 @@ class SettingsPage(QWidget):
     def rebuild(self):
         """After a reset: recreate the pages from the config."""
         self.rows.clear()
-        cur = self.groups.currentRow()
+        cur = self.tabs.currentIndex()
         while self.stack.count():
             w = self.stack.widget(0)
             self.stack.removeWidget(w)
             w.deleteLater()
         for g in schema.GROUPS:
             self.stack.addWidget(self._build_group(g))
-        self.groups.setCurrentRow(cur)
+        self.stack.setCurrentIndex(cur)
         self._apply_dependencies()

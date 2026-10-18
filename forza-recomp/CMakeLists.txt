@@ -158,8 +158,12 @@ set(FORZA_SOURCES
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
 if(WIN32)
+    enable_language(RC)
+    configure_file(resources/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc" @ONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico")
     list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
-    add_executable(forza WIN32 ${FORZA_SOURCES})
+    add_executable(forza WIN32 ${FORZA_SOURCES} "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc")
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
 else()

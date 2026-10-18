@@ -39,6 +39,14 @@ QPushButton#nav:checked {{ color: {CREAM}; border-left: 3px solid {ORANGE}; back
 QPushButton {{ background: {PANEL2}; border: 1px solid {BORDER}; border-radius: 10px; padding: 9px 18px;
   color: {TEXT}; font-weight: 600; }}
 QPushButton:hover {{ border-color: {ORANGE}; background: #2d1d57; }}
+QPushButton:focus {{ border-color: {ORANGE}; }}
+QPushButton#nav:focus {{ color: {CREAM}; background: #2d1d57; }}
+QPushButton#play:focus {{ border: 2px solid {CREAM}; }}
+QPushButton#link:focus {{ color: {CREAM}; text-decoration: underline; }}
+QToolButton#disclosure {{ background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 6px 8px; color: {MUTED}; font-weight: 600; }}
+QToolButton#disclosure:hover {{ color: {CREAM}; background: {PANEL2}; }}
+QToolButton#disclosure:focus {{ border-color: {ORANGE}; color: {CREAM}; }}
 QPushButton:disabled {{ color: #6f6494; border-color: #2b2055; background: #19113a; }}
 QPushButton#play {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 {ORANGE}, stop:1 {PINK});
   color: #1a0f33; border: none; border-radius: 14px; padding: 16px 64px; font-size: 20px; font-weight: 800; }}
@@ -47,10 +55,13 @@ QPushButton#play:disabled {{ background: #3a2a5e; color: #8c7fb3; }}
 QPushButton#link {{ background: transparent; border: none; color: {ORANGE}; padding: 4px 0; text-align: left; }}
 QPushButton#link:hover {{ color: {CREAM}; text-decoration: underline; }}
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
-  background: #130c2c; border: 1px solid {BORDER}; border-radius: 8px; padding: 7px 10px;
+  background: #130c2c; border: 1px solid {BORDER}; border-radius: 8px; padding: 9px 14px;
   selection-background-color: {PINK}; selection-color: white; color: {TEXT}; }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {ORANGE}; }}
 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{ color: #6f6494; background: #17102f; }}
+QSpinBox, QDoubleSpinBox {{ padding: 9px 0; }}
+QAbstractSpinBox QLineEdit, QComboBox QLineEdit {{
+  background: transparent; border: none; border-radius: 0; padding: 0; }}
 QComboBox::drop-down {{ border: none; width: 26px; }}
 QComboBox::down-arrow {{ image: url("{ARROW}"); width: 12px; height: 8px; margin-right: 10px; }}
 QComboBox QAbstractItemView {{ background: {PANEL2}; border: 1px solid {BORDER}; selection-background-color: {PINK};
@@ -61,10 +72,11 @@ QProgressBar {{ background: #130c2c; border: 1px solid {BORDER}; border-radius: 
   color: {TEXT}; font-size: 12px; }}
 QProgressBar::chunk {{ border-radius: 7px;
   background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 {ORANGE}, stop:1 {PINK}); }}
-QListWidget#groups {{ background: transparent; border: none; outline: none; }}
-QListWidget#groups::item {{ padding: 9px 14px; border-radius: 8px; color: {MUTED}; font-weight: 600; margin: 1px 0; }}
-QListWidget#groups::item:selected {{ background: {PANEL2}; color: {CREAM}; }}
-QListWidget#groups::item:hover {{ color: {TEXT}; }}
+QTabBar::tab {{ padding: 9px 14px; margin-right: 6px; color: {MUTED}; font-weight: 600;
+  border: 1px solid transparent; border-radius: 9px; }}
+QTabBar::tab:selected {{ color: {CREAM}; background: {PANEL2}; border-color: {BORDER}; }}
+QTabBar::tab:hover {{ color: {TEXT}; background: {PANEL2}; }}
+QTabBar::tab:focus {{ color: {CREAM}; border-color: {ORANGE}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 4px; min-height: 30px; }}
@@ -75,5 +87,6 @@ QRadioButton::indicator:checked {{ border-color: {ORANGE}; background: qradialgr
   fx:0.5,fy:0.5, stop:0 {ORANGE}, stop:0.55 {ORANGE}, stop:0.6 #130c2c, stop:1 #130c2c); }}
 QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px; border: 2px solid {BORDER}; background: #130c2c; }}
 QCheckBox::indicator:checked {{ background: {ORANGE}; border-color: {ORANGE}; }}
+QCheckBox:focus::indicator, QRadioButton:focus::indicator {{ border-color: {ORANGE}; }}
 QToolTip {{ background: {PANEL2}; color: {TEXT}; border: 1px solid {ORANGE}; padding: 6px; }}
 """

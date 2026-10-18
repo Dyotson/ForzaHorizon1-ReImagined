@@ -131,6 +131,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - **Photos:** photo mode saves the picture in the profile (`photo/<name>/`); SAVE asks for
   a name in a small window over the game (Enter or OK). Builds before SDK patch 0048 saved
   a garbled picture (#54); photos saved by them stay garbled, take them again.
+  The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
+  copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
 
 ## Recommended picture settings
 

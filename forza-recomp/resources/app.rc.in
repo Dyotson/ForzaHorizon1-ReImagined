@@ -1,0 +1,2 @@
+// Shared ReImagined branding for Explorer and Windows shortcuts.
+1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/forza.ico"

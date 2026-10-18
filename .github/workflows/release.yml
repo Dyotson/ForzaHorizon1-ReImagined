@@ -208,6 +208,9 @@ jobs:
           cd launcher
           pyinstaller --noconfirm forza-launcher.spec
           dist/forza-launcher/forza-launcher.exe --version
+      - name: Smoke test the packaged window
+        shell: bash
+        run: python launcher/packaging/smoke_gui.py launcher/dist/forza-launcher/forza-launcher.exe
       - name: Package
         shell: bash
         run: |
@@ -218,7 +221,6 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
-          python -c "from PIL import Image; Image.open('docs/images/logo.png').save('launcher/packaging/logo.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
           & $iscc "/DAppVersion=$env:VERSION" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss

@@ -90,8 +90,9 @@ def default_game_files() -> Path:
 
 
 def asset(name: str) -> Path:
-    """A launcher image: bundled in the frozen app, else docs/images of the checkout."""
-    for base in (LAUNCHER_ROOT / "assets", REPO_ROOT / "docs" / "images"):
+    """A launcher image: bundled in the frozen app, else the checkout's artwork."""
+    for base in (LAUNCHER_ROOT / "assets", REPO_ROOT / "docs" / "images",
+                 REPO_ROOT / "forza-recomp" / "resources"):
         if (base / name).is_file():
             return base / name
     return LAUNCHER_ROOT / "assets" / name
