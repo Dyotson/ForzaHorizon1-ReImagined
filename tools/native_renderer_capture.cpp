@@ -272,6 +272,8 @@ int main(int argc, char **argv) {
         first_viewport = false;
         detail << "{\"x\":" << vp.vp.x << ",\"y\":" << vp.vp.y
                << ",\"width\":" << vp.vp.width << ",\"height\":" << vp.vp.height
+               << ",\"scissor_x\":" << vp.scissor.x
+               << ",\"scissor_y\":" << vp.scissor.y
                << ",\"scissor_width\":" << vp.scissor.width
                << ",\"scissor_height\":" << vp.scissor.height << '}';
       }
@@ -294,6 +296,11 @@ int main(int argc, char **argv) {
                  << ",\"bytes\":" << descriptor.byteSize
                  << ",\"first_mip\":" << uint32_t(descriptor.firstMip)
                  << ",\"first_layer\":" << uint32_t(descriptor.firstSlice)
+                 << ",\"view_format\":" << Json(descriptor.format.Name().c_str())
+                 << ",\"swizzle\":[" << int(descriptor.swizzle.red) << ','
+                 << int(descriptor.swizzle.green) << ','
+                 << int(descriptor.swizzle.blue) << ','
+                 << int(descriptor.swizzle.alpha) << ']'
                  << '}';
         }
       }

@@ -168,8 +168,10 @@ struct Input {
   VkImageView view{};
   VkDeviceMemory memory{};
   uint32_t width = 37, height = 19;
+  bool swizzled = false;
   std::vector<std::array<uint8_t, 4>> pixels;
-  explicit Input(Context& c) : context(c), pixels(width * height) {
+  explicit Input(Context& c, uint32_t w = 37, uint32_t h = 19, bool bgra = false)
+      : context(c), width(w), height(h), swizzled(bgra), pixels(width * height) {
     constexpr uint8_t masks[] = {0, 3, 15, 24, 72, 127, 128, 255};
     for (uint32_t y = 0; y < height; ++y)
       for (uint32_t x = 0; x < width; ++x)
@@ -191,6 +193,9 @@ struct Input {
     VkImageViewCreateInfo image_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     image_view.image = image; image_view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     image_view.format = info.format;
+    if (swizzled)
+      image_view.components = {VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G,
+          VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
     image_view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(c.device, &image_view, nullptr, &view));
     Buffer upload(c, pixels.size() * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -217,6 +222,11 @@ struct Input {
     vkDestroyImageView(context.device, view, nullptr);
     vkDestroyImage(context.device, image, nullptr);
     vkFreeMemory(context.device, memory, nullptr);
+  }
+  std::array<uint8_t, 4> Read(uint32_t x, uint32_t y) const {
+    auto sample = pixels[y * width + x];
+    if (swizzled) std::swap(sample[0], sample[2]);
+    return sample;
   }
 };
 
@@ -284,11 +294,11 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
     for (uint32_t y = 0; y < height; ++y)
       for (uint32_t x = 0; x < width; ++x) {
         const float u = (float(x) + 0.5f) / width, v = (float(y) + 0.5f) / height;
-        const float sample_u = u * parameters.uv_transform[0] + parameters.uv_transform[2];
-        const float sample_v = v * parameters.uv_transform[1] + parameters.uv_transform[3];
-        const auto ix = std::clamp(int(sample_u * input.width), 0, int(input.width) - 1);
-        const auto iy = std::clamp(int(sample_v * input.height), 0, int(input.height) - 1);
-        const auto expected = EvaluateVelocity(parameters, input.pixels[iy * input.width + ix], u, v, width, height);
+        const uint64_t center_x = rotated ? 2ull * (width - x) - 1 : 2ull * x + 1;
+        const uint64_t center_y = rotated ? 2ull * (height - y) - 1 : 2ull * y + 1;
+        const auto ix = uint32_t(center_x * input.width / (2ull * width));
+        const auto iy = uint32_t(center_y * input.height / (2ull * height));
+        const auto expected = EvaluateVelocity(parameters, input.Read(ix, iy), u, v, width, height);
         const size_t p = size_t(y) * width + x;
         CHECK(std::isfinite(depth[p]) && std::isfinite(motion[p * 4]) && std::isfinite(motion[p * 4 + 1]));
         depth_error = std::max(depth_error, std::abs(depth[p] - expected.depth));
@@ -329,6 +339,9 @@ int main(int argc, char** argv) {
     Run(context, input, shader, 73, 41, true, true);
     Run(context, input, shader, 2560, 1440, false, false);
     Run(context, input, shader, 2560, 1440, true, false);
+    Input swizzled(context, 146, 82, true);
+    Run(context, swizzled, shader, 73, 41, false, false);
+    Run(context, swizzled, shader, 73, 41, true, false);
     CHECK(context.validation_errors == 0);
     std::cout << "Native velocity GPU checks passed\n";
     return 0;

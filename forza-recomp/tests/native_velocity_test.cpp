@@ -41,6 +41,11 @@ int main() {
   parameters.previous[8][2] = std::numeric_limits<float>::quiet_NaN();
   CHECK(!Valid(parameters));
   parameters.previous[8][2] = 0;
+  CHECK(Valid(parameters));
+  parameters.uv_transform = {0.5f, 1, 0, 0};
+  CHECK(!Valid(parameters));
+  parameters.uv_transform = {1, 1, 0, 0};
+  CHECK(Valid(parameters));
   parameters.blur[3] = 0;
   CHECK(!Valid(parameters));
   std::cout << "Native velocity reference checks passed\n";

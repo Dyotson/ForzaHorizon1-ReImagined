@@ -61,7 +61,7 @@ void VelocityPass::Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice p
   functions_ = dispatch;
   VkPhysicalDeviceProperties properties;
   functions_.vkGetPhysicalDeviceProperties(physical, &properties);
-  if (width > properties.limits.maxImageDimension2D ||
+  if (width > 32768 || height > 32768 || width > properties.limits.maxImageDimension2D ||
       height > properties.limits.maxImageDimension2D)
     throw std::invalid_argument("Native velocity extent exceeds device limits");
   physical_ = physical; device_ = device; width_ = width; height_ = height;

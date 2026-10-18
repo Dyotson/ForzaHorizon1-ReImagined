@@ -44,6 +44,10 @@ inline bool Valid(const VelocityParameters& parameters) {
                           &parameters.uv_transform, &parameters.motion_scale})
     for (float value : *row)
       if (!std::isfinite(value)) return false;
+  for (uint32_t axis = 0; axis < 2; ++axis)
+    if (!((parameters.uv_transform[axis] == 1 && parameters.uv_transform[axis + 2] == 0) ||
+          (parameters.uv_transform[axis] == -1 && parameters.uv_transform[axis + 2] == 1)))
+      return false;
   return parameters.blur[0] > 0 && parameters.blur[1] >= 0 &&
          parameters.blur[2] >= 0 && parameters.blur[3] > 0;
 }

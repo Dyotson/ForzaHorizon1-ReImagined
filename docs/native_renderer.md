@@ -44,6 +44,10 @@ projection parameters, blur response, UV orientation and motion scale. The calle
 supplies a point-sampled RGBA8 array view in shader-read layout and reports GPU
 completion using monotonically increasing submission IDs. Those IDs must come
 from waited fences. Enqueuing work does not make its resources reusable.
+Dimensions are limited to 32768 and the UV mapping supports identity or mirrored
+axes. Atlas/subrect sampling needs a separate contract. Center texels are selected
+with integer arithmetic: normalized point filtering at an exact 2:1 reduction can
+choose opposite sides of a depth/stencil boundary because of coordinate precision.
 
 `Prepare` reserves a free frame slot and updates its descriptors/constants on the
 producer thread. `Record` consumes an immutable dispatch snapshot on the Vulkan
@@ -65,6 +69,8 @@ coordinates, blur limits, two orientations and output sizes 73x41 and 2560x1440.
 The odd size also exercises partial compute workgroups and readback alignment.
 Every output pixel is compared with a CPU reference; closed-form reference tests
 independently check expected pixel displacements and depth values.
+Additional fixtures exercise a BGRA image-view mapping and an exact 2:1 reduction
+in both orientations.
 
 On an RTX 5060 Ti, all three Release tests passed with Khronos synchronization
 validation enabled and zero validation errors. At 2560x1440, depth and quantized
@@ -72,6 +78,23 @@ blur matched exactly; the largest motion difference was 0.000197 pixels. These
 are synthetic correctness measurements, not a comparison with the game's actual
 velocity attachment or a whole-frame performance result. No shader disassembly,
 game textures, saves or generated binaries are included in the implementation.
+
+A separate local replay comparison subsequently identified a motion draw at a
+1280x720 viewport/scissor within a 2560x4096 RGBA8 attachment. Its 2560x1440 packed
+depth texture uses a BGRA image-view mapping. Supplying that view and the captured
+transforms to the native GPU pass produced **byte-identical RGBA blur output at
+all 921,600 pixels**, repeated through both frame slots, with synchronization
+validation enabled. This is a neutral-motion frame: its color channels contain
+neutral velocity, while alpha still distinguishes cars from the world. It checks
+real input format, sampling, object masks and output encoding; it does not prove
+moving-camera equivalence. The original normalized-filter implementation differed
+at 496 alpha edge pixels; integer center selection removed every difference.
+
+The local fixture and replay outputs are volatile files outside the repository.
+A new moving AI-race capture currently fails during Vulkan instance creation
+under RenderDoc with `ErrorExtensionNotPresent`; the regular game and standalone
+GPU test start successfully. Investigate capture compatibility before claiming a
+moving-scene comparison. The native pass is still not substituted into the game.
 
 ## Build the development tools
 
@@ -140,9 +163,9 @@ Release builds.
 
 ## Next execution milestone
 
-1. Compare the native depth/motion/blur pass with actual captured velocity output.
-   Establish viewport/scissor orientation, constants and downstream blur encoding
-   before substituting it. Synthetic parity alone does not establish this.
+1. Complete a moving-camera/AI-race comparison after the neutral-motion replay
+   match. Establish tiled/reflection state and fallback conditions before replacing
+   the original draw. Neutral-motion parity alone does not establish this.
 2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
 3. Implement its layout and queue transitions, format interpretation and CPU

@@ -20,7 +20,15 @@ void main() {
 
   vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
   uv = uv * uv_transform.xy + uv_transform.zw;
-  uvec4 bytes = uvec4(round(textureLod(packed_depth, vec3(uv, 0), 0) * 255));
+  // An exact 2:1 reduction puts normalized point samples on texel boundaries.
+  // Filter-coordinate precision otherwise chooses different sides of a car's
+  // stencil edge. Select the center texel with integer arithmetic instead.
+  uvec2 center = 2u * uvec2(pixel) + 1u;
+  if (uv_transform.x < 0) center.x = 2u * uint(extent.x) - center.x;
+  if (uv_transform.y < 0) center.y = 2u * uint(extent.y) - center.y;
+  ivec2 source = ivec2(center * uvec2(textureSize(packed_depth, 0).xy) /
+      (2u * uvec2(extent)));
+  uvec4 bytes = uvec4(round(texelFetch(packed_depth, ivec3(source, 0), 0) * 255));
   uint mantissa = ((bytes.w & 15u) << 16) | (bytes.x << 8) | bytes.y;
   float depth = clamp(exp2(float(int(bytes.w >> 4) - 15)) *
       (1 + float(mantissa) / 1048576.0), 0, 1);

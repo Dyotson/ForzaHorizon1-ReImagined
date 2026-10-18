@@ -10,6 +10,8 @@ namespace forza::native_renderer {
 // An owned native compute pass. The caller supplies a compatible device/queue
 // and a sampled RGBA8 2D-array view in SHADER_READ_ONLY_OPTIMAL, made visible to
 // compute. Outputs remain GENERAL, visible to compute/transfer consumers.
+// Input/output dimensions must not exceed 32768. UV transforms support identity
+// or an axis mirror; subrect/atlas transforms require a different pass contract.
 // Prepare runs on the producer thread; Record consumes its immutable snapshot on
 // the submission thread. Completion IDs must come from waited GPU fences, never
 // from merely enqueuing a submission. Consumers must restore output GENERAL
