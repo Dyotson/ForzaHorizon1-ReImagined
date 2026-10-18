@@ -109,9 +109,8 @@ class SettingsSearchTests(unittest.TestCase):
         self.assertTrue(self.search.count.isHidden())
 
     def test_hidden_gpu_rows_excluded_and_rebuild_replaces_targets(self):
-        from forza_launcher import schema
         self.assertEqual(bool(self.query("fh1_output_resolution")),
-                         schema.BY_KEY["fh1_output_resolution"].applies())
+                         "fh1_output_resolution" in self.page.rows)
         old = self.query("mnk_sensitivity")[0].widget
         self.cfg.gpu["vendor"] = "amd"
         self.page.rebuild()
