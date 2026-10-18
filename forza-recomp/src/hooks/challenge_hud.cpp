@@ -202,8 +202,10 @@ void NoticeIcons(Native& ui, uint8_t* base, uint32_t control, Actions actions, b
         ? "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\B_Button.tga"
         : "GAME:\\Media\\UI\\Textures\\Horizon\\Controller\\X_Button.tga");
     }
+    // Match the caption's visual centre and leave the same six-pixel gap
+    // between each 20-pixel button and its label (native 720p coordinates).
     const std::array<float, 5> buttons{
-        i ? -42.0f : -140.0f, -14.0f, 0.28f, 0.28f,
+        i ? -37.0f : -142.0f, -14.0f, 0.23333333f, 0.23333333f,
         i && actions != Actions::kAnswer ? 0.0f : 1.0f};
     for (size_t n = 0; n < icon_fields.size(); ++n) {
       uint32_t value;

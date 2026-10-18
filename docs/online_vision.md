@@ -669,9 +669,10 @@ Ownership resets when the control binds, unbinds, or receives an ordinary notifi
 Action messages explicitly request button artwork. The native `MiscIcon` and
 `MailIcon` materials load the game's own `Controller/X_Button.tga` and
 `Controller/B_Button.tga` through the original texture binding; no game artwork
-is distributed. Their model caches place 24-pixel buttons alongside the caption's
-Accept/Decline labels. The native model-property updater uses the same position,
-scale, opacity and dirty fields on disc (`82F22B08`) and TU4 (`82FE3AB8`).
+is distributed. Their model caches place 20-pixel buttons on the caption's visual
+centre, with equal gaps before the Accept/Decline labels. The native model-property
+updater uses the same position, scale, opacity and dirty fields on disc (`82F22B08`)
+and TU4 (`82FE3AB8`).
 Original texture references are retained while borrowed, and resources and layout
 are restored on response, expiry, a normal notification, or unbind. Countdown and
 result messages remove the action buttons.
