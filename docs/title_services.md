@@ -766,6 +766,9 @@ notification flows), all scratch files not kept in the repo.
 
 - The other services (the design storefront for liveries, tuning, layer groups and replays,
   DLC metadata) get empty answers; only the photo storefront is kept (above).
+  Existing local design/vinyl saves can now be inspected and exported with
+  `tools/ugc_catalog.py` ([preservation workflow](ugc-preservation.md)); these bundles
+  preserve encrypted payloads and attribution but are not yet installable or served online.
 - Monthly Rivals: a time trial raced to its end (score, ghost, bounty) was not tried; the
   server has two sample trials and no tool to edit them.
 - Car gifts between players: the game's CAR SELECT (Dak's Garage, CHANGE CAR) offers GET
