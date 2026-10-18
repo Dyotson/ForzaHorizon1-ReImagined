@@ -368,6 +368,20 @@ visibility and lifetime, and must drain recording jobs and GPU work before
 releasing the pipeline. A separate geometry function table uses the existing
 Vulkan loader without changing the compute bridge's function requirements.
 
+`PrepareGpu` snapshots authoritative GPU vertex/index ranges on the command
+stream before drawing. `RecordUploads` runs outside the render pass and orders
+source visibility, copies and subsequent vertex/index reads. The source owner
+must keep read tracking so later GPU writes follow those copies. Two-byte
+aligned 16-bit index ranges preserve their prefix while Vulkan buffer copies
+remain four-byte aligned. No CPU mirror or readback participates in this path.
+GPU-supplied out-of-range indices are clipped by the bounded vertex fetch;
+CPU-supplied invalid indices are rejected during preparation.
+
+A GPU test writes two different meshes successively into one shared buffer,
+snapshots each, clears the source, then renders both snapshots. Both depth and
+stencil results match the independent CPU-upload reference. The private car-part
+comparison also passes all three poses through GPU-source snapshots.
+
 All seven standalone tests pass with Khronos synchronization validation. Geometry
 fixtures cover forward/reverse depth, overlapping car IDs, both index sizes,
 endianness, primitive restart, odd extents, 2560x1440, scissor/padding preservation,

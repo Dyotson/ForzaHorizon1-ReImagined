@@ -1,6 +1,7 @@
 #include "../src/platform/native_renderer/geometry_pass.h"
 #include "native_gpu_test_support.h"
 #include <fstream>
+#include <functional>
 #include <memory>
 using namespace forza::native_renderer;
 
@@ -55,11 +56,14 @@ struct DepthTarget {
     vkDestroyFramebuffer(context.device,framebuffer,nullptr);vkDestroyRenderPass(context.device,render_pass,nullptr);
     vkDestroyImageView(context.device,view,nullptr);vkDestroyImage(context.device,image,nullptr);vkFreeMemory(context.device,memory,nullptr);
   }
-  Result Render(const GeometryPass& pass,const std::vector<GeometryPass::Dispatch>& draws,bool reverse) {
+  Result Render(const GeometryPass& pass,const std::vector<GeometryPass::Dispatch>& draws,bool reverse,
+      const std::function<void(VkCommandBuffer)>& uploads = {}) {
     const size_t pixels=size_t(width)*height;
     const VkDeviceSize stencil_offset=(pixels*4+15)&~VkDeviceSize(15);
     Buffer readback(context,stencil_offset+pixels,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     context.Begin();
+    if(uploads)uploads(context.command);
+    else for(const auto& draw:draws)pass.RecordUploads(context.command,draw);
     VkClearValue clear{};clear.depthStencil={reverse?0.0f:1.0f,0xa5};
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass=render_pass;begin.framebuffer=framebuffer;begin.renderArea.extent={width,height};
@@ -155,6 +159,72 @@ void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uin
   std::cout<<"Native geometry "<<width<<'x'<<height<<", reverse="<<reverse<<": depth, stencil, scissor, snapshots and retired slots passed\n";
 }
 
+void RunGpuSnapshots(Context& context,const std::vector<uint32_t>& shader) {
+  constexpr uint32_t width=73,height=41;
+  DepthTarget target(context,width,height);
+  GeometryPass pass;
+  pass.Initialize(Functions(),context.physical,context.device,
+      {target.render_pass,2,4096,4096,true,true,context.full_index_uint32},shader);
+  Buffer source(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  Buffer first_upload(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+  Buffer second_upload(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+  std::memset(source.mapped,0,256);
+  std::memset(first_upload.mapped,0x57,256);std::memset(second_upload.mapped,0xa3,256);
+  GeometryParameters p;p.layout={7,2,3,1};
+  std::vector<uint32_t> far_vertices(21,0),near_vertices(21,0);
+  const std::array<std::array<int16_t,2>,3> xy{{{-26214,-26214},{26214,-26214},{0,26214}}};
+  for(uint32_t i=0;i<3;++i) {
+    far_vertices[i*7]=near_vertices[i*7]=GeometryEndian((uint32_t(uint16_t(xy[i][0]))<<16)|uint16_t(xy[i][1]),2);
+    far_vertices[i*7+1]=GeometryEndian((8192u<<16)|32767,2);
+    near_vertices[i*7+1]=GeometryEndian((24575u<<16)|32767,2);
+  }
+  std::vector<uint16_t> indices;
+  for(uint32_t i:{0u,1u,2u,0xffffu,2u,1u,0u})indices.push_back(uint16_t(GeometryEndian(i,1)));
+  std::memcpy(static_cast<uint8_t*>(first_upload.mapped)+4,far_vertices.data(),84);
+  std::memcpy(static_cast<uint8_t*>(second_upload.mapped)+4,near_vertices.data(),84);
+  for(void* mapped:{first_upload.mapped,second_upload.mapped})
+    std::memcpy(static_cast<uint8_t*>(mapped)+90,indices.data(),14);
+  GeometryPass::GpuMesh gpu{{source.buffer,256,4,84},{source.buffer,256,90,14},2};
+  GeometryPass::Raster raster{{0,0,float(width),float(height),0,1},{{2,2},{width-4,height-4}},9};
+  auto invalid=gpu;invalid.vertices.offset=5;CHECK(!pass.PrepareGpu(0,invalid,p,raster,1,0));
+  invalid=gpu;invalid.indices.offset=88;invalid.indices.buffer_bytes=102;
+  CHECK(!pass.PrepareGpu(0,invalid,p,raster,1,0)); // logical bytes fit, rounded copy does not
+  invalid=gpu;invalid.vertices.buffer_bytes=87;CHECK(!pass.PrepareGpu(0,invalid,p,raster,1,0));
+  invalid=gpu;invalid.indices.offset=UINT64_MAX-1;CHECK(!pass.PrepareGpu(0,invalid,p,raster,1,0));
+  const auto first=pass.PrepareGpu(0,gpu,p,raster,1,0);CHECK(first);
+  CHECK(!pass.PrepareGpu(0,gpu,p,raster,1,0));
+  raster.stencil_reference=42;raster.scissor={{width/3,height/3},{width/3,height/3}};
+  const auto second=pass.PrepareGpu(1,gpu,p,raster,1,0);CHECK(second);
+  const auto result=target.Render(pass,{*first,*second},true,[&](VkCommandBuffer command) {
+    VkBufferMemoryBarrier writable{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    writable.buffer=source.buffer;writable.size=VK_WHOLE_SIZE;
+    writable.srcQueueFamilyIndex=writable.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    writable.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;writable.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&writable,0,nullptr);
+    VkBufferCopy copy{0,0,256};
+    vkCmdCopyBuffer(command,first_upload.buffer,source.buffer,1,&copy);
+    pass.RecordUploads(command,*first);
+    // The source owner orders its next write after the snapshot read.
+    writable.srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&writable,0,nullptr);
+    vkCmdCopyBuffer(command,second_upload.buffer,source.buffer,1,&copy);
+    pass.RecordUploads(command,*second);
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&writable,0,nullptr);
+    vkCmdFillBuffer(command,source.buffer,0,VK_WHOLE_SIZE,0);
+  });
+  GeometryPass::Mesh cpu{far_vertices.data(),84,indices.data(),14,2};
+  raster.scissor={{2,2},{width-4,height-4}};raster.stencil_reference=9;
+  const auto reference_first=pass.Prepare(0,cpu,p,raster,2,1);CHECK(reference_first);
+  cpu.vertices=near_vertices.data();raster.stencil_reference=42;raster.scissor={{width/3,height/3},{width/3,height/3}};
+  const auto reference_second=pass.Prepare(1,cpu,p,raster,2,1);CHECK(reference_second);
+  const auto reference=target.Render(pass,{*reference_first,*reference_second},true);
+  CHECK(std::memcmp(result.depth.data(),reference.depth.data(),result.depth.size()*4)==0);
+  CHECK(result.stencil==reference.stencil);
+  CHECK(result.stencil[(height/2)*width+width/2]==42);
+  CHECK(result.stencil[(height/4)*width+width/2]==9);
+  std::cout<<"GPU geometry snapshots: distinct GPU-written versions, later source overwrite, unaligned indices and retired-slot reuse passed\n";
+}
+
 int main(int argc,char** argv) {
   if(argc<2 || argc>3)return 2;
   const bool validation=argc==3 && std::string(argv[2])=="--validation";
@@ -171,6 +241,7 @@ int main(int argc,char** argv) {
     if(!(properties.optimalTilingFeatures&VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))return 77;
     for(bool reverse:{false,true})Run(context,shader,73,41,reverse);
     Run(context,shader,2560,1440,true);
+    RunGpuSnapshots(context,shader);
     CHECK(context.validation_errors==0);std::cout<<"Native geometry GPU checks passed\n";return 0;
   }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

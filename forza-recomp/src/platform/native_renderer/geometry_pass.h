@@ -7,6 +7,7 @@
 #define FORZA_NATIVE_GEOMETRY_VULKAN_FUNCTIONS(X) \
   X(vkCreateGraphicsPipelines) \
   X(vkCmdBindIndexBuffer) \
+  X(vkCmdCopyBuffer) \
   X(vkCmdDrawIndexed) \
   X(vkCmdPushConstants) \
   X(vkCmdSetViewport) \
@@ -50,6 +51,15 @@ class GeometryPass {
     const void* indices = nullptr;
     uint32_t index_bytes = 0, index_width = 2;
   };
+  struct GpuRange {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceSize buffer_bytes = 0, offset = 0;
+    uint32_t bytes = 0;
+  };
+  struct GpuMesh {
+    GpuRange vertices, indices;
+    uint32_t index_width = 2;
+  };
   struct Raster {
     VkViewport viewport{};
     VkRect2D scissor{};
@@ -62,7 +72,11 @@ class GeometryPass {
     friend class GeometryPass;
     const GeometryPass* owner = nullptr;
     VkDescriptorSet descriptors = VK_NULL_HANDLE;
-    VkBuffer indices = VK_NULL_HANDLE;
+    VkBuffer vertices = VK_NULL_HANDLE, indices = VK_NULL_HANDLE;
+    VkBuffer source_vertices = VK_NULL_HANDLE, source_indices = VK_NULL_HANDLE;
+    VkBufferCopy vertex_copy{}, index_copy{};
+    VkDeviceSize index_offset = 0;
+    bool gpu_upload = false;
     VkIndexType index_type = VK_INDEX_TYPE_UINT16;
     uint32_t count = 0;
     GeometryParameters parameters;
@@ -76,6 +90,18 @@ class GeometryPass {
                   const Config& config, const std::vector<uint32_t>& vertex_shader);
   std::optional<Dispatch> Prepare(uint32_t slot, const Mesh& mesh, const GeometryParameters& parameters,
       const Raster& raster, uint64_t submission, uint64_t completed_submission);
+  // Sources must remain alive through submission completion and have transfer
+  // source usage. Buffer sizes and ranges describe the actual bound resources.
+  // The GPU path never reads stale CPU mirrors. Bounded shader fetches clip an
+  // out-of-range GPU index; unlike Prepare, it does not inspect index contents.
+  std::optional<Dispatch> PrepareGpu(uint32_t slot, const GpuMesh& mesh,
+      const GeometryParameters& parameters, const Raster& raster, uint64_t submission,
+      uint64_t completed_submission);
+  // Once per prepared token, outside a render pass and before Record. Source
+  // visibility and snapshot-buffer dependencies are ordered here. The source
+  // owner must retain its read tracking so later writes follow these copies.
+  // CPU preparations need no upload; this is a no-op for their tokens.
+  void RecordUploads(VkCommandBuffer command, const Dispatch& dispatch) const;
   void Record(VkCommandBuffer command, const Dispatch& dispatch) const;
  private:
   struct Buffer {
@@ -89,6 +115,12 @@ class GeometryPass {
     uint64_t submission = 0;
   };
   void Allocate(Buffer& buffer, uint32_t bytes, VkBufferUsageFlags usage);
+  bool CanPrepare(uint32_t slot, uint32_t vertex_bytes, uint32_t index_bytes, uint32_t index_width,
+      const GeometryParameters& parameters, const Raster& raster, uint64_t submission,
+      uint64_t completed) const;
+  Dispatch Reserve(uint32_t slot, uint32_t index_bytes, uint32_t index_width,
+      const GeometryParameters& parameters, const Raster& raster, uint64_t submission,
+      uint64_t completed);
   GeometryVulkanDispatch functions_;
   VkPhysicalDevice physical_ = VK_NULL_HANDLE;
   VkDevice device_ = VK_NULL_HANDLE;

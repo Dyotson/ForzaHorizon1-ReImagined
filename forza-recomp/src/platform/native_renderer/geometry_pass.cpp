@@ -105,8 +105,8 @@ void GeometryPass::Initialize(const GeometryVulkanDispatch& functions, VkPhysica
   const auto result=functions_.vkCreateGraphicsPipelines(device_,VK_NULL_HANDLE,1,&pipeline,nullptr,&pipeline_);
   functions_.vkDestroyShaderModule(device_,module,nullptr);Check(result,"geometry graphics pipeline");
   for(auto& frame:frames_) {
-    Allocate(frame.vertices,config.vertex_capacity,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    Allocate(frame.indices,config.index_capacity,VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    Allocate(frame.vertices,config.vertex_capacity,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    Allocate(frame.indices,config.index_capacity,VK_BUFFER_USAGE_INDEX_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocate.descriptorPool=descriptor_pool_;allocate.descriptorSetCount=1;allocate.pSetLayouts=&descriptor_layout_;
     Check(functions_.vkAllocateDescriptorSets(device_,&allocate,&frame.descriptors),"geometry descriptor allocation");
@@ -118,13 +118,14 @@ void GeometryPass::Initialize(const GeometryVulkanDispatch& functions, VkPhysica
   initialized_=true;
 }
 
-std::optional<GeometryPass::Dispatch> GeometryPass::Prepare(uint32_t slot, const Mesh& mesh,
-    const GeometryParameters& parameters, const Raster& raster, uint64_t submission, uint64_t completed) {
-  if(!initialized_ || slot>=frames_.size() || !Valid(parameters) || !mesh.vertices || !mesh.indices ||
-      !mesh.vertex_bytes || mesh.vertex_bytes>config_.vertex_capacity ||
-      uint64_t(parameters.layout[0])*parameters.layout[2]*4!=mesh.vertex_bytes ||
-      (mesh.index_width!=2 && mesh.index_width!=4) || mesh.index_bytes<3*mesh.index_width ||
-      mesh.index_bytes>config_.index_capacity || mesh.index_bytes%mesh.index_width ||
+bool GeometryPass::CanPrepare(uint32_t slot, uint32_t vertex_bytes, uint32_t index_bytes,
+    uint32_t index_width, const GeometryParameters& parameters, const Raster& raster,
+    uint64_t submission, uint64_t completed) const {
+  if(!initialized_ || slot>=frames_.size() || !Valid(parameters) ||
+      !vertex_bytes || vertex_bytes>config_.vertex_capacity ||
+      uint64_t(parameters.layout[0])*parameters.layout[2]*4!=vertex_bytes ||
+      (index_width!=2 && index_width!=4) || index_bytes<3*index_width ||
+      index_bytes>config_.index_capacity || index_bytes%index_width ||
       !submission || completed>=submission || submission<last_submission_ || completed<last_completed_ ||
       frames_[slot].submission>completed || raster.stencil_reference>255 ||
       !std::isfinite(raster.viewport.x) || !std::isfinite(raster.viewport.y) ||
@@ -138,7 +139,26 @@ std::optional<GeometryPass::Dispatch> GeometryPass::Prepare(uint32_t slot, const
       raster.scissor.offset.x<0 || raster.scissor.offset.y<0 || !raster.scissor.extent.width || !raster.scissor.extent.height ||
       uint64_t(raster.scissor.offset.x)+raster.scissor.extent.width>INT32_MAX ||
       uint64_t(raster.scissor.offset.y)+raster.scissor.extent.height>INT32_MAX)
-    return {};
+    return false;
+  return true;
+}
+
+GeometryPass::Dispatch GeometryPass::Reserve(uint32_t slot, uint32_t index_bytes,
+    uint32_t index_width, const GeometryParameters& parameters, const Raster& raster,
+    uint64_t submission, uint64_t completed) {
+  auto& frame=frames_[slot];
+  frame.submission=submission;last_submission_=submission;last_completed_=completed;
+  Dispatch draw;draw.owner=this;draw.descriptors=frame.descriptors;
+  draw.vertices=frame.vertices.buffer;draw.indices=frame.indices.buffer;
+  draw.index_type=index_width==2?VK_INDEX_TYPE_UINT16:VK_INDEX_TYPE_UINT32;
+  draw.count=index_bytes/index_width;draw.parameters=parameters;draw.raster=raster;
+  return draw;
+}
+
+std::optional<GeometryPass::Dispatch> GeometryPass::Prepare(uint32_t slot, const Mesh& mesh,
+    const GeometryParameters& parameters, const Raster& raster, uint64_t submission, uint64_t completed) {
+  if(!mesh.vertices || !mesh.indices || !CanPrepare(slot,mesh.vertex_bytes,mesh.index_bytes,
+      mesh.index_width,parameters,raster,submission,completed))return {};
   for(uint32_t offset=0;offset<mesh.index_bytes;offset+=mesh.index_width) {
     uint32_t index=0;std::memcpy(&index,static_cast<const uint8_t*>(mesh.indices)+offset,mesh.index_width);
     if(config_.triangle_strip && index==(mesh.index_width==2?0xffffu:0xffffffffu))continue;
@@ -149,11 +169,59 @@ std::optional<GeometryPass::Dispatch> GeometryPass::Prepare(uint32_t slot, const
   auto& frame=frames_[slot];
   std::memcpy(frame.vertices.mapped,mesh.vertices,mesh.vertex_bytes);
   std::memcpy(frame.indices.mapped,mesh.indices,mesh.index_bytes);
-  frame.submission=submission;last_submission_=submission;last_completed_=completed;
-  Dispatch draw;draw.owner=this;draw.descriptors=frame.descriptors;draw.indices=frame.indices.buffer;
-  draw.index_type=mesh.index_width==2?VK_INDEX_TYPE_UINT16:VK_INDEX_TYPE_UINT32;
-  draw.count=mesh.index_bytes/mesh.index_width;draw.parameters=parameters;draw.raster=raster;
+  return Reserve(slot,mesh.index_bytes,mesh.index_width,parameters,raster,submission,completed);
+}
+
+std::optional<GeometryPass::Dispatch> GeometryPass::PrepareGpu(uint32_t slot, const GpuMesh& mesh,
+    const GeometryParameters& parameters, const Raster& raster, uint64_t submission, uint64_t completed) {
+  if(!CanPrepare(slot,mesh.vertices.bytes,mesh.indices.bytes,mesh.index_width,
+      parameters,raster,submission,completed) || !mesh.vertices.buffer || !mesh.indices.buffer ||
+      mesh.vertices.offset%4 || mesh.indices.offset%mesh.index_width ||
+      (mesh.index_width==4 && !config_.full_index_uint32))return {};
+  const VkDeviceSize prefix=mesh.indices.offset%4;
+  const VkDeviceSize copy_bytes=(VkDeviceSize(mesh.indices.bytes)+prefix+3)&~VkDeviceSize(3);
+  if(mesh.vertices.offset>mesh.vertices.buffer_bytes ||
+      mesh.vertices.bytes>mesh.vertices.buffer_bytes-mesh.vertices.offset ||
+      mesh.indices.offset-prefix>mesh.indices.buffer_bytes ||
+      copy_bytes>mesh.indices.buffer_bytes-(mesh.indices.offset-prefix) || copy_bytes>config_.index_capacity)
+    return {};
+  const auto& frame=frames_[slot];
+  for(VkBuffer source:{mesh.vertices.buffer,mesh.indices.buffer})
+    if(source==frame.vertices.buffer || source==frame.indices.buffer)return {};
+  auto draw=Reserve(slot,mesh.indices.bytes,mesh.index_width,parameters,raster,submission,completed);
+  draw.gpu_upload=true;draw.source_vertices=mesh.vertices.buffer;draw.source_indices=mesh.indices.buffer;
+  draw.vertex_copy={mesh.vertices.offset,0,mesh.vertices.bytes};
+  draw.index_copy={mesh.indices.offset-prefix,0,copy_bytes};draw.index_offset=prefix;
   return draw;
+}
+
+void GeometryPass::RecordUploads(VkCommandBuffer command, const Dispatch& draw) const {
+  if(!command || draw.owner!=this)throw std::invalid_argument("Invalid native geometry upload");
+  if(!draw.gpu_upload)return;
+  VkBufferMemoryBarrier before[4]{};
+  const VkBuffer buffers[]={draw.source_vertices,draw.source_indices,draw.vertices,draw.indices};
+  for(uint32_t i=0;i<4;++i) {
+    before[i].sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    before[i].srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_HOST_WRITE_BIT;
+    if(i>=2)before[i].srcAccessMask|=VK_ACCESS_MEMORY_READ_BIT;
+    before[i].dstAccessMask=i<2?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_TRANSFER_WRITE_BIT;
+    before[i].srcQueueFamilyIndex=before[i].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    before[i].buffer=buffers[i];before[i].size=VK_WHOLE_SIZE;
+  }
+  functions_.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT|VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,4,before,0,nullptr);
+  functions_.vkCmdCopyBuffer(command,draw.source_vertices,draw.vertices,1,&draw.vertex_copy);
+  functions_.vkCmdCopyBuffer(command,draw.source_indices,draw.indices,1,&draw.index_copy);
+  VkBufferMemoryBarrier after[2]{};
+  for(uint32_t i=0;i<2;++i) {
+    after[i].sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    after[i].srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    after[i].dstAccessMask=i?VK_ACCESS_INDEX_READ_BIT:VK_ACCESS_SHADER_READ_BIT;
+    after[i].srcQueueFamilyIndex=after[i].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    after[i].buffer=i?draw.indices:draw.vertices;after[i].size=VK_WHOLE_SIZE;
+  }
+  functions_.vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_VERTEX_INPUT_BIT|VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,0,0,nullptr,2,after,0,nullptr);
 }
 
 void GeometryPass::Record(VkCommandBuffer command, const Dispatch& draw) const {
@@ -164,7 +232,7 @@ void GeometryPass::Record(VkCommandBuffer command, const Dispatch& draw) const {
   functions_.vkCmdSetViewport(command,0,1,&draw.raster.viewport);
   functions_.vkCmdSetScissor(command,0,1,&draw.raster.scissor);
   functions_.vkCmdSetStencilReference(command,VK_STENCIL_FACE_FRONT_AND_BACK,draw.raster.stencil_reference);
-  functions_.vkCmdBindIndexBuffer(command,draw.indices,0,draw.index_type);
+  functions_.vkCmdBindIndexBuffer(command,draw.indices,draw.index_offset,draw.index_type);
   functions_.vkCmdDrawIndexed(command,draw.count,1,0,0,0);
 }
 }  // namespace forza::native_renderer
