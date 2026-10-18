@@ -233,3 +233,8 @@ direct-motion and ownership-based RGBA8-resolve paths in the same game session.
 It preserves the independent diagnostic modes and every existing contract gate;
 unsupported draws and resolves continue through the original path. See
 [Native renderer](native_renderer.md#combined-native-execution).
+
+0087 adds the separately selected `FORZA_NATIVE_RENDERER=world-color` pass:
+authored world-color filtering, bloom, exposure, grading and output composition
+with immutable GPU quad snapshots and per-region controls. Unsupported states
+retain the existing draw. See [Native world-color composition](native_world_color.md).

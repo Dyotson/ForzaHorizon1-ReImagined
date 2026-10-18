@@ -14,6 +14,8 @@ add_executable(native_geometry_test ../../forza-recomp/tests/native_geometry_tes
 add_test(NAME native_geometry COMMAND native_geometry_test)
 add_executable(native_vertex_lit_test ../../forza-recomp/tests/native_vertex_lit_test.cpp)
 add_test(NAME native_vertex_lit COMMAND native_vertex_lit_test)
+add_executable(native_world_color_test ../../forza-recomp/tests/native_world_color_test.cpp)
+add_test(NAME native_world_color COMMAND native_world_color_test)
 
 option(NATIVE_RENDERER_GPU_TESTS "Build and run synthetic Vulkan pass validation" OFF)
 option(NATIVE_RENDERER_VULKAN_VALIDATION "Require Khronos synchronization validation in the GPU test" OFF)
@@ -40,6 +42,30 @@ if(NATIVE_RENDERER_GPU_TESTS)
     target_link_libraries(native_velocity_pass PUBLIC Vulkan::Headers)
     add_library(native_geometry_pass STATIC "${native_source}/geometry_pass.cpp")
     target_link_libraries(native_geometry_pass PUBLIC Vulkan::Headers)
+    add_library(native_world_color_pass STATIC "${native_source}/world_color_pass.cpp")
+    target_link_libraries(native_world_color_pass PUBLIC Vulkan::Headers)
+    foreach(stage vert frag)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/world_color.${stage}.spv"
+            COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1
+                "${native_source}/world_color.${stage}"
+                -o "${CMAKE_CURRENT_BINARY_DIR}/world_color.${stage}.spv"
+            DEPENDS "${native_source}/world_color.${stage}" "${native_source}/world_color.glsl"
+            VERBATIM)
+    endforeach()
+    add_custom_target(native_world_color_shaders ALL DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.vert.spv"
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.frag.spv")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/world_color_view.frag.spv"
+        COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../forza-recomp/tests/native_world_color_view.frag"
+            -o "${CMAKE_CURRENT_BINARY_DIR}/world_color_view.frag.spv"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../forza-recomp/tests/native_world_color_view.frag"
+        VERBATIM)
+    add_custom_target(native_world_color_view_shader DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/world_color_view.frag.spv")
+    add_executable(native_world_color_gpu_test ../../forza-recomp/tests/native_world_color_gpu_test.cpp)
+    target_link_libraries(native_world_color_gpu_test PRIVATE native_world_color_pass Vulkan::Vulkan)
+    add_dependencies(native_world_color_gpu_test native_world_color_shaders)
+    add_dependencies(native_world_color_gpu_test native_world_color_view_shader)
     add_executable(native_velocity_gpu_test ../../forza-recomp/tests/native_velocity_gpu_test.cpp)
     target_link_libraries(native_velocity_gpu_test PRIVATE native_velocity_pass Vulkan::Vulkan)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv"
@@ -58,6 +84,15 @@ if(NATIVE_RENDERER_GPU_TESTS)
     if(NATIVE_RENDERER_VULKAN_VALIDATION)
         list(APPEND validation_arguments --validation)
     endif()
+    add_test(NAME native_world_color_gpu COMMAND native_world_color_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.vert.spv"
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.frag.spv"
+        "--view-probe=${CMAKE_CURRENT_BINARY_DIR}/world_color_view.frag.spv" ${validation_arguments})
+    add_test(NAME native_world_color_dynamic_gpu COMMAND native_world_color_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.vert.spv"
+        "${CMAKE_CURRENT_BINARY_DIR}/world_color.frag.spv"
+        "--view-probe=${CMAKE_CURRENT_BINARY_DIR}/world_color_view.frag.spv" --dynamic-rendering ${validation_arguments})
+    set_tests_properties(native_world_color_gpu native_world_color_dynamic_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
     add_test(NAME native_velocity_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv" ${validation_arguments})
     set_tests_properties(native_velocity_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
@@ -91,12 +126,17 @@ set(RENDERDOC_INCLUDE_DIR "" CACHE PATH "RenderDoc's renderdoc/api/replay direct
 set(RENDERDOC_LIBRARY "" CACHE FILEPATH "Official RenderDoc replay library/import library")
 if(RENDERDOC_INCLUDE_DIR AND RENDERDOC_LIBRARY)
     add_executable(native_renderer_capture ../native_renderer_capture.cpp)
+    add_executable(native_renderer_profile ../native_renderer_profile.cpp)
+    target_include_directories(native_renderer_profile PRIVATE "${RENDERDOC_INCLUDE_DIR}")
+    target_link_libraries(native_renderer_profile PRIVATE "${RENDERDOC_LIBRARY}")
     target_include_directories(native_renderer_capture PRIVATE "${RENDERDOC_INCLUDE_DIR}")
     target_link_libraries(native_renderer_capture PRIVATE "${RENDERDOC_LIBRARY}")
     if(WIN32)
         target_compile_definitions(native_renderer_capture PRIVATE RENDERDOC_PLATFORM_WIN32)
+        target_compile_definitions(native_renderer_profile PRIVATE RENDERDOC_PLATFORM_WIN32)
     else()
         target_compile_definitions(native_renderer_capture PRIVATE RENDERDOC_PLATFORM_LINUX)
+        target_compile_definitions(native_renderer_profile PRIVATE RENDERDOC_PLATFORM_LINUX)
     endif()
 elseif(RENDERDOC_INCLUDE_DIR OR RENDERDOC_LIBRARY)
     message(FATAL_ERROR "Set both RENDERDOC_INCLUDE_DIR and RENDERDOC_LIBRARY to build the capture tool")

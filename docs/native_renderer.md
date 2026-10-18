@@ -562,6 +562,11 @@ Release builds.
 
 ## Next execution milestone
 
+The first complete world-color finishing replacement is documented in
+[Native world-color composition](native_world_color.md). It is selected
+independently with `FORZA_NATIVE_RENDERER=world-color`; the world geometry and
+attachment transfer work described below remains separate.
+
 The portability boundary and the next complete-pass acceptance criteria are in
 [Native renderer portability](native_renderer_portability.md). Vulkan-only pass
 replacements below remain useful comparisons, but do not establish a Metal port

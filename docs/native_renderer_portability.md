@@ -133,6 +133,21 @@ This original-MSAA baseline also differs from the earlier native-1440p SMAA
 geometry comparison. Source shaders, captures, saves and generated outputs stay
 outside the repository.
 
+## Live world-color pass
+
+The next supported live pass is now available independently as
+`FORZA_NATIVE_RENDERER=world-color`. It replaces world-color filtering, bloom
+combination, exposure, grading and output color conversion with authored Vulkan
+shaders. The captured original-GPU output matches within one 10-bit channel
+step at 2560x1440. A warmed four-run comparison measured 57.55 FPS original and
+59.62 FPS native, with the limitations and full validation recorded in
+[`native_world_color.md`](native_world_color.md).
+
+This owns the authored pipeline and its immutable inputs, while retaining the
+SDK scene attachments and transfers. It does not yet meet the broader native
+world-geometry/resource-ownership milestone above. Neither the measured gain
+nor the Vulkan implementation establishes Metal performance.
+
 ## Metal validation
 
 After the shared scene pass works on Vulkan, implement equivalent Metal resource
