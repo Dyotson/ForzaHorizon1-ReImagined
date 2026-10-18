@@ -30,6 +30,10 @@ finish-args:
   - --filesystem=/run/media:ro
   - --filesystem=/mnt:ro
   - --talk-name=org.freedesktop.ScreenSaver
+  # Local Rich Presence, only when the player enables it. No Discord account access.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/app/com.discordapp.Discord
+  - --filesystem=xdg-run/app/com.discordapp.DiscordCanary
 
 add-extensions:
   org.freedesktop.Sdk.Extension.llvm22:

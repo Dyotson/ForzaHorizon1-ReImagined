@@ -331,6 +331,14 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        discord = self.rows.get("discord_presence")
+        if discord:
+            identifier = str(self.cfg.settings.get("discord_application_id", ""))
+            valid = (17 <= len(identifier) <= 20 and identifier.isascii() and identifier.isdigit()
+                     and not identifier.startswith("0") and int(identifier) <= 2 ** 64 - 1)
+            discord.warning.setText("Discord sharing needs a valid public Application ID. "
+                                    "Add it under Advanced > Discord setup.")
+            discord.warning.setVisible(bool(self.cfg.settings.get("discord_presence")) and not valid)
         active = dlss.enabled(self.cfg)
         temporal = fsr3.enabled(self.cfg)
         ultrawide = bool(self.cfg.settings.get("forza_ultrawide"))
@@ -541,6 +549,8 @@ class SettingsPage(QWidget):
         for key, text, issue in gpu.warnings(vendor, warning_settings):
             found.setdefault(key, []).append(text + gpu.issue_text(issue))
         for key, row in self.rows.items():
+            if key == "discord_presence":
+                continue  # its setup warning is managed by _apply_dependencies
             row.set_warning(" ".join(found.get(key, [])))
 
     def _pad_block(self, lay):

@@ -7,6 +7,7 @@
 #include "debug/frame_stats.h"
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
+#include "platform/discord_presence.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
 #include "platform/vulkan_hooks.h"
@@ -46,6 +47,7 @@ std::string ForzaGpuBackend();
 class ForzaApp : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
+  ~ForzaApp() override { forza::discord::Shutdown(); }
 
   static std::unique_ptr<rex::ui::WindowedApp> Create(
       rex::ui::WindowedAppContext& ctx) {
@@ -105,6 +107,7 @@ class ForzaApp : public rex::ReXApp {
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
     return true;
@@ -117,6 +120,7 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::discord::Initialize();
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),
         [this, last = std::array<double, 6>{-1,-1,-1,-1,-1,-1}]

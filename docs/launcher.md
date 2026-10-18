@@ -6,6 +6,10 @@ both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
+Discord status sharing is available under **Settings > Online > Discord** (off by
+default). See [Discord Rich Presence](discord.md) for the one-time public application
+ID setup, supported activities, privacy and local IPC tests.
+
 No prebuilt game is ever shipped (the generated C++ is translated game code). The release
 holds only the **launcher**, the project's own sources, the Forza Live server and the patched
 ReXGlue SDK pieces (SDK code, BSD-3-Clause). The launcher builds the game on the player's

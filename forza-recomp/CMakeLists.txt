@@ -151,6 +151,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/discord_presence.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
@@ -184,6 +185,7 @@ else()
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
+include(cmake/discord.cmake)
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
