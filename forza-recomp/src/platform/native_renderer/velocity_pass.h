@@ -9,7 +9,7 @@ namespace forza::native_renderer {
 
 // An owned native compute pass. The caller supplies a compatible device/queue
 // and a sampled RGBA8 2D-array view in SHADER_READ_ONLY_OPTIMAL, made visible to
-// compute. Outputs remain GENERAL, visible to compute/transfer consumers.
+// compute. Owned outputs remain GENERAL, visible to compute/transfer consumers.
 // Input/output dimensions must not exceed 32768. UV transforms support identity
 // or an axis mirror; subrect/atlas transforms require a different pass contract.
 // Prepare runs on the producer thread; Record consumes its immutable snapshot on
@@ -31,6 +31,7 @@ class VelocityPass {
     VkDescriptorSet descriptors = VK_NULL_HANDLE;
     std::array<VkImage, 3> images{};
     bool first_use = false;
+    bool external_blur = false;
   };
   VelocityPass() = default;
   ~VelocityPass();
@@ -38,10 +39,18 @@ class VelocityPass {
   VelocityPass& operator=(const VelocityPass&) = delete;
 
   void Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice physical, VkDevice device, uint32_t width,
-                  uint32_t height, uint32_t slots, const std::vector<uint32_t>& spirv);
+                  uint32_t height, uint32_t slots, const std::vector<uint32_t>& spirv,
+                  bool own_blur = true);
+  // With own_blur=false, each preparation supplies a borrowed RGBA8 storage
+  // view covering at least width x height texels. Its owner handles transitions
+  // to/from GENERAL, visibility and lifetime through submission completion.
+  // Only that rectangle is written; padding in a larger attachment is retained.
   std::optional<Dispatch> Prepare(uint32_t slot, VkImageView packed_depth,
-      const VelocityParameters& parameters, uint64_t submission, uint64_t completed_submission);
+      const VelocityParameters& parameters, uint64_t submission, uint64_t completed_submission,
+      const Output* external_blur = nullptr);
   void Record(VkCommandBuffer command, const Dispatch& dispatch) const;
+  // Only owned outputs are returned here. In borrowed mode, attachment 2 has
+  // null handles; Dispatch::images contains the caller's actual destination.
   const Output& output(uint32_t slot, uint32_t attachment) const;
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }
@@ -62,6 +71,7 @@ class VelocityPass {
   VkPhysicalDevice physical_ = VK_NULL_HANDLE;
   VkDevice device_ = VK_NULL_HANDLE;
   uint32_t width_ = 0, height_ = 0;
+  bool own_blur_ = true;
   uint64_t last_submission_ = 0, last_completed_ = 0;
   VkDescriptorSetLayout descriptor_layout_ = VK_NULL_HANDLE;
   VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <atomic>
+#include <memory>
 
 using namespace forza::native_renderer;
 #define CHECK(value) do { if (!(value)) throw std::runtime_error(#value); } while (false)
@@ -170,7 +171,7 @@ struct Input {
   uint32_t width = 37, height = 19;
   bool swizzled = false;
   std::vector<std::array<uint8_t, 4>> pixels;
-  explicit Input(Context& c, uint32_t w = 37, uint32_t h = 19, bool bgra = false)
+  explicit Input(Context& c, uint32_t w = 37, uint32_t h = 19, bool bgra = false, bool storage = false)
       : context(c), width(w), height(h), swizzled(bgra), pixels(width * height) {
     for (uint32_t y = 0; y < height; ++y)
       for (uint32_t x = 0; x < width; ++x)
@@ -182,6 +183,7 @@ struct Input {
     info.extent = {width, height, 1}; info.mipLevels = info.arrayLayers = 1;
     info.samples = VK_SAMPLE_COUNT_1_BIT; info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (storage) info.usage |= VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     VK_CHECK(vkCreateImage(c.device, &info, nullptr, &image));
     VkMemoryRequirements requirements;
     vkGetImageMemoryRequirements(c.device, image, &requirements);
@@ -191,7 +193,8 @@ struct Input {
     VK_CHECK(vkAllocateMemory(c.device, &allocate, nullptr, &memory));
     VK_CHECK(vkBindImageMemory(c.device, image, memory, 0));
     VkImageViewCreateInfo image_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    image_view.image = image; image_view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    image_view.image = image;
+    image_view.viewType = storage ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     image_view.format = info.format;
     if (swizzled)
       image_view.components = {VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G,
@@ -212,7 +215,8 @@ struct Input {
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = info.extent;
     vkCmdCopyBufferToImage(c.command, upload.buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    barrier.oldLayout = barrier.newLayout; barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.oldLayout = barrier.newLayout;
+    barrier.newLayout = storage ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(c.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -231,19 +235,28 @@ struct Input {
 };
 
 void Run(Context& context, const Input& input, const std::vector<uint32_t>& shader,
-    uint32_t width, uint32_t height, bool rotated, bool singular) {
+    uint32_t width, uint32_t height, bool rotated, bool singular, bool borrowed = false) {
   const size_t pixels = size_t(width) * height;
   // A four-channel float texel needs a sixteen-byte-aligned copy offset even
   // when the preceding single-channel image has an odd number of pixels.
   const VkDeviceSize motion_offset = (pixels * 4 + 15) & ~VkDeviceSize(15);
   const VkDeviceSize offsets[] = {0, motion_offset, motion_offset + pixels * 16};
   Buffer readback(context, offsets[2] + pixels * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  std::unique_ptr<Input> target;
+  std::unique_ptr<Buffer> padding;
+  VelocityPass::Output external;
+  if (borrowed) {
+    target = std::make_unique<Input>(context, width + 13, height + 7, false, true);
+    padding = std::make_unique<Buffer>(context, target->pixels.size() * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    external = {target->image, target->view, VK_FORMAT_R8G8B8A8_UNORM};
+  }
   VelocityPass pass;
   VulkanDispatch dispatch;
 #define FORZA_NATIVE_BIND(name) dispatch.name = &name;
   FORZA_NATIVE_VULKAN_FUNCTIONS(FORZA_NATIVE_BIND)
 #undef FORZA_NATIVE_BIND
-  pass.Initialize(dispatch, context.physical, context.device, width, height, 2, shader);
+  pass.Initialize(dispatch, context.physical, context.device, width, height, 2, shader, !borrowed);
+  CHECK(bool(pass.output(0, 2).image) == !borrowed);
   VelocityParameters parameters;
   parameters.projection = {1.0002f, -1.0002f, 0, 0};
   for (uint32_t object = 0; object < 43; ++object) {
@@ -265,20 +278,56 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
     auto invalid = parameters;
     invalid.projection[0] = std::numeric_limits<float>::quiet_NaN();
     const uint64_t submission = repeat + 1, completed = repeat;
-    CHECK(!pass.Prepare(slot, input.view, invalid, submission, completed));
-    CHECK(!pass.Prepare(slot, input.view, parameters, completed, completed));
-    const auto dispatch = pass.Prepare(slot, input.view, parameters, submission, completed);
+    const auto* output = borrowed ? &external : nullptr;
+    CHECK(!pass.Prepare(slot, input.view, invalid, submission, completed, output));
+    CHECK(!pass.Prepare(slot, input.view, parameters, completed, completed, output));
+    if (borrowed) {
+      CHECK(!pass.Prepare(slot, input.view, parameters, submission, completed));
+      auto wrong_format = external; wrong_format.format = VK_FORMAT_R32_SFLOAT;
+      CHECK(!pass.Prepare(slot, input.view, parameters, submission, completed, &wrong_format));
+      auto missing_view = external; missing_view.view = VK_NULL_HANDLE;
+      CHECK(!pass.Prepare(slot, input.view, parameters, submission, completed, &missing_view));
+    }
+    const auto dispatch = pass.Prepare(slot, input.view, parameters, submission, completed, output);
     CHECK(dispatch.has_value());
-    CHECK(!pass.Prepare(slot, input.view, parameters, submission + 1, completed));
+    CHECK(dispatch->external_blur == borrowed);
+    auto mismatched = *dispatch;
+    mismatched.external_blur = !borrowed;
+    bool rejected = false;
+    try { pass.Record(context.command, mismatched); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    CHECK(rejected);
+    CHECK(!pass.Prepare(slot, input.view, parameters, submission + 1, completed, output));
+    VkImageMemoryBarrier external_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    if (borrowed) {
+      external_barrier.image = target->image;
+      external_barrier.oldLayout = external_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+      external_barrier.srcQueueFamilyIndex = external_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      external_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+      external_barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+      external_barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+      vkCmdPipelineBarrier(context.command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+          0, 0, nullptr, 0, nullptr, 1, &external_barrier);
+    }
     pass.Record(context.command, *dispatch);
+    if (borrowed) {
+      external_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+      external_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+      vkCmdPipelineBarrier(context.command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+          0, 0, nullptr, 0, nullptr, 1, &external_barrier);
+      VkBufferImageCopy copy{};
+      copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      copy.imageExtent = {target->width, target->height, 1};
+      vkCmdCopyImageToBuffer(context.command, target->image, VK_IMAGE_LAYOUT_GENERAL, padding->buffer, 1, &copy);
+    }
     // Recorded/enqueued work is not completed work. Its slot remains reserved.
-    CHECK(!pass.Prepare(slot, input.view, parameters, submission + 1, completed));
+    CHECK(!pass.Prepare(slot, input.view, parameters, submission + 1, completed, output));
     for (uint32_t i = 0; i < 3; ++i) {
       VkBufferImageCopy copy{};
       copy.bufferOffset = offsets[i];
       copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
       copy.imageExtent = {width, height, 1};
-      vkCmdCopyImageToBuffer(context.command, pass.output(slot, i).image,
+      vkCmdCopyImageToBuffer(context.command, dispatch->images[i],
           VK_IMAGE_LAYOUT_GENERAL, readback.buffer, 1, &copy);
     }
     VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -287,7 +336,20 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
     barrier.buffer = readback.buffer; barrier.size = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(context.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
         0, 0, nullptr, 1, &barrier, 0, nullptr);
+    if (borrowed) {
+      barrier.buffer = padding->buffer;
+      vkCmdPipelineBarrier(context.command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+          0, 0, nullptr, 1, &barrier, 0, nullptr);
+    }
     context.Submit();
+    if (borrowed) {
+      const auto* retained = static_cast<const uint8_t*>(padding->mapped);
+      for (uint32_t y = 0; y < target->height; ++y)
+        for (uint32_t x = 0; x < target->width; ++x)
+          if (x >= width || y >= height)
+            CHECK(std::memcmp(retained + (size_t(y) * target->width + x) * 4,
+                target->pixels[size_t(y) * target->width + x].data(), 4) == 0);
+    }
     const auto* depth = static_cast<const float*>(readback.mapped);
     const auto* motion = reinterpret_cast<const float*>(static_cast<const uint8_t*>(readback.mapped) + offsets[1]);
     const auto* blur = static_cast<const uint8_t*>(readback.mapped) + offsets[2];
@@ -309,7 +371,7 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
         for (uint32_t c = 0; c < 4; ++c)
           blur_error = std::max(blur_error, std::abs(int(blur[p * 4 + c]) - int(std::lround(expected.blur[c] * 255))));
       }
-    std::cout << width << 'x' << height << ", rotated=" << rotated << ", singular=" << singular
+    std::cout << width << 'x' << height << ", rotated=" << rotated << ", singular=" << singular << ", borrowed=" << borrowed
         << ", slot=" << slot << ": errors depth=" << depth_error << ", motion=" << motion_error
         << " pixels, blur=" << blur_error << "/255\n";
     CHECK(depth_error < 0.000002f);
@@ -344,6 +406,9 @@ int main(int argc, char** argv) {
     Input swizzled(context, 146, 82, true);
     Run(context, swizzled, shader, 73, 41, false, false);
     Run(context, swizzled, shader, 73, 41, true, false);
+    Run(context, input, shader, 73, 41, false, false, true);
+    Run(context, swizzled, shader, 73, 41, true, true, true);
+    Run(context, input, shader, 2560, 1440, false, false, true);
     CHECK(context.validation_errors == 0);
     std::cout << "Native velocity GPU checks passed\n";
     return 0;

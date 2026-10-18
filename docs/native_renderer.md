@@ -137,13 +137,14 @@ performance measurements. Fractional scene inputs remain on the original path.
 
 The complete patched Windows SDK also built with DLSS and FSR disabled, and its
 GPU plugin executed the replacement in a freshly rebuilt public TU4 host. No NGX
-runtime was loaded. A single uninstrumented control pair, with native 1440p,
+runtime was loaded. A preliminary sequential comparison, with native 1440p,
 SMAA, threaded submission and the cap configured to 120, measured:
 
 | Pass | Average FPS | 1% low | P99 | Worst | Stalls over 50 ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Original | 69.63 | 44.73 | 16.73 ms | 30.10 ms | 0 |
-| Native | 69.37 | 42.22 | 17.22 ms | 30.38 ms | 0 |
+| Native with compatibility copy | 69.37 | 42.22 | 17.22 ms | 30.38 ms | 0 |
+| Native direct attachment write | 69.96 | 46.98 | 16.39 ms | 29.34 ms | 0 |
 
 These are functional comparison results, not a demonstrated speedup. The window
 was covered by a pending Windows Firewall prompt, and AI traffic varies. More
@@ -169,7 +170,9 @@ retains the original renderer. The native bridge and the fallback both compile
 with NVIDIA DLSS and AMD FSR support disabled.
 
 Set `FORZA_NATIVE_RENDERER=velocity` in the game's environment to replace the
-recognized motion draw. Set it to `validate` to execute the native pass before
+recognized motion draw using an owned blur attachment and compatibility copy.
+Set it to `velocity-direct` to write directly into the existing attachment,
+removing that copy and the intermediate blur allocation. Set it to `validate` to execute the native pass before
 the original draw for GPU comparisons. With the variable unset, the original
 renderer runs. These are developer options, not a launcher setting or a user
 performance recommendation.
@@ -180,9 +183,27 @@ unsupported states, active occlusion queries, fractional rasters and unavailable
 frame slots on the original path. Three native slots per extent and at most four
 extents are retained until shutdown; extent changes never destroy in-flight
 resources. Recording uses an immutable packet on the submission thread. Shutdown
-drains recording and GPU work before releasing the pass. The current bridge
-copies native blur output into the existing target for its ordinary resolve
-consumers; eliminating that copy needs guest-resource alias mapping.
+drains recording and GPU work before releasing the pass. The direct variant
+borrows a storage-compatible RGBA8 view from the render-target owner. The owner
+transitions it to GENERAL before dispatch and restores its tracked usage
+afterward. The pass never allocates, destroys or transitions that borrowed image,
+and its shader touches only the active rectangle. The ordinary resolve consumers
+still use the existing attachment; eliminating the EDRAM round trip needs
+guest-resource alias mapping.
+
+The borrowed-target tests run at 73x41 and 2560x1440, including odd workgroups,
+mirrored sampling, singular/NaN transforms, frame-slot reuse and rejected
+incompatible dispatch metadata. Padding in a larger target is compared byte for
+byte after every dispatch. All three tests pass with synchronization validation.
+A moving-race fixture also matches the original GPU blur within one quantized
+step and its car mask exactly across three slot uses, including a reused slot.
+The direct runtime variant completed a full native-1440p AI run with threaded
+submission and Khronos synchronization validation, with no Vulkan errors.
+Those instrumentation-heavy frame rates are not performance evidence.
+A subsequent moving-gameplay capture contains four native dispatches writing
+the existing RGBA8 target directly. Each is followed by the ordinary resolve
+consumer, with no intervening image copy and no intermediate native blur image.
+The recovered final output is 2560x1440, including the HUD, minimap and car labels.
 
 ## Build the development tools
 
@@ -256,8 +277,13 @@ Release builds.
    keep unsupported states on the original path until their output is validated.
 2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
-3. Extend layout/queue and alias tracking to remove the compatibility copy and
-   EDRAM round trip while preserving CPU readbacks. Keep the option off by default.
+3. Fuse native RGBA8 image output directly into the existing tiled/scaled resolve
+   buffer, removing the EDRAM dump while preserving the current CPU readback
+   contract. The existing 32-bit scaled texture loader defines that buffer layout.
+   Longer-term direct texture-view aliases need independent snapshots and
+   consumer-fence lifetimes: the observed resolve clears its source attachment
+   immediately afterward, so retaining that view would be invalid. Keep the
+   option off by default.
 4. Check reflections, labels/HUD, cutscenes and menus before extending the path to
    more of the world renderer.
 

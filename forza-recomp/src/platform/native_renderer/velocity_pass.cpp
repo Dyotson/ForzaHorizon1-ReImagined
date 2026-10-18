@@ -54,7 +54,7 @@ uint32_t VelocityPass::MemoryType(uint32_t bits, VkMemoryPropertyFlags required)
 }
 
 void VelocityPass::Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice physical, VkDevice device,
-    uint32_t width, uint32_t height, uint32_t slots, const std::vector<uint32_t>& spirv) {
+    uint32_t width, uint32_t height, uint32_t slots, const std::vector<uint32_t>& spirv, bool own_blur) {
   if (device_ || !dispatch.Valid() || !physical || !device || !width || !height || !slots || slots > 16 ||
       spirv.empty() || spirv.front() != 0x07230203)
     throw std::invalid_argument("Invalid native velocity configuration");
@@ -65,6 +65,7 @@ void VelocityPass::Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice p
       height > properties.limits.maxImageDimension2D)
     throw std::invalid_argument("Native velocity extent exceeds device limits");
   physical_ = physical; device_ = device; width_ = width; height_ = height;
+  own_blur_ = own_blur;
   frames_.resize(slots);
 
   const VkDescriptorSetLayoutBinding bindings[] = {
@@ -125,6 +126,7 @@ void VelocityPass::Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice p
                                     VK_FORMAT_R8G8B8A8_UNORM};
     for (uint32_t index = 0; index < 3; ++index) {
       auto& image = frame.images[index]; image.format = formats[index];
+      if (index == 2 && !own_blur_) continue;
       VkFormatProperties format;
       functions_.vkGetPhysicalDeviceFormatProperties(physical_, image.format, &format);
       constexpr auto required = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
@@ -152,18 +154,21 @@ void VelocityPass::Initialize(const VulkanDispatch& dispatch, VkPhysicalDevice p
 
 std::optional<VelocityPass::Dispatch> VelocityPass::Prepare(uint32_t slot,
     VkImageView packed_depth, const VelocityParameters& parameters,
-    uint64_t submission, uint64_t completed_submission) {
+    uint64_t submission, uint64_t completed_submission, const Output* external_blur) {
   auto& frame = frames_.at(slot);
   if (!packed_depth || !Valid(parameters) || submission <= completed_submission ||
       submission < last_submission_ || completed_submission < last_completed_ ||
-      frame.submission > completed_submission)
+      frame.submission > completed_submission ||
+      (own_blur_ && external_blur) ||
+      (!own_blur_ && (!external_blur || !external_blur->image || !external_blur->view ||
+                     external_blur->format != VK_FORMAT_R8G8B8A8_UNORM)))
     return {};
   std::memcpy(frame.mapped, &parameters, sizeof(parameters));
   const VkDescriptorImageInfo images[] = {
       {sampler_, packed_depth, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
       {VK_NULL_HANDLE, frame.images[0].view, VK_IMAGE_LAYOUT_GENERAL},
       {VK_NULL_HANDLE, frame.images[1].view, VK_IMAGE_LAYOUT_GENERAL},
-      {VK_NULL_HANDLE, frame.images[2].view, VK_IMAGE_LAYOUT_GENERAL}};
+      {VK_NULL_HANDLE, own_blur_ ? frame.images[2].view : external_blur->view, VK_IMAGE_LAYOUT_GENERAL}};
   const VkDescriptorBufferInfo buffer{frame.constants, 0, sizeof(parameters)};
   VkWriteDescriptorSet writes[5]{};
   for (uint32_t i = 0; i < 5; ++i) {
@@ -177,7 +182,9 @@ std::optional<VelocityPass::Dispatch> VelocityPass::Prepare(uint32_t slot,
   Dispatch dispatch;
   dispatch.descriptors = frame.descriptors;
   dispatch.first_use = !frame.initialized;
+  dispatch.external_blur = !own_blur_;
   for (uint32_t i = 0; i < 3; ++i) dispatch.images[i] = frame.images[i].image;
+  if (!own_blur_) dispatch.images[2] = external_blur->image;
   frame.initialized = true;
   frame.submission = submission;
   last_submission_ = submission;
@@ -186,25 +193,26 @@ std::optional<VelocityPass::Dispatch> VelocityPass::Prepare(uint32_t slot,
 }
 
 void VelocityPass::Record(VkCommandBuffer command, const Dispatch& dispatch) const {
-  if (!command || !dispatch.descriptors)
+  if (!command || !dispatch.descriptors || dispatch.external_blur == own_blur_)
     throw std::invalid_argument("Native velocity dispatch must be prepared before recording");
   VkImageMemoryBarrier barriers[3];
-  for (uint32_t i = 0; i < 3; ++i)
+  const uint32_t owned_images = dispatch.external_blur ? 2 : 3;
+  for (uint32_t i = 0; i < owned_images; ++i)
     barriers[i] = ImageBarrier(dispatch.images[i],
         dispatch.first_use ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
         VK_IMAGE_LAYOUT_GENERAL, dispatch.first_use ? 0 : VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
         VK_ACCESS_SHADER_WRITE_BIT);
   functions_.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      0, 0, nullptr, 0, nullptr, 3, barriers);
+      0, 0, nullptr, 0, nullptr, owned_images, barriers);
   functions_.vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
   functions_.vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout_,
       0, 1, &dispatch.descriptors, 0, nullptr);
   functions_.vkCmdDispatch(command, (width_ + 7) / 8, (height_ + 7) / 8, 1);
-  for (uint32_t i = 0; i < 3; ++i)
+  for (uint32_t i = 0; i < owned_images; ++i)
     barriers[i] = ImageBarrier(dispatch.images[i], VK_IMAGE_LAYOUT_GENERAL,
         VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT);
   functions_.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-      0, 0, nullptr, 0, nullptr, 3, barriers);
+      0, 0, nullptr, 0, nullptr, owned_images, barriers);
 }
 
 const VelocityPass::Output& VelocityPass::output(uint32_t slot, uint32_t attachment) const {

@@ -177,3 +177,11 @@ and a nonempty but incomplete path fails configuration. The shader header is
 generated in the build directory. Native rendering is disabled by default and
 does not require NVIDIA libraries. See [Native renderer](native_renderer.md) for
 the deliberately limited replacement scope and validation evidence.
+
+0080 adds `FORZA_NATIVE_RENDERER=velocity-direct`. The native motion pass writes
+its RGBA8 output directly into the existing color attachment, removing the
+intermediate blur image and copy. The render-target owner handles the borrowed
+image's layout and visibility; the pass retains its own depth/motion images and
+submission-protected descriptor slots. Only compatible single-sample RGBA8
+attachments receive storage usage. Unsupported formats and states retain the
+original draw. This does not yet bypass EDRAM resolves or replace geometry.
