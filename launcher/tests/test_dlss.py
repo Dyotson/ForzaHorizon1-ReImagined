@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -208,6 +209,10 @@ class RuntimeSetup(unittest.TestCase):
             self.assertEqual(dlss._sha256(binary), original)
             self.assertEqual(sha.call_count, 1)
             binary.write_bytes(b"replacement runtime")
+            # Same-size writes can share a filesystem timestamp tick. Model an
+            # observable modification explicitly rather than depending on speed.
+            stat = binary.stat()
+            os.utime(binary, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
             self.assertNotEqual(dlss._sha256(binary), original)
             self.assertEqual(sha.call_count, 2)
 
