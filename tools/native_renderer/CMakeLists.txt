@@ -107,6 +107,9 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_r10_resolve_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv" --resolve-r10 ${validation_arguments})
     set_tests_properties(native_r10_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_test(NAME native_r10_direct_gpu COMMAND native_velocity_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/resolve_r10.spv" --resolve-direct ${validation_arguments})
+    set_tests_properties(native_r10_direct_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
     add_test(NAME native_resolve_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv" --resolve-only ${validation_arguments})
     set_tests_properties(native_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)

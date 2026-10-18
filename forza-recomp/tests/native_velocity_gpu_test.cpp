@@ -281,14 +281,15 @@ struct ResolveGpu {
 
 struct SceneImage {
  Context& c;VkImage image{};VkImageView view{};VkDeviceMemory memory{};
- SceneImage(Context& c,uint32_t w,uint32_t h,bool storage):c(c){
+ SceneImage(Context& c,uint32_t w,uint32_t h,bool storage,bool direct=false):c(c){
   VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};info.imageType=VK_IMAGE_TYPE_2D;
-  info.format=storage?VK_FORMAT_R32_UINT:VK_FORMAT_A2B10G10R10_UNORM_PACK32;info.extent={w,h,1};info.mipLevels=info.arrayLayers=1;
+  info.format=storage&&!direct?VK_FORMAT_R32_UINT:VK_FORMAT_A2B10G10R10_UNORM_PACK32;info.extent={w,h,1};info.mipLevels=info.arrayLayers=1;
+  if(direct)info.flags=VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
   info.samples=VK_SAMPLE_COUNT_1_BIT;info.tiling=VK_IMAGE_TILING_OPTIMAL;info.usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|(storage?VK_IMAGE_USAGE_STORAGE_BIT:VK_IMAGE_USAGE_TRANSFER_DST_BIT);
   VK_CHECK(vkCreateImage(c.device,&info,nullptr,&image));VkMemoryRequirements r;vkGetImageMemoryRequirements(c.device,image,&r);
   VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=r.size;a.memoryTypeIndex=c.MemoryType(r.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   VK_CHECK(vkAllocateMemory(c.device,&a,nullptr,&memory));VK_CHECK(vkBindImageMemory(c.device,image,memory,0));
-  if(storage){VkImageViewCreateInfo v{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};v.image=image;v.viewType=VK_IMAGE_VIEW_TYPE_2D;v.format=info.format;v.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};VK_CHECK(vkCreateImageView(c.device,&v,nullptr,&view));}
+  if(storage){VkImageViewCreateInfo v{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};v.image=image;v.viewType=VK_IMAGE_VIEW_TYPE_2D;v.format=VK_FORMAT_R32_UINT;v.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};VK_CHECK(vkCreateImageView(c.device,&v,nullptr,&view));}
  }
  ~SceneImage(){if(view)vkDestroyImageView(c.device,view,nullptr);vkDestroyImage(c.device,image,nullptr);vkFreeMemory(c.device,memory,nullptr);}
 };
@@ -298,7 +299,7 @@ void SceneBarrier(Context& c,VkImage image,VkImageLayout old,VkImageLayout next,
  vkCmdPipelineBarrier(c.command,src,dst,0,0,nullptr,0,nullptr,1,&b);
 }
 
-void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=false) {
+void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=false,bool direct=false) {
   ResolveGpu gpu(context);gpu.Initialize(shader,r10);
   auto run=[&](uint32_t sx,uint32_t sy,uint32_t endian,bool swap,uint32_t width,uint32_t height,bool fill,float gain=1) {
     ResolveParameters p;
@@ -340,7 +341,7 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=fa
       std::memcpy(expected.data()+ResolveQuadOffset(p,q,y)/4,encoded.data(),16);
     }
     std::unique_ptr<SceneImage> snapshot,consumer;std::unique_ptr<Buffer> native_read;
-    if(r10){snapshot=std::make_unique<SceneImage>(context,width,height,true);consumer=std::make_unique<SceneImage>(context,width,height,false);
+    if(r10){snapshot=std::make_unique<SceneImage>(context,width,height,true,direct);consumer=std::make_unique<SceneImage>(context,width,height,false);
       native_read=std::make_unique<Buffer>(context,width*height*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);}
     VkDescriptorBufferInfo buffer_info{output.buffer,0,p.bounds[0]};
     VkDescriptorImageInfo image_info{VK_NULL_HANDLE,view.value,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -377,12 +378,14 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=fa
       const auto copyImage=reinterpret_cast<PFN_vkCmdCopyImage>(vkGetInstanceProcAddr(context.instance,"vkCmdCopyImage"));CHECK(clear && copyImage);
       const VkClearColorValue color{{1,0,1,0}};const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
       clear(context.command,input.image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&color,1,&range);
+      if(!direct){
       SceneBarrier(context,consumer->image,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,VK_ACCESS_TRANSFER_WRITE_BIT);
       VkImageCopy copy{};copy.srcSubresource=copy.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};copy.extent={width,height,1};
       copyImage(context.command,snapshot->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,consumer->image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
       SceneBarrier(context,consumer->image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+      }
       VkBufferImageCopy read{};read.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};read.imageExtent={width,height,1};
-      vkCmdCopyImageToBuffer(context.command,consumer->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,native_read->buffer,1,&read);
+      vkCmdCopyImageToBuffer(context.command,direct?snapshot->image:consumer->image,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,native_read->buffer,1,&read);
       VkBufferMemoryBarrier host=barrier;host.buffer=native_read->buffer;host.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
       vkCmdPipelineBarrier(context.command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,nullptr,1,&host,0,nullptr);
     }
@@ -393,7 +396,7 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=fa
       CHECK(static_cast<const uint32_t*>(native_read->mapped)[y*width+q*4+lane]==SwapResolveWord(encoded,endian));
     }
     std::cout<<"Resolve "<<width<<'x'<<height<<", scale="<<sx<<'x'<<sy<<", endian="<<endian
-             <<", gain="<<gain<<", swap="<<swap<<", half-pixel fill="<<fill<<": exact output and preserved padding\n";
+             <<", gain="<<gain<<", swap="<<swap<<", half-pixel fill="<<fill<<", direct="<<direct<<": exact output and preserved padding\n";
   };
   for(float gain:{1.0f,.25f})if(r10 || gain==1){
   for(const auto& scale:std::array<std::array<uint32_t,2>,7>{{{1,1},{2,2},{3,2},{7,3},{4,6},{5,7},{1,4}}})
@@ -405,11 +408,12 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=fa
 
 int main(int argc, char** argv) {
   if (argc < 2 || argc > 4) return 2;
-  bool validation=false,resolve_only=false,r10=false;
+  bool validation=false,resolve_only=false,r10=false,direct=false;
   for(int i=2;i<argc;++i) {
     if(std::string(argv[i])=="--validation")validation=true;
     else if(std::string(argv[i])=="--resolve-only")resolve_only=true;
     else if(std::string(argv[i])=="--resolve-r10"){resolve_only=true;r10=true;}
+    else if(std::string(argv[i])=="--resolve-direct"){resolve_only=true;r10=true;direct=true;}
     else return 2;
   }
   try {
@@ -426,7 +430,7 @@ int main(int argc, char** argv) {
       std::cout << "No compatible Vulkan device\n"; return 77;
     }
     if(resolve_only) {
-      RunResolve(context,shader,r10);CHECK(context.validation_errors==0);
+      RunResolve(context,shader,r10,direct);CHECK(context.validation_errors==0);
       std::cout<<"Native resolve GPU checks passed\n";return 0;
     }
     Input input(context);

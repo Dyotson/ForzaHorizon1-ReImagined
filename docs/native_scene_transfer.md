@@ -14,13 +14,16 @@ it as an unconverted image alias produces the wrong exposure and rounding.
 The new compute dispatch reads the owned attachment, reconstructs its packed
 channels and applies the original conversion. It writes both the canonical
 tiled backing and an independent R32_UINT snapshot containing the converted R10
-bits. The next matching texture load copies those bits into its existing R10
-image with `vkCmdCopyImage`, bypassing its untiling dispatch. This uses a raw
-copy between compatible 32-bit formats, without filtering or normalization.
-The snapshot is complete before the source attachment can be cleared or reused.
+bits. The first matching texture load copies those bits into its existing R10
+image with `vkCmdCopyImage`, bypassing its untiling dispatch. That load also
+records the complete consumer key. Later producers reacquire that cached texture
+and write the converted bits directly through its existing R32_UINT storage view.
+This bypasses both the snapshot copy and untiling for that exact consumer.
+Conversion finishes before the source attachment can be cleared or reused.
 
 This removes the supported scene's EDRAM dump and texture reconstruction. It
-still writes canonical tiled memory and makes one image copy. CPU readbacks,
+still writes canonical tiled memory. Initial or unsupported consumers retain the
+snapshot-copy or ordinary upload path. CPU readbacks,
 other texture interpretations and unsupported consumers retain valid backing.
 The already-direct HUD handoff, original geometry and reflection passes remain
 in use; this is not a complete native renderer or a Metal backend.
@@ -46,10 +49,20 @@ Eight slots own their images and views, with an actual allocation budget of
 only waited submissions allow reuse. Invalidation does not free an in-flight
 image. Allocation failure, missing descriptors, budget exhaustion or any
 unsupported state returns to the original path. No device-idle wait is added.
+The direct path remembers a key rather than an image pointer across producers,
+so eviction cannot leave a stale pointer. Each producer reacquires and marks the
+normal cached image as used. Its existing usage barriers order previous shader
+reads before the compute write and subsequent sampling after it. Sampling views
+stay attached to the same cache-owned image; no attachment alias is introduced.
+After canonical backing invalidation, only the populated texture is marked
+current and watched, under the same recursive invalidation lock. Other keys and
+later overlapping writes continue to use the normal cache invalidation rules.
+Missing storage views or descriptors retain the independent-snapshot fallback.
+
 The texture-cache owner drains recording/GPU work before destroying resources
 and unregisters the memory watch before releasing the state.
 
-SDK patch 0088 connects these rules to Vulkan. Canonical headers and shader
+SDK patches 0088 and 0089 connect these rules to Vulkan. Canonical headers and shader
 sources are supplied through `REXGLUE_FH1_NATIVE_SOURCE_DIR`; builds without
 those sources keep the standalone fallback. The public Vulkan function-table
 ABI is unchanged.
@@ -66,9 +79,12 @@ ABI is unchanged.
   offsets/padding and full 1440p images. The test clears the source before
   consuming the snapshot, then checks both the raw-copy consumer and backing.
   The live bridge deliberately accepts a narrower state set than the shader.
+- Another 340 cases write directly through an R32_UINT view of a mutable R10
+  image, without the intermediate image copy. They clear the original source
+  before reading the result and check exact converted bits and tiled backing.
 - CPU tests check identity, overlapping and adjacent writes, stale versions,
   monotonic submissions and protection of invalidated in-flight resources.
-- All 15 standalone tests pass: seven CPU and eight GPU tests, with Khronos
+- All 16 standalone tests pass: seven CPU and nine GPU tests, with Khronos
   synchronization validation enabled for the GPU suite. The CPU-only build
   passes all seven tests without Vulkan. Canonical and standalone-fallback
   Windows SDK builds pass, and the full patch series applies to its pinned SDK.
@@ -120,11 +136,12 @@ from the timed runs. Per-second audits found no other FH1 process.
 | Pooled | Baseline | 59.42 | 39.09 | 19.45 ms | 36.46 ms | 0 |
 | Pooled | Native snapshot | 56.58 | 36.92 | 20.68 ms | 37.12 ms | 0 |
 
-The native snapshot path is **4.78% slower on average** in this comparison,
+The original native snapshot path is **4.78% slower on average** in this comparison,
 with a lower 1% low. This does not establish a performance improvement. It
 remains opt-in, and the normal renderer is unchanged. The remaining canonical
 writes and image copies need profiling before further optimization; these
-end-to-end results do not attribute the regression to one GPU operation.
+end-to-end results do not attribute the regression to one GPU operation. These
+numbers precede the direct cached-image output in patch 0089.
 
 Pooled statistics use saved frame intervals: 7,130 baseline intervals over
 119.985673 seconds and 6,789 native intervals over 119.983235 seconds. CSV counts

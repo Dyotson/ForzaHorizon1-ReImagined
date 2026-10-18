@@ -1,0 +1,104 @@
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -91,7 +91,12 @@
+   VkImageView GetActiveBindingOrNullImageView(uint32_t fetch_constant_index,
+                                               xenos::FetchOpDimension dimension, bool is_signed);
+
+-  struct NativeScenePacket {VkDescriptorSet descriptor;uint32_t slot;};
++  struct NativeScenePacket {
++    VkDescriptorSet descriptor;
++    uint32_t slot;
++    Texture* direct_texture = nullptr;
++    uint32_t address = 0, bytes = 0;
++  };
+   std::optional<NativeScenePacket> PrepareNativeSceneSnapshot(uint32_t address,uint32_t bytes,
+       uint32_t width,uint32_t height,uint32_t pitch,uint32_t endian);
+   void PublishNativeSceneSnapshot(const NativeScenePacket&);
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -57,6 +57,9 @@
+   std::array<Image,forza::native_renderer::SceneSnapshotTracker::kSlots> images{};
+   uint64_t allocated_bytes=0;
+   rex::thread::global_critical_region critical;
++  // Remember a validated consumer key, never a pointer that cache eviction can
++  // invalidate. Reacquire and pin the ordinary cached image at each producer.
++  std::optional<TextureKey> direct_key;
+ #endif
+ };
+ void VulkanTextureCache::NativeSceneInvalidated(const std::unique_lock<std::recursive_mutex>&,
+@@ -88,7 +91,39 @@
+     native_scene_=std::make_unique<NativeSceneState>();
+     native_scene_watch_=shared_memory().RegisterGlobalWatch(NativeSceneInvalidated,this);
+   }
+-  auto& state=*native_scene_;std::optional<uint32_t> slot;
++  auto& state=*native_scene_;
++  if (state.direct_key) {
++    const auto consumer_key = *state.direct_key;
++    auto* texture = static_cast<VulkanTexture*>(FindOrCreateTexture(consumer_key));
++    if (texture && texture->storage_view() &&
++        nr::SceneSnapshotKey{uint32_t(consumer_key.base_page) << 12,
++          texture->GetGuestBaseSize(), consumer_key.GetWidth(), consumer_key.GetHeight(),
++          uint32_t(consumer_key.pitch) * 32, uint32_t(consumer_key.endianness), sx, sy} == key) {
++      auto descriptor = command_processor_.AllocateSingleTransientDescriptor(
++          VulkanCommandProcessor::SingleTransientDescriptorLayout::kStorageImageCompute);
++      if (descriptor) {
++        const auto* device = command_processor_.GetVulkanDevice();
++        VkDescriptorImageInfo image_info{VK_NULL_HANDLE, texture->storage_view(), VK_IMAGE_LAYOUT_GENERAL};
++        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
++        write.dstSet = descriptor; write.descriptorCount = 1;
++        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; write.pImageInfo = &image_info;
++        device->functions().vkUpdateDescriptorSets(device->device(), 1, &write, 0, nullptr);
++        // The normal texture cache owns the image and all sampling views. Its
++        // usage state orders earlier shader reads before this compute write;
++        // RequestTextures will order this write before the next shader read.
++        texture->MarkAsUsed();
++        VkPipelineStageFlags stage; VkAccessFlags access; VkImageLayout layout;
++        GetTextureUsageMasks(texture->SetUsage(VulkanTexture::Usage::kComputeDestination), stage, access, layout);
++        command_processor_.EndRenderPass();
++        command_processor_.PushImageMemoryBarrier(texture->image(),
++            ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1),
++            stage, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, access, VK_ACCESS_SHADER_WRITE_BIT,
++            layout, VK_IMAGE_LAYOUT_GENERAL);
++        return NativeScenePacket{descriptor, 0, texture, address, bytes};
++      }
++    }
++  }
++  std::optional<uint32_t> slot;
+   {auto lock=state.critical.Acquire();slot=state.tracker.Reserve(command_processor_.GetCurrentSubmission(),command_processor_.GetCompletedSubmission());}
+   if(!slot)return {};
+   auto& image=state.images[*slot];const auto* device=command_processor_.GetVulkanDevice();
+@@ -124,7 +159,20 @@
+ }
+ void VulkanTextureCache::PublishNativeSceneSnapshot(const NativeScenePacket& packet) {
+ #if defined(REXGLUE_FH1_NATIVE_RENDERER)
+-  auto& state=*native_scene_;auto& image=state.images[packet.slot];
++  auto& state=*native_scene_;
++  if (packet.direct_texture) {
++    // Keep canonical backing and every other texture interpretation valid.
++    // Invalidate first, then publish only the image this dispatch populated,
++    // under the same recursive lock used by CPU/GPU invalidation callbacks.
++    auto lock = state.critical.Acquire();
++    MarkRangeAsResolved(packet.address, packet.bytes);
++    const bool published = packet.direct_texture->MakeUpToDateAndWatch(lock);
++    static uint64_t count = 0;
++    if (published && (++count == 1 || count % 120 == 0))
++      REXGPU_INFO("FH1 native scene direct: published {} (cached R10 image, snapshot copy skipped)", count);
++    return;
++  }
++  auto& image=state.images[packet.slot];
+   command_processor_.PushImageMemoryBarrier(image.image,ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1),
+       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,
+       VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+@@ -144,6 +192,10 @@
+       key.scaled_resolve!=IsDrawResolutionScaled() || GetHostFormatPair(key).format_unsigned.format!=VK_FORMAT_A2B10G10R10_UNORM_PACK32)return false;
+   forza::native_renderer::SceneSnapshotKey identity{uint32_t(key.base_page)<<12,texture.GetGuestBaseSize(),key.GetWidth(),key.GetHeight(),
+       uint32_t(key.pitch)*32,uint32_t(key.endianness),draw_resolution_scale_x(),draw_resolution_scale_y()};
++  if (!forza::native_renderer::Valid(identity)) return false;
++  // Learn the complete consumer key (including packed-mip and scale bits).
++  // Different interpretations still load the canonical backing normally.
++  native_scene_->direct_key = key;
+   std::optional<uint32_t> slot;
+   {auto lock=native_scene_->critical.Acquire();slot=native_scene_->tracker.Find(identity,command_processor_.GetCurrentSubmission());}
+   if(!slot)return false;

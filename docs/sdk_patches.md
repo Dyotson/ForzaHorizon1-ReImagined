@@ -246,3 +246,9 @@ A matching texture load copies that image instead of untiling the backing.
 Shared-memory invalidation, waited reader/producer fences and bounded allocations
 protect reuse; unsupported states retain the original path. See
 [Native scene transfer](native_scene_transfer.md) for exact-output and GPU tests.
+
+0089 lets a subsequent supported R10 producer populate its previously observed
+consumer's cache-owned image directly through its R32_UINT storage view. This
+removes repeated snapshot copies for the exact key while preserving canonical
+backing, normal texture views, usage barriers, eviction and memory watches.
+Initial consumers and missing storage views retain 0088's snapshot fallback.
