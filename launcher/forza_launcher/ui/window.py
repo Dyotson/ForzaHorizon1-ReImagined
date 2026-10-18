@@ -1,4 +1,4 @@
-"""The main window: Play, Photo gallery, Setup, Settings and About."""
+"""The main window: Play, Photo gallery, Setup, Settings, Controls and About."""
 import sys
 import threading
 
@@ -13,6 +13,7 @@ from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .controls_page import ControlsPage
 
 
 class MainWindow(QMainWindow):
@@ -83,12 +84,15 @@ class MainWindow(QMainWindow):
         self.settings = SettingsPage(cfg, self)
         self.about = AboutPage(cfg, self)
         self.gallery = GalleryPage(cfg, self)
+        self.controls = ControlsPage(cfg, self)
+        self.controls.haptics_changed.connect(self.update_haptics)
+        self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
         self.navs = QButtonGroup(self)
         for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
                                           ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery))):
+                                          ("Photo gallery", self.gallery), ("Controls", self.controls))):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -98,6 +102,8 @@ class MainWindow(QMainWindow):
             # beside Play in the sidebar without renumbering those destinations.
             if page is self.gallery:
                 sl.insertWidget(2, btn)
+            elif page is self.controls:
+                sl.insertWidget(5, btn)
             else:
                 sl.addWidget(btn)
             self.stack.addWidget(page)
@@ -173,6 +179,11 @@ class MainWindow(QMainWindow):
         self.version.setText(f"Launcher {__version__}\nGame: {game.game_version(install)}")
         self.write_toml()
 
+    def show_control_settings(self):
+        from .. import schema
+        self.settings.tabs.setCurrentIndex(schema.GROUPS.index('Controls'))
+        self.show_page(2)
+
     def status(self, text, error=False):
         self.footer.setText(text)
         self.footer.setVisible(bool(text))
@@ -212,6 +223,13 @@ class MainWindow(QMainWindow):
             return
         # Installation flushed settings before handing off. Avoid writing the old config
         # over migrations made by a newly started Flatpak launcher.
+        service = getattr(self.session, 'haptics', None)
+        if service and service.running:
+            service.stop()
+            self.status('Releasing adaptive triggers…')
+            QTimer.singleShot(50, self.close)
+            e.ignore()
+            return
         if not self.about.updates.restarting:
             self.settings.flush()
         self.stop_game()
@@ -390,6 +408,10 @@ class MainWindow(QMainWindow):
             return
         if self.session is not None:
             self.session.stop()
+
+    def update_haptics(self, settings):
+        if self.session and self.session.haptics:
+            self.session.haptics.update(settings)
 
     def _poll(self):
         if self.session is None:

@@ -26,6 +26,7 @@ mkdir -p "$DIST/licenses" "$DIST/server"
 # One flat directory: forza finds librexruntime.so through its $ORIGIN runpath, and the
 # runtime dlopen()s the plugin and the modules from there.
 cp "$BUILD/forza" "$DIST/"
+cp "$BUILD/forza-telemetry.json" "$DIST/"
 for module in "${MODULES[@]}"; do cp "$BUILD/$module" "$DIST/"; done
 cp -L "$SDK/lib/librexruntime.so" "$SDK/lib/librexgpu-xenos.so" "$DIST/"
 # The plugin comes out of the SDK's build tree, whose runpath points into that tree.

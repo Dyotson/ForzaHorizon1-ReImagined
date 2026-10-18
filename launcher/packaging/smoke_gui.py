@@ -19,6 +19,9 @@ def inside(report):
         from forza_launcher.config import Config
         from forza_launcher.ui import theme
         from forza_launcher.ui.window import MainWindow
+        # The optional backend must be importable in the frozen package. Import
+        # only: no device discovery, connection or effects during this smoke test.
+        from forza_launcher.haptics.vendor.dualsense.main import DualSense
 
         # Never discover a player's installation or write their config/forza.toml.
         paths.config_dir = lambda: report.parent
@@ -32,7 +35,7 @@ def inside(report):
         app.setStyleSheet(theme.QSS)
         window = MainWindow(cfg)
         window.show()
-        for page in (0, 1, 2, 3, 4):
+        for page in (0, 1, 2, 3, 4, 5):
             window.show_page(page)
             app.processEvents()
             if window.grab().isNull():
@@ -46,6 +49,19 @@ def inside(report):
         app.processEvents()
         if window.settings.tabs.tabText(window.settings.tabs.currentIndex()) != 'Controls':
             raise RuntimeError('Bundled settings search did not navigate to Controls')
+        for family in range(window.controls.family.count()):
+            window.controls.family.setCurrentIndex(family)
+            app.processEvents()
+            if window.controls.diagram.grab().isNull():
+                raise RuntimeError('Controller artwork did not render')
+        window.controls.haptics_enabled.setChecked(True)
+        window.controls.haptics_fields['throttle_strength'].setValue(2)
+        if Config(cfg.path).d['haptics']['throttle_strength'] != 2:
+            raise RuntimeError('Haptics preferences did not persist')
+        window.controls.xbox_enabled.setChecked(True)
+        window.controls.xbox_fields['xbox_brake'].setValue(60)
+        if Config(cfg.path).d['haptics']['xbox_brake'] != 60:
+            raise RuntimeError('Xbox trigger preferences did not persist')
         def finish():
             # Upstream's read-only probes are daemon threads. Let their child
             # processes release the disposable working directory before cleanup.

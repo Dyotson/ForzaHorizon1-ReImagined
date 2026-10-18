@@ -280,6 +280,7 @@ class LaunchPlan:
     notes: list = field(default_factory=list)
     log_dir: Path | None = None
     dlss_status_file: Path | None = None
+    haptics_settings: dict = field(default_factory=dict)
 
     def command_line(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -462,7 +463,7 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
             libs.append(user_libs)
         env["LD_LIBRARY_PATH"] = ":".join(libs)
     return LaunchPlan(game, game.dir, [str(game.exe)] + args, env, unset, toml_path,
-                      toml_text, server_argv, notes, home, dlss_status_file)
+                      toml_text, server_argv, notes, home, dlss_status_file, dict(cfg.d['haptics']))
 
 
 def log_path_of(plan: "LaunchPlan"):
@@ -592,6 +593,7 @@ class Session:
         self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
         self.stop_requested = False   # the player stopped it from the launcher: its exit code is no crash
         self.stop_deadline = None
+        self.haptics = None
 
     def start(self):
         plan = self.plan
@@ -618,7 +620,25 @@ class Session:
         env.update(plan.env)
         env["FORZA_LAUNCHER_RELAUNCH"] = "1"
         env.update(extra)
-        self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        # Never inherit another launcher's telemetry destination or session token.
+        env.pop('FORZA_TELEMETRY_PORT', None)
+        env.pop('FORZA_TELEMETRY_TOKEN', None)
+        from .haptics.service import HapticsService, supported, supports_xbox
+        if self.haptics is None and supported(plan.cwd):
+            try:
+                self.haptics = HapticsService(plan.haptics_settings, xbox_capable=supports_xbox(plan.cwd))
+                self.haptics.start()
+            except OSError as exc:
+                self.log(f'Adaptive triggers unavailable: {exc}')
+        if self.haptics:
+            env.update(self.haptics.new_stream())
+        elif plan.haptics_settings.get('enabled') or plan.haptics_settings.get('xbox_enabled'):
+            self.log('Controller haptics need a game build with the FH1 telemetry bridge.')
+        try:
+            self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        except BaseException:
+            self.cleanup()
+            raise
 
     def relaunch(self):
         """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running.
@@ -644,6 +664,8 @@ class Session:
         return code
 
     def stop(self):
+        if self.haptics:
+            self.haptics.stop()
         if self.proc and self.proc.poll() is None:
             self.stop_requested = True
             if paths.IS_WINDOWS:
@@ -657,6 +679,8 @@ class Session:
 
     def cleanup(self):
         """After the game ends: stop our server and free guest memory left in /dev/shm."""
+        if self.haptics:
+            self.haptics.stop()
         if self.server and self.server.poll() is None:
             self.server.terminate()
         dlss.cleanup_status(self.plan)

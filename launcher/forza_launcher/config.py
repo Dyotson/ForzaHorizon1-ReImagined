@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, gpu, paths, schema
+from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
@@ -16,6 +17,7 @@ FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
 def _default():
     return {
         "version": 1,
+        "haptics": dict(HAPTICS_DEFAULTS),
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
@@ -75,6 +77,7 @@ class Config:
         if isinstance(data, dict):
             _merge(self.d, data)
             self.loaded = True
+        self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
         online = self.d["online"]

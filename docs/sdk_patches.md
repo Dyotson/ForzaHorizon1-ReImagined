@@ -126,3 +126,20 @@ patch also turns on SDL's haptic subsystem in `thirdparty/CMakeLists.txt` (it wa
 driver ignores wheels the wheel driver takes. Local builds need `libudev.h` (Homebrew `systemd`, added to
 `tools/build_rexglue_sdk.sh`), otherwise SDL is built without udev and sees no joystick at all.
 Test: a uinput virtual wheel; see [Playing](playing.md#racing-wheels-issue-4).
+
+0075 adds Xbox impulse trigger output to the SDL input driver. The optional C
+export `ForzaInputTriggerRumble(user_mask, left, right, duration_ms)` routes only
+to SDL Xbox One/Series devices that advertise trigger rumble, through the same
+device assignments and SDL gamepad handles as normal game input/rumble. It uses
+`SDL_RumbleGamepadTriggers`, leaving body motor state intact. Calls respect the
+vibration setting, UI input blockers and focus, and clamp effects to 150 ms.
+Two nonvirtual methods are added; class layouts and virtual tables are unchanged.
+The game discovers the export dynamically, so an older runtime still loads and
+the launcher explains that an update/rebuild is required. Main was checked before
+choosing patch number 0075. See [telemetry](telemetry.md#xbox-impulse-triggers).
+
+Windows validation: both modified SDK sources compiled; an isolated runtime DLL
+linked and exported the entry point. A probe with real SDL virtual controllers
+verified trigger amplitudes, routing to guest users, unsupported-device rejection,
+body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
+USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.
