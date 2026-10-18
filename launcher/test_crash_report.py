@@ -68,6 +68,20 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Exit code: 134", report.body)
         self.assertIn("Not recorded", report.body)
 
+    def test_quoted_secrets_and_authorization_values_are_removed_in_full(self):
+        self.log.write_text(r'''{"token": "private token with spaces", "password": "private password"}
+"Authorization": "Bearer private bearer"
+apiKey='private API key'
+refresh_token=private-refresh
+Authorization: Bearer private-unquoted
+{"client_secret": "private escaped \"quotes\" and spaces"}
+''')
+        report = self.report()
+        for private in ('private token', 'private password', 'private bearer',
+                        'private API key', 'private-refresh', 'private-unquoted', 'private escaped'):
+            self.assertNotIn(private, report.body)
+        self.assertIn('<private>', report.body)
+
     def test_large_log_is_bounded_and_preserves_final_fault(self):
         with self.log.open("wb") as f:
             f.write(b"old line\n" * 150000)

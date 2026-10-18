@@ -99,6 +99,9 @@ text is copied and the launcher asks you to paste it into the draft description.
 Nothing is uploaded automatically. `test_crash_report.py`, `test_game_exit.py` and
 `test_launcher_ui.py` cover bounded reads, missing logs, redaction, report actions,
 unexpected/normal exits, and background collection with a disposable child process.
+Secret redaction handles JSON-style quoted keys, quoted values containing spaces
+or escaped quotes, and common authorization/API-key/token spellings. Reports
+remain editable for review before the player chooses to copy, save or open a draft.
 
 ## Photo gallery
 

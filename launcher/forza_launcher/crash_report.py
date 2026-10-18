@@ -35,10 +35,14 @@ def redact(text, private=()):
     text = re.sub(r"(?i)\b[0-9a-f]{16}\b", "<id>", text)
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "<address>", text)
     text = re.sub(r"(?i)\b(?:https?|wss?|udp|tcp)://[^\s<>\"']+", "<url>", text)
-    text = re.sub(r"(?i)\bauthorization\s*[:=]\s*(?:bearer\s+|basic\s+)?[^\s,;]+",
-                  "authorization=<private>", text)
-    text = re.sub(r"(?i)\b(token|password|secret|api_key)\s*[:=]\s*[^\s,;]+",
-                  r"\1=<private>", text)
+    # Logs may contain JSON keys or quoted values with spaces/escaped quotes.
+    # Remove the complete value, including an unquoted Authorization scheme.
+    secret_key = (r"(?:authorization|(?:access[_-]?|refresh[_-]?|session[_-]?)?token|"
+                  r"password|(?:client[_-]?)?secret|api[_-]?key)")
+    secret_value = (r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|'''
+                    r"(?:bearer\s+|basic\s+)?[^\s,;]+)")
+    text = re.sub(r'''(?i)(?<![\w-])(["']?''' + secret_key + r'''["']?\s*[:=]\s*)'''
+                  + secret_value, r"\1<private>", text)
     # Prevent log contents from escaping the Markdown code blocks.
     return text.replace("```", "''' ").replace("\x00", "")
 
