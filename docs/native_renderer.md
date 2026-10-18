@@ -14,7 +14,8 @@ replace that renderer. Removing those copies without tracking consumers can
 invalidate reflections, minimap inputs, screenshots and CPU readbacks.
 
 This branch contains development infrastructure and an opt-in replacement for
-one motion-effect pass. It is **not a complete native world renderer**:
+one motion-effect pass, plus an isolated rigid-mesh geometry pipeline. It is
+**not a complete native world renderer**:
 
 - `render_graph.h` assigns resource versions and records RAW, WAR, WAW and alias
   dependencies. A mutable attachment and an independent snapshot are distinct
@@ -34,6 +35,11 @@ one motion-effect pass. It is **not a complete native world renderer**:
   texture buffer, bypassing its EDRAM dump. Geometry, reflections, other effects
   and HUD composition retain the existing renderer. The resource planner does
   not schedule these runtime passes yet.
+
+- `geometry_pass` owns vertex/index snapshots and an authored vertex shader for
+  rigid signed-normalized packed positions. It draws depth and stencil into a
+  caller-owned native render pass. Synthetic GPU tests and a private original-
+  shader comparison execute it offscreen; it is not connected to live draws yet.
 
 The planner currently works at whole-resource granularity. Layout transitions,
 queue ownership, subresources, native allocation and guest EDRAM alias mapping
@@ -331,6 +337,60 @@ settling and 60 seconds measurement:
 This pair does not establish a speedup: average and tail results vary in opposite
 directions, AI traffic is not deterministic, and the earlier foreground-window
 limitation remains. It is a check for a large regression, not a hardware ranking.
+
+## Native rigid-mesh geometry
+
+`GeometryPass` is the first authored graphics pipeline, separate from the compute
+motion and resolve paths. Its native input contract contains packed signed
+normalized 16-bit XYZW positions, a scale/translation, four clip-space matrix
+columns and an NDC transform. W controls the position's dequantization scale.
+The shader performs a bounded vertex fetch and explicit, non-contracted matrix
+arithmetic. This is an authored rigid-mesh transform, not a translated guest
+shader or a dump of game code.
+
+The pass supports triangle lists or restarting triangle strips, 16/32-bit index
+buffers and word-endian modes 0 through 3. Large raw 32-bit indices require the
+caller to have enabled `fullDrawIndexUint32`. Unsupported sizes, invalid indices,
+non-finite parameters, conservative overflow bounds and invalid raster extents
+are rejected before reserving a slot. Depth uses either less-or-equal or
+reverse-depth greater-or-equal. Stencil replaces the car/object reference only
+when depth passes; other stencil outcomes retain their value. The initial scope
+is single-sample, no culling, no color targets and a caller-owned compatible
+depth/stencil render pass. It does not implement skinning, foliage deformation,
+color/material shading or arbitrary guest raster state.
+
+`Prepare` copies the mesh into owned coherent vertex/index buffers and returns
+an opaque immutable draw token. Mutating caller data afterward cannot change the
+draw. Tokens and slots belong to a submission; reuse requires waited completion
+fences. `Record` consumes the token inside the caller's compatible render pass,
+without reading mutable producer state. The caller owns attachment layout,
+visibility and lifetime, and must drain recording jobs and GPU work before
+releasing the pipeline. A separate geometry function table uses the existing
+Vulkan loader without changing the compute bridge's function requirements.
+
+All seven standalone tests pass with Khronos synchronization validation. Geometry
+fixtures cover forward/reverse depth, overlapping car IDs, both index sizes,
+endianness, primitive restart, odd extents, 2560x1440, scissor/padding preservation,
+immutable snapshots, busy slots, fence retirement and rejected inputs. Common
+Vulkan test setup is shared with the earlier motion/resolve tests.
+
+A private captured rigid car-part fixture contains 145 distinct vertices and 217
+strip indices, including ten restarts. A CPU reconstruction matched every captured
+post-vertex position word exactly. A separate GPU comparison rendered the original
+captured vertex shader and the authored native shader into independent cleared
+1440p depth/stencil targets. Every depth and stencil byte matched across three
+poses: the captured camera, a translated camera and a subpixel NDC offset. The
+part covers 381 or 437 pixels depending on the pose. These are isolated mesh tests,
+not a comparison of a complete car or live world frame. GPU synchronization
+validation reported zero errors; the source mesh, constants and original shader
+remain volatile local fixtures outside the repository.
+
+This geometry pipeline is not in the SDK draw stream yet. The next integration
+must recognize its validated source contract, snapshot authoritative GPU buffer
+versions before later writes, preserve the original depth/stencil and query
+behavior, and keep unsupported draws on the existing path. Native HUD rendering
+continues through the already tested runtime path; these offscreen tests do not
+establish a new whole-game rendering or performance result.
 
 ## Build the development tools
 

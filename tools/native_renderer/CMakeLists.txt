@@ -10,6 +10,8 @@ add_executable(native_velocity_test ../../forza-recomp/tests/native_velocity_tes
 add_test(NAME native_velocity COMMAND native_velocity_test)
 add_executable(native_resolve_test ../../forza-recomp/tests/native_resolve_test.cpp)
 add_test(NAME native_resolve COMMAND native_resolve_test)
+add_executable(native_geometry_test ../../forza-recomp/tests/native_geometry_test.cpp)
+add_test(NAME native_geometry COMMAND native_geometry_test)
 
 option(NATIVE_RENDERER_GPU_TESTS "Build and run synthetic Vulkan pass validation" OFF)
 option(NATIVE_RENDERER_VULKAN_VALIDATION "Require Khronos synchronization validation in the GPU test" OFF)
@@ -21,6 +23,8 @@ if(NATIVE_RENDERER_GPU_TESTS)
     set(native_source "${CMAKE_CURRENT_SOURCE_DIR}/../../forza-recomp/src/platform/native_renderer")
     add_library(native_velocity_pass STATIC "${native_source}/velocity_pass.cpp")
     target_link_libraries(native_velocity_pass PUBLIC Vulkan::Headers)
+    add_library(native_geometry_pass STATIC "${native_source}/geometry_pass.cpp")
+    target_link_libraries(native_geometry_pass PUBLIC Vulkan::Headers)
     add_executable(native_velocity_gpu_test ../../forza-recomp/tests/native_velocity_gpu_test.cpp)
     target_link_libraries(native_velocity_gpu_test PRIVATE native_velocity_pass Vulkan::Vulkan)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv"
@@ -45,6 +49,17 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_resolve_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv" --resolve-only ${validation_arguments})
     set_tests_properties(native_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv"
+        COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1
+            "${native_source}/geometry.vert" -o "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv"
+        DEPENDS "${native_source}/geometry.vert" VERBATIM)
+    add_custom_target(native_geometry_shader DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv")
+    add_executable(native_geometry_gpu_test ../../forza-recomp/tests/native_geometry_gpu_test.cpp)
+    target_link_libraries(native_geometry_gpu_test PRIVATE native_geometry_pass Vulkan::Vulkan)
+    add_dependencies(native_geometry_gpu_test native_geometry_shader)
+    add_test(NAME native_geometry_gpu COMMAND native_geometry_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv" ${validation_arguments})
+    set_tests_properties(native_geometry_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
 endif()
 
 set(RENDERDOC_INCLUDE_DIR "" CACHE PATH "RenderDoc's renderdoc/api/replay directory")
