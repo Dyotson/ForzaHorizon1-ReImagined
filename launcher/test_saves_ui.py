@@ -60,7 +60,7 @@ class SaveUITests(unittest.TestCase):
         self.assertFalse(self.page.busy(), 'Save thread did not finish')
 
     def test_named_backup_restore_and_profile_change_guard(self):
-        self.win.show_page(4)
+        self.win.show_page(self.win.stack.indexOf(self.page))
         self.wait_done()
         self.page.name.setText('Before the finale')
         self.page.create_button.click()
@@ -78,6 +78,17 @@ class SaveUITests(unittest.TestCase):
         self.page._enable()
         self.assertFalse(self.page.create_button.isEnabled())
         self.assertFalse(self.page.restore_button.isEnabled())
+
+    def test_gallery_controls_and_saves_have_distinct_navigation_destinations(self):
+        pages = (self.win.gallery, self.win.controls, self.win.saves)
+        indexes = [self.win.stack.indexOf(page) for page in pages]
+        self.assertEqual(len(set(indexes)), 3)
+        with patch.object(self.win.gallery, 'refresh') as gallery, patch.object(self.win.saves, 'refresh') as saved:
+            for page, index in zip(pages, indexes):
+                self.win.navs.button(index).click()
+                self.assertIs(self.win.stack.currentWidget(), page)
+            gallery.assert_called_once_with()
+            saved.assert_called_once_with()
 
     def test_automatic_backup_finishes_before_launch_and_failure_blocks_launch(self):
         launched = []
