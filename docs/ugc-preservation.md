@@ -29,24 +29,42 @@ output; existing destinations are never overwritten.
 
 ## Launcher integration
 
+Open **Designs & vinyls** in the launcher's sidebar. Choose **Open save package** for
+a `LivCatalog` or `LivGroups` STFS save, or **Open catalog folder** for an extracted
+catalog. The page shows thumbnails, creator markers, car IDs, declared layer counts
+and whether storefront records were preserved. Search by title, creator or car ID,
+and filter designs or vinyl groups. A missing or unsupported preview does not prevent
+preserving the original files.
+
+**Export catalog** saves the entire inspected catalog (including items hidden by a
+filter) to a new, timestamped folder under the location you choose. It includes original
+payloads and ownership/storefront records, a manifest with hashes, and decoded PNG
+previews where supported. **Open export folder** reveals the result. Loading/export
+run in a cancellable worker; closing waits for that worker, and a cancelled export
+removes its incomplete output. Close the game before opening a catalog.
+
+This page preserves local collections; it does not download designs, apply them to a
+profile, or unlock ownership. The verified disposable-profile recovery below remains
+a separate manual experiment.
+
 `launcher/forza_launcher/ugc.py` is independent of Qt. `read_catalog` and `export_catalog`
 accept cancellation callbacks; export also accepts progress updates. Run them in a
-launcher worker, as the photo gallery does. The reader retains source bytes in memory so
+launcher worker. The reader retains source bytes in memory so
 an export uses the same snapshot the user inspected. `tools/xdc_decode.py` now exposes
 bounded `decode` and `png_bytes` functions using the standard library, avoiding a Pillow
 dependency in a packaged launcher. The original command-line decoder still works but
 requires a new output filename and reads dimensions from the texture descriptor.
 
-Relevant open PRs inspected on 2026-10-18:
+Related PRs inspected on 2026-10-18:
 
 - [#139, save manager and profile editor](https://github.com/Dyotson/ForzaHorizon1-ReImagined/pull/139):
   full backups, game-session locks and an authenticated career-profile codec. This is the
   foundation for any future importer that changes a save. Its profile codec does not
   directly decode the recovered livery's different encrypted wrapper.
 - [#130, photo gallery and launcher layout](https://github.com/Dyotson/ForzaHorizon1-ReImagined/pull/130):
-  worker-based discovery, preview/export and UI lifecycle patterns. Both PRs currently
-  assign page ID 4 to different pages; reconcile that when integrating them. This work
-  adds no navigation IDs and does not merge those PRs.
+  worker-based discovery, preview/export and UI lifecycle patterns; now merged into main.
+  Gallery keeps page ID 4 and Designs uses ID 6, leaving ID 5 available for Saves.
+  The Saves PR's original ID 4 will need reconciliation when it is integrated.
 
 ## Recovery findings and remaining work
 

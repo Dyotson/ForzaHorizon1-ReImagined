@@ -1,4 +1,4 @@
-"""The main window: Play, Photo gallery, Setup, Settings and About."""
+"""The main window: Play, Photo gallery, Designs & vinyls, Setup, Settings and About."""
 import sys
 import threading
 
@@ -13,6 +13,7 @@ from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .catalogs import CatalogsPage, CATALOG_PAGE_ID
 
 
 class MainWindow(QMainWindow):
@@ -85,22 +86,22 @@ class MainWindow(QMainWindow):
         self.gallery = GalleryPage(cfg, self)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
+        self.catalogs = CatalogsPage(cfg, self)
         self.navs = QButtonGroup(self)
-        for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
-                                          ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery))):
+        self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
+                       4: self.gallery, CATALOG_PAGE_ID: self.catalogs}
+        for page in self._pages.values():
+            self.stack.addWidget(page)
+        # Route stable IDs to widgets independently of sidebar/stack order.
+        for i, name in ((0, "Play"), (4, "Photo gallery"),
+                        (CATALOG_PAGE_ID, "Designs && vinyls"), (1, "Setup"),
+                        (2, "Settings"), (3, "About")):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self.navs.addButton(btn, i)
-            # Keep the existing page IDs used by setup/update links; place Gallery
-            # beside Play in the sidebar without renumbering those destinations.
-            if page is self.gallery:
-                sl.insertWidget(2, btn)
-            else:
-                sl.addWidget(btn)
-            self.stack.addWidget(page)
+            sl.addWidget(btn)
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
         self.version = QLabel(f"Launcher {__version__}")
@@ -153,7 +154,7 @@ class MainWindow(QMainWindow):
 
     # ---- navigation -------------------------------------------------------------------
     def show_page(self, i):
-        self.stack.setCurrentIndex(i)
+        self.stack.setCurrentWidget(self._pages[i])
         self.navs.button(i).setChecked(True)
         self.navs.button(i).setFocus(Qt.OtherFocusReason)
         if i == 0:
@@ -182,6 +183,12 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self.catalogs.busy():
+            self.catalogs.closing = True
+            self.catalogs.cancel_task()
+            self.status("Stopping the catalog operation before closing…")
+            e.ignore()
+            return
         if self.about.updates.busy():
             if self.about.updates.installing:
                 self.status("Installing the update. The launcher will restart when it's ready…")

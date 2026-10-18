@@ -83,6 +83,12 @@ QListWidget#settingsSearchResults {{ background: {PANEL}; border: 1px solid {BOR
 QListWidget#settingsSearchResults::item {{ padding: 6px 12px; border-radius: 5px; }}
 QListWidget#settingsSearchResults::item:selected {{ background: {PANEL2}; color: {CREAM}; }}
 QListWidget#settingsSearchResults:focus::item:selected {{ border: 1px solid {ORANGE}; }}
+QListView#catalogGrid {{ background: transparent; border: none; outline: none; }}
+QListView#catalogGrid::item {{ padding: 6px; border: 1px solid transparent; border-radius: 8px; }}
+QListView#catalogGrid::item:hover {{ background: {PANEL}; border-color: {BORDER}; }}
+QListView#catalogGrid::item:selected {{ background: {PANEL2}; border-color: {ORANGE}; color: {CREAM}; }}
+QListView#catalogGrid::item:focus {{ border-color: {ORANGE}; }}
+QSplitter#catalogSplitter::handle:horizontal {{ width: 6px; background: {BORDER}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
