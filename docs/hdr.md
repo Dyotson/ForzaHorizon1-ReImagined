@@ -125,7 +125,8 @@ unused fragment-output warning is still emitted.
 
 Linux: Fedora WSL, lavapipe/LLVM 22.1.8, Xvfb/X11, 1280x720. With HDR requested,
 the presenter logs that the surface does not offer HDR and creates format 44 /
-color space 0. The game boots and renders its menus through the fallback. No
+color space 0. The game boots, renders its menus and reaches free roam through
+the fallback. No
 physical Linux HDR display, AMD HDR driver, DLSS/FSR combination, or ultrawide
 HDR validation is claimed by these tests.
 
