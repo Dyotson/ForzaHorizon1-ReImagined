@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
                 pass
         self.session = None
         self.session_plan = None
+        self._last_start_error = None
         self._dlss_session_status = None
         self._busy = False
         self._dlss_task = None
@@ -273,9 +274,12 @@ class MainWindow(QMainWindow):
             session = game.Session(plan)
             session.start()
         except (RuntimeError, OSError) as e:
-            paths.log_error("start the game", e)
+            if str(e) != self._last_start_error:   # a player who presses Play again gets the same text, not a log line each time (#124)
+                self._last_start_error = str(e)
+                paths.log_error("start the game", e)
             self.play.show_message(f"Could not start the game: {e}\nLog: {paths.launcher_log()}", True, keep=True)
             return
+        self._last_start_error = None
         self.session = session
         self.session_plan = plan
         self._dlss_session_status = None

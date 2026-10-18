@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -256,6 +257,7 @@ def downloaded_paths(root: Path):
 
 _CXX_CACHE = {}
 _TOOLS_CACHE = {}
+_TOOLS_LOCK = threading.Lock()
 
 
 def cxx_works(cxx: str, env=None) -> str | None:
@@ -280,16 +282,33 @@ def _cxx_works(cxx: str, env=None) -> str | None:
     return None
 
 
-def detect_tools(root: Path, prefer_downloaded=False, max_age=5.0) -> Tools:
-    """Cached for a few seconds: the window asks often. Pass max_age=0 to look again."""
+def detect_tools(root: Path, prefer_downloaded=False, max_age=None) -> Tools:
+    """Detection starts a --version program per candidate (hundreds of ms each on Windows), so the
+    result is kept for the whole session (#124). `max_age` (seconds) limits that; max_age=0 looks
+    again (a build does), as does forget_tools()."""
     import time
     key = (str(root), prefer_downloaded)
-    hit = _TOOLS_CACHE.get(key)
-    if hit and time.time() - hit[0] < max_age:
+    with _TOOLS_LOCK:
+        hit = _TOOLS_CACHE.get(key)
+    if hit and (max_age is None or time.time() - hit[0] < max_age):
         return hit[1]
     tools = _detect_tools(root, prefer_downloaded)
-    _TOOLS_CACHE[key] = (time.time(), tools)
+    with _TOOLS_LOCK:
+        _TOOLS_CACHE[key] = (time.time(), tools)
     return tools
+
+
+def cached_tools(root: Path, prefer_downloaded=False):
+    """The detected tools if detection already ran this session, else None (never starts a program)."""
+    with _TOOLS_LOCK:
+        hit = _TOOLS_CACHE.get((str(root), prefer_downloaded))
+    return hit[1] if hit else None
+
+
+def forget_tools():
+    """Detect again at the next detect_tools (after tools were downloaded or installed)."""
+    with _TOOLS_LOCK:
+        _TOOLS_CACHE.clear()
 
 
 FLATPAK_LLVM_CMD = "flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08"

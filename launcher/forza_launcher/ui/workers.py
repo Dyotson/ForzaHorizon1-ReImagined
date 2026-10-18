@@ -39,6 +39,32 @@ class Task(QThread):
             self.done.emit(False, f"Unexpected error: {type(e).__name__}: {e}\n(Details: {log})")
 
 
+class Probe(QObject):
+    """Runs fn() on a daemon thread (a program to start, a package to open: not on the GUI thread) and
+    emits `result` with what it returned, in the GUI thread; None when it raised (logged). A daemon
+    thread cannot hold up closing the window."""
+    result = Signal(object)
+
+    def __init__(self, fn, name="probe", parent=None):
+        super().__init__(parent)
+        self.fn, self.name = fn, name
+
+    def start(self):
+        import threading
+        threading.Thread(target=self._run, name=self.name, daemon=True).start()
+
+    def _run(self):
+        try:
+            value = self.fn()
+        except BaseException as e:
+            paths.log_error(f"{self.name}: unexpected {type(e).__name__}", e)
+            value = None
+        try:
+            self.result.emit(value)
+        except RuntimeError:   # the page was deleted meanwhile
+            pass
+
+
 class TaskReporter(builder.Reporter):
     """Adapts a Task to the builder's Reporter."""
 

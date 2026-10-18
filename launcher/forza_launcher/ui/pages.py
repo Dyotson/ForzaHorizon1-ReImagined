@@ -251,6 +251,9 @@ class SetupPage(QWidget):
         super().__init__()
         self.cfg, self.window = cfg, window
         self.task = None
+        self._probes = {}   # key -> Probe running off the GUI thread (#124)
+        self._probe_done = set()   # keys already probed: an answer that cannot be cached is not asked again
+        self._dlc_error = None     # (folder, message) of a DLC folder that cannot be read
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -462,8 +465,14 @@ class SetupPage(QWidget):
             self.fail.pop("msg1", None)
         self.msg1.setStyleSheet(f"color: {theme.ERR if self.fail.get('msg1') or (have and not ok) else theme.MUTED};")
         tu = cfg["tu_package"].strip()
-        if tu:
-            ok_tu, msg_tu = installer.inspect_title_update(tu)
+        got_tu = installer.title_update_cached(tu) if tu else None
+        if tu and got_tu is None:
+            self.ctu.set_badge("Checking", None)
+            self.msgtu.setText("Checking the title update package...")
+            self.msgtu.setStyleSheet(f"color: {theme.MUTED};")
+            self._probe("tu:" + tu, lambda: installer.inspect_title_update(tu))
+        elif tu:
+            ok_tu, msg_tu = got_tu
             self.ctu.set_badge("Ready" if ok_tu else "Problem", ok_tu)
             self.msgtu.setText(msg_tu + ("  This launcher has no title update tool: reinstall it."
                                          if ok_tu and builder.title_update_script() is None else
@@ -474,17 +483,14 @@ class SetupPage(QWidget):
             self.msgtu.setText("No title update: the base game is built (no Horizon Rally, no 1000 Club).")
         d = self.dlc.text().strip()
         if d:
-            try:
-                found, skipped = installer.describe_dlc_folder(d)
-                txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
-                       (" ..." if len(found) > 12 else "")) if found else (
-                    "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
-                if skipped:
-                    txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
-                            ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
-                self.dlclist.setText(txt)
-            except installer.InstallError as e:
-                self.dlclist.setText(str(e))
+            got = installer.dlc_cached(d)
+            if self._dlc_error and self._dlc_error[0] == d:
+                self.dlclist.setText(self._dlc_error[1])
+            elif got is None:
+                self.dlclist.setText("Reading the DLC folder...")
+                self._probe("dlc:" + d, lambda: self._read_dlc(d))
+            else:
+                self.dlclist.setText(self._dlc_text(*got))
         else:
             self.dlclist.setText("")
         n = game.installed_dlc(cfg)
@@ -506,6 +512,44 @@ class SetupPage(QWidget):
         self.go3.setEnabled(not busy and have)
         self._pkg_kind()
 
+    @staticmethod
+    def _dlc_text(found, skipped):
+        txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
+               (" ..." if len(found) > 12 else "")) if found else (
+            "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
+        if skipped:
+            txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
+                    ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
+        return txt
+
+    @staticmethod
+    def _read_dlc(folder):
+        """In a probe: the DLC folder is read (and remembered by installer); an unreadable one gives its message."""
+        try:
+            installer.describe_dlc_folder(folder)
+            return None
+        except installer.InstallError as e:
+            return str(e)
+
+    def _probe(self, key, fn):
+        """Run fn off the GUI thread once per key; when it ends, refresh() shows the answer from the caches.
+        An error text it returns is shown in place of the DLC list."""
+        if key in self._probes or key in self._probe_done:
+            return
+        pr = workers.Probe(fn, "check " + key.split(":")[0], self)
+        self._probes[key] = pr
+
+        def done(value, key=key):
+            self._probes.pop(key, None)
+            self._probe_done.add(key)
+            if key.startswith("dlc:") and isinstance(value, str):
+                self._dlc_error = (key[4:], value)
+            elif key.startswith("dlc:"):
+                self._dlc_error = None
+            self.refresh()
+        pr.result.connect(done)
+        pr.start()
+
     def _update_mem(self):
         lvl, text, _fit = build_env.memory_check(self.jobs.value())
         self.mem_row.setVisible(bool(text))
@@ -518,7 +562,15 @@ class SetupPage(QWidget):
             if w:
                 w.deleteLater()
         root = self.cfg.data_home()
-        tools = build_env.detect_tools(root)
+        tools = build_env.cached_tools(root)
+        if tools is None:   # starting the programs takes seconds on Windows: not on the GUI thread (#124)
+            r = StatusRow("")
+            r.title.hide()
+            r.set(None, "Looking for the build tools (clang, cmake, ninja)...")
+            self.checks.addWidget(r)
+            self.tools_msg.setText("")
+            self._probe("tools:" + str(root), lambda: build_env.detect_tools(root) and None)
+            return
         for lvl, text in build_env.preflight(root, (self.cfg.game_files() / "default.xex").is_file(),
                                               bool(tools.missing), self.jobs.value(), memory=False):
             r = StatusRow("")
@@ -742,6 +794,8 @@ class SetupPage(QWidget):
             self._dlc_changed()
 
     def _dlc_changed(self):
+        self._dlc_error = None
+        self._probe_done = {k for k in self._probe_done if not k.startswith("dlc:")}
         self.cfg["dlc_dir"] = self.dlc.text().strip()
         self.cfg.save()
         self.refresh()
@@ -881,6 +935,9 @@ class SetupPage(QWidget):
         self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
         self.window.set_busy(False)
+        build_env.forget_tools()   # a build or download may have changed what is installed
+        self._dlc_error = None
+        self._probe_done.clear()
         self.refresh()
         self.changed.emit()
         if failed and blocked:

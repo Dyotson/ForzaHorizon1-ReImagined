@@ -123,14 +123,37 @@ def source_files(proj: Path):
         yield Path("generated") / "rexglue.cmake"
 
 
+_SOURCES_MEMO = {}
+
+
 def sources_hash(proj: Path) -> str:
-    h = hashlib.sha1()
-    for rel in sorted(source_files(proj)):
-        h.update(str(rel).replace("\\", "/").encode())
-        h.update((proj / "forza-recomp" / rel).read_bytes())
+    """SHA-1 of the build sources. The window asks at every page change, so the files are read again
+    only when one changed (size or modification time), not every time (#124)."""
+    base = proj / "forza-recomp"
     cm = proj / "tools" / "cmake" / "windows-native-clang-cl.cmake"
+    rels, sig = sorted(source_files(proj)), []
+    for rel in rels:
+        try:
+            st = (base / rel).stat()
+            sig.append((str(rel), st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append((str(rel), 0, 0))
+    try:
+        st = cm.stat()
+        sig.append((str(cm), st.st_mtime_ns, st.st_size))
+    except OSError:
+        pass
+    key = str(proj)
+    hit = _SOURCES_MEMO.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    h = hashlib.sha1()
+    for rel in rels:
+        h.update(str(rel).replace("\\", "/").encode())
+        h.update((base / rel).read_bytes())
     if cm.is_file():
         h.update(cm.read_bytes())
+    _SOURCES_MEMO[key] = (sig, h.hexdigest())
     return h.hexdigest()
 
 

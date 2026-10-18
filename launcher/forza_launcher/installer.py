@@ -152,16 +152,27 @@ _NO_DLC = ("No DLC found in that folder. Pick the folder of your DLC packages, o
            "folder (or its 0000000000000000, 4D5309C9 or 00000002 folder).")
 
 
+def _dlc_key(folder: str):
+    p = Path(folder).expanduser()
+    try:
+        return (str(p), p.stat().st_mtime_ns)
+    except OSError:
+        return (str(p), 0)
+
+
+def dlc_cached(folder: str):
+    """describe_dlc_folder's result if this folder was read already (and did not change), else None.
+    Starts no file reads beyond one stat."""
+    return _DLC_CACHE.get(_dlc_key(folder))
+
+
 def describe_dlc_folder(folder: str):
     """([(name, display name)] of the DLC in a folder, [(name, reason)] of what was skipped).
     The DLC is STFS packages (files) and/or extracted package folders (a Xenia content folder or
     one of its subfolders). Raises InstallError. Cached per folder and modification time (each
     package is opened to read its name)."""
     p = Path(folder).expanduser()
-    try:
-        key = (str(p), p.stat().st_mtime_ns)
-    except OSError:
-        key = (str(p), 0)
+    key = _dlc_key(folder)
     if key not in _DLC_CACHE:
         packages, dirs, skipped = list_dlc(p)
         for _f, _n, pkg in packages:
@@ -399,9 +410,34 @@ def check_game_folder(folder: Path):
 TITLE_UPDATE = 0xB0000
 
 
+_TU_CACHE = {}
+
+
+def _tu_key(path: str):
+    p = Path(path).expanduser()
+    try:
+        st = p.stat()
+        return (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(p), 0, 0)
+
+
+def title_update_cached(path: str):
+    """The earlier inspect_title_update result for this file as it is now, else None."""
+    return _TU_CACHE.get(_tu_key(path))
+
+
 def inspect_title_update(path: str):
     """(ok, message) for the player's title update package (TU4: the package of the 4000D145
-    update, version 4)."""
+    update, version 4). A zip is unpacked to look inside, so the answer is kept per file, size and
+    modification time (the Setup page asks at every refresh, #124)."""
+    key = _tu_key(path)
+    if key not in _TU_CACHE:
+        _TU_CACHE[key] = _inspect_title_update(path)
+    return _TU_CACHE[key]
+
+
+def _inspect_title_update(path: str):
     import tempfile
     import zipfile
     tmp = None
