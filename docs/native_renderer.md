@@ -258,6 +258,35 @@ rates are not performance evidence. A separate uninstrumented run completed at
 69.55 FPS average with no stalls over 50 ms, as listed above. The same foreground
 and AI-variation limitations apply; this is not evidence of a speedup.
 
+## Resolve from tracked attachment ownership
+
+Patch 0082 adds the independent `FORZA_NATIVE_RENDERER=rgba8-resolve` mode. It
+selects the source from the SDK's render-target ownership map rather than the
+most recent motion draw. The complete requested tile rectangle must belong to
+one RGBA8, single-sample target with the same base and pitch. Mixed owners,
+wrapped spans, offset/reinterpreted sources and the unsupported conversions
+listed above retain the original resolve. This mode leaves the original motion
+draw in place, so resolve behavior can be tested independently of its native
+replacement. It does not replace geometry or allocate native world targets.
+
+At native 1440p, a complete AI race with threaded submission and Khronos
+synchronization validation completed over 3,300 native resolves without Vulkan
+errors. The harness terminated the test child after its report was saved. A
+separate moving capture contains eight native image-to-buffer dispatches over
+four game frames, covering two consecutive eligible passes per frame. Their
+push constants identify the intended RGBA8 source, layout and buffer range;
+no EDRAM buffer participates in those dispatches. The recovered 2560x1440 output
+retains the original HUD, labels and minimap. A second original-GPU fixture
+matched all 921,600 words exactly through three executions, with padding
+preserved and no synchronization errors. Both standalone SDK fallback and
+canonical native build modes compile.
+
+A captured full-scene RGBA8 resolve uses the SDK's half-pixel edge-fill rule.
+A direct texel copy differs there, so that case is deliberately still rejected;
+its original GPU buffer is retained locally for the next implementation. These
+results establish only the two supported resolve passes, not complete native
+world rendering or a performance improvement.
+
 ## Build the development tools
 
 No SDK, game files or NVIDIA runtime is needed for the planner tests:

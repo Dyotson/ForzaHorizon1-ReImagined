@@ -197,3 +197,11 @@ retirement rules order consumers. Canonical shader/layout sources and their BSD
 mapping license are supplied through `REXGLUE_FH1_NATIVE_SOURCE_DIR`. The feature
 is off by default. See [Native renderer](native_renderer.md#native-rgba8-resolve)
 for GPU equivalence and actual-game validation.
+
+0082 adds `FORZA_NATIVE_RENDERER=rgba8-resolve`, selecting a fully owned source
+from the SDK render-target ownership map. Only a complete, non-wrapping region
+owned by one matching single-sample RGBA8 target uses the native image-to-buffer
+resolve. Mixed ownership, reinterpreted sources and unsupported conversion states
+retain the original path. The original motion draw remains active in this mode
+for independent resolve validation. It is disabled by default and does not
+replace geometry. See [Native renderer](native_renderer.md#resolve-from-tracked-attachment-ownership).
