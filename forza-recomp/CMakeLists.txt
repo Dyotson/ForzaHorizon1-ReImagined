@@ -118,6 +118,7 @@ set(FORZA_SOURCES
     src/hooks/compressed_stream_stall.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
+    src/hooks/map_alpha.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
     src/hooks/frame_time.cpp
