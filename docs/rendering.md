@@ -1,5 +1,31 @@
 # Rendering issues
 
+## Barn-find minimap transparency (#111)
+
+The minimap profile draws a barn-find region twice: an opaque white ellipse for
+colour, then a colour-preserving ellipse with alpha 51/255. The map renderer uses
+source-alpha factor ZERO to suppress alpha writes during the first pass, but
+leaves the alpha equation at MAX. Host MAX blending ignores the factors: the
+first pass writes alpha 1 and the following MAX(0.2, 1) keeps it opaque.
+
+`src/hooks/map_alpha.cpp` intercepts only the native map renderer's ellipse
+source-alpha state change. The colour pass uses ADD with ZERO/ONE to preserve
+destination alpha; the separate alpha pass restores MAX. Roads and icons retain
+their original equations. Both changes use the native state scope and unwind
+with it. Game XML, textures and shader microcode are unchanged.
+
+The state helper is disc `824679E0` / TU4 `82497228`, called at disc `8244B728` /
+TU4 `8247ADE8`. At that call, r16 identifies the ellipse technique, state 0x54
+selects the source-alpha factor and state 0x5C selects the alpha equation. Disc
+and TU4 both set that ellipse flag and use the same state layout. Set
+`FORZA_MAP_ALPHA_FIX=0` for a baseline comparison.
+
+RenderDoc pixel history on Windows confirms the two ellipse passes leave alpha
+0 then 0.2 with the fix, versus 1 then 1 without it. Later road pixels still reach
+alpha 1. A private fixture registers a transient native barn-find region near
+the player's car, using disposable copied saves; it does not unlock a rumor or
+alter progression. The fixture, captures, game data and saves stay outside Git.
+
 ## Fixed: hard-edged rectangle in the speed blur (2026-10-14)
 
 **Symptom.** At speed the game blurs the edges of the screen. A rectangle around the
