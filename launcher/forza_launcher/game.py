@@ -280,6 +280,7 @@ class LaunchPlan:
     notes: list = field(default_factory=list)
     log_dir: Path | None = None
     dlss_status_file: Path | None = None
+    save_profile: object = None
 
     def command_line(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -463,8 +464,16 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         if user_libs:
             libs.append(user_libs)
         env["LD_LIBRARY_PATH"] = ":".join(libs)
+    save_profile = None
+    if write:
+        from . import saves
+        root = saves.data_root_arg(args, root)
+        if not root.is_absolute():
+            root = game.dir / root
+        save_profile = saves.profile_for(cfg, root=root)
     return LaunchPlan(game, game.dir, [str(game.exe)] + args, env, unset, toml_path,
-                      toml_text, server_argv, notes, home, dlss_status_file)
+                      toml_text, server_argv, notes, home, dlss_status_file,
+                      save_profile=save_profile)
 
 
 def log_path_of(plan: "LaunchPlan"):
@@ -594,8 +603,21 @@ class Session:
         self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
         self.stop_requested = False   # the player stopped it from the launcher: its exit code is no crash
         self.stop_deadline = None
+        self._save_lock = None
 
     def start(self):
+        from . import saves
+        if self.plan.save_profile is not None:
+            guard = saves.locked(self.plan.save_profile)
+            guard.__enter__()
+            self._save_lock = guard
+        try:
+            self._start()
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def _start(self):
         plan = self.plan
         if plan.log_dir:
             plan.log_dir.mkdir(parents=True, exist_ok=True)
@@ -662,6 +684,9 @@ class Session:
         if self.server and self.server.poll() is None:
             self.server.terminate()
         dlss.cleanup_status(self.plan)
+        if self._save_lock is not None:
+            guard, self._save_lock = self._save_lock, None
+            guard.__exit__(None, None, None)
         if not paths.IS_WINDOWS:
             clean_shm()
 
