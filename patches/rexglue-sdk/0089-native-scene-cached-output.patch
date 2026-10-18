@@ -102,3 +102,31 @@ diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture
    std::optional<uint32_t> slot;
    {auto lock=native_scene_->critical.Acquire();slot=native_scene_->tracker.Find(identity,command_processor_.GetCurrentSubmission());}
    if(!slot)return false;
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1180,11 +1180,21 @@
+     const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
+     return mode && (std::string_view(mode) == "rgba8-resolve" || std::string_view(mode) == "combined" || std::string_view(mode) == "world-color-transfer");
+   }();
+-  const char* scene_mode=std::getenv("FORZA_NATIVE_RENDERER");
+-  const bool native_r10_scene=scene_mode && std::string_view(scene_mode)=="world-color-transfer";
++  static const bool native_r10_scene = [] {
++    const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
++    return mode && std::string_view(mode) == "world-color-transfer";
++  }();
+   const auto native_scene_format=native_r10_scene?xenos::ColorRenderTargetFormat::k_2_10_10_10:xenos::ColorRenderTargetFormat::k_8_8_8_8;
+   uint32_t scene_width = native_width, scene_height = native_height;
+-  if (native_scene_resolve && GetPath() == Path::kHostRenderTargets &&
++  // R10 transfer supports only the complete 1280x720 scene. Reject other
++  // resolves before walking EDRAM ownership; the final adapter still checks
++  // the complete format, layout and source-owner contract.
++  const bool native_scene_shape = !native_r10_scene ||
++      (resolve_info.coordinate_info.width_div_8 == 160 && resolve_info.height_div_8 == 90 &&
++       resolve_info.copy_dest_coordinate_info.pitch_aligned_div_32 == 40 &&
++       !resolve_info.copy_dest_coordinate_info.offset_x_div_8 &&
++       !resolve_info.copy_dest_coordinate_info.offset_y_div_8);
++  if (native_scene_resolve && native_scene_shape && GetPath() == Path::kHostRenderTargets &&
+       resolve_info.copy_dest_extent_length && !resolve_info.IsCopyingDepth() &&
+       resolve_info.color_edram_info.format == uint32_t(native_scene_format) &&
+       resolve_info.color_edram_info.msaa_samples == xenos::MsaaSamples::k1X) {

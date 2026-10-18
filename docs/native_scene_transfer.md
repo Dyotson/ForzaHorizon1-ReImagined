@@ -36,6 +36,9 @@ pitch, integer equal scales 1 or 2 and exponent bias 0 or -2. Fractional raster
 states and unsupported endian modes retain the original path. The unscaled
 scene contract is 1280x720, including its original half-pixel edge-fill rule.
 Scale 2 produces a native 2560x1440 scene; HUD composition stays at output size.
+Other R10 sizes, pitches and offsets are rejected before walking render-target
+ownership. The selected diagnostic mode is read once, as on the other native
+resolve paths. The final adapter retains its complete contract checks.
 
 Consumers must match address, byte extent, dimensions, pitch, endian and scale,
 and use a tiled, unsigned, single-mip R10 2D texture without an array. Merely
