@@ -445,6 +445,54 @@ car/world renderer or evidence of improved performance. The native HUD keeps
 its existing 1440p path. GPU capture and further equivalence checks are recorded
 with the draft PR; game files, shaders, fixtures and captures remain local.
 
+### Warmed geometry comparison
+
+A four-run original/native/native/original comparison used the same executable,
+SDK binary, copied-save seed and shared warmed shader cache. Each native 1440p
+SMAA run used threaded submission, a configured 120 FPS cap, 15 seconds settling
+and 60 seconds measured from guest swaps. No validation or capture layer was
+loaded, and no other GPU replay work ran during measurement.
+
+| Run | Path | Average FPS | 1% low FPS | Stalls over 50 ms |
+| --- | --- | ---: | ---: | ---: |
+| 1 | Original | 69.96 | 45.47 | 0 |
+| 2 | Native rigid depth | 69.22 | 43.72 | 0 |
+| 3 | Native rigid depth | 68.82 | 42.69 | 0 |
+| 4 | Original | 69.42 | 44.21 | 0 |
+
+Pooled frame-count/time averages were 69.69 FPS for the original path and 69.02
+for native rigid depth, about 1% lower. AI traffic varies, and this replaces only
+a small subset of draws while retaining the original setup plus GPU snapshots.
+These results do not establish a speedup. They also do not measure the combined
+mode, which must be profiled independently. Window focus was not independently
+controlled, so these are matched development runs, not an uncontended hardware
+benchmark.
+The test harness stops only its own child after saving each report.
+
+### Combined native execution
+
+`FORZA_NATIVE_RENDERER=combined` enables the already guarded rigid depth path,
+direct native motion output and ownership-based RGBA8 resolves together. The
+individual modes remain available for diagnosis and original-path comparisons.
+The combined mode does not widen any shader, raster, attachment ownership,
+format, sample-count or buffer-lifetime contract. Each unsupported draw or resolve
+still falls back independently.
+
+Geometry updates the existing depth attachment at its original draw position.
+Motion consumes the existing packed-depth texture, preserving its established
+sample and car-mask contract, then writes its compatible RGBA8 target directly.
+The resolve obtains its complete source owner independently, so a different
+later draw or source clear cannot select a stale motion target. HUD composition
+and texture/readback consumers keep their original paths.
+
+A copied-save native 1440p AI race with threaded submission and Khronos
+synchronization validation completed with zero Vulkan errors. It executed at
+least 15,360 native rigid-depth draws, 1,320 native motion draws and 7,800 native
+RGBA8 resolves in one session. World and HUD dimensions remained 2560x1440.
+This is a correctness check, not an uninstrumented performance result.
+
+
+
 ## Build the development tools
 
 No SDK, game files or NVIDIA runtime is needed for the planner tests:

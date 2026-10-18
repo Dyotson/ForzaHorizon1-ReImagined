@@ -227,3 +227,9 @@ canonical native pipeline supports reversed viewport depth ranges and both
 traditional render passes and dynamic rendering. Standalone
 SDK builds keep a fallback stub. See
 [Native renderer](native_renderer.md#live-rigid-depth-integration).
+
+0085 adds `FORZA_NATIVE_RENDERER=combined`, enabling the validated rigid-depth,
+direct-motion and ownership-based RGBA8-resolve paths in the same game session.
+It preserves the independent diagnostic modes and every existing contract gate;
+unsupported draws and resolves continue through the original path. See
+[Native renderer](native_renderer.md#combined-native-execution).
