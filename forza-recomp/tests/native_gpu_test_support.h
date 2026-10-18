@@ -167,4 +167,3 @@ struct Buffer {
     vkFreeMemory(context.device, memory, nullptr);
   }
 };
-
