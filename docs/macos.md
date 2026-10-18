@@ -85,6 +85,21 @@ here. The screen is 3024×1964; these are whole-number render scales presented
 on that display. Exact pixel-matched drawing at its fractional scale remains
 unsupported by this renderer's vertical resolve path.
 
+## Continuous integration
+
+The `macOS` GitHub Actions workflow checks relevant pull requests (including
+drafts and stacked PRs), pushes to `main`, and manual runs on a native Apple
+Silicon `macos-15` runner. It builds the complete pinned SDK with this repository's
+patches, runs the graphics preset, timing and config-preservation tests, compiles
+both base and TU4 host sources, and links the native GPU probe. It also checks
+shell syntax, SDK binary architecture and codegen startup. The installed SDK is
+cached against the patch series, build scripts and runner toolchain.
+
+These checks need no game files and do not generate, link or launch the game.
+The workflow uploads diagnostic logs only. GPU rendering, MetalFX quality,
+controllers, saves and frame rates still require local hardware validation;
+the hosted job does not run `--gpu-check`. Game app packaging remains local.
+
 ## Local macOS app
 
 ```sh
