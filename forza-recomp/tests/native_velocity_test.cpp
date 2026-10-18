@@ -8,7 +8,7 @@ using namespace forza::native_renderer;
 int main() {
   VelocityParameters parameters;
   parameters.projection = {1.0002f, -1.0002f, 0, 0};
-  for (uint32_t object = 0; object < 25; ++object)
+  for (uint32_t object = 0; object < 43; ++object)
     for (uint32_t row = 0; row < 4; ++row)
       parameters.previous[object * 4 + row][row] = 1;
   CHECK(Valid(parameters));
@@ -32,14 +32,30 @@ int main() {
   CHECK(car.blur[3] == 1);
   // The blur limit must never clamp the temporal motion vector.
   CHECK(car.blur[0] > 0.99f && car.pixels[0] < -200);
-  parameters.previous[24 * 4][3] = 0.1f;
+  parameters.previous[42 * 4][3] = 0.1f;
   const auto high_id = EvaluateVelocity(parameters, {0, 0, 127, 232}, 0.25f, 0.75f, 2560, 1440);
   CHECK(std::abs(high_id.pixels[0] - 128) < 0.001f);
   parameters.previous[3] = {};
   const auto bad_w = EvaluateVelocity(parameters, {0, 0, 128, 232}, 0.25f, 0.75f, 2560, 1440);
   CHECK(bad_w.pixels[0] == 0 && bad_w.pixels[1] == 0);
+  for (uint32_t row = 0; row < 4; ++row) parameters.previous[33 * 4 + row] = {};
+  const auto zero_position = EvaluateVelocity(parameters, {0, 0, 99, 232}, 0.25f, 0.75f, 2560, 1440);
+  CHECK(zero_position.pixels[0] == 0 && zero_position.pixels[1] == 0);
+  CHECK(std::abs(zero_position.blur[0] - (127.0f / 255 - 0.5f / std::sqrt(2.0f))) < 0.0001f);
+  CHECK(zero_position.blur[2] > 0.7f);
+  parameters.previous[0] = {1, 0, 0.2f, 0};
+  parameters.previous[3] = {0, 0, 0, 1};
+  const auto outside_depth = EvaluateVelocity(parameters, {0, 0, 128, 248}, 0.25f, 0.75f, 2560, 1440);
+  CHECK(outside_depth.depth == 1);
+  CHECK(std::abs(outside_depth.pixels[0] + 128) < 0.001f);
   parameters.previous[8][2] = std::numeric_limits<float>::quiet_NaN();
-  CHECK(!Valid(parameters));
+  CHECK(Valid(parameters));
+  const auto unused_nan = EvaluateVelocity(parameters, {0, 0, 6, 240}, 0.25f, 0.75f, 2560, 1440);
+  CHECK(std::isfinite(unused_nan.pixels[0]));
+  CHECK(unused_nan.blur[0] != 0);
+  const auto invalid_nan = EvaluateVelocity(parameters, {0, 0, 6, 232}, 0.25f, 0.75f, 2560, 1440);
+  CHECK(invalid_nan.pixels[0] == 0 && invalid_nan.pixels[1] == 0);
+  CHECK(invalid_nan.blur == Float4({0, 0, 0, 1}));
   parameters.previous[8][2] = 0;
   CHECK(Valid(parameters));
   parameters.uv_transform = {0.5f, 1, 0, 0};

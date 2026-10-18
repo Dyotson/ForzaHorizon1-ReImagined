@@ -25,8 +25,8 @@ VkImageMemoryBarrier ImageBarrier(VkImage image, VkImageLayout old_layout,
 
 VelocityPass::~VelocityPass() {
   if (!device_) return;
-  // Shutdown only. Normal operation never waits for the entire device.
-  functions_.vkDeviceWaitIdle(device_);
+  // The owner drains recording jobs and GPU submissions before destruction.
+  // Waiting on an externally owned device here would race other queue users.
   if (pipeline_) functions_.vkDestroyPipeline(device_, pipeline_, nullptr);
   if (pipeline_layout_) functions_.vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
   if (descriptor_pool_) functions_.vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);

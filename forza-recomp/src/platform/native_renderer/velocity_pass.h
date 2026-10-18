@@ -16,6 +16,8 @@ namespace forza::native_renderer {
 // the submission thread. Completion IDs must come from waited GPU fences, never
 // from merely enqueuing a submission. Consumers must restore output GENERAL
 // layout before slot reuse. The pass must outlive every recorded dispatch.
+// Before destruction, the owner must drain recording jobs and wait their GPU
+// submission fences. Destruction does not wait on the externally owned device.
 // A prepared dispatch must be recorded/submitted; abandoning a command stream
 // requires destroying the pass after the device is idle and recreating it.
 class VelocityPass {

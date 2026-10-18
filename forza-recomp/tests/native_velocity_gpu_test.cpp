@@ -172,11 +172,11 @@ struct Input {
   std::vector<std::array<uint8_t, 4>> pixels;
   explicit Input(Context& c, uint32_t w = 37, uint32_t h = 19, bool bgra = false)
       : context(c), width(w), height(h), swizzled(bgra), pixels(width * height) {
-    constexpr uint8_t masks[] = {0, 3, 15, 24, 72, 127, 128, 255};
     for (uint32_t y = 0; y < height; ++y)
       for (uint32_t x = 0; x < width; ++x)
         pixels[y * width + x] = {uint8_t((x * 17) & 255), uint8_t((y * 37) & 255),
-            masks[(x + y) % 8], uint8_t(224 + (x + y) % 16)};
+            uint8_t((x + y * width) & 255), uint8_t(224 + (x + y) % 32)};
+    if (width > 1 && height > 1) pixels[width + 1] = {0, 0, 6, 240};
     VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     info.imageType = VK_IMAGE_TYPE_2D; info.format = VK_FORMAT_R8G8B8A8_UNORM;
     info.extent = {width, height, 1}; info.mipLevels = info.arrayLayers = 1;
@@ -246,13 +246,15 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
   pass.Initialize(dispatch, context.physical, context.device, width, height, 2, shader);
   VelocityParameters parameters;
   parameters.projection = {1.0002f, -1.0002f, 0, 0};
-  for (uint32_t object = 0; object < 25; ++object) {
+  for (uint32_t object = 0; object < 43; ++object) {
     for (uint32_t row = 0; row < 4; ++row)
       parameters.previous[object * 4 + row][row] = 1;
     parameters.previous[object * 4][3] = float(int(object % 3) - 1) * 0.037f;
     parameters.previous[object * 4 + 1][3] = float(int(object % 5) - 2) * 0.029f;
     if (singular) parameters.previous[object * 4 + 3] = {};
   }
+  for (uint32_t row = 0; row < 4; ++row) parameters.previous[33 * 4 + row] = {};
+  parameters.previous[2 * 4][2] = std::numeric_limits<float>::quiet_NaN();
   if (rotated) {
     parameters.uv_transform = {-1, -1, 1, 1};
     parameters.motion_scale = {-0.5f, 0.5f, 0, 0};

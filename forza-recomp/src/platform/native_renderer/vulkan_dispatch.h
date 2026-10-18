@@ -30,7 +30,6 @@
   X(vkDestroyPipelineLayout) \
   X(vkDestroySampler) \
   X(vkDestroyShaderModule) \
-  X(vkDeviceWaitIdle) \
   X(vkFreeMemory) \
   X(vkGetBufferMemoryRequirements) \
   X(vkGetImageMemoryRequirements) \

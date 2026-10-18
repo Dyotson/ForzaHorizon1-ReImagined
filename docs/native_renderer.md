@@ -29,7 +29,8 @@ pass. It is **not yet an enabled replacement renderer**:
 - `velocity_pass` owns Vulkan depth, motion and blur attachments. Its authored
   compute shader decodes packed depth/stencil, reconstructs per-object movement,
   and keeps unclamped temporal motion separate from shaped blur. It executes in
-  the standalone GPU test; it is not wired into the game's draw stream yet.
+  the standalone GPU test. A private SDK integration prototype also executes it
+  in the game's draw stream; that bridge is not published in this branch yet.
 
 The planner currently works at whole-resource granularity. Layout transitions,
 queue ownership, subresources, native allocation and guest EDRAM alias mapping
@@ -39,7 +40,7 @@ therefore explicitly say `execution_ready: false`.
 
 ## Native depth and motion pass
 
-The pass accepts a host parameter block containing 25 preceding-frame transforms,
+The pass accepts a host parameter block containing 43 preceding-frame transforms,
 projection parameters, blur response, UV orientation and motion scale. The caller
 supplies a point-sampled RGBA8 array view in shader-read layout and reports GPU
 completion using monotonically increasing submission IDs. Those IDs must come
@@ -55,7 +56,10 @@ submission thread. Slots own separate attachments and constants; preparation
 rejects unfinished slots and invalid parameters without recording GPU work.
 Prepared dispatches must be submitted; abandoning a command stream requires an
 idle-device reset of the pass. Consumers must return its images to GENERAL layout
-before reuse. Destruction waits for the device before releasing resources.
+before reuse. Before destruction the owner must drain recording jobs and wait
+their submission fences. The pass does not wait on an externally owned device:
+doing so can race another thread's queue submissions. Partially initialized,
+never-submitted resources can be released without a device-wide stall.
 
 Outputs are R32F depth, RGBA32F motion (XY in output pixels) and RGBA8 blur. The
 four-component motion image is intentional during validation: it preserves full
@@ -64,7 +68,7 @@ existing device setup does not enable. A supplied function table lets the pass
 use the runtime's Vulkan loader. No NVIDIA library is required.
 
 Synthetic fixtures test static and translated cameras, individual car/stencil
-IDs, the world mask, capped object IDs, invalid transforms, singular homogeneous
+IDs, the world mask, all reachable object IDs, invalid transforms, singular homogeneous
 coordinates, blur limits, two orientations and output sizes 73x41 and 2560x1440.
 The odd size also exercises partial compute workgroups and readback alignment.
 Every output pixel is compared with a CPU reference; closed-form reference tests
@@ -74,7 +78,8 @@ in both orientations.
 
 On an RTX 5060 Ti, all three Release tests passed with Khronos synchronization
 validation enabled and zero validation errors. At 2560x1440, depth and quantized
-blur matched exactly; the largest motion difference was 0.000197 pixels. These
+blur matched within one quantized colour step; motion differed by less than
+0.001 pixels. These
 are synthetic correctness measurements, not a comparison with the game's actual
 velocity attachment or a whole-frame performance result. No shader disassembly,
 game textures, saves or generated binaries are included in the implementation.
@@ -90,11 +95,40 @@ real input format, sampling, object masks and output encoding; it does not prove
 moving-camera equivalence. The original normalized-filter implementation differed
 at 496 alpha edge pixels; integer center selection removed every difference.
 
-The local fixture and replay outputs are volatile files outside the repository.
-A new moving AI-race capture currently fails during Vulkan instance creation
-under RenderDoc with `ErrorExtensionNotPresent`; the regular game and standalone
-GPU test start successfully. Investigate capture compatibility before claiming a
-moving-scene comparison. The native pass is still not substituted into the game.
+The moving race exposed additional requirements. Blur reprojection must use raw
+decoded depth, including values above one; only the exported temporal depth is
+clamped. Stencil indices below 128 can reach transform 42, not just the first 25
+entries. Zero products retain the legacy zero-times-infinity/NaN behaviour. A zero
+homogeneous position and NaN/Inf results have different blur encodings, while
+temporal motion rejects invalid projections. Unused non-finite matrix entries do
+not invalidate an otherwise usable frame. These cases now have synthetic tests.
+
+An offline GPU comparison using a moving-race fixture, including 17 NaN and 42
+infinite projection results, matched all 921,600 car-mask pixels exactly and all
+colour channels within one quantized step. This ran with Khronos synchronization
+validation and zero errors. A private integration subsequently executed the
+native pass before the original draw across four captured race frames: each
+comparison had maximum error [1,1,1,0] and no pixels outside that tolerance.
+
+The private replacement prototype then removed the original motion draw. Its
+capture shows a native dispatch, an image copy into the existing target, and the
+usual resolve consumers. All four copies matched the native output exactly.
+The recovered game output is 2560x1440 with the original HUD. This still uses the
+legacy renderer for geometry, other effects, EDRAM resolves and HUD composition.
+It is an incremental pass replacement, not a complete native world renderer.
+
+Capture startup required a private runtime workaround: RenderDoc 1.46 on Windows
+advertises `VK_KHR_portability_enumeration`, then rejects instance creation when it
+is enabled. A standalone extension probe isolated that extension; omitting it
+when RenderDoc is attached allowed the AI race capture. Validation reported
+swapchain and queue-use errors at the capture boundary. A run without RenderDoc
+is still required before claiming clean integration validation or performance.
+Threaded submission and fractional scene inputs also remain integration checks.
+
+The local fixtures, captures and screenshots remain volatile files outside the
+repository. The benchmark preview runtime was restored after the experiments.
+The SDK bridge, build integration and a reviewable runtime patch remain work in
+progress; this branch does not enable the replacement in normal game builds.
 
 ## Build the development tools
 
@@ -163,9 +197,9 @@ Release builds.
 
 ## Next execution milestone
 
-1. Complete a moving-camera/AI-race comparison after the neutral-motion replay
-   match. Establish tiled/reflection state and fallback conditions before replacing
-   the original draw. Neutral-motion parity alone does not establish this.
+1. Finish the runtime bridge after the moving-frame comparisons. Validate it
+   without capture instrumentation, with threaded submission, and across scene
+   resolution changes. Keep unsupported draw states on the original path.
 2. Map the pass's guest texture/resolve identities to explicitly owned native
    images. Preserve immutable snapshots for consumers that outlive a source write.
 3. Implement its layout and queue transitions, format interpretation and CPU

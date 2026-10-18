@@ -6,12 +6,19 @@ layout(binding = 1, r32f) uniform writeonly image2D native_depth;
 layout(binding = 2, rgba32f) uniform writeonly image2D native_motion;
 layout(binding = 3, rgba8) uniform writeonly image2D native_blur;
 layout(binding = 4, std140) uniform Parameters {
-  vec4 previous[100];
+  vec4 previous[172];
   vec4 projection;
   vec4 blur;
   vec4 uv_transform;
   vec4 motion_scale;
 };
+
+float legacy_dot(vec4 position, vec4 coefficients) {
+  float result = 0;
+  for (int i = 0; i < 4; ++i)
+    result += position[i] == 0 || coefficients[i] == 0 ? 0 : position[i] * coefficients[i];
+  return result;
+}
 
 void main() {
   ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -30,28 +37,35 @@ void main() {
       (2u * uvec2(extent)));
   uvec4 bytes = uvec4(round(texelFetch(packed_depth, ivec3(source, 0), 0) * 255));
   uint mantissa = ((bytes.w & 15u) << 16) | (bytes.x << 8) | bytes.y;
-  float depth = clamp(exp2(float(int(bytes.w >> 4) - 15)) *
-      (1 + float(mantissa) / 1048576.0), 0, 1);
-  uint object = bytes.z >= 128u ? 0u : min((bytes.z + 1u) / 3u, 24u);
+  float depth = exp2(float(int(bytes.w >> 4) - 15)) *
+      (1 + float(mantissa) / 1048576.0);
+  uint object = bytes.z >= 128u ? 0u : (bytes.z + 1u) / 3u;
   vec2 current = uv * vec2(2, -2) + vec2(-1, 1);
   float denominator = 1 - projection.x - depth;
   float z = projection.y / (abs(denominator) > 1e-20 ? denominator : -1e-20);
   vec4 position = vec4(current * z, z * (1 - depth), z);
   uint row = object * 4u;
-  float w = dot(position, previous[row + 3u]);
-  vec2 displacement = vec2(dot(position, previous[row]),
-      dot(position, previous[row + 1u])) / w - current;
-  if (abs(w) < 1e-20 || any(isnan(displacement)) || any(isinf(displacement)))
+  float w = legacy_dot(position, previous[row + 3u]);
+  vec2 numerator = vec2(legacy_dot(position, previous[row]), legacy_dot(position, previous[row + 1u]));
+  float reciprocal_w = 1 / w;
+  vec2 preceding = vec2(numerator.x == 0 || reciprocal_w == 0 ? 0 : numerator.x * reciprocal_w,
+      numerator.y == 0 || reciprocal_w == 0 ? 0 : numerator.y * reciprocal_w);
+  vec2 displacement = preceding - current;
+  bool invalid_nan = any(isnan(displacement));
+  if (invalid_nan || any(isinf(displacement)))
     displacement = vec2(0);
 
   vec2 motion = clamp(displacement * vec2(extent) * motion_scale.xy,
       -vec2(extent), vec2(extent));
+  if (isnan(w) || isinf(w) || abs(w) < 1e-20) motion = vec2(0);
   float speed = length(displacement);
   float shaped = speed + speed * blur.z / (1 + pow(speed * blur.y, blur.x));
   float amount = speed > 1e-20 ? min(shaped, blur.w) / speed : 0;
   vec2 encoded = displacement * vec2(-5, 5) * amount + 127.0 / 255.0;
-  imageStore(native_depth, pixel, vec4(depth));
+  imageStore(native_depth, pixel, vec4(clamp(depth, 0, 1)));
   imageStore(native_motion, pixel, vec4(motion, 0, 0));
-  imageStore(native_blur, pixel, vec4(clamp(encoded, 0, 1), clamp(shaped, 0, 1),
-      float(bytes.z > 0u && bytes.z < 128u)));
+  vec3 blur_rgb = vec3(clamp(encoded, 0, 1), clamp(shaped, 0, 1));
+  if (isinf(speed)) blur_rgb = vec3(127.0 / 255.0, 127.0 / 255.0, 0);
+  if (invalid_nan) blur_rgb = vec3(0);
+  imageStore(native_blur, pixel, vec4(blur_rgb, float(bytes.z > 0u && bytes.z < 128u)));
 }
