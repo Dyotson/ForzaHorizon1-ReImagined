@@ -233,6 +233,32 @@ class SaveUITests(unittest.TestCase):
 
 
 class SaveSessionTests(unittest.TestCase):
+    def test_haptics_and_save_lock_share_the_session_through_relaunch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = saves.Profile(root, root, 'local', 'Test')
+            plan = game.LaunchPlan(None, root, ['fake-game'], {}, [], root/'forza.toml', '',
+                                   haptics_settings={'enabled': True}, save_profile=profile)
+            service = Mock()
+            service.new_stream.return_value = {}
+            with patch('forza_launcher.haptics.service.supported', return_value=True), \
+                 patch('forza_launcher.haptics.service.supports_xbox', return_value=False), \
+                 patch('forza_launcher.haptics.service.HapticsService', return_value=service), \
+                 patch.object(game.subprocess, 'Popen'):
+                session = game.Session(plan)
+                try:
+                    session.start()
+                    session.relaunch()
+                    service.start.assert_called_once_with()
+                    self.assertEqual(service.new_stream.call_count, 2)
+                    service.stop.assert_not_called()
+                    with self.assertRaises(saves.SaveError):
+                        saves.create(profile)
+                finally:
+                    session.cleanup()
+                service.stop.assert_called_once_with()
+                self.assertIsNone(saves.create(profile))
+
     def test_session_lock_survives_relaunch_and_releases_on_cleanup_or_start_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
