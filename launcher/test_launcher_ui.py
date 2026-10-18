@@ -164,10 +164,14 @@ class LauncherUITests(unittest.TestCase):
         self.assertFalse(page.build_details.toggle.isChecked())
 
     def test_graphics_dependency_reasons_follow_selected_upscaler(self):
+        from forza_launcher.paths import IS_WINDOWS
         page = self.window.settings
+        # Linux has a fixed Vulkan backend and no Graphics API selector.
+        self.assertEqual("gpu_backend" in page.rows, IS_WINDOWS)
+        backend_keys = ("gpu_backend",) if IS_WINDOWS else ()
         self.cfg.settings.update(fh1_upscaler="quality", forza_ultrawide=False)
         page._apply_dependencies()
-        for key in ("resolution", "resolution_scale", "gpu_backend", "present_effect"):
+        for key in ("resolution", "resolution_scale", "present_effect") + backend_keys:
             self.assertFalse(page.rows[key].control.isEnabled())
             self.assertIn("NVIDIA", page.rows[key].dependency.text())
         self.cfg.settings.update(fh1_upscaler="off", present_effect="fsr3")
@@ -176,11 +180,14 @@ class LauncherUITests(unittest.TestCase):
         self.assertIn("AMD FSR 3", page.rows["resolution"].dependency.text())
         self.cfg.settings.update(present_effect="fsr", forza_ultrawide=True)
         page._apply_dependencies()
-        self.assertIn("Ultrawide", page.rows["gpu_backend"].dependency.text())
+        for key in ("resolution_scale",) + backend_keys:
+            self.assertFalse(page.rows[key].control.isEnabled())
+            self.assertIn("Ultrawide", page.rows[key].dependency.text())
         self.cfg.settings["forza_ultrawide"] = False
         page._apply_dependencies()
-        self.assertTrue(page.rows["gpu_backend"].control.isEnabled())
-        self.assertEqual(page.rows["gpu_backend"].dependency.text(), "")
+        for key in ("resolution_scale",) + backend_keys:
+            self.assertTrue(page.rows[key].control.isEnabled())
+            self.assertEqual(page.rows[key].dependency.text(), "")
 
     def test_settings_tabs_preserve_values_and_selected_page_after_rebuild(self):
         from forza_launcher import schema
