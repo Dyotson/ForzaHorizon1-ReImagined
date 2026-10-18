@@ -37,6 +37,10 @@ class SettingsSearchTests(unittest.TestCase):
         self.page.show()
         self.app.processEvents()
         self.search = self.page.search
+        # Initial radio selection schedules the page's existing startup save.
+        # Measure search separately so slow CI rendering cannot flush that timer mid-test.
+        self.page._save_timer.stop()
+        self.window.reset_mock()
 
     def tearDown(self):
         self.page._save_timer.stop()
@@ -105,7 +109,9 @@ class SettingsSearchTests(unittest.TestCase):
         self.assertTrue(self.search.count.isHidden())
 
     def test_hidden_gpu_rows_excluded_and_rebuild_replaces_targets(self):
-        self.assertTrue(self.query("fh1_output_resolution"))
+        from forza_launcher import schema
+        self.assertEqual(bool(self.query("fh1_output_resolution")),
+                         schema.BY_KEY["fh1_output_resolution"].applies())
         old = self.query("mnk_sensitivity")[0].widget
         self.cfg.gpu["vendor"] = "amd"
         self.page.rebuild()
