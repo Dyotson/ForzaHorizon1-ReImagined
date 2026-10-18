@@ -150,6 +150,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/guest_cpu.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
@@ -184,6 +185,11 @@ endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+
+# Experimental CPU optimization, independent of the GPU/driver. Keep the host
+# bootstrap at the SDK baseline so it can reject an incompatible CPU safely.
+include(cmake/GuestFma.cmake)
+forza_configure_guest_fma(forza)
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client

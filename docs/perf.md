@@ -482,8 +482,10 @@ time the game uses. On a Deck the busy wait took one of its 8 hardware threads (
 that core, and power from the shared CPU/GPU budget), so that is where the gain should show; a Deck log is
 still needed to tell.
 
-Ideas left (not cheap): build the generated code with `-mfma` behind a CPU check (every x86-64 CPU since
-2013 and the Deck have FMA3; 11,700 `std::fma` calls in the generated code); cache Vulkan descriptor sets in
+An opt-in `FORZA_GUEST_FMA` experiment now builds generated code with `-mfma` behind a CPU/OS check;
+see [the Pinyon comparison and BC-250 validation plan](bc250-performance.md). It defaults off and has
+no confirmed BC-250 fps result. FMA3 is not available on every x86-64 CPU, so keep the portable build.
+Other ideas left: cache Vulkan descriptor sets in
 `UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
 write-back instead of the 50 us sleeps.
 
