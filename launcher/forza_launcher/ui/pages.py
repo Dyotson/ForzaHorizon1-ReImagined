@@ -339,7 +339,13 @@ class SetupPage(QWidget):
         self.dlc.editingFinished.connect(self._dlc_changed)
         self.c2.lay.addLayout(row)
         self.dlclist = label("", "help")
+        self.dlclist.setTextFormat(Qt.PlainText)
         self.c2.lay.addWidget(self.dlclist)
+        self.dlcwarning = label("")
+        self.dlcwarning.setTextFormat(Qt.PlainText)
+        self.dlcwarning.setStyleSheet(f"color: {theme.ORANGE};")
+        self.dlcwarning.hide()
+        self.c2.lay.addWidget(self.dlcwarning)
         self.go2 = QPushButton("Install DLC")
         self.go2.clicked.connect(self._install_dlc)
         brow = QHBoxLayout()
@@ -482,6 +488,7 @@ class SetupPage(QWidget):
             self.ctu.set_badge("Recommended", None)
             self.msgtu.setText("No title update: the base game is built (no Horizon Rally, no 1000 Club).")
         d = self.dlc.text().strip()
+        warning = ""
         if d:
             got = installer.dlc_cached(d)
             if self._dlc_error and self._dlc_error[0] == d:
@@ -491,8 +498,11 @@ class SetupPage(QWidget):
                 self._probe("dlc:" + d, lambda: self._read_dlc(d))
             else:
                 self.dlclist.setText(self._dlc_text(*got))
+                warning = installer.dlc_warning(got[0])
         else:
             self.dlclist.setText("")
+        self.dlcwarning.setText(warning)
+        self.dlcwarning.setVisible(bool(warning))
         n = game.installed_dlc(cfg)
         self.c2.set_badge(f"{n} installed" if n else "Optional", True if n else None)
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])

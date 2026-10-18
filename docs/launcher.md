@@ -30,6 +30,16 @@ machine from their own copy:
    header is generated (display name from a table of the 23 known package names, else "DLC <name>").
    Folders that do not look like DLC (a name that is not 8 to 42 hex digits, no files inside) are
    skipped and listed in the card.
+   Packages outside the known official package-name table show an amber **Unrecognized DLC**
+   warning (#118), naming every package by its display name and filename, including packages
+   beyond the list's 12-item preview. Installation remains available without a confirmation
+   dialog. The warning explains that unofficial or modified packs can cause endless loading
+   and suggests removing the named packages first if that happens. It stays visible after
+   installation and clears when a different selection has no unrecognized packages. Both STFS
+   files and extracted Xenia folders use the same case-insensitive name check; this does not
+   verify the contents or authenticity of a recognized package. Installation also emits the
+   warning through its log callback. `launcher/test_dlc_warnings.py` covers recognition,
+   synthetic STFS/extracted-folder installs, and the offscreen Setup UI on Windows and Linux.
    With a TU4 package the build runs `tools/apply_title_update.py BASE_XEX TU_PACKAGE
    <data>/build/tu/default.xex` (patched `default.xex`, both facade DLLs and `media.zip`, about
    2 s), copies `forza_manifest_tu4.toml` with its three `file_path`s and `game_root` pointed at

@@ -166,6 +166,20 @@ def dlc_cached(folder: str):
     return _DLC_CACHE.get(_dlc_key(folder))
 
 
+def dlc_warning(found) -> str:
+    """Advisory for [(package filename, display name)], using the known package-name table.
+    This is recognition, not a check of the package's contents or authenticity. No file I/O."""
+    unknown = [(name, display) for name, display in found if name.upper() not in install_dlc.KNOWN_NAMES]
+    if not unknown:
+        return ""
+    names = "\n".join(f"- {display or name} ({name})" if display and display != name else f"- {name}"
+                      for name, display in unknown)
+    return ("Unrecognized DLC packages:\n" + names +
+            "\nThese are not in the launcher's known official package list. You can still install them, "
+            "but unofficial or modified packs may cause endless loading. If the game hangs after "
+            "installing DLC, try removing these packages first.")
+
+
 def describe_dlc_folder(folder: str):
     """([(name, display name)] of the DLC in a folder, [(name, reason)] of what was skipped).
     The DLC is STFS packages (files) and/or extracted package folders (a Xenia content folder or
@@ -216,6 +230,10 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
     """Install every DLC package of a folder (package files and extracted package folders).
     Returns the number of packages installed."""
     found, dirs, skipped = list_dlc(Path(folder).expanduser())
+    warning = dlc_warning([(f.name, name) for f, name, _ in found] +
+                          [(name, display) for _, name, display, _ in dirs])
+    if warning:
+        log(warning)
     for n, why in skipped:
         log(f"skipping {n}: {why}")
     if not found and not dirs:
