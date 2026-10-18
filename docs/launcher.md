@@ -284,8 +284,12 @@ recovery, Xenia source isolation, Qt actions, worker shutdown and session lockin
 link rejection is skipped on Windows when symlink creation is unavailable.
 
 **Edit profile…** opens an offline editor for credits (0–999,999,999) and career XP
-(0–2,147,483,647). Level and wristband values are shown for context. Changing XP only
-changes the stored total: level, wristbands, event flags and garage records are preserved.
+(0–2,147,483,647), plus a **Wristband** selector: Yellow, Green, Blue, Pink, Orange,
+Purple and Gold. The selector uses the career database's IDs 0–6 and edits only
+`Main/WristbandLevel`; it leaves XP separate and does not complete races, award cars,
+finish the opening tutorial or change online rank. Level is shown for context. Changing
+XP only changes the stored total. An unfamiliar saved wristband value is shown as an
+unchanged current value and preserved unless a supported tier is selected.
 The editor authenticates and decrypts `ForzaProfile/ForzaProfile` using the selected
 profile's XUID and key tables read from the player's own `default.xex` in the game-files
 folder. It supports the known disc and TU4 layouts; no game key bytes are bundled or

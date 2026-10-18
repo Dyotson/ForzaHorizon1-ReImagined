@@ -17,7 +17,10 @@ from . import TITLE_ID, game, paths, saves
 
 MAX_PROFILE = 16 * 1024**2
 FORMATS = {0: '?', 1: 'B', 3: 'I', 4: 'Q', 7: 'i', 9: 'f'}
-EDITABLE = {'Main/Credits': (3, 0, 999_999_999), 'Main/XP': (7, 0, 2_147_483_647)}
+# CareerWristbandLevels IDs in the supported game's database (not online ranks).
+WRISTBANDS = tuple(enumerate(('Yellow', 'Green', 'Blue', 'Pink', 'Orange', 'Purple', 'Gold')))
+EDITABLE = {'Main/Credits': (3, 0, 999_999_999), 'Main/XP': (7, 0, 2_147_483_647),
+            'Main/WristbandLevel': (7, 0, len(WRISTBANDS)-1)}
 
 
 @dataclass(frozen=True)

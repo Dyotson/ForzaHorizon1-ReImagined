@@ -162,10 +162,14 @@ class SaveUITests(unittest.TestCase):
             self.assertEqual(dialog.controls['Main/Credits'].value(), 500)
             dialog.controls['Main/Credits'].setValue(1500)
             dialog.controls['Main/XP'].setValue(5000)
+            self.assertEqual(dialog.wristband.currentText(), 'Green')
+            dialog.wristband.setCurrentIndex(dialog.wristband.findData(6))
+            self.assertEqual(dialog.controls['Main/XP'].value(), 5000)
             dialog.apply_button.click()
             self.wait_done()
             self.assertIn('Changes saved', dialog.message.text())
             self.assertEqual(dialog.document.values['Main/XP'].value, 5000)
+            self.assertEqual(dialog.document.values['Main/WristbandLevel'].value, 6)
             backup = saves.snapshots(self.profile)[0][0]
             self.assertEqual(backup.kind, 'before-edit')
             self.assertEqual((backup.path/'save/ForzaProfile/ForzaProfile').read_bytes(), original)
@@ -187,6 +191,34 @@ class SaveUITests(unittest.TestCase):
         self.assertTrue(dialog.message.text())
         dialog.close()
         self.wait_done()
+
+    def test_editor_preserves_an_unknown_current_wristband_without_clamping(self):
+        import struct
+        from forza_launcher import save_editor
+        from test_save_editor import KEYS, body, profile_bytes
+        content = bytearray(body())
+        offset = save_editor.fields(content)['Main/WristbandLevel'].offset
+        struct.pack_into('>i', content, offset, 8)
+        path = self.profile.folder/'ForzaProfile/ForzaProfile'
+        path.parent.mkdir()
+        path.write_bytes(profile_bytes(bytes(content)))
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.refresh()
+            self.wait_done()
+            self.page.edit_button.click()
+            self.wait_done()
+            dialog = self.page.editor
+            self.assertEqual(dialog.wristband.currentData(), 8)
+            self.assertIn('unchanged', dialog.wristband.currentText())
+            dialog.reload_button.click()
+            self.wait_done()
+            self.assertEqual(dialog.wristband.count(), len(save_editor.WRISTBANDS)+1)
+            dialog.controls['Main/Credits'].setValue(700)
+            dialog.apply_button.click()
+            self.wait_done()
+            self.assertEqual(dialog.document.values['Main/WristbandLevel'].value, 8)
+            dialog.close()
+            self.wait_done()
 
 
 class SaveSessionTests(unittest.TestCase):

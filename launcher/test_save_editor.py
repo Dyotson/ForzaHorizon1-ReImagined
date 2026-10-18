@@ -79,7 +79,8 @@ class EditorTests(unittest.TestCase):
         after = editor.decode(self.profile, changed, (KEYS,))
         self.assertEqual(after.values['Main/Credits'].value, 1_000_000)
         self.assertEqual(after.values['Main/XP'].value, 450_000)
-        allowed = {offset+i for path in editor.EDITABLE for offset in (self.doc.values[path].offset,) for i in range(4)}
+        allowed = {offset+i for path in ('Main/Credits', 'Main/XP')
+                   for offset in (self.doc.values[path].offset,) for i in range(4)}
         self.assertTrue(all(a == b or i in allowed for i, (a, b) in enumerate(zip(self.doc.body, after.body))))
         self.assertEqual(after.padding, self.doc.padding)
         self.assertTrue(changed.endswith(b'untouched file capacity'))
@@ -93,6 +94,26 @@ class EditorTests(unittest.TestCase):
         self.assertEqual((self.file.parent/'PlayerDatabase').read_bytes(), b'untouched companion')
         saves.restore(self.profile, result.backup)
         self.assertEqual(self.file.read_bytes(), self.original)
+
+    def test_all_career_wristbands_round_trip_without_changing_xp_or_other_state(self):
+        self.assertEqual(editor.WRISTBANDS, ((0, 'Yellow'), (1, 'Green'), (2, 'Blue'), (3, 'Pink'),
+                                            (4, 'Orange'), (5, 'Purple'), (6, 'Gold')))
+        for value, name in editor.WRISTBANDS:
+            with self.subTest(wristband=name):
+                changed = editor.encode(self.doc, {'Main/WristbandLevel': value})
+                after = editor.decode(self.profile, changed, (KEYS,))
+                self.assertEqual(after.values['Main/WristbandLevel'].value, value)
+                offset = self.doc.values['Main/WristbandLevel'].offset
+                self.assertTrue(all(a == b or offset <= i < offset+4
+                                    for i, (a, b) in enumerate(zip(self.doc.body, after.body))))
+                self.assertEqual(after.values['Main/XP'].value, 100)
+
+    def test_unknown_existing_wristband_is_preserved_when_editing_other_fields(self):
+        data = bytearray(self.doc.body)
+        struct.pack_into('>i', data, self.doc.values['Main/WristbandLevel'].offset, 8)
+        document = editor.decode(self.profile, profile_bytes(bytes(data)), (KEYS,))
+        changed = editor.decode(self.profile, editor.encode(document, {'Main/Credits': 1000}), (KEYS,))
+        self.assertEqual(changed.values['Main/WristbandLevel'].value, 8)
 
     def test_stale_document_cannot_overwrite_newer_save(self):
         self.file.write_bytes(b'newer save')
@@ -120,7 +141,8 @@ class EditorTests(unittest.TestCase):
 
     def test_edit_limits_and_unknown_fields_are_rejected(self):
         for path, value in (('Main/Credits', -1), ('Main/Credits', 1_000_000_000), ('Main/XP', 2**31),
-                            ('Main/XP', True), ('Main/Level', 50), ('Main/Credits', 1.5)):
+                            ('Main/XP', True), ('Main/Level', 50), ('Main/Credits', 1.5),
+                            ('Main/WristbandLevel', -1), ('Main/WristbandLevel', 7)):
             with self.subTest(path=path, value=value):
                 with self.assertRaises(saves.SaveError): editor.apply(self.doc, {path:value})
         self.assertEqual(self.file.read_bytes(), self.original)

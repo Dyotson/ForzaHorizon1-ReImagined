@@ -2,7 +2,8 @@
 from copy import deepcopy
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QProgressBar,
+from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QProgressBar,
                                QPushButton, QSpinBox, QVBoxLayout)
 
 from .. import save_editor
@@ -18,7 +19,7 @@ class ProfileEditor(QDialog):
         self.closing = False
         self.setWindowTitle('Edit FH1 profile')
         self.setWindowModality(Qt.WindowModal)
-        self.resize(600, 460)
+        self.resize(600, 520)
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -41,9 +42,18 @@ class ProfileEditor(QDialog):
             control.lineEdit().setTextMargins(10, 2, 10, 2)
             self.controls[path] = control
             form.addRow(title, control)
+        self.wristband = QComboBox()
+        self.wristband.setAccessibleName('Career wristband')
+        self.wristband.setMinimumHeight(42)
+        for value, name in save_editor.WRISTBANDS:
+            swatch = QPixmap(16, 16)
+            swatch.fill(QColor(name.lower()))
+            self.wristband.addItem(QIcon(swatch), name, value)
+        self.controls['Main/WristbandLevel'] = self.wristband
+        form.addRow('Wristband', self.wristband)
         layout.addLayout(form)
-        layout.addWidget(label('A full backup is kept before applying changes. XP edits change the stored total; '
-                               'level, wristbands, garage cars and event completion stay unchanged.', 'muted'))
+        layout.addWidget(label('A full backup is kept before applying changes. Wristband selects the festival tier; '
+                               'XP is edited separately. This does not complete races, change level or award cars.', 'muted'))
         self.message = label('Reading and checking the encrypted profile…', 'muted')
         layout.addWidget(self.message)
         self.progress = QProgressBar()
@@ -78,8 +88,18 @@ class ProfileEditor(QDialog):
             super().reject()
             return
         self.document = document
+        # Remove any previous unknown-value placeholder before reloading.
+        while self.wristband.count() > len(save_editor.WRISTBANDS):
+            self.wristband.removeItem(self.wristband.count()-1)
         for path, control in self.controls.items():
             value = document.values[path].value
+            if control is self.wristband:
+                index = control.findData(value)
+                if index < 0:
+                    control.addItem(f'Current value ({value}) — unchanged', value)
+                    index = control.count()-1
+                control.setCurrentIndex(index)
+                continue
             # A signed XP value outside the supported edit range is displayed as
             # an error, never silently clamped and then written back.
             _kind, low, high = save_editor.EDITABLE[path]
@@ -88,10 +108,7 @@ class ProfileEditor(QDialog):
                 return
             control.setValue(value)
         level = document.values.get('Main/Level')
-        wristband = document.values.get('Main/WristbandLevel')
-        self.summary.setText(' · '.join(text for text in (
-            f'Level: {level.value}' if level else '', f'Wristband: {wristband.value}' if wristband else '') if text)
-                            or 'Career profile')
+        self.summary.setText(f'Level: {level.value}' if level else 'Career profile')
         self.message.setText(message)
         self._set_busy(False)
 
@@ -114,8 +131,11 @@ class ProfileEditor(QDialog):
     def apply(self):
         if self.document is None or self.page.busy():
             return
-        changes = {path: control.value() for path, control in self.controls.items()
-                   if control.value() != self.document.values[path].value}
+        changes = {}
+        for path, control in self.controls.items():
+            value = control.currentData() if control is self.wristband else control.value()
+            if value != self.document.values[path].value:
+                changes[path] = value
         if not changes:
             self.message.setText('No values have changed.')
             return
