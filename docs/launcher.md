@@ -61,6 +61,18 @@ Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCAL
 The launcher's own config is `~/.config/forza-reimagined/launcher.json`
 (`%APPDATA%\ForzaReImagined\launcher.json`).
 
+## Settings search
+
+Use the search field above the Settings categories, or press **Ctrl+F** while in
+Settings. Search matches setting names, help text, option names and configuration
+keys across every category, including the launcher's server, profile and advanced
+options. Select a result or press Enter to open its category and focus the existing
+control. Down moves into the results; Escape clears the search.
+
+Searching does not change configuration. Disabled settings remain disabled with
+their existing explanations, and unsupported graphics options stay hidden. Search
+indexes descriptions, not personal field values such as paths or server addresses.
+
 ## Photo gallery
 
 Open **Photo gallery** in the launcher sidebar to browse locally saved photo-mode

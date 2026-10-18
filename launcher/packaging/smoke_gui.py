@@ -37,6 +37,15 @@ def inside(report):
             app.processEvents()
             if window.grab().isNull():
                 raise RuntimeError(f'Page {page} did not render')
+        window.show_page(2)
+        search = window.settings.search
+        search.edit.setText('mnk_sensitivity')
+        if search.results.count() != 1:
+            raise RuntimeError('Bundled settings search did not find a configuration key')
+        search._choose_current()
+        app.processEvents()
+        if window.settings.tabs.tabText(window.settings.tabs.currentIndex()) != 'Controls':
+            raise RuntimeError('Bundled settings search did not navigate to Controls')
         def finish():
             # Upstream's read-only probes are daemon threads. Let their child
             # processes release the disposable working directory before cleanup.

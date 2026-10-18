@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
 from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
 from ..config import Config, render_toml, validate_extras
 from . import theme
+from .settings_search import SettingsSearch
 from .widgets import DoubleSpinBox, SpinBox, Switch, card, label
 
 NO_WHEEL = Qt.StrongFocus
@@ -170,10 +171,14 @@ class SettingRow(QWidget):
         col = QVBoxLayout()
         col.setSpacing(8)
         title = QLabel(s.label)
+        title.setWordWrap(True)
         title.setStyleSheet("font-weight: 600;")
         col.addWidget(title)
         if s.help:
-            col.addWidget(label(s.help, "help"))
+            help_text = label(s.help, "help")
+            # Long button-map examples must not make every row wider than the viewport.
+            help_text.setMinimumWidth(1)
+            col.addWidget(help_text)
         self.warning = label("", "")
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
@@ -188,6 +193,7 @@ class SettingRow(QWidget):
                                     note=lambda v, s=s: gpu.choice_note(vendor, s.key, v))
         tip = f"{s.key}" + (f" (default {s.default!r})" if s.default != "" else "")
         self.control.setToolTip(tip)
+        self.control.setAccessibleName(s.label)
         title.setToolTip(tip)
         lay.addWidget(self.control, 0, Qt.AlignRight | Qt.AlignVCenter)
 
@@ -234,6 +240,9 @@ class SettingsPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(16)
+        self.search = SettingsSearch(self)
+        self.search.chosen.connect(self._show_search_result)
+        root.addWidget(self.search)
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
@@ -245,10 +254,22 @@ class SettingsPage(QWidget):
             self.tabs.addTab(g)
             self.stack.addWidget(self._build_group(g))
         self.tabs.currentChanged.connect(self.stack.setCurrentIndex)
+        self.tabs.currentChanged.connect(self.search.dismiss)
         self.tabs.setCurrentIndex(0)
         self._apply_dependencies()
 
     # --- plumbing -------------------------------------------------------------------
+    def _show_search_result(self, target):
+        index = schema.GROUPS.index(target.group)
+        self.tabs.setCurrentIndex(index)
+        scroll = self.stack.widget(index)
+        scroll.widget().layout().activate()
+        scroll.ensureWidgetVisible(target.widget, 0, 32)
+        if target.focus.isEnabled():
+            target.focus.setFocus(Qt.ShortcutFocusReason)
+        # QScrollArea may pan a wide row sideways even with its horizontal bar hidden.
+        scroll.horizontalScrollBar().setValue(0)
+
     def set_value(self, key, value):
         self.cfg.settings[key] = schema.coerce(schema.BY_KEY[key], value)
         if key in ("fh1_upscaler", "fh1_output_resolution") and dlss.enabled(self.cfg):
@@ -334,6 +355,7 @@ class SettingsPage(QWidget):
             row = SettingRow(s, self.cfg, self.set_value)
             self.rows[s.key] = row
             content.addWidget(row)
+            self.search.add_setting(s, row)
 
     def _page(self, title, lead):
         w = QWidget()
@@ -412,6 +434,8 @@ class SettingsPage(QWidget):
         lay.addWidget(self.gpu_apply, 0, Qt.AlignLeft)
         self.gpu_combo.activated.connect(lambda _i: self._gpu_chosen(self.gpu_combo.currentData(), False))
         self._gpu_texts()
+        self.search.add("Your graphics card", "Display", "Graphics card", w, self.gpu_combo,
+                        "GPU vendor NVIDIA AMD Intel recommended settings")
 
     def _gpu_texts(self):
         vendor = self.cfg.gpu_vendor()
@@ -477,6 +501,9 @@ class SettingsPage(QWidget):
         w.setLayout(row)
         lay.addWidget(w)
 
+        self.search.add("Each controller is its own player", "Controls", "Players", w, sw,
+                        "pad_per_user FORZA_PAD_PER_USER controller routing player 1")
+
     def _adv(self, key, value):
         self.cfg.advanced[key] = value
         self.touched()
@@ -510,6 +537,10 @@ class SettingsPage(QWidget):
         lay.addWidget(self.custom)
         self.radios[self.cfg.online["mode"]].setChecked(True)
         self.custom.setEnabled(self.cfg.online["mode"] == "custom")
+        self.search.add("Online server", "Online", "Server", self.radios["public"],
+                        keywords="public local offline Xbox LIVE Forza Live")
+        self.search.add("Custom server address", "Online", "Server", self.custom,
+                        keywords="host port custom_server")
 
     def _set_mode(self, mode):
         self.cfg.online["mode"] = mode
@@ -575,6 +606,13 @@ class SettingsPage(QWidget):
         self.xuid.lineEdit().editingFinished.connect(self._xenia_fields)
         self.xuid.setEditText(self.cfg.profile.get("xenia_xuid", ""))
         self._scan_xenia(quiet=True)
+        self.search.add("Save profile", "Profile", "Save", self.xenia,
+                        keywords="own Xenia Canary import continue save")
+        self.search.add("Xenia content folder", "Profile", "Save", self.xcontent)
+        self.search.add("Profile (XUID)", "Profile", "Save", self.xuid,
+                        keywords="Xenia account")
+        self.search.add("Copy the save again on the next start", "Profile", "Save", self.recopy,
+                        keywords="Xenia recopy import")
 
     def _profile_mode(self, on):
         self.cfg.profile["mode"] = "xenia" if on else "own"
@@ -630,6 +668,7 @@ class SettingsPage(QWidget):
             e = QLineEdit(adv.get(key, ""))
             e.setPlaceholderText(placeholder)
             e.setMinimumWidth(280)
+            self.search.add(title, "Advanced", "Launcher", w, e, key + " " + help_)
             if key == "data_root":
                 # the same checked flow as Setup > Where the game is built: free space, OneDrive,
                 # and the choice to copy saves and files (nothing is deleted)
@@ -689,6 +728,13 @@ class SettingsPage(QWidget):
         reset = QPushButton("Reset all settings to defaults")
         reset.clicked.connect(self.window.reset_settings)
         page.addWidget(reset, 0, Qt.AlignLeft)
+        self.search.add("Other settings", "Advanced", "Other settings", self.extras,
+                        keywords="extras_toml forza.toml configuration keys")
+        self.search.add("Environment variables", "Advanced", "Environment variables", self.envs,
+                        keywords="extra_env FORZA_NETTRACE NAME=value")
+        self.search.add("What Play runs", "Advanced", "What Play runs", self.preview,
+                        keywords="command line preview executable")
+        self.search.add("Reset all settings to defaults", "Advanced", "Launcher", reset)
         self.refresh_preview()
 
     def _browse_into(self, edit, title, key):
@@ -712,6 +758,7 @@ class SettingsPage(QWidget):
     def rebuild(self):
         """After a reset: recreate the pages from the config."""
         self.rows.clear()
+        self.search.clear_targets()
         cur = self.tabs.currentIndex()
         while self.stack.count():
             w = self.stack.widget(0)
@@ -721,3 +768,4 @@ class SettingsPage(QWidget):
             self.stack.addWidget(self._build_group(g))
         self.stack.setCurrentIndex(cur)
         self._apply_dependencies()
+        self.search.refresh()

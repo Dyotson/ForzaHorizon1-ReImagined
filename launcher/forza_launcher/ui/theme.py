@@ -78,6 +78,11 @@ QTabBar::tab:selected {{ color: {CREAM}; background: {PANEL2}; border-color: {BO
 QTabBar::tab:hover {{ color: {TEXT}; background: {PANEL2}; }}
 QTabBar::tab:focus {{ color: {CREAM}; border-color: {ORANGE}; }}
 QScrollArea {{ border: none; background: transparent; }}
+QListWidget#settingsSearchResults {{ background: {PANEL}; border: 1px solid {BORDER};
+  border-radius: 8px; padding: 3px; outline: none; }}
+QListWidget#settingsSearchResults::item {{ padding: 6px 12px; border-radius: 5px; }}
+QListWidget#settingsSearchResults::item:selected {{ background: {PANEL2}; color: {CREAM}; }}
+QListWidget#settingsSearchResults:focus::item:selected {{ border: 1px solid {ORANGE}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 4px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
