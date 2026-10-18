@@ -185,3 +185,15 @@ image's layout and visibility; the pass retains its own depth/motion images and
 submission-protected descriptor slots. Only compatible single-sample RGBA8
 attachments receive storage usage. Unsupported formats and states retain the
 original draw. This does not yet bypass EDRAM resolves or replace geometry.
+
+0081 adds `FORZA_NATIVE_RENDERER=velocity-resolve`. For an immediately preceding
+native motion output, a native RGBA8 image-to-buffer shader replaces the EDRAM
+dump and resolve with one dispatch. It preserves the existing tiled/scaled
+texture buffer, upload, readback and clear contracts. Integer-scale,
+single-sample unsigned RGBA8 layouts are supported; conversions, array targets,
+half-pixel fill, MSAA and other sources retain the original resolve. The source
+owner tracks image visibility, while existing buffer range and descriptor
+retirement rules order consumers. Canonical shader/layout sources and their BSD
+mapping license are supplied through `REXGLUE_FH1_NATIVE_SOURCE_DIR`. The feature
+is off by default. See [Native renderer](native_renderer.md#native-rgba8-resolve)
+for GPU equivalence and actual-game validation.

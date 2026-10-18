@@ -1,0 +1,46 @@
+#version 450
+// The tiled address mapping is derived from ReXGlue/Xenia under the BSD
+// license reproduced in resolve-LICENSE.txt. Other code uses the project license.
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, std430) writeonly buffer Destination { uvec4 words[]; } destination;
+layout(set = 1, binding = 0) uniform texture2D source_image;
+layout(push_constant, std430) uniform Parameters {
+  uvec4 source;
+  uvec4 dest;
+  uvec4 layout_info;
+  uvec4 bounds;
+} p;
+
+uint tiled(uvec2 pixel) {
+  uint macro = ((pixel.x >> 5) + (pixel.y >> 5) * (p.dest.z >> 5)) << 9;
+  uint micro = ((pixel.x & 7) + ((pixel.y & 14) << 2)) << 2;
+  uint offset = macro + ((micro & ~15u) << 1) + (micro & 15) + ((pixel.y & 1) << 4);
+  return ((offset & ~511u) << 3) + ((pixel.y & 16) << 7) + ((offset & 448) << 2) +
+      (((((pixel.y & 8) >> 2) + (pixel.x >> 3)) & 3) << 6) + (offset & 63);
+}
+
+void main() {
+  uvec2 invocation = gl_GlobalInvocationID.xy;
+  uvec2 pixel = uvec2(invocation.x * 4, invocation.y);
+  if (pixel.x >= p.source.z || pixel.y >= p.source.w) return;
+  uvec2 scale = p.layout_info.xy;
+  uvec2 guest = p.dest.xy + uvec2((invocation.x / scale.x) * 4, pixel.y / scale.y);
+  uint address = p.dest.w + tiled(guest) * scale.x * scale.y +
+      ((invocation.x % scale.x) * scale.y + pixel.y % scale.y) * 16;
+  uvec4 result;
+  uint endian = p.layout_info.z;
+  for (uint i = 0; i < 4; ++i) {
+    vec4 color = texelFetch(source_image, ivec2(p.source.xy + pixel + uvec2(i, 0)), 0);
+    if (p.layout_info.w != 0) color = color.bgra;
+    uint word = packUnorm4x8(color);
+    uint swap = endian >= 4 ? 2 : endian;
+    if (((swap ^ (swap >> 1)) & 1) != 0)
+      word = ((word & 0x00ff00ffu) << 8) | ((word & 0xff00ff00u) >> 8);
+    if ((swap & 2) != 0) word = (word << 16) | (word >> 16);
+    uint lane = endian == 4 ? i ^ 1 : (endian == 5 ? 3 - i : i);
+    result[lane] = word;
+  }
+  destination.words[address >> 4] = result;
+}

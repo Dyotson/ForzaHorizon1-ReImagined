@@ -1,5 +1,6 @@
 // Optional hardware test. Uses only synthetic fixtures, never game data.
 #include "../src/platform/native_renderer/velocity_pass.h"
+#include "../src/platform/native_renderer/resolve.h"
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -380,10 +381,120 @@ void Run(Context& context, const Input& input, const std::vector<uint32_t>& shad
   }
 }
 
+struct ResolveGpu {
+  Context& context;
+  VkDescriptorSetLayout sets[2]{};
+  VkDescriptorPool pool{};
+  VkPipelineLayout layout{};
+  VkPipeline pipeline{};
+  VkDescriptorSet descriptors[2]{};
+  explicit ResolveGpu(Context& c) : context(c) {}
+  ~ResolveGpu() {
+    if (pipeline) vkDestroyPipeline(context.device,pipeline,nullptr);
+    if (layout) vkDestroyPipelineLayout(context.device,layout,nullptr);
+    if (pool) vkDestroyDescriptorPool(context.device,pool,nullptr);
+    for(auto set:sets) if(set) vkDestroyDescriptorSetLayout(context.device,set,nullptr);
+  }
+  void Initialize(const std::vector<uint32_t>& shader) {
+    const VkDescriptorType types[]={VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE};
+    for(uint32_t i=0;i<2;++i) {
+      VkDescriptorSetLayoutBinding binding{0,types[i],1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
+      VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+      info.bindingCount=1;info.pBindings=&binding;
+      VK_CHECK(vkCreateDescriptorSetLayout(context.device,&info,nullptr,&sets[i]));
+    }
+    VkDescriptorPoolSize sizes[]={{types[0],1},{types[1],1}};
+    VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.maxSets=2;pool_info.poolSizeCount=2;pool_info.pPoolSizes=sizes;
+    VK_CHECK(vkCreateDescriptorPool(context.device,&pool_info,nullptr,&pool));
+    VkDescriptorSetAllocateInfo allocate{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocate.descriptorPool=pool;allocate.descriptorSetCount=2;allocate.pSetLayouts=sets;
+    VK_CHECK(vkAllocateDescriptorSets(context.device,&allocate,descriptors));
+    VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(ResolveParameters)};
+    VkPipelineLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout_info.setLayoutCount=2;layout_info.pSetLayouts=sets;
+    layout_info.pushConstantRangeCount=1;layout_info.pPushConstantRanges=&range;
+    VK_CHECK(vkCreatePipelineLayout(context.device,&layout_info,nullptr,&layout));
+    VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    module_info.codeSize=shader.size()*4;module_info.pCode=shader.data();VkShaderModule module;
+    VK_CHECK(vkCreateShaderModule(context.device,&module_info,nullptr,&module));
+    VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    info.layout=layout;info.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    info.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;info.stage.module=module;info.stage.pName="main";
+    const auto result=vkCreateComputePipelines(context.device,VK_NULL_HANDLE,1,&info,nullptr,&pipeline);
+    vkDestroyShaderModule(context.device,module,nullptr);VK_CHECK(result);
+  }
+};
+
+void RunResolve(Context& context,const std::vector<uint32_t>& shader) {
+  ResolveGpu gpu(context);gpu.Initialize(shader);
+  auto run=[&](uint32_t sx,uint32_t sy,uint32_t endian,bool swap,uint32_t width,uint32_t height) {
+    ResolveParameters p;
+    p.source={3,5,width,height};p.destination={8,8,((width/sx+8+31)/32)*32,32};
+    p.layout={sx,sy,endian,uint32_t(swap)};
+    p.bounds={uint32_t(ResolveBufferBytes(p)),width+8,height+8,0};CHECK(Valid(p));
+    Input input(context,p.bounds[1],p.bounds[2],endian%2!=0);
+    struct View {
+      VkDevice device;VkImageView value{};
+      ~View(){if(value)vkDestroyImageView(device,value,nullptr);}
+    } view{context.device};
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image=input.image;view_info.viewType=VK_IMAGE_VIEW_TYPE_2D;view_info.format=VK_FORMAT_R8G8B8A8_UNORM;
+    if(input.swizzled) view_info.components={VK_COMPONENT_SWIZZLE_B,VK_COMPONENT_SWIZZLE_G,VK_COMPONENT_SWIZZLE_R,VK_COMPONENT_SWIZZLE_A};
+    view_info.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    VK_CHECK(vkCreateImageView(context.device,&view_info,nullptr,&view.value));
+    Buffer output(context,p.bounds[0],VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::memset(output.mapped,0xA7,p.bounds[0]);
+    std::vector<uint32_t> expected(p.bounds[0]/4,0xA7A7A7A7);
+    for(uint32_t y=0;y<height;++y) for(uint32_t q=0;q<width/4;++q) {
+      std::array<std::array<uint8_t,4>,4> texels;
+      for(uint32_t lane=0;lane<4;++lane) texels[lane]=input.Read(p.source[0]+q*4+lane,p.source[1]+y);
+      const auto encoded=EncodeResolveQuad(texels,endian,swap);
+      std::memcpy(expected.data()+ResolveQuadOffset(p,q,y)/4,encoded.data(),16);
+    }
+    VkDescriptorBufferInfo buffer_info{output.buffer,0,p.bounds[0]};
+    VkDescriptorImageInfo image_info{VK_NULL_HANDLE,view.value,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet writes[2]{};
+    for(uint32_t i=0;i<2;++i) {
+      writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=gpu.descriptors[i];
+      writes[i].descriptorCount=1;
+    }
+    writes[0].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[0].pBufferInfo=&buffer_info;
+    writes[1].descriptorType=VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;writes[1].pImageInfo=&image_info;
+    vkUpdateDescriptorSets(context.device,2,writes,0,nullptr);
+    context.Begin();
+    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    barrier.buffer=output.buffer;barrier.size=VK_WHOLE_SIZE;
+    barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    barrier.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(context.command,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,0,nullptr,1,&barrier,0,nullptr);
+    vkCmdBindPipeline(context.command,VK_PIPELINE_BIND_POINT_COMPUTE,gpu.pipeline);
+    vkCmdBindDescriptorSets(context.command,VK_PIPELINE_BIND_POINT_COMPUTE,gpu.layout,0,2,gpu.descriptors,0,nullptr);
+    vkCmdPushConstants(context.command,gpu.layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(p),&p);
+    vkCmdDispatch(context.command,(width/4+7)/8,(height+7)/8,1);
+    barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(context.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,
+        0,0,nullptr,1,&barrier,0,nullptr);
+    context.Submit();
+    CHECK(std::memcmp(expected.data(),output.mapped,p.bounds[0])==0);
+    std::cout<<"Resolve "<<width<<'x'<<height<<", scale="<<sx<<'x'<<sy<<", endian="<<endian
+             <<", swap="<<swap<<": exact output and preserved padding\n";
+  };
+  for(const auto& scale:std::array<std::array<uint32_t,2>,4>{{{1,1},{2,2},{3,2},{7,3}}})
+    for(uint32_t endian=0;endian<6;++endian) for(bool swap:{false,true})
+      run(scale[0],scale[1],endian,swap,32*scale[0],24*scale[1]);
+  run(2,2,2,true,2560,1440);
+}
+
 int main(int argc, char** argv) {
-  if (argc != 2 && argc != 3) return 2;
-  const bool validation = argc == 3 && std::string(argv[2]) == "--validation";
-  if (argc == 3 && !validation) return 2;
+  if (argc < 2 || argc > 4) return 2;
+  bool validation=false,resolve_only=false;
+  for(int i=2;i<argc;++i) {
+    if(std::string(argv[i])=="--validation")validation=true;
+    else if(std::string(argv[i])=="--resolve-only")resolve_only=true;
+    else return 2;
+  }
   try {
     std::ifstream file(argv[1], std::ios::binary | std::ios::ate);
     CHECK(file.good());
@@ -396,6 +507,10 @@ int main(int argc, char** argv) {
     if (!context.Initialize(validation)) {
       if (validation) throw std::runtime_error("Could not start requested Vulkan validation");
       std::cout << "No compatible Vulkan device\n"; return 77;
+    }
+    if(resolve_only) {
+      RunResolve(context,shader);CHECK(context.validation_errors==0);
+      std::cout<<"Native resolve GPU checks passed\n";return 0;
     }
     Input input(context);
     Run(context, input, shader, 73, 41, false, false);

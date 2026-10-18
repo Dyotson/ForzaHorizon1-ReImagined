@@ -8,6 +8,8 @@ add_executable(native_render_graph_test ../../forza-recomp/tests/native_render_g
 add_test(NAME native_render_graph COMMAND native_render_graph_test)
 add_executable(native_velocity_test ../../forza-recomp/tests/native_velocity_test.cpp)
 add_test(NAME native_velocity COMMAND native_velocity_test)
+add_executable(native_resolve_test ../../forza-recomp/tests/native_resolve_test.cpp)
+add_test(NAME native_resolve COMMAND native_resolve_test)
 
 option(NATIVE_RENDERER_GPU_TESTS "Build and run synthetic Vulkan pass validation" OFF)
 option(NATIVE_RENDERER_VULKAN_VALIDATION "Require Khronos synchronization validation in the GPU test" OFF)
@@ -27,6 +29,12 @@ if(NATIVE_RENDERER_GPU_TESTS)
         DEPENDS "${native_source}/velocity.comp" VERBATIM)
     add_custom_target(native_velocity_shader DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv")
     add_dependencies(native_velocity_gpu_test native_velocity_shader)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv"
+        COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1
+            "${native_source}/resolve.comp" -o "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv"
+        DEPENDS "${native_source}/resolve.comp" VERBATIM)
+    add_custom_target(native_resolve_shader DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv")
+    add_dependencies(native_velocity_gpu_test native_resolve_shader)
     set(validation_arguments)
     if(NATIVE_RENDERER_VULKAN_VALIDATION)
         list(APPEND validation_arguments --validation)
@@ -34,6 +42,9 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_velocity_gpu COMMAND native_velocity_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/velocity.spv" ${validation_arguments})
     set_tests_properties(native_velocity_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_test(NAME native_resolve_gpu COMMAND native_velocity_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/resolve.spv" --resolve-only ${validation_arguments})
+    set_tests_properties(native_resolve_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
 endif()
 
 set(RENDERDOC_INCLUDE_DIR "" CACHE PATH "RenderDoc's renderdoc/api/replay directory")
