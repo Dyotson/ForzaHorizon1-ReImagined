@@ -45,7 +45,7 @@ void GeometryPass::Allocate(Buffer& buffer, uint32_t bytes, VkBufferUsageFlags u
 
 void GeometryPass::Initialize(const GeometryVulkanDispatch& functions, VkPhysicalDevice physical,
     VkDevice device, const Config& config, const std::vector<uint32_t>& shader) {
-  if(device_ || !functions.Valid() || !physical || !device || !config.render_pass || !config.slots ||
+  if(device_ || !functions.Valid() || !physical || !device || (!config.render_pass && !config.dynamic_rendering) || !config.slots ||
       config.slots>64 || config.vertex_capacity<8 || config.vertex_capacity%4 ||
       config.vertex_capacity>16*1024*1024 || config.index_capacity<6 || config.index_capacity%4 ||
       config.index_capacity>16*1024*1024 || shader.empty() || shader[0]!=0x07230203)
@@ -101,7 +101,11 @@ void GeometryPass::Initialize(const GeometryVulkanDispatch& functions, VkPhysica
   pipeline.pInputAssemblyState=&assembly;pipeline.pViewportState=&viewport;
   pipeline.pRasterizationState=&raster;pipeline.pMultisampleState=&samples;
   pipeline.pDepthStencilState=&depth;pipeline.pColorBlendState=&blend;pipeline.pDynamicState=&dynamic;
-  pipeline.layout=pipeline_layout_;pipeline.renderPass=config.render_pass;
+  VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+  rendering.depthAttachmentFormat=rendering.stencilAttachmentFormat=VK_FORMAT_D32_SFLOAT_S8_UINT;
+  pipeline.layout=pipeline_layout_;
+  pipeline.renderPass=config.dynamic_rendering?VK_NULL_HANDLE:config.render_pass;
+  pipeline.pNext=config.dynamic_rendering?&rendering:nullptr;
   const auto result=functions_.vkCreateGraphicsPipelines(device_,VK_NULL_HANDLE,1,&pipeline,nullptr,&pipeline_);
   functions_.vkDestroyShaderModule(device_,module,nullptr);Check(result,"geometry graphics pipeline");
   for(auto& frame:frames_) {
@@ -135,7 +139,8 @@ bool GeometryPass::CanPrepare(uint32_t slot, uint32_t vertex_bytes, uint32_t ind
       raster.viewport.x<limits_.viewportBoundsRange[0] || raster.viewport.y<limits_.viewportBoundsRange[0] ||
       raster.viewport.x+raster.viewport.width>limits_.viewportBoundsRange[1] ||
       raster.viewport.y+raster.viewport.height>limits_.viewportBoundsRange[1] ||
-      !(raster.viewport.minDepth>=0 && raster.viewport.maxDepth<=1 && raster.viewport.minDepth<=raster.viewport.maxDepth) ||
+      !(raster.viewport.minDepth>=0 && raster.viewport.minDepth<=1 &&
+        raster.viewport.maxDepth>=0 && raster.viewport.maxDepth<=1) ||
       raster.scissor.offset.x<0 || raster.scissor.offset.y<0 || !raster.scissor.extent.width || !raster.scissor.extent.height ||
       uint64_t(raster.scissor.offset.x)+raster.scissor.extent.width>INT32_MAX ||
       uint64_t(raster.scissor.offset.y)+raster.scissor.extent.height>INT32_MAX)

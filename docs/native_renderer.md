@@ -14,8 +14,8 @@ replace that renderer. Removing those copies without tracking consumers can
 invalidate reflections, minimap inputs, screenshots and CPU readbacks.
 
 This branch contains development infrastructure and an opt-in replacement for
-one motion-effect pass, plus an isolated rigid-mesh geometry pipeline. It is
-**not a complete native world renderer**:
+one motion-effect pass, RGBA8 resolves and a limited rigid-mesh depth pipeline.
+It is **not a complete native world renderer**:
 
 - `render_graph.h` assigns resource versions and records RAW, WAR, WAW and alias
   dependencies. A mutable attachment and an independent snapshot are distinct
@@ -32,14 +32,15 @@ one motion-effect pass, plus an isolated rigid-mesh geometry pipeline. It is
   and keeps unclamped temporal motion separate from shaped blur. It executes in
   the standalone GPU test and, through SDK patch 0079, in the game's draw stream.
   Patch 0081 resolves that pass's RGBA8 image directly into the existing guest
-  texture buffer, bypassing its EDRAM dump. Geometry, reflections, other effects
+  texture buffer, bypassing its EDRAM dump. Most geometry, reflections, other effects
   and HUD composition retain the existing renderer. The resource planner does
   not schedule these runtime passes yet.
 
 - `geometry_pass` owns vertex/index snapshots and an authored vertex shader for
   rigid signed-normalized packed positions. It draws depth and stencil into a
   caller-owned native render pass. Synthetic GPU tests and a private original-
-  shader comparison execute it offscreen; it is not connected to live draws yet.
+  shader comparison execute it offscreen; patch 0084 also connects a strictly
+  matched rigid depth draw to the live SDK stream.
 
 The planner currently works at whole-resource granularity. Layout transitions,
 queue ownership, subresources, native allocation and guest EDRAM alias mapping
@@ -382,7 +383,9 @@ snapshots each, clears the source, then renders both snapshots. Both depth and
 stencil results match the independent CPU-upload reference. The private car-part
 comparison also passes all three poses through GPU-source snapshots.
 
-All seven standalone tests pass with Khronos synchronization validation. Geometry
+All eight standalone tests pass with Khronos synchronization validation. The
+geometry suite runs independently with traditional render passes and Vulkan 1.3
+dynamic rendering. Geometry
 fixtures cover forward/reverse depth, overlapping car IDs, both index sizes,
 endianness, primitive restart, odd extents, 2560x1440, scissor/padding preservation,
 immutable snapshots, busy slots, fence retirement and rejected inputs. Common
@@ -399,12 +402,48 @@ not a comparison of a complete car or live world frame. GPU synchronization
 validation reported zero errors; the source mesh, constants and original shader
 remain volatile local fixtures outside the repository.
 
-This geometry pipeline is not in the SDK draw stream yet. The next integration
-must recognize its validated source contract, snapshot authoritative GPU buffer
-versions before later writes, preserve the original depth/stencil and query
-behavior, and keep unsupported draws on the existing path. Native HUD rendering
-continues through the already tested runtime path; these offscreen tests do not
-establish a new whole-game rendering or performance result.
+### Live rigid depth integration
+
+SDK patch 0084 adds `FORZA_NATIVE_RENDERER=geometry`, independently of the
+motion/resolve modes. It matches the validated rigid position shader's guest
+identity and exact constant/fetch maps, not compiled binary size. Five float
+vectors become four clip columns and a scale/translation; fetch 95 describes
+the packed vertices. The source is the authoritative shared GPU buffer, never
+a CPU mirror. Fresh viewport, scissor, NDC transform and stencil reference are
+snapshotted for each draw.
+
+The bridge accepts only depth-only, single-sample D32S8 targets, indexed triangle
+strips with restart, the verified depth/stencil and solid/no-cull/clip state,
+zero depth bias and the unmodified vertex contract. Queries, memexports,
+fractional raster, color/material draws, skinning and unsupported state retain
+the original draw. Four bounded buffer size classes per rendering mode each have 64 fence-retired
+slots. Traditional and dynamic rendering pipelines are cached separately. Busy slots and unsupported ranges also fall back. Resources survive
+until recording jobs and GPU submissions are drained at SDK shutdown.
+
+The game uses a reversed viewport depth range (observed 0.5 to 0) even though
+the compare function is greater-or-equal. Both endpoints must independently
+lie in [0,1]; their order is not restricted. GPU regression tests now cover both
+viewport directions with both compare functions, overlapping stencil IDs and
+1440p output. The original car-part shader and authored native shader also
+produce byte-identical depth/stencil for all three poses with this reversed
+range and GPU-source snapshots.
+
+Snapshot copies run outside a render pass at the original draw's position.
+Shared-memory read tracking prevents later writes from moving before the copy.
+The native draw resumes the existing depth attachment and preserves its stencil
+reference. Afterward all affected pipeline, descriptor, viewport, scissor,
+depth-bias, blend and stencil state is invalidated so the next original draw
+restores it. Deferred packets use an eight-byte-aligned envelope and copy into
+properly aligned immutable native tokens on the recording thread.
+
+A copied-save native 1440p AI race executed this path with threaded submission
+and Khronos synchronization validation with zero reported Vulkan errors. The
+bridge selects the enabled rendering mode and declares the same D32S8 formats
+when using dynamic rendering. This remains a limited depth-only
+replacement on existing attachments, not native material shading, a complete
+car/world renderer or evidence of improved performance. The native HUD keeps
+its existing 1440p path. GPU capture and further equivalence checks are recorded
+with the draft PR; game files, shaders, fixtures and captures remain local.
 
 ## Build the development tools
 
@@ -487,6 +526,6 @@ Release builds.
    and depth with the original draw before removing any tiled replay.
 5. Check reflections, labels/HUD, cutscenes and menus as the world path expands.
 
-A complete native world renderer remains the goal. The first pass's gameplay
-validation establishes a limited replacement with the existing native HUD; it
-does not establish native geometry rendering or a performance improvement.
+A complete native world renderer remains the goal. These gameplay
+checks establish limited pass replacements with the existing native HUD; they
+do not establish a complete geometry renderer or a performance improvement.

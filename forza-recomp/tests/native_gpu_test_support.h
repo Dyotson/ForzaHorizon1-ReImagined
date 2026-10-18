@@ -18,7 +18,7 @@ struct Context {
   VkCommandPool pool{};
   VkCommandBuffer command{};
   VkFence fence{};
-  bool full_index_uint32 = false;
+  bool full_index_uint32 = false, dynamic_rendering = false;
   ~Context() {
     if (device) {
       vkDeviceWaitIdle(device);
@@ -102,7 +102,15 @@ struct Context {
       features.fullDrawIndexUint32 = available.fullDrawIndexUint32;
       full_index_uint32 = available.fullDrawIndexUint32;
     }
+    VkPhysicalDeviceDynamicRenderingFeatures dynamic{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
+    if (api_version >= VK_API_VERSION_1_3 && properties.apiVersion >= VK_API_VERSION_1_3) {
+      VkPhysicalDeviceFeatures2 available{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+      available.pNext = &dynamic;
+      vkGetPhysicalDeviceFeatures2(physical, &available);
+      dynamic_rendering = dynamic.dynamicRendering;
+    }
     VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+    device_info.pNext = dynamic_rendering ? &dynamic : nullptr;
     device_info.queueCreateInfoCount = 1; device_info.pQueueCreateInfos = &queue_info;
     device_info.pEnabledFeatures = &features;
     VK_CHECK(vkCreateDevice(physical, &device_info, nullptr, &device));

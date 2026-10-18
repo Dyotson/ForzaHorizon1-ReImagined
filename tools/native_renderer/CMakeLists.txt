@@ -60,6 +60,9 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_geometry_gpu COMMAND native_geometry_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv" ${validation_arguments})
     set_tests_properties(native_geometry_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_test(NAME native_geometry_dynamic_gpu COMMAND native_geometry_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv" --dynamic-rendering ${validation_arguments})
+    set_tests_properties(native_geometry_dynamic_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
 endif()
 
 set(RENDERDOC_INCLUDE_DIR "" CACHE PATH "RenderDoc's renderdoc/api/replay directory")

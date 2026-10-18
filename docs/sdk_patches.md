@@ -214,3 +214,16 @@ existing fast 32-bit SDK shader; 64/128-bit swaps retain its original path. This
 allows the captured full-scene RGBA8 case to bypass EDRAM while preserving the original scaled resolve output. See
 [Native renderer](native_renderer.md#full-scene-half-pixel-edge-filling) for
 original-GPU byte comparisons and synthetic coverage.
+
+0084 adds the independent `FORZA_NATIVE_RENDERER=geometry` development mode.
+It replaces only a verified rigid depth/stencil draw using an authored native
+vertex shader and immutable GPU-source vertex/index snapshots. The bridge gates
+shader identity, constant maps, primitive, depth/stencil, raster, target format
+and sample count; unsupported draws retain the original path. Copies precede
+the draw outside a render pass, source read tracking orders later writes, and
+all affected graphics state is restored on the next original draw. Slots retire
+with waited submissions and are released after recording/GPU shutdown. The
+canonical native pipeline supports reversed viewport depth ranges and both
+traditional render passes and dynamic rendering. Standalone
+SDK builds keep a fallback stub. See
+[Native renderer](native_renderer.md#live-rigid-depth-integration).

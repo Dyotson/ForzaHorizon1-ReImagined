@@ -30,7 +30,8 @@ struct GeometryVulkanDispatch : VulkanDispatch {
 
 // An authored rigid-mesh depth/stencil draw. It owns immutable vertex/index
 // snapshots per slot. The caller owns a compatible, single-sample depth/stencil
-// render pass with no color targets, its attachments, layouts and lifetime.
+// D32S8 render pass (or enabled dynamic rendering) with no color targets, its
+// attachments, layouts and lifetime.
 // Prepare is producer-only; Record consumes an immutable token inside that pass
 // on the recording thread. Uploads precede queue submission. Slots may be reused
 // only after waited completion fences. Drain recording jobs and GPU work before
@@ -44,6 +45,7 @@ class GeometryPass {
     uint32_t slots = 0, vertex_capacity = 0, index_capacity = 0;
     bool triangle_strip = true, reverse_depth = true;
     bool full_index_uint32 = false; // caller enabled fullDrawIndexUint32 on this device
+    bool dynamic_rendering = false; // caller enabled dynamicRendering; D32S8 only
   };
   struct Mesh {
     const void* vertices = nullptr;

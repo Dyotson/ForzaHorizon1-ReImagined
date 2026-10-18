@@ -68,9 +68,36 @@ struct DepthTarget {
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass=render_pass;begin.framebuffer=framebuffer;begin.renderArea.extent={width,height};
     begin.clearValueCount=1;begin.pClearValues=&clear;
-    vkCmdBeginRenderPass(context.command,&begin,VK_SUBPASS_CONTENTS_INLINE);
+    if(context.dynamic_rendering) {
+      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.srcAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+      barrier.dstAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED;barrier.newLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+      barrier.image=image;barrier.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT,0,1,0,1};
+      vkCmdPipelineBarrier(context.command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+          0,0,nullptr,0,nullptr,1,&barrier);
+      VkRenderingAttachmentInfo attachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+      attachment.imageView=view;attachment.imageLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+      attachment.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;attachment.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+      attachment.clearValue=clear;
+      VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+      rendering.renderArea.extent={width,height};rendering.layerCount=1;
+      rendering.pDepthAttachment=rendering.pStencilAttachment=&attachment;
+      vkCmdBeginRendering(context.command,&rendering);
+    } else vkCmdBeginRenderPass(context.command,&begin,VK_SUBPASS_CONTENTS_INLINE);
     for(const auto& draw:draws)pass.Record(context.command,draw);
-    vkCmdEndRenderPass(context.command);
+    if(context.dynamic_rendering) {
+      vkCmdEndRendering(context.command);
+      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.srcAccessMask=VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+      barrier.oldLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+      barrier.srcQueueFamilyIndex=barrier.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+      barrier.image=image;barrier.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT,0,1,0,1};
+      vkCmdPipelineBarrier(context.command,VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+          VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
+    } else vkCmdEndRenderPass(context.command);
     VkBufferImageCopy copies[2]{};
     copies[0].imageSubresource={VK_IMAGE_ASPECT_DEPTH_BIT,0,0,1};copies[0].imageExtent={width,height,1};
     copies[1].bufferOffset=stencil_offset;copies[1].imageSubresource={VK_IMAGE_ASPECT_STENCIL_BIT,0,0,1};copies[1].imageExtent=copies[0].imageExtent;
@@ -97,10 +124,10 @@ GeometryVulkanDispatch Functions() {
   return result;
 }
 
-void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uint32_t height,bool reverse) {
+void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uint32_t height,bool reverse,bool reversed_viewport=false) {
   DepthTarget target(context,width+13,height+7);
   GeometryPass pass;
-  GeometryPass::Config config{target.render_pass,2,4096,4096,true,reverse,context.full_index_uint32};
+  GeometryPass::Config config{target.render_pass,2,4096,4096,true,reverse,context.full_index_uint32,context.dynamic_rendering};
   pass.Initialize(Functions(),context.physical,context.device,config,shader);
   uint64_t completed=0,submission=1;
   for(uint32_t vertex_endian=0;vertex_endian<4;++vertex_endian)
@@ -124,16 +151,20 @@ void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uin
       }
       GeometryPass::Mesh mesh{vertices.data(),uint32_t(vertices.size()*4),indices.data(),uint32_t(indices.size()),index_width};
       GeometryPass::Raster raster{{0,0,float(width),float(height),0,1},{{2,2},{width-4,height-4}},9};
-      pack(reverse?8192:24575);
+      if(reversed_viewport) {raster.viewport.minDepth=0.5f;raster.viewport.maxDepth=0;}
+      pack(reverse!=reversed_viewport?8192:24575);
       const auto first=pass.Prepare(0,mesh,p,raster,submission,completed);CHECK(first);
       CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));
-      pack(reverse?24575:8192);raster.stencil_reference=42;
+      pack(reverse!=reversed_viewport?24575:8192);raster.stencil_reference=42;
       raster.scissor={{int32_t(width/3),int32_t(height/3)},{width/3,height/3}};
       const auto second=pass.Prepare(1,mesh,p,raster,submission,completed);CHECK(second);
       // Later caller edits cannot alter an already prepared draw.
       vertices.assign(vertices.size(),0);indices.assign(indices.size(),0);p.origin_scale={9,9,9,9};
       const auto result=target.Render(pass,{*first,*second},reverse);
-      const float near=GeometrySnorm(reverse?24575:8192),far=GeometrySnorm(reverse?8192:24575);
+      const auto depth_value=[&](int16_t z) {return raster.viewport.minDepth+
+          GeometrySnorm(z)*(raster.viewport.maxDepth-raster.viewport.minDepth);};
+      const float near=depth_value(reverse!=reversed_viewport?24575:8192),
+          far=depth_value(reverse!=reversed_viewport?8192:24575);
       const auto center=size_t(height/2)*target.width+width/2;
       CHECK(result.stencil[center]==42 && std::abs(result.depth[center]-near)<1e-6f);
       const auto outer=size_t(height/4)*target.width+width/2;
@@ -148,6 +179,10 @@ void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uin
       CHECK(drawn>100);completed=submission++;
       p=GeometryParameters{};p.layout={7,vertex_endian,3,index_endian};
       mesh.vertices=nullptr;CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));mesh.vertices=vertices.data();
+      const auto valid_viewport=raster.viewport;
+      raster.viewport.minDepth=1.01f;CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));
+      raster.viewport=valid_viewport;raster.viewport.maxDepth=-0.01f;
+      CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));raster.viewport=valid_viewport;
       auto invalid=p;invalid.layout[2]=4;CHECK(!pass.Prepare(0,mesh,invalid,raster,submission,completed));
       raster.scissor.extent.width=UINT32_MAX;CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));
       raster.scissor.extent.width=width/3;
@@ -156,7 +191,7 @@ void Run(Context& context,const std::vector<uint32_t>& shader,uint32_t width,uin
       CHECK(!pass.Prepare(0,mesh,p,raster,submission,completed));
     }
   bool rejected=false;try {pass.Record(context.command,GeometryPass::Dispatch{});}catch(const std::invalid_argument&){rejected=true;}CHECK(rejected);
-  std::cout<<"Native geometry "<<width<<'x'<<height<<", reverse="<<reverse<<": depth, stencil, scissor, snapshots and retired slots passed\n";
+  std::cout<<"Native geometry "<<width<<'x'<<height<<", reverse="<<reverse<<", reversed viewport="<<reversed_viewport<<": depth, stencil, scissor, snapshots and retired slots passed\n";
 }
 
 void RunGpuSnapshots(Context& context,const std::vector<uint32_t>& shader) {
@@ -164,7 +199,7 @@ void RunGpuSnapshots(Context& context,const std::vector<uint32_t>& shader) {
   DepthTarget target(context,width,height);
   GeometryPass pass;
   pass.Initialize(Functions(),context.physical,context.device,
-      {target.render_pass,2,4096,4096,true,true,context.full_index_uint32},shader);
+      {target.render_pass,2,4096,4096,true,true,context.full_index_uint32,context.dynamic_rendering},shader);
   Buffer source(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
   Buffer first_upload(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
   Buffer second_upload(context,256,VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
@@ -226,21 +261,30 @@ void RunGpuSnapshots(Context& context,const std::vector<uint32_t>& shader) {
 }
 
 int main(int argc,char** argv) {
-  if(argc<2 || argc>3)return 2;
-  const bool validation=argc==3 && std::string(argv[2])=="--validation";
-  if(argc==3 && !validation)return 2;
+  if(argc<2 || argc>4)return 2;
+  bool validation=false,dynamic=false;
+  for(int i=2;i<argc;++i) {
+    const std::string option=argv[i];
+    if(option=="--validation")validation=true;
+    else if(option=="--dynamic-rendering")dynamic=true;
+    else return 2;
+  }
   try {
     std::ifstream file(argv[1],std::ios::binary|std::ios::ate);CHECK(file.good());
     const auto bytes=file.tellg();CHECK(bytes>0 && bytes%4==0);std::vector<uint32_t> shader(size_t(bytes)/4);
     file.seekg(0);file.read(reinterpret_cast<char*>(shader.data()),bytes);CHECK(file.good());
-    Context context;if(!context.Initialize(validation,true)) {
+    Context context;if(!context.Initialize(validation,true,dynamic?VK_API_VERSION_1_3:VK_API_VERSION_1_1)) {
       if(validation)throw std::runtime_error("Could not start requested geometry validation");
       std::cout<<"No compatible graphics device\n";return 77;
     }
+    if(dynamic && !context.dynamic_rendering) {std::cout<<"No Vulkan 1.3 dynamic rendering support\n";return 77;}
+    std::cout<<"Dynamic rendering: "<<dynamic<<'\n';
     VkFormatProperties properties;vkGetPhysicalDeviceFormatProperties(context.physical,VK_FORMAT_D32_SFLOAT_S8_UINT,&properties);
     if(!(properties.optimalTilingFeatures&VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))return 77;
     for(bool reverse:{false,true})Run(context,shader,73,41,reverse);
+    for(bool reverse:{false,true})Run(context,shader,73,41,reverse,true);
     Run(context,shader,2560,1440,true);
+    Run(context,shader,2560,1440,true,true);
     RunGpuSnapshots(context,shader);
     CHECK(context.validation_errors==0);std::cout<<"Native geometry GPU checks passed\n";return 0;
   }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
