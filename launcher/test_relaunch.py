@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from forza_launcher import game
@@ -27,29 +28,40 @@ sys.exit(int(codes[min(n, len(codes) - 1)]))
 class RelaunchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        # Cleanups run last-in-first-out: sessions must release processes and file
+        # handles before the temporary directory is removed, especially on Windows.
+        self.addCleanup(self.temp.cleanup)
         self.dir = Path(self.temp.name)
         (self.dir / "cwd").mkdir()
         self.record = self.dir / "starts.txt"
         (self.dir / "fake.py").write_text(FAKE_GAME)
         self.messages = []
 
-    def tearDown(self):
-        self.temp.cleanup()
-
     def session(self, codes, server=False):
-        os.environ["CODES"] = codes
-        self.addCleanup(os.environ.pop, "CODES", None)
+        env = mock.patch.dict(os.environ, CODES=codes)
+        env.start()
+        self.addCleanup(env.stop)
         server_argv = None
         if server:
             (self.dir / "srv").mkdir()
-            server_argv = [sys.executable, "-c", "import time; time.sleep(60)", "--data-dir", str(self.dir / "srv")]
+            server_argv = [sys.executable, "-c", "import time; print('server started', flush=True); time.sleep(60)",
+                           "--data-dir", str(self.dir / "srv")]
         plan = game.LaunchPlan(game=None, cwd=self.dir / "cwd",
                                argv=[sys.executable, str(self.dir / "fake.py"), str(self.record)],
                                env={"PLAN_VAR": "x"}, unset=["FORZA_RELAUNCHED"], toml_path=self.dir / "t.toml",
                                toml_text="", server_argv=server_argv)
         s = game.Session(plan, log=self.messages.append)
-        self.addCleanup(s.cleanup)
+        self.addCleanup(self.cleanup_session, s)
         return s
+
+    def cleanup_session(self, s):
+        s.cleanup()
+        # Also reap children if an assertion fails before the normal wait path.
+        for child in (s.proc, s.server):
+            if child is not None:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=10)
 
     def wait(self, s):
         s.proc.wait(timeout=30)
@@ -57,6 +69,20 @@ class RelaunchTests(unittest.TestCase):
 
     def starts(self):
         return [line.split("|") for line in self.record.read_text().splitlines()]
+
+    def test_server_log_parent_handle_is_closed_after_spawn(self):
+        s = self.session("0", server=True)
+        with mock.patch.object(game.subprocess, "Popen") as spawn:
+            s.start()
+        self.assertTrue(spawn.call_args_list[0].kwargs["stdout"].closed)
+
+    def test_server_log_is_closed_when_spawn_fails(self):
+        s = self.session("0", server=True)
+        with mock.patch.object(game.subprocess, "Popen", side_effect=OSError("cannot start server")) as spawn:
+            with self.assertRaisesRegex(OSError, "cannot start server"):
+                s.start()
+        self.assertTrue(spawn.call_args.kwargs["stdout"].closed)
+        self.assertIsNone(s.server)
 
     def test_exit_75_then_0_restarts_once_with_same_cwd_and_env(self):
         s = self.session("75,0", server=True)
@@ -74,6 +100,7 @@ class RelaunchTests(unittest.TestCase):
         self.assertIn("The game restarts itself", self.messages)
         s.cleanup()
         server.wait(timeout=10)
+        self.assertIn("server started", (self.dir / "srv" / "server.log").read_text())
 
     def test_a_restart_loop_is_bounded(self):
         s = self.session("75")   # every start asks for another

@@ -34,7 +34,9 @@ class UpdateUITests(unittest.TestCase):
         cfg.d["check_updates"] = False
         self.win = MainWindow(cfg)
         self.card = self.win.about.updates
-        self.asset = updater.Asset("ForzaHorizon1-ReImagined-linux-x86_64.tar.gz", GITHUB_URL, "0" * 64, 6)
+        asset_name = ("ForzaHorizon1-ReImagined-Setup.exe" if sys.platform == "win32" else
+                      "ForzaHorizon1-ReImagined-linux-x86_64.tar.gz")
+        self.asset = updater.Asset(asset_name, GITHUB_URL, "0" * 64, 6)
         self.release = updater.Release("v99.0.0", (self.asset,))
         self.select = patch.object(updater.Release, "asset_for", return_value=self.asset)
         self.select.start()
@@ -81,7 +83,7 @@ class UpdateUITests(unittest.TestCase):
             self.wait_done()
         self.assertEqual(self.card.downloaded, dest)
         self.assertIn("verified", self.card.message.text())
-        self.assertEqual(self.card.action.text(), "Open download")
+        self.assertEqual(self.card.action.text(), "Open installer" if sys.platform == "win32" else "Open download")
         self.card.automatic.setChecked(True)
         from forza_launcher.config import Config
         self.assertTrue(Config(self.win.cfg.path).d["check_updates"])
@@ -190,7 +192,7 @@ class UpdateUITests(unittest.TestCase):
             self.assertFalse(self.card.install_requested)
             self.card.action.click()
             open_url.assert_called_once()
-            self.assertEqual(open_url.call_args.args[0].toLocalFile(), str(dest.parent))
+            self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()), dest.parent)
             self.assertIn(command, self.card.message.text())  # folder errors retain installation instructions
             spawn.assert_not_called()
             run.assert_not_called()
@@ -260,7 +262,7 @@ class UpdateUITests(unittest.TestCase):
                 patch.object(paths, "app_dir", return_value=Path("C:/Custom/Launcher")), \
                 patch("subprocess.Popen") as spawn:
             self.card.install()
-            spawn.assert_called_once_with([str(self.card.downloaded), "/DIR=C:/Custom/Launcher"])
+            spawn.assert_called_once_with([str(self.card.downloaded), "/DIR=" + str(Path("C:/Custom/Launcher"))])
 
 
 if __name__ == "__main__":
