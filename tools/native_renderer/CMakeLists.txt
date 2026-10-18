@@ -12,6 +12,8 @@ add_executable(native_resolve_test ../../forza-recomp/tests/native_resolve_test.
 add_test(NAME native_resolve COMMAND native_resolve_test)
 add_executable(native_geometry_test ../../forza-recomp/tests/native_geometry_test.cpp)
 add_test(NAME native_geometry COMMAND native_geometry_test)
+add_executable(native_vertex_lit_test ../../forza-recomp/tests/native_vertex_lit_test.cpp)
+add_test(NAME native_vertex_lit COMMAND native_vertex_lit_test)
 
 option(NATIVE_RENDERER_GPU_TESTS "Build and run synthetic Vulkan pass validation" OFF)
 option(NATIVE_RENDERER_VULKAN_VALIDATION "Require Khronos synchronization validation in the GPU test" OFF)
@@ -21,6 +23,19 @@ endif()
 if(NATIVE_RENDERER_GPU_TESTS)
     find_package(Vulkan REQUIRED COMPONENTS glslangValidator)
     set(native_source "${CMAKE_CURRENT_SOURCE_DIR}/../../forza-recomp/src/platform/native_renderer")
+    # Compile the authored material separately from the SDK's guest shader ABI.
+    # These binaries are also suitable inputs for offline Metal translation.
+    foreach(stage vert frag)
+        add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.${stage}.spv"
+            COMMAND Vulkan::glslangValidator -V --target-env vulkan1.1
+                "${native_source}/vertex_lit.${stage}"
+                -o "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.${stage}.spv"
+            DEPENDS "${native_source}/vertex_lit.${stage}" "${native_source}/vertex_lit.glsl"
+            VERBATIM)
+    endforeach()
+    add_custom_target(native_vertex_lit_shaders ALL DEPENDS
+        "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.vert.spv"
+        "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.frag.spv")
     add_library(native_velocity_pass STATIC "${native_source}/velocity_pass.cpp")
     target_link_libraries(native_velocity_pass PUBLIC Vulkan::Headers)
     add_library(native_geometry_pass STATIC "${native_source}/geometry_pass.cpp")
@@ -63,6 +78,13 @@ if(NATIVE_RENDERER_GPU_TESTS)
     add_test(NAME native_geometry_dynamic_gpu COMMAND native_geometry_gpu_test
         "${CMAKE_CURRENT_BINARY_DIR}/geometry.spv" --dynamic-rendering ${validation_arguments})
     set_tests_properties(native_geometry_dynamic_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
+    add_executable(native_vertex_lit_gpu_test ../../forza-recomp/tests/native_vertex_lit_gpu_test.cpp)
+    target_link_libraries(native_vertex_lit_gpu_test PRIVATE Vulkan::Vulkan)
+    add_dependencies(native_vertex_lit_gpu_test native_vertex_lit_shaders)
+    add_test(NAME native_vertex_lit_gpu COMMAND native_vertex_lit_gpu_test
+        "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.vert.spv"
+        "${CMAKE_CURRENT_BINARY_DIR}/vertex_lit.frag.spv" ${validation_arguments})
+    set_tests_properties(native_vertex_lit_gpu PROPERTIES SKIP_RETURN_CODE 77 LABELS gpu)
 endif()
 
 set(RENDERDOC_INCLUDE_DIR "" CACHE PATH "RenderDoc's renderdoc/api/replay directory")

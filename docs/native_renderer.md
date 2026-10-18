@@ -2,9 +2,11 @@
 
 ## Goal and current boundary
 
-Replace the Xbox 360 rendering contract incrementally with an explicitly owned
-Vulkan scene graph. Keep the original world, reflections and UI intact while
-moving to native attachments, resource lifetimes and pass scheduling. Preserve
+Replace the Xbox 360 rendering contract incrementally with an explicitly owned,
+API-independent scene graph. Vulkan is the first execution backend; a future
+Metal backend should consume the same scene and material contracts. Keep the
+original world, reflections and UI intact while moving to native attachments,
+resource lifetimes and pass scheduling. Preserve
 independent scene/output resolution and compose the HUD at output resolution.
 
 The current backend already executes Vulkan draws. It still interprets Xenos
@@ -559,6 +561,11 @@ aliased views, feedback and dependency ordering. Assertions remain active in
 Release builds.
 
 ## Next execution milestone
+
+The portability boundary and the next complete-pass acceptance criteria are in
+[Native renderer portability](native_renderer_portability.md). Vulkan-only pass
+replacements below remain useful comparisons, but do not establish a Metal port
+or a performance gain.
 
 1. Compare warmed, uninstrumented performance at native 1440p and exercise live
    scene resolution changes. Add explicit contracts for fractional scene inputs;
