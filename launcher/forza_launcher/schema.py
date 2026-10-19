@@ -298,7 +298,9 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
-add("log_level", "Log level", "Advanced", "choice", "info", "", "Log",
+add("log_level", "Log level", "Advanced", "choice", "info",
+    "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
+    "lower the frame rate a lot (#174).", "Log",
     choices=_c("trace", "debug", "info", "warn", "error", "critical", "off"))
 add("log_noisy", "Noisy logging", "Advanced", "bool", False,
     "High-frequency log messages.", "Log")
