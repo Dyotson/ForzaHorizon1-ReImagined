@@ -48,7 +48,7 @@ values fall back to defaults; finite values are clamped to the displayed ranges.
 
 ## HUD protection and implementation
 
-SDK patch 0075 adapts the scRGB presenter, highlight curve, and coverage shaders
+SDK patch 0091 adapts the scRGB presenter, highlight curve, and coverage shaders
 from [PinyonShift's SDK fork](https://github.com/arcanite24/shiftglue-sdk), notably
 commits `36275a6`, `2c82d4d`, and `159464d` (BSD-3-Clause). It keeps this project's
 pinned SDK and uses its existing render-target cache rather than importing the

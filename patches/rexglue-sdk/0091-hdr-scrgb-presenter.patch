@@ -1,25 +1,10 @@
-Subject: [PATCH] Add opt-in scRGB output with pre-HUD scene coverage
-
-Adapted from arcanite24/shiftglue-sdk commits 36275a6, 2c82d4d and
-159464d (HDR work by Brandon G. Neri), under the SDK's BSD-3-Clause
-license. Original Xenia/ReXGlue notices are retained. The source shaders
-and generated SPIR-V are included; hdr_output was regenerated after
-adapting calibration to this host's UI.
-
-Use FH1's existing render-target cache at the scene/HUD transition instead
-of importing the fork's native executor. Retire three scene snapshots by
-submission, mask HUD coverage conservatively, present through scRGB only
-when offered, and keep SDR as the default/fallback. Presentation waits
-are owned by swapchain images and drained before swapchain retirement.
-The developer float-attachment readback is opt-in and off by default.
-
 diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
-index 74208c0..5533b34 100644
+index dace5df..a65d1d7 100644
 --- a/include/rex/graphics/vulkan/command_processor.h
 +++ b/include/rex/graphics/vulkan/command_processor.h
-@@ -697,6 +697,27 @@ class VulkanCommandProcessor : public CommandProcessor {
-   bool Fh1SynchronizeResolve(uint32_t address, uint32_t length);
-   void Fh1SelectNativeHud(bool native_hud);
+@@ -702,6 +702,27 @@ class VulkanCommandProcessor : public CommandProcessor {
+   std::filesystem::path fh1_storage_root_;
+   uint32_t fh1_storage_title_ = 0;
  
 +  // FH1 HDR: pre-HUD scene copies are retired independently per in-flight frame.
 +  struct HdrScene {
@@ -70,7 +55,7 @@ index 4edde2b..33ea745 100644
  
    const Extensions& extensions() const { return extensions_; }
 diff --git a/include/rex/ui/vulkan/presenter.h b/include/rex/ui/vulkan/presenter.h
-index 56ee43b..5a80694 100644
+index 12e29a1..b57913b 100644
 --- a/include/rex/ui/vulkan/presenter.h
 +++ b/include/rex/ui/vulkan/presenter.h
 @@ -58,6 +58,14 @@ class VulkanUIDrawContext final : public UIDrawContext {
@@ -97,23 +82,10 @@ index 56ee43b..5a80694 100644
  
      kGuestOutputPaintPipelineLayoutCount,
    };
-@@ -333,12 +343,32 @@ class VulkanPresenter final : public Presenter {
+@@ -342,6 +352,22 @@ class VulkanPresenter final : public Presenter {
+       VkSemaphore present_semaphore;
      };
  
-     struct SwapchainFramebuffer {
--      SwapchainFramebuffer(VkImageView image_view, VkFramebuffer framebuffer)
--          : image_view(image_view), framebuffer(framebuffer) {}
-+      SwapchainFramebuffer(VkImageView image_view, VkFramebuffer framebuffer,
-+                           VkSemaphore present_semaphore)
-+          : image_view(image_view),
-+            framebuffer(framebuffer),
-+            present_semaphore(present_semaphore) {}
- 
-       VkImageView image_view;
-       VkFramebuffer framebuffer;
-+      VkSemaphore present_semaphore;
-+    };
-+
 +    // present_hdr: the swapchain is scRGB, and everything above paints into an
 +    // SDR stand-in per swapchain image as it would into an SDR swapchain; one
 +    // last pass decodes its sRGB and scales it to the paper white.
@@ -125,14 +97,15 @@ index 56ee43b..5a80694 100644
 +      VkImageView swapchain_view = VK_NULL_HANDLE;
 +      VkFramebuffer swapchain_framebuffer = VK_NULL_HANDLE;
 +      VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-     };
++    };
 +    static constexpr VkFormat kHdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 +    static constexpr VkFormat kHdrStandInFormat = VK_FORMAT_B8G8R8A8_UNORM;
 +    static constexpr VkFormat kHdrStandInSrgbFormat = VK_FORMAT_B8G8R8A8_SRGB;
- 
++
      explicit PaintContext(const VulkanDevice* const vulkan_device)
          : vulkan_device(vulkan_device), submission_tracker(vulkan_device) {}
-@@ -352,8 +382,8 @@ class VulkanPresenter final : public Presenter {
+     PaintContext(const PaintContext& paint_context) = delete;
+@@ -354,8 +380,8 @@ class VulkanPresenter final : public Presenter {
      static VkSwapchainKHR CreateSwapchainForVulkanSurface(
          const VulkanDevice* vulkan_device, VkSurfaceKHR surface, uint32_t width, uint32_t height,
          VkSwapchainKHR old_swapchain, uint32_t& present_queue_family_out,
@@ -143,7 +116,7 @@ index 56ee43b..5a80694 100644
  
      // Destroys the swapchain and its derivatives, nulls `swapchain` and returns
      // the original swapchain object, if it existed, for use as oldSwapchain if
-@@ -408,6 +438,15 @@ class VulkanPresenter final : public Presenter {
+@@ -410,6 +436,15 @@ class VulkanPresenter final : public Presenter {
      VkRenderPass swapchain_render_pass = VK_NULL_HANDLE;
      VkFormat swapchain_render_pass_format = VK_FORMAT_UNDEFINED;
      bool swapchain_render_pass_clear_load_op = false;
@@ -159,7 +132,7 @@ index 56ee43b..5a80694 100644
  
      VkSurfaceKHR vulkan_surface = VK_NULL_HANDLE;
      uint32_t present_queue_family = UINT32_MAX;
-@@ -416,6 +455,10 @@ class VulkanPresenter final : public Presenter {
+@@ -418,6 +453,10 @@ class VulkanPresenter final : public Presenter {
      bool swapchain_is_fifo = false;
      std::vector<VkImage> swapchain_images;
      std::vector<SwapchainFramebuffer> swapchain_framebuffers;
@@ -170,7 +143,7 @@ index 56ee43b..5a80694 100644
    };
  
    explicit VulkanPresenter(HostGpuLossCallback host_gpu_loss_callback,
-@@ -432,8 +475,15 @@ class VulkanPresenter final : public Presenter {
+@@ -434,8 +473,15 @@ class VulkanPresenter final : public Presenter {
  
    bool InitializeSurfaceIndependent();
  
@@ -188,7 +161,7 @@ index 56ee43b..5a80694 100644
  
  #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
    bool EnsureTemporalUpscalerContext(uint32_t render_width, uint32_t render_height,
-@@ -455,6 +505,8 @@ class VulkanPresenter final : public Presenter {
+@@ -457,6 +503,8 @@ class VulkanPresenter final : public Presenter {
    std::array<VkPipelineLayout, kGuestOutputPaintPipelineLayoutCount>
        guest_output_paint_pipeline_layouts_ = {};
    VkShaderModule guest_output_paint_vs_ = VK_NULL_HANDLE;
@@ -399,10 +372,10 @@ index 0000000..48dfffa
 +	0x00000010,0x00000069,0x00000067,0x00000068,0x000200fe,0x00000069,0x00010038
 +};
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 314a9b7..ce564d9 100644
+index cd3a8a8..0bb158c 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -692,6 +692,7 @@ namespace shaders {
+@@ -700,6 +700,7 @@ namespace shaders {
  #include "../shaders/vulkan_spirv/apply_gamma_table_fxaa_luma_cs.h"
  #include "../shaders/vulkan_spirv/apply_gamma_table_ps.h"
  #include "../shaders/vulkan_spirv/fullscreen_cw_vs.h"
@@ -410,7 +383,7 @@ index 314a9b7..ce564d9 100644
  #include "../shaders/vulkan_spirv/resolve_downscale_cs.h"
  }  // namespace shaders
  
-@@ -2395,6 +2396,16 @@ void VulkanCommandProcessor::ShutdownContext() {
+@@ -2330,6 +2331,16 @@ void VulkanCommandProcessor::ShutdownContext() {
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                           swap_fxaa_extreme_pipeline_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device, swap_fxaa_pipeline_);
@@ -427,7 +400,7 @@ index 314a9b7..ce564d9 100644
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                           swap_apply_gamma_compute_pwl_fxaa_luma_pipeline_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
-@@ -2780,6 +2791,178 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
+@@ -2715,6 +2726,178 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
    gamma_ramp_pwl_current_frame_ = UINT32_MAX;
  }
  
@@ -606,7 +579,7 @@ index 314a9b7..ce564d9 100644
  void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                                         uint32_t frontbuffer_height) {
    SCOPE_profile_cpu_f("gpu");
-@@ -2931,11 +3114,18 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2866,11 +3049,18 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
      display_height = 9;
    }
  
@@ -627,7 +600,7 @@ index 314a9b7..ce564d9 100644
          // In case the swap command is the only one in the frame.
          if (!BeginSubmission(true)) {
            return false;
-@@ -3279,6 +3469,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -3214,6 +3404,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
              deferred_command_buffer_.CmdVkDispatch(group_count_x, group_count_y, 1);
            }
  
@@ -669,8 +642,8 @@ index 314a9b7..ce564d9 100644
            // Insert the release barrier.
            PushImageMemoryBarrier(vulkan_context.image(), guest_output_subresource_range,
                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-@@ -4530,6 +4755,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
-           fh1_dlss_ ? fh1_dlss_->output_width() : 2560, fh1_dlss_ ? fh1_dlss_->output_height() : 1440);
+@@ -4682,6 +4907,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+           REXCVAR_GET(fh1_output_width), REXCVAR_GET(fh1_output_height));
    }
  
 +  if (is_rasterization_done && normalized_color_mask && ui::vulkan::GetHdrOutputState().active)
@@ -679,7 +652,7 @@ index 314a9b7..ce564d9 100644
    // Create the pipeline (for this, need the render pass from the render target
    // cache), translating the shaders - doing this now to obtain the used
    // textures.
-@@ -6142,6 +6370,8 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -6294,6 +6522,8 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
      fh1_scene_composited_ = false;
      fh1_seed_pending_ = false;
      fh1_scene_base_ = UINT32_MAX;
@@ -689,7 +662,7 @@ index 314a9b7..ce564d9 100644
  
      // Reset bindings that depend on transient data.
 diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
-index 71d3330..5d7160b 100644
+index 03e5b24..b610922 100644
 --- a/src/graphics/vulkan/render_target_cache.cpp
 +++ b/src/graphics/vulkan/render_target_cache.cpp
 @@ -1914,6 +1914,12 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
@@ -1307,7 +1280,7 @@ index 914b311..9c295b1 100644
      // #6.
      requested_extensions.emplace("VK_KHR_xcb_surface",
 diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
-index da26e95..fff3423 100644
+index fbe47d3..a86fdcd 100644
 --- a/src/ui/vulkan/vulkan_presenter.cpp
 +++ b/src/ui/vulkan/vulkan_presenter.cpp
 @@ -16,6 +16,8 @@
@@ -1412,7 +1385,7 @@ index da26e95..fff3423 100644
  }  // namespace shaders
  
  VulkanPresenter::PaintContext::Submission::~Submission() {
-@@ -223,6 +297,9 @@ VulkanPresenter::~VulkanPresenter() {
+@@ -213,6 +287,9 @@ VulkanPresenter::~VulkanPresenter() {
    if (paint_context_.swapchain_render_pass != VK_NULL_HANDLE) {
      dfn.vkDestroyRenderPass(device, paint_context_.swapchain_render_pass, nullptr);
    }
@@ -1422,7 +1395,7 @@ index da26e95..fff3423 100644
  
    for (const PaintContext::UISetupCommandBuffer& ui_setup_command_buffer :
         paint_context_.ui_setup_command_buffers) {
-@@ -248,6 +325,8 @@ VulkanPresenter::~VulkanPresenter() {
+@@ -238,6 +315,8 @@ VulkanPresenter::~VulkanPresenter() {
      util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device, shader_module);
    }
    util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device, guest_output_paint_vs_);
@@ -1431,7 +1404,7 @@ index da26e95..fff3423 100644
    for (VkPipelineLayout& pipeline_layout : guest_output_paint_pipeline_layouts_) {
      util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device, pipeline_layout);
    }
-@@ -775,7 +854,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -765,7 +844,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
      paint_context_.swapchain = PaintContext::CreateSwapchainForVulkanSurface(
          vulkan_device_, paint_context_.vulkan_surface, new_surface_width, new_surface_height,
          old_swapchain, paint_context_.present_queue_family, new_swapchain_format,
@@ -1441,7 +1414,7 @@ index da26e95..fff3423 100644
      // Destroy the old swapchain that may be retired now.
      if (old_swapchain != VK_NULL_HANDLE) {
        dfn.vkDestroySwapchainKHR(device, old_swapchain, nullptr);
-@@ -879,7 +959,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -869,7 +949,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
      paint_context_.swapchain = PaintContext::CreateSwapchainForVulkanSurface(
          vulkan_device_, paint_context_.vulkan_surface, new_surface_width, new_surface_height,
          VK_NULL_HANDLE, paint_context_.present_queue_family, new_swapchain_format,
@@ -1451,7 +1424,7 @@ index da26e95..fff3423 100644
      if (paint_context_.swapchain == VK_NULL_HANDLE) {
        // Failed to create the swapchain for the new Vulkan surface - destroy the
        // Vulkan surface.
-@@ -895,16 +976,20 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -885,16 +966,20 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
    // paint_context_.DestroySwapchainAndVulkanSurface must be called before
    // returning.
  
@@ -1476,7 +1449,7 @@ index da26e95..fff3423 100644
      render_pass_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
      render_pass_attachment.loadOp = REXCVAR_GET(present_render_pass_clear)
                                          ? VK_ATTACHMENT_LOAD_OP_CLEAR
-@@ -913,7 +998,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -903,7 +988,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
      render_pass_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
      render_pass_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
      render_pass_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1486,7 +1459,7 @@ index da26e95..fff3423 100644
      VkAttachmentReference render_pass_color_attachment;
      render_pass_color_attachment.attachment = 0;
      render_pass_color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-@@ -942,6 +1028,14 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -932,6 +1018,14 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
          VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
      render_pass_dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
      render_pass_dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
@@ -1501,7 +1474,7 @@ index da26e95..fff3423 100644
      VkRenderPassCreateInfo render_pass_create_info;
      render_pass_create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
      render_pass_create_info.pNext = nullptr;
-@@ -962,7 +1056,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -952,7 +1046,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
        return SurfacePaintConnectResult::kFailure;
      }
      paint_context_.swapchain_render_pass = new_render_pass;
@@ -1511,7 +1484,7 @@ index da26e95..fff3423 100644
      paint_context_.swapchain_render_pass_clear_load_op =
          render_pass_attachment.loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR;
    }
-@@ -994,6 +1089,11 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -984,6 +1079,11 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
      return SurfacePaintConnectResult::kFailure;
    }
  
@@ -1523,7 +1496,7 @@ index da26e95..fff3423 100644
    // Create the image views and the framebuffers.
    assert_true(paint_context_.swapchain_framebuffers.empty());
    paint_context_.swapchain_framebuffers.reserve(paint_context_.swapchain_images.size());
-@@ -1002,7 +1102,7 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -992,7 +1092,7 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
    image_view_create_info.pNext = nullptr;
    image_view_create_info.flags = 0;
    image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -1532,7 +1505,7 @@ index da26e95..fff3423 100644
    image_view_create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
    image_view_create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
    image_view_create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-@@ -1023,8 +1123,10 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -1013,8 +1113,10 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
    framebuffer_create_info.width = paint_context_.swapchain_extent.width;
    framebuffer_create_info.height = paint_context_.swapchain_extent.height;
    framebuffer_create_info.layers = 1;
@@ -1545,25 +1518,7 @@ index da26e95..fff3423 100644
      if (dfn.vkCreateImageView(device, &image_view_create_info, nullptr, &image_view) !=
          VK_SUCCESS) {
        REXLOG_ERROR("VulkanPresenter: Failed to create a swapchain image view");
-@@ -1039,7 +1141,16 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
-       paint_context_.DestroySwapchainAndVulkanSurface();
-       return SurfacePaintConnectResult::kFailure;
-     }
--    paint_context_.swapchain_framebuffers.emplace_back(image_view, framebuffer);
-+    VkSemaphoreCreateInfo semaphore_info = {};
-+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-+    VkSemaphore present_semaphore;
-+    if (dfn.vkCreateSemaphore(device, &semaphore_info, nullptr, &present_semaphore) != VK_SUCCESS) {
-+      dfn.vkDestroyFramebuffer(device, framebuffer, nullptr);
-+      dfn.vkDestroyImageView(device, image_view, nullptr);
-+      paint_context_.DestroySwapchainAndVulkanSurface();
-+      return SurfacePaintConnectResult::kFailure;
-+    }
-+    paint_context_.swapchain_framebuffers.emplace_back(image_view, framebuffer, present_semaphore);
-   }
- 
-   is_vsync_implicit_out = paint_context_.swapchain_is_fifo;
-@@ -1112,11 +1223,21 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
+@@ -1111,11 +1213,21 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
    return refresher_succeeded;
  }
  
@@ -1586,7 +1541,7 @@ index da26e95..fff3423 100644
  
    const VulkanInstance::Functions& ifn = vulkan_device->vulkan_instance()->functions();
    const VkPhysicalDevice physical_device = vulkan_device->physical_device();
-@@ -1295,6 +1416,37 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1294,6 +1406,37 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
        image_format = surface_formats.front();
      }
    }
@@ -1624,7 +1579,7 @@ index da26e95..fff3423 100644
  
    // Get presentation modes.
    std::vector<VkPresentModeKHR> present_modes;
-@@ -1339,6 +1491,12 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1338,6 +1481,12 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
    swapchain_create_info.imageExtent = image_extent;
    swapchain_create_info.imageArrayLayers = 1;
    swapchain_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -1637,7 +1592,7 @@ index da26e95..fff3423 100644
    uint32_t swapchain_queue_family_indices[2];
    if (queue_family_index_graphics_compute != queue_family_index_present) {
      // Using concurrent sharing mode to avoid an explicit ownership transfer
-@@ -1448,6 +1606,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1447,6 +1596,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
        uint32_t(swapchain_create_info.imageFormat), uint32_t(swapchain_create_info.imageColorSpace),
        uint32_t(swapchain_create_info.presentMode));
  
@@ -1645,26 +1600,15 @@ index da26e95..fff3423 100644
    present_queue_family_out = queue_family_index_present;
    image_format_out = swapchain_create_info.imageFormat;
    image_extent_out = swapchain_create_info.imageExtent;
-@@ -1458,16 +1617,35 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1457,6 +1607,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
  }
  
  VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
 +  hdr_output_active.store(false, std::memory_order_relaxed);
    if (swapchain != VK_NULL_HANDLE) {
      submission_tracker.AwaitAllSubmissionsCompletion();
-+    // A rendering fence does not cover the presentation engine's semaphore
-+    // wait. Drain presentation only when retiring a swapchain, not every frame.
-+    const auto queue = vulkan_device->AcquireQueue(present_queue_family, 0);
-+    const auto wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(
-+        vulkan_device->vulkan_instance()->functions().vkGetDeviceProcAddr(vulkan_device->device(),
-+                                                                          "vkQueueWaitIdle"));
-+    wait_idle(queue.queue());
-   }
-   const VulkanDevice::Functions& dfn = vulkan_device->functions();
-   const VkDevice device = vulkan_device->device();
-   for (const SwapchainFramebuffer& framebuffer : swapchain_framebuffers) {
-+    dfn.vkDestroySemaphore(device, framebuffer.present_semaphore, nullptr);
-     dfn.vkDestroyFramebuffer(device, framebuffer.framebuffer, nullptr);
+     // Submission fences don't cover presentation. Drain it before destroying
+@@ -1478,6 +1629,15 @@ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
      dfn.vkDestroyImageView(device, framebuffer.image_view, nullptr);
    }
    swapchain_framebuffers.clear();
@@ -1677,11 +1621,10 @@ index da26e95..fff3423 100644
 +  }
 +  hdr_images.clear();
 +  util::DestroyAndNullHandle(dfn.vkDestroyDescriptorPool, device, hdr_descriptor_pool);
-+
    swapchain_images.clear();
    swapchain_extent.width = 0;
    swapchain_extent.height = 0;
-@@ -1561,6 +1739,13 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
+@@ -1571,6 +1731,13 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
  }
  
  Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_drawers) {
@@ -1695,7 +1638,7 @@ index da26e95..fff3423 100644
    // Begin the submission in place of the one not currently potentially used on
    // the GPU.
    uint64_t current_paint_submission_index =
-@@ -2106,6 +2291,30 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2116,6 +2283,30 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
  
            dfn.vkCmdDraw(draw_command_buffer, 4, 1, 0, 0);
  
@@ -1726,7 +1669,7 @@ index da26e95..fff3423 100644
            if (is_final_effect) {
              // Clear the letterbox around the guest output if the guest output
              // doesn't cover the entire swapchain image.
-@@ -2189,6 +2398,145 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2199,6 +2390,145 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
  
    dfn.vkCmdEndRenderPass(draw_command_buffer);
  
@@ -1872,18 +1815,7 @@ index da26e95..fff3423 100644
    dfn.vkEndCommandBuffer(draw_command_buffer);
  
    VkPipelineStageFlags acquire_semaphore_wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-@@ -2210,7 +2558,9 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
-     paint_context_.ui_setup_command_buffer_current_index = SIZE_MAX;
-   }
-   command_buffers[command_buffer_count++] = draw_command_buffer;
--  VkSemaphore present_semaphore = paint_submission.present_semaphore();
-+  // Reacquiring this image guarantees its previous presentation wait finished.
-+  VkSemaphore present_semaphore =
-+      paint_context_.swapchain_framebuffers[swapchain_image_index].present_semaphore;
-   VkSubmitInfo submit_info;
-   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-   submit_info.pNext = nullptr;
-@@ -2263,6 +2613,43 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2274,6 +2604,43 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
      }
    }
  
@@ -1927,7 +1859,7 @@ index da26e95..fff3423 100644
    VkPresentInfoKHR present_info;
    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
    present_info.pNext = nullptr;
-@@ -2384,6 +2771,9 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
+@@ -2395,6 +2762,9 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
          guest_output_paint_push_constant_range_ffx.size = sizeof(FsrRcasConstants);
          break;
  #endif
@@ -1937,7 +1869,7 @@ index da26e95..fff3423 100644
        default:
          assert_unhandled_case(GuestOutputPaintPipelineLayoutIndex(i));
          continue;
-@@ -2606,8 +2996,203 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
+@@ -2617,8 +2987,203 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
    return InitializeCommonSurfaceIndependent();
  }
  
@@ -2142,7 +2074,7 @@ index da26e95..fff3423 100644
    VkPipelineShaderStageCreateInfo stages[2] = {};
    for (uint32_t i = 0; i < 2; ++i) {
      VkPipelineShaderStageCreateInfo& stage = stages[i];
-@@ -2616,7 +3201,8 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
+@@ -2627,7 +3192,8 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
      stage.pName = "main";
    }
    stages[0].module = guest_output_paint_vs_;
@@ -2152,7 +2084,7 @@ index da26e95..fff3423 100644
    assert_true(stages[1].module != VK_NULL_HANDLE);
  
    VkPipelineVertexInputStateCreateInfo vertex_input_state = {};
-@@ -2643,9 +3229,7 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
+@@ -2654,9 +3220,7 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
    multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
  
    VkPipelineColorBlendAttachmentState color_blend_attachment_state = {};
@@ -2163,7 +2095,7 @@ index da26e95..fff3423 100644
    VkPipelineColorBlendStateCreateInfo color_blend_state = {};
    color_blend_state.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
    color_blend_state.attachmentCount = 1;
-@@ -2676,7 +3260,9 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
+@@ -2687,7 +3251,9 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
    pipeline_create_info.pColorBlendState = &color_blend_state;
    pipeline_create_info.pDynamicState = &dynamic_state;
    pipeline_create_info.layout =
