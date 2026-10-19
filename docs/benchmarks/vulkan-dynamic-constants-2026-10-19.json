@@ -1,0 +1,776 @@
+{
+  "date": "2026-10-19",
+  "public_patch_base": "ad9b443",
+  "game_source_base": "fc55901",
+  "sdk_base": "bd833a2ab69d305f99ddf57418fc38ffec8af93d",
+  "reference": "Vulkan dynamic uniform descriptors with a bounded per-frame memo",
+  "hardware": {
+    "cpu": "Intel Core i9-13900K",
+    "ram_gb": 64,
+    "gpu": "NVIDIA RTX 5060 Ti",
+    "driver": "617.14",
+    "os": "Windows"
+  },
+  "toolchain": "clang-cl 23.1.3; CMake 4.4.4; Ninja 1.13.2",
+  "sdk_snapshot": {
+    "sdk_base": "bd833a2ab69d305f99ddf57418fc38ffec8af93d",
+    "source_working_diff_sha256": "de217f98af33aa5013999e5d51d663b6187e250994ecd7d831df818c662891bc",
+    "common_game_runtime": "build/cpu-fence/runtime",
+    "source_copy": "build/vulkan-bindings/sdk-source"
+  },
+  "snapshot_extra_files": {
+    "preexisting_differences": [
+      "include/rex/ui/vulkan/presenter.h",
+      "src/graphics/vulkan/command_processor.cpp",
+      "src/ui/vulkan/vulkan_device.cpp",
+      "src/ui/vulkan/vulkan_presenter.cpp",
+      "thirdparty/CMakeLists.txt"
+    ],
+    "shared_by_both_modes": true
+  },
+  "ai_benchmark_provenance": {
+    "source_commit": "ec7300244e369d2802b1112ecd02bc681cb8cf94",
+    "files_sha256": {
+      "src/platform/benchmark.cpp": "848465bb04e55b4c5bab3574b80963f7094d67302a12bdc1cb8ded890c0e653a",
+      "src/platform/benchmark.h": "747559bdc24d965030ce1f74b5402cc84fc21aa9faa8a9cadce248b0cb00e459",
+      "src/platform/benchmark_stats.h": "7cf4a0f457efb500d9591fb31a896e7129b1e1bcd4251ca374f47a654202d88a"
+    },
+    "integration": "benchmark Tick in existing frame-time hook; OnSwap in guest swap hook; identical in both variants",
+    "source_changes_are_private": true
+  },
+  "protocol": {
+    "display": {
+      "primary": true,
+      "width": 2560,
+      "height": 1440,
+      "hz": 360
+    },
+    "render_resolution": "1280x720",
+    "scale": 1,
+    "frame_target": 240,
+    "upscaler": "off",
+    "vsync": false,
+    "present_mode": "IMMEDIATE",
+    "cpu_affinity": null,
+    "fence_wait": "yield",
+    "ai_movement_gate_m": 10,
+    "ai_settle_s": 15,
+    "ai_score_s": 60,
+    "cpu_window_s": 30,
+    "cpu_start_offset_from_ai_marker_s": 10,
+    "validation_in_scores": false,
+    "binding_stats_in_scores": false,
+    "stack_sampling_in_scores": false,
+    "gpu_telemetry_in_scores": false,
+    "retained_pairs": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "identical_runtime_binaries": true,
+    "race": "eight-car Recaro Rush / Montano Dirt Cross; native AI drives the Evo"
+  },
+  "exclusion": {
+    "labels": [
+      "baseline-1",
+      "candidate-1"
+    ],
+    "reason": "Conservative exclusion: source snapshot audit may overlap the end of baseline FPS scoring. Both originals retained; repeat as pair 6.",
+    "audit_completion_epoch": 1792387714.6687365,
+    "audit_duration_s_upper_estimate": 7.2447738,
+    "possible_ai_overlap_s": 1.308037519454956,
+    "cpu_window_finished_before_audit": true,
+    "replacement_pair": 6
+  },
+  "binary_sha256": {
+    "forza.exe": "0eca96d4a97f849f04812dcff6b60a17839ab7fccbeeba8da019fa3c614838b6",
+    "forza_SpeechFacade_default.dll": "f4b31ae25ba5385437d26104f0074012a925910d850476f19e51d2ef1971b08d",
+    "forza_XMediaFacade_default.dll": "3fbf755549f8e232a9905c649b5f63ab6196c67030936c18fc124830a75a02e0",
+    "rexgpu-xenos.dll": "854d2c8b3ec77b45a20293cbf2d6b7af28fa062394359ff1ae3a1a827d6b25c1",
+    "rexruntime.dll": "c012e40c21e005c83c9e17f583618ba638857140bd5211f5e85eafdcd3019baf",
+    "TracyClient.dll": "1c705440aefdb14f7c568e67d20564f156bfa1adea614e8ac8125aa4c7feec3d"
+  },
+  "runs": [
+    {
+      "label": "candidate-2",
+      "variant": "candidate",
+      "guest": {
+        "frames": 3247,
+        "fps": 108.04548545232593,
+        "low1_fps": 84.32672773966038,
+        "p99_ms": 11.368,
+        "worst_ms": 13.528,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3247,
+        "fps": 108.04507918885731,
+        "low1_fps": 84.35130016026747,
+        "p99_ms": 11.306,
+        "worst_ms": 13.436,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.201754750890027,
+      "cpu_ms_per_guest_frame": 29.62831074838312,
+      "cpu_window_s": 30.0470000000023,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.20400000000154,
+      "cpu_measure_ready_s": 132.20400000000154,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 6255,
+        "seconds": 59.9908,
+        "average_fps": 104.266,
+        "low_1_percent_fps": 81.2422,
+        "p99_ms": 11.8515,
+        "worst_ms": 13.5293,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": true,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.5625,
+        "percent_of_one_core": 88.4031683695476,
+        "cpu_ms_per_guest_frame": 8.180628272251308
+      }
+    },
+    {
+      "label": "baseline-2",
+      "variant": "baseline",
+      "guest": {
+        "frames": 3063,
+        "fps": 101.91472582276926,
+        "low1_fps": 77.44907723172014,
+        "p99_ms": 12.475,
+        "worst_ms": 13.919,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3062,
+        "fps": 101.90849449236507,
+        "low1_fps": 77.8057767024406,
+        "p99_ms": 12.426,
+        "worst_ms": 13.797,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.1944744899658626,
+      "cpu_ms_per_guest_frame": 31.33672053542279,
+      "cpu_window_s": 30.04699999999866,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.15600000000268,
+      "cpu_measure_ready_s": 132.15600000000268,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 5970,
+        "seconds": 59.9951,
+        "average_fps": 99.5081,
+        "low_1_percent_fps": 76.4745,
+        "p99_ms": 12.6414,
+        "worst_ms": 14.6451,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": false,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.84375,
+        "percent_of_one_core": 89.33920191700068,
+        "cpu_ms_per_guest_frame": 8.763875285667647
+      }
+    },
+    {
+      "label": "baseline-3",
+      "variant": "baseline",
+      "guest": {
+        "frames": 3063,
+        "fps": 101.94080923230284,
+        "low1_fps": 78.59223559416998,
+        "p99_ms": 12.155,
+        "worst_ms": 14.417,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3063,
+        "fps": 101.94253276771813,
+        "low1_fps": 78.80521131236098,
+        "p99_ms": 12.1,
+        "worst_ms": 14.974,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.2064349186276266,
+      "cpu_ms_per_guest_frame": 31.454048318641853,
+      "cpu_window_s": 30.04699999999866,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.20300000000134,
+      "cpu_measure_ready_s": 132.20300000000134,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 5890,
+        "seconds": 59.9984,
+        "average_fps": 98.1693,
+        "low_1_percent_fps": 75.3016,
+        "p99_ms": 12.6856,
+        "worst_ms": 15.2898,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": false,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 27.0625,
+        "percent_of_one_core": 90.06722800945587,
+        "cpu_ms_per_guest_frame": 8.835292197192295
+      }
+    },
+    {
+      "label": "candidate-3",
+      "variant": "candidate",
+      "guest": {
+        "frames": 3439,
+        "fps": 114.45751133492138,
+        "low1_fps": 86.88054173741226,
+        "p99_ms": 11.168,
+        "worst_ms": 13.188,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3439,
+        "fps": 114.46070370001298,
+        "low1_fps": 86.51288794850753,
+        "p99_ms": 11.104,
+        "worst_ms": 13.22,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.23139581322609,
+      "cpu_ms_per_guest_frame": 28.23313463216051,
+      "cpu_window_s": 30.04699999999866,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.17099999999846,
+      "cpu_measure_ready_s": 132.17099999999846,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 6616,
+        "seconds": 59.9924,
+        "average_fps": 110.281,
+        "low_1_percent_fps": 82.5299,
+        "p99_ms": 11.7544,
+        "worst_ms": 13.5,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": true,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.671875,
+        "percent_of_one_core": 88.7671814157859,
+        "cpu_ms_per_guest_frame": 7.755706600756033
+      }
+    },
+    {
+      "label": "candidate-4",
+      "variant": "candidate",
+      "guest": {
+        "frames": 3115,
+        "fps": 103.64792447110861,
+        "low1_fps": 47.97421386005023,
+        "p99_ms": 15.951,
+        "worst_ms": 28.723,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3114,
+        "fps": 103.6421564504645,
+        "low1_fps": 48.26072858618687,
+        "p99_ms": 16.059,
+        "worst_ms": 28.166,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.2558366891866912,
+      "cpu_ms_per_guest_frame": 31.405497592295344,
+      "cpu_window_s": 30.0470000000023,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.15599999999904,
+      "cpu_measure_ready_s": 132.15599999999904,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 6118,
+        "seconds": 59.9946,
+        "average_fps": 101.976,
+        "low_1_percent_fps": 55.1946,
+        "p99_ms": 14.416,
+        "worst_ms": 28.7221,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": true,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 27.09375,
+        "percent_of_one_core": 90.17123173693855,
+        "cpu_ms_per_guest_frame": 8.697833065810594
+      }
+    },
+    {
+      "label": "baseline-4",
+      "variant": "baseline",
+      "guest": {
+        "frames": 3003,
+        "fps": 99.95314883373348,
+        "low1_fps": 80.31088082901555,
+        "p99_ms": 12.084,
+        "worst_ms": 13.397,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3003,
+        "fps": 99.95282945391206,
+        "low1_fps": 81.48866650368933,
+        "p99_ms": 11.995,
+        "worst_ms": 13.1,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.12791210436996,
+      "cpu_ms_per_guest_frame": 31.29682817182817,
+      "cpu_window_s": 30.04699999999866,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.23500000000058,
+      "cpu_measure_ready_s": 132.23500000000058,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 5868,
+        "seconds": 59.996,
+        "average_fps": 97.8065,
+        "low_1_percent_fps": 76.4128,
+        "p99_ms": 12.594,
+        "worst_ms": 14.9603,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": false,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.671875,
+        "percent_of_one_core": 88.7671814157859,
+        "cpu_ms_per_guest_frame": 8.881743256743256
+      }
+    },
+    {
+      "label": "baseline-5",
+      "variant": "baseline",
+      "guest": {
+        "frames": 3004,
+        "fps": 99.99270692340647,
+        "low1_fps": 78.48756984760752,
+        "p99_ms": 12.193,
+        "worst_ms": 13.995,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3004,
+        "fps": 99.99402831934736,
+        "low1_fps": 79.60372750873715,
+        "p99_ms": 12.068,
+        "worst_ms": 14.324,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.1981146204281385,
+      "cpu_ms_per_guest_frame": 31.988598535286286,
+      "cpu_window_s": 30.04699999999866,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.18700000000172,
+      "cpu_measure_ready_s": 132.18700000000172,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 5829,
+        "seconds": 59.9998,
+        "average_fps": 97.1503,
+        "low_1_percent_fps": 75.1117,
+        "p99_ms": 12.6978,
+        "worst_ms": 17.0075,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": false,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.640625,
+        "percent_of_one_core": 88.6631776882923,
+        "cpu_ms_per_guest_frame": 8.86838382157124
+      }
+    },
+    {
+      "label": "candidate-5",
+      "variant": "candidate",
+      "guest": {
+        "frames": 3222,
+        "fps": 107.21737664236507,
+        "low1_fps": 85.35645372386928,
+        "p99_ms": 11.447,
+        "worst_ms": 13.297,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3222,
+        "fps": 107.22154760427063,
+        "low1_fps": 85.66889232718248,
+        "p99_ms": 11.395,
+        "worst_ms": 12.524,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.1835540985786497,
+      "cpu_ms_per_guest_frame": 29.68846989447548,
+      "cpu_window_s": 30.0470000000023,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 122.17199999999866,
+      "cpu_measure_ready_s": 132.17199999999866,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 6303,
+        "seconds": 59.9985,
+        "average_fps": 105.053,
+        "low_1_percent_fps": 79.3853,
+        "p99_ms": 11.9648,
+        "worst_ms": 16.5978,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": true,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 27.234375,
+        "percent_of_one_core": 90.63924851065968,
+        "cpu_ms_per_guest_frame": 8.452630353817504
+      }
+    },
+    {
+      "label": "candidate-6",
+      "variant": "candidate",
+      "guest": {
+        "frames": 3219,
+        "fps": 107.12928947721805,
+        "low1_fps": 85.26008200469705,
+        "p99_ms": 11.33,
+        "worst_ms": 12.665,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3219,
+        "fps": 107.13096519208776,
+        "low1_fps": 86.23145043912713,
+        "p99_ms": 11.216,
+        "worst_ms": 12.887,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.1991546577026875,
+      "cpu_ms_per_guest_frame": 29.861758310034173,
+      "cpu_window_s": 30.0470000000023,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 125.76599999999962,
+      "cpu_measure_ready_s": 135.76599999999962,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 6367,
+        "seconds": 59.9924,
+        "average_fps": 106.13,
+        "low_1_percent_fps": 82.8999,
+        "p99_ms": 11.5875,
+        "worst_ms": 13.3997,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": true,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.78125,
+        "percent_of_one_core": 89.1311944620027,
+        "cpu_ms_per_guest_frame": 8.319742155949053
+      }
+    },
+    {
+      "label": "baseline-6",
+      "variant": "baseline",
+      "guest": {
+        "frames": 3015,
+        "fps": 100.33965054911248,
+        "low1_fps": 79.30031541060936,
+        "p99_ms": 12.183,
+        "worst_ms": 13.606,
+        "over50ms": 0
+      },
+      "present": {
+        "frames": 3015,
+        "fps": 100.34035181091205,
+        "low1_fps": 80.31587456214893,
+        "p99_ms": 12.063,
+        "worst_ms": 13.479,
+        "over50ms": 0
+      },
+      "cpu_cores": 3.1539130362429777,
+      "cpu_ms_per_guest_frame": 31.431384742951906,
+      "cpu_window_s": 30.0470000000023,
+      "focused_fraction": 1.0,
+      "ai_focused_fraction": 1.0,
+      "ai_measure_ready_s": 123.71900000000096,
+      "cpu_measure_ready_s": 133.71900000000096,
+      "ai_race": {
+        "valid": true,
+        "reason": "completed",
+        "source": "guest_vdswap",
+        "warmup_seconds": 15,
+        "frames": 5827,
+        "seconds": 59.9906,
+        "average_fps": 97.1318,
+        "low_1_percent_fps": 76.7623,
+        "p99_ms": 12.5991,
+        "worst_ms": 14.738,
+        "stalls_over_50ms": 0,
+        "stalls_over_100ms": 0
+      },
+      "present_mode": "IMMEDIATE",
+      "dynamic_constants": false,
+      "new_pipeline_creation_entries_during_ai_score": 0,
+      "gpu_command_thread_counter": {
+        "identification": "thread emitting SetupContext VKBIND mode log",
+        "cpu_seconds": 26.734375,
+        "percent_of_one_core": 88.97518887076232,
+        "cpu_ms_per_guest_frame": 8.86712271973466
+      }
+    }
+  ],
+  "averages": {
+    "baseline": {
+      "cpu_cores": 3.176169833926913,
+      "cpu_ms_per_guest_frame": 31.5015160608262,
+      "average_fps": 97.9532,
+      "low_1_percent_fps": 76.01258,
+      "p99_ms": 12.64358,
+      "worst_ms": 15.32814,
+      "gpu_command_thread_cpu_ms_per_guest_frame": 8.843283456181819
+    },
+    "candidate": {
+      "cpu_cores": 3.214339201916829,
+      "cpu_ms_per_guest_frame": 29.763434235469727,
+      "average_fps": 105.5412,
+      "low_1_percent_fps": 76.25038,
+      "p99_ms": 12.31484,
+      "worst_ms": 17.14978,
+      "gpu_command_thread_cpu_ms_per_guest_frame": 8.281308089716898
+    }
+  },
+  "pairs": [
+    {
+      "original_pair_number": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "fps_change_percent": 4.781419804015963,
+      "cpu_ms_per_frame_change_percent": -5.451782311133968
+    },
+    {
+      "original_pair_number": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "fps_change_percent": 12.337563780122696,
+      "cpu_ms_per_frame_change_percent": -10.240060846388433
+    },
+    {
+      "original_pair_number": 4,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "fps_change_percent": 4.263009104711846,
+      "cpu_ms_per_frame_change_percent": 0.3472218330577981
+    },
+    {
+      "original_pair_number": 5,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "fps_change_percent": 8.134509105993493,
+      "cpu_ms_per_frame_change_percent": -7.190463934434499
+    },
+    {
+      "original_pair_number": 6,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "fps_change_percent": 9.263907391811955,
+      "cpu_ms_per_frame_change_percent": -4.993818903475777
+    }
+  ],
+  "diagnostics": {
+    "gpu_test_log": [
+      "Vulkan synchronization validation enabled",
+      "GPU: NVIDIA GeForce RTX 5060 Ti, driver 2588114944",
+      "1600 GPU dispatches matched across five dynamic bindings, buffer/range variants and eight fenced frames"
+    ],
+    "full_patch_series": {
+      "passed": true,
+      "count": 66,
+      "last": "0092-vulkan-dynamic-constant-descriptors.patch"
+    },
+    "candidate_counter_windows": {
+      "logged_ai_windows": [
+        {
+          "draws": 1685384,
+          "constant_sets": 135544,
+          "cache_hits": 1515340
+        },
+        {
+          "draws": 1463889,
+          "constant_sets": 79913,
+          "cache_hits": 1349476
+        },
+        {
+          "draws": 1533180,
+          "constant_sets": 102804,
+          "cache_hits": 1395876
+        },
+        {
+          "draws": 1573750,
+          "constant_sets": 112193,
+          "cache_hits": 1427057
+        }
+      ],
+      "new_sets": 430454,
+      "memo_hits": 5687749,
+      "hit_fraction": 0.9296437205499719,
+      "not_scored": true
+    },
+    "candidate_live_api_validation": {
+      "AI_valid": true,
+      "validation_layer_inserted": true,
+      "VUID_or_validation_errors": 0,
+      "scored": false
+    }
+  },
+  "native_diagnostic": {
+    "repeat_count_per_mode": 1,
+    "scored_pair_member": false,
+    "render_resolution": "2560x1440",
+    "scale": 2,
+    "order": [
+      "candidate",
+      "baseline"
+    ],
+    "gpu_telemetry_interval_s": 1,
+    "runs": [
+      {
+        "label": "candidate-native",
+        "ai_race": {
+          "valid": true,
+          "reason": "completed",
+          "source": "guest_vdswap",
+          "warmup_seconds": 15,
+          "frames": 4247,
+          "seconds": 59.983,
+          "average_fps": 70.8034,
+          "low_1_percent_fps": 50.1632,
+          "p99_ms": 15.5376,
+          "worst_ms": 29.6772,
+          "stalls_over_50ms": 0,
+          "stalls_over_100ms": 0
+        },
+        "cpu_ms_per_guest_frame": 37.11029067041725,
+        "foreground_fraction": 1.0,
+        "new_pipeline_creation_entries": 0,
+        "gpu_utilization_cpu_window": {
+          "samples": 30,
+          "mean_percent": 98.93333333333334,
+          "min_percent": 98.0,
+          "max_percent": 99.0
+        }
+      },
+      {
+        "label": "baseline-native",
+        "ai_race": {
+          "valid": true,
+          "reason": "completed",
+          "source": "guest_vdswap",
+          "warmup_seconds": 15,
+          "frames": 4183,
+          "seconds": 59.9865,
+          "average_fps": 69.7323,
+          "low_1_percent_fps": 47.2147,
+          "p99_ms": 15.7569,
+          "worst_ms": 29.5879,
+          "stalls_over_50ms": 0,
+          "stalls_over_100ms": 0
+        },
+        "cpu_ms_per_guest_frame": 38.645833333333336,
+        "foreground_fraction": 1.0,
+        "new_pipeline_creation_entries": 0,
+        "gpu_utilization_cpu_window": {
+          "samples": 30,
+          "mean_percent": 98.0,
+          "min_percent": 98.0,
+          "max_percent": 98.0
+        }
+      }
+    ]
+  },
+  "patch_sha256": "c0e142f263d09f38d370c409cb8d4db9d6cfdb56c083283ab1e7d185b9402f63"
+}
