@@ -57,6 +57,12 @@ def enabled(cfg) -> bool:
              cfg.settings.get("forza_antialiasing") == "dlaa"))
 
 
+def menu_runtime_enabled(cfg) -> bool:
+    """Prepare NGX before a native session so its menu can enable DLSS later."""
+    return (paths.IS_WINDOWS and cfg.gpu_vendor() == gpu.NVIDIA and
+            cfg.settings.get("gpu_backend", "vulkan") == "vulkan")
+
+
 def check_renderer(folder):
     """An older SDK overlay must not silently ignore the native settings."""
     try:
