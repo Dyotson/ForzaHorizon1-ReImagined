@@ -3,8 +3,9 @@
 ## Scope and evidence
 
 Report: CachyOS, Mesa 26.2.4, standalone ReImagined 0.1.17 at 35–42 fps;
-Pinyon 0.5.1 and 0.6.0 reportedly hold 60 fps at 1440p. The reporter is
-testing a newer ReImagined release. We have no BC-250 trace or local BC-250.
+Pinyon 0.5.1 and 0.6.0 reportedly hold 60 fps at 1440p. The reporter subsequently confirmed the same result on 0.1.23, with 40 GPU CUs
+unlocked and six CPU cores. Aggregate CPU/GPU utilization was below 100%;
+that does not exclude a serial CPU bottleneck or synchronization wait. We have no BC-250 trace or local BC-250.
 This is a source comparison and an experimental build option, not a verified
 fix for that machine.
 
@@ -23,6 +24,15 @@ size (temporal upscaling and ultrawide add their own sizing). Check the actual
 internal dimensions, output dimensions, upscaler and MSAA in both programs.
 The Linux GPU detector recognizes AMD by PCI vendor, not a model whitelist;
 we found no BC-250-specific performance cap.
+
+Follow-up [issue #174](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/174)
+reports no improvement at render scales 1 and 2 as well as guest resolutions
+720p through 4K, and a roughly 1 GB game log. That strengthens the case for
+profiling CPU work, waits and logging overhead; it does not identify the cause.
+Current main (`5d246b0`) adds a warning that trace/debug logging lowers frame
+rate. Confirm the reporter's log level and repeat at the normal level before
+attributing the difference to code generation or hardware recognition. No
+normal-level BC-250 comparison or FMA runtime result is available yet.
 
 ## Material differences
 
