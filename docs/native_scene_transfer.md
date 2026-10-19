@@ -77,7 +77,7 @@ ABI is unchanged.
   snapshot pixels match exactly, and the canonical backing has zero mismatched
   words. Synchronization validation reports no errors. Game images, shaders,
   captures and fixture bytes are not committed.
-- Synthetic GPU coverage includes 340 R10 cases: gain 1 and 0.25, source
+- Synthetic GPU coverage includes 356 R10 cases: gain 1 and 0.25, source
   swizzles, endian variants, unequal scales, half-pixel fill, destination
   offsets/padding and full 1440p images. The test clears the source before
   consuming the snapshot, then checks both the raw-copy consumer and backing.
@@ -238,3 +238,57 @@ The direct path removes repeated snapshot copies and passes correctness tests,
 but these end-to-end measurements do **not** demonstrate a performance fix.
 Keep it opt-in and the PR in draft. A repeatable scene/workload and CPU/driver
 attribution are needed before further optimization or enabling it by default.
+
+## Alternating transfer profile
+
+A follow-up diagnostic alternated original and direct transfer every 240 frames
+inside one copied-save race, with native 1440p scene/HUD, SMAA, the 120 FPS cap,
+warmed shaders and immediate presentation. The other testing task held its
+games and heavy builds. CPU scopes were enabled, but GPU timestamps, validation
+layers and screenshot readbacks were absent during measurement. These scopes
+add overhead, so the absolute FPS must not be compared with the release runs.
+Both halves keep the native cache/watch infrastructure installed; this isolates
+the transfer selection rather than reproducing two separate process modes.
+
+After discarding the first partial measurement block, original transfer averaged
+64.65 FPS over 16 complete 120-frame blocks and direct transfer averaged 65.08 FPS
+over 15 blocks. Each native block published 117–120 transfers. The seven complete
+paired cycles ranged from -3.39% to +3.16%. The overall +0.65% is small relative to
+that variation and does not establish an end-to-end speedup. It also does not
+reproduce the earlier -11.62% between-process result.
+
+The native adapter averaged 0.0114 ms per frame versus 0.0035 ms in the fallback
+half; snapshot preparation and publication averaged 0.0010 and 0.0053 ms.
+Ownership inspection averaged 0.0003 ms in either half. Ordinary draw processing
+averaged 10.47 ms original and 10.35 ms native; command recording on the submission
+thread averaged 2.84 and 2.86 ms. These are nested and sometimes overlapping wall
+times, not additive frame budgets. The measured transfer bookkeeping does not
+explain a multi-millisecond CPU regression in this race.
+
+A separate timestamp run with synchronization validation fell back during the
+measured race, despite native dispatches during startup. Its native startup
+timings and heavily instrumented FPS are excluded from the comparison. The
+diagnostic harness now checks native publication coverage inside the measured
+interval and rejects blocks below 95%; startup logs alone are insufficient.
+
+A repeat without validation recorded 1,858 native GPU spans during the measured
+race: mean 0.0787 ms, median 0.0724 ms, and P95 0.0801 ms. Two native blocks
+published only 88–89 transfers out of 120 frames, so the strict coverage check
+rejected the complete-run comparison. The executed native spans remain useful
+for attribution, but cannot establish the cost of frames that fell back. The
+original-path probes also included additional R10 resolves/loads; their times
+must not be summed as if they represented one matched scene transfer.
+
+Three shader experiments changed the distribution of pixels between invocations
+while preserving conversion and tiled output. On the RTX 5060 Ti, a private
+2560x1440 same-process ABBA kernel test measured only approximately 0–2% changes
+in mean transfer time (roughly 0.127 ms for the existing kernel). These tests use
+synthetic inputs and repeated resident resources, not the full game workload.
+The experiments were reverted: they do not explain or fix the reported 11.62%
+whole-game difference. Partial workgroup tests for both axes, endian permutations
+and scaled half-pixel filling remain as regression coverage.
+
+No renderer speedup or root cause for the earlier between-process variance is
+claimed. The controlled CPU profile does not reproduce that regression, and the
+GPU spans identify a small transfer cost rather than a multi-millisecond stall.
+The direct path remains experimental and disabled by default.

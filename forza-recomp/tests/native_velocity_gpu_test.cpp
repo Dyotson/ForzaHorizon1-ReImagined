@@ -403,6 +403,10 @@ void RunResolve(Context& context,const std::vector<uint32_t>& shader,bool r10=fa
     for(uint32_t endian=0;endian<6;++endian) for(bool swap:{false,true}) for(bool fill:{false,true})
       run(scale[0],scale[1],endian,swap,32*scale[0],24*scale[1],fill,gain);
   for(bool fill:{false,true}) run(2,2,2,true,2560,1440,fill,gain);
+  // Exercise the partial workgroup on both axes, including lane permutations.
+  for(uint32_t endian=0;endian<6;++endian)
+    run(1,1,endian,false,36,9,true,gain);
+  for(bool fill:{false,true}) run(2,2,2,true,40,18,fill,gain);
   }
 }
 
