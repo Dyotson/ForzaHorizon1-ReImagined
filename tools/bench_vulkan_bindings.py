@@ -41,7 +41,7 @@ def conflicts(own_pid=None):
     found = []
     for proc in psutil.process_iter(["pid", "name", "exe"]):
         name = (proc.info["name"] or "").lower()
-        if proc.pid != own_pid and name in {"forza.exe", "forza", "pinyon_shift.exe", "pinyon_shift",
+        if proc.pid != own_pid and name in {"forza.exe", "forza",
                                              "clang-cl.exe", "clang++.exe", "clang++", "cl.exe",
                                              "rexglue.exe", "rexglue", "ninja.exe", "ninja", "lld-link.exe"}:
             found.append(proc.info)
