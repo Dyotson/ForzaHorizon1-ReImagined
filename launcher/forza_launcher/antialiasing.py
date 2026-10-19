@@ -12,6 +12,8 @@ def configure_runtime(cfg, env, args, write=True):
         args.append("--swap_post_effect=none")
     if scaling and aa != "game":
         raise RuntimeError("Upscaling includes anti-aliasing. Turn it off before choosing a separate AA method.")
+    if aa == "game":
+        return  # Preserve the existing render path unless separate AA was chosen.
     if aa != "game" and (values.get("gpu_backend", "vulkan") != "vulkan" or values.get("forza_ultrawide")):
         raise RuntimeError("Separate scene anti-aliasing currently requires Vulkan and standard 16:9 output.")
     if aa == "dlaa" and not dlss.enabled(cfg):
