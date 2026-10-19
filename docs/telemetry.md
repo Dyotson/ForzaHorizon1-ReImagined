@@ -103,7 +103,7 @@ overall intensity 50%, RT throttle 35%, LT brake 70%. These multiply raw RT/LT
 input values; they do not simulate ABS or traction from unavailable data.
 Zero disables a channel. DualSense preferences remain independent.
 
-The launcher sends output commands back to the native FH1 bridge. SDK patch 0075
+The launcher sends output commands back to the native FH1 bridge. SDK patch 0090
 uses the game's existing SDL controller driver and gamepad handles, rather than
 opening another controller connection from Python. This lets SDL preserve normal
 body rumble when a backend builds a combined device report. Only Xbox One/Series
