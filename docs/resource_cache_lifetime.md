@@ -37,8 +37,10 @@ against eviction; it is not a global smart-pointer replacement or a null-vtable
 skip. Other publication/lifetime bugs remain possible. It applies only to the
 verified TU4 executable; the disc build has no new override.
 
-Set `FORZA_RESOURCE_LIFETIME_TRACE=1` for up to 20 diagnostics showing guarded
-evictions or busy-cache deferrals. No logging is added to the normal hot path.
+Set `FORZA_RESOURCE_LIFETIME_TRACE=1` for up to 20 diagnostics per outcome:
+guarded evictions and busy-cache deferrals. Independent limits keep startup
+deferrals from hiding later guarded evictions. No logging is added to the normal
+hot path.
 
 ## Validation
 

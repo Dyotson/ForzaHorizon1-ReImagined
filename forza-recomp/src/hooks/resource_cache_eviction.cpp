@@ -60,12 +60,13 @@ extern "C" REX_FUNC(sub_82D25DD8) {
     const char* value = std::getenv("FORZA_RESOURCE_LIFETIME_TRACE");
     return value && *value && *value != '0';
   }();
-  static std::atomic<unsigned> reports{0};
+  static std::atomic<unsigned> busy_reports{0};
+  static std::atomic<unsigned> guarded_reports{0};
   const uint32_t cache = ctx.r3.u32;
   const uint32_t entry = ctx.r4.u32;
   TryCacheWriter writer(ctx, base, ctx.r3.u32);
   if (!writer) {
-    if (trace && reports.fetch_add(1) < 20)
+    if (trace && busy_reports.fetch_add(1) < 20)
       REXLOG_INFO("RESOURCE CACHE: TU4 eviction deferred for busy cache {:08X}, entry {} (#182)", cache, entry);
     // Return zero bytes reclaimed; the existing trimming loop can try another
     // entry/cache. Never drop a live reference or block while holding its list.
@@ -73,7 +74,7 @@ extern "C" REX_FUNC(sub_82D25DD8) {
     return;
   }
   __imp__sub_82D25DD8(ctx, base);
-  if (trace && reports.fetch_add(1) < 20)
+  if (trace && guarded_reports.fetch_add(1) < 20)
     REXLOG_INFO("RESOURCE CACHE: TU4 eviction guarded cache {:08X}, entry {}, reclaimed {} bytes (#182)", cache, entry, ctx.r3.u32);
 }
 #endif
