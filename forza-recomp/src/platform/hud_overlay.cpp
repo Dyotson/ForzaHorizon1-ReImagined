@@ -2,6 +2,7 @@
 
 #include "hud_overlay.h"
 #include "performance_history.h"
+#include "sdk_import.h"
 #include <rex/cvar.h>
 #include <string_view>
 
@@ -179,7 +180,6 @@ class PerformanceDialog final : public rex::ui::ImGuiDialog {
       : ImGuiDialog(drawer), drawer_(drawer), context_(context) {
     drawer_->RemoveDialog(this);
   }
-  bool WantsContinuousRepaint() const override { return false; }
   void Update() {
     const auto value = REXCVAR_GET(forza_performance_overlay);
     const int mode = value == "graph" ? 2 : value == "fps" ? 1 : 0;
@@ -190,8 +190,17 @@ class PerformanceDialog final : public rex::ui::ImGuiDialog {
       history_ = PerformanceHistory{};
     }
     context_.CallInUIThread([this] {
-      if (mode_.load()) drawer_->AddDialog(this);
-      else drawer_->RemoveDialog(this);
+      if (mode_.load()) {
+        drawer_->AddDialog(this);
+        // Optional C extension: Linux builds use the stock nightly class layouts.
+        // RemoveDialog forgets the hint, so restore it on every registration.
+        using SetRepaint = void (*)(const void*, bool);
+        static const auto set_repaint = reinterpret_cast<SetRepaint>(
+            SdkSymbol("rexui_SetDialogContinuousRepaint"));
+        if (set_repaint) set_repaint(this, false);
+      } else {
+        drawer_->RemoveDialog(this);
+      }
     });
   }
   void Frame() {

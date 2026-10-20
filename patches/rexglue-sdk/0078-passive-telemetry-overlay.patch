@@ -1,29 +1,94 @@
-diff --git a/include/rex/ui/imgui_dialog.h b/include/rex/ui/imgui_dialog.h
-index a7ab6b3..bca50a7 100644
---- a/include/rex/ui/imgui_dialog.h
-+++ b/include/rex/ui/imgui_dialog.h
-@@ -39,6 +39,9 @@ class ImGuiDialog {
- 
-   void Draw();
- 
-+  // Passive telemetry is redrawn with game frames; interactive dialogs keep polling input.
-+  virtual bool WantsContinuousRepaint() const { return true; }
-+
-  protected:
-   ImGuiDialog(ImGuiDrawer* imgui_drawer);
- 
 diff --git a/src/ui/imgui_drawer.cpp b/src/ui/imgui_drawer.cpp
-index f270f3c..9912b5e 100644
 --- a/src/ui/imgui_drawer.cpp
 +++ b/src/ui/imgui_drawer.cpp
-@@ -436,7 +436,9 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
+@@ -14,6 +14,8 @@
+ #include <filesystem>
+ #include <map>
+ 
++#include "imgui_dialog_repaint.h"
++
+ #include <rex/assert.h>
+ #include <rex/chrono/clock.h>
+ #include <rex/logging.h>
+@@ -35,6 +37,8 @@
+ static_assert(sizeof(ImmediateVertex) == sizeof(ImDrawVert), "Vertex types must match");
+ 
+ namespace {
++
++DialogRepaintHints dialog_repaint_hints;
+ 
+ void ApplyDefaultStyle(ImGuiStyle& style) {
+   style.ScrollbarRounding = 0;
+@@ -88,6 +92,17 @@
+ 
+ }  // namespace
+ 
++// UI-thread-only optional C extension. No public SDK header, class layout or
++// virtual table changes: clients may compile against the stock nightly headers.
++#ifdef _WIN32
++extern "C" __declspec(dllexport)
++#else
++extern "C" __attribute__((visibility("default")))
++#endif
++void rexui_SetDialogContinuousRepaint(const void* dialog, bool continuous) {
++  dialog_repaint_hints.SetContinuous(dialog, continuous);
++}
++
+ ImGuiDrawer::ImGuiDrawer(rex::ui::Window* window, size_t z_order, FontSetupCallback font_setup,
+                          StyleSetupCallback style_setup)
+     : window_(window),
+@@ -98,6 +113,7 @@
+ }
+ 
+ ImGuiDrawer::~ImGuiDrawer() {
++  for (const auto* dialog : dialogs_) dialog_repaint_hints.Forget(dialog);
+   SetPresenter(nullptr);
+   SetWindowTextInputActive(false);
+   if (!dialogs_.empty()) {
+@@ -136,6 +152,7 @@
+ 
+ void ImGuiDrawer::RemoveDialog(ImGuiDialog* dialog) {
+   assert_not_null(dialog);
++  dialog_repaint_hints.Forget(dialog);
+   auto it = std::find(dialogs_.cbegin(), dialogs_.cend(), dialog);
+   if (it == dialogs_.cend()) {
+     return;
+@@ -436,7 +453,9 @@
    // it now if needed.
    DetachIfLastDialogRemoved();
  
 -  if (!dialogs_.empty()) {
 +  if (std::any_of(dialogs_.begin(), dialogs_.end(), [](const ImGuiDialog* dialog) {
-+        return dialog->WantsContinuousRepaint();
++        return dialog_repaint_hints.WantsContinuous(dialog);
 +      })) {
      // Repaint (and handle input) continuously if still active. In detached mode
      // there is no presenter; the app drives repaint via its own present loop.
      if (presenter_) {
+diff --git a/src/ui/imgui_dialog_repaint.h b/src/ui/imgui_dialog_repaint.h
+new file mode 100644
+--- /dev/null
++++ b/src/ui/imgui_dialog_repaint.h
+@@ -0,0 +1,23 @@
++// Private runtime state. Never included by SDK clients.
++#pragma once
++
++#include <unordered_set>
++
++namespace rex::ui {
++
++// Accessed only on the UI thread, like ImGuiDrawer's dialog registrations.
++class DialogRepaintHints {
++ public:
++  void SetContinuous(const void* dialog, bool continuous) {
++    if (!dialog) return;
++    if (continuous) passive_.erase(dialog);
++    else passive_.insert(dialog);
++  }
++  void Forget(const void* dialog) { passive_.erase(dialog); }
++  bool WantsContinuous(const void* dialog) const { return !passive_.contains(dialog); }
++
++ private:
++  std::unordered_set<const void*> passive_;
++};
++
++}  // namespace rex::ui
