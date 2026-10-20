@@ -618,10 +618,24 @@ def gift_credits(recipient, amount, message="", sender=0, sender_tag="Forza Live
     return gid
 
 
-def gift_stock_car(recipient, model, sender=0, sender_tag="Forza Live"):
+def gift_stock_car(recipient, model, sender=0, sender_tag="Forza Live", idempotency_key=None):
     """A stock car (the game database's Data_Car id), collected from the Message Center
     (RetrieveCarGift): no parts, tuning or livery, a new car's history."""
     import forza_clubs
+    MARKET.load()
+    existing = next((g for g in MARKET.gifts.values()
+                     if idempotency_key is not None and g.get("deliveryKey") == idempotency_key), None)
+    if existing:
+        if existing["recipient"] != key(recipient) or existing["car"]["carId"] != model:
+            raise ValueError("delivery key reused for a different reward")
+        gid = existing["id"]
+        MARKET.save()  # a previous save may have failed after adding the in-memory row
+        # Also repairs a crash between saving the gift and saving its notification.
+        notifications.send(recipient, notifications.GIFT_CAR, {
+            "GiftId": gid, "MakeId": existing["car"]["make"], "ModelId": model,
+            "SenderXuid": sender, "SenderGamerTag": sender_tag, "Reason": 0},
+            idempotency_key=idempotency_key)
+        return gid
     info = forza_clubs.game_car(model)
     if not info:
         raise ValueError("no car %d in the game database" % model)
@@ -635,11 +649,13 @@ def gift_stock_car(recipient, model, sender=0, sender_tag="Forza Live"):
                                 "curOwnerPurchaseDate": int(time.time())}},
         "wzItemGuid": "", "unencryptedSize": 0, "retrieved": False,
         **{name: "" for name in BLOBS}}
+    if idempotency_key is not None:
+        MARKET.gifts[gid]["deliveryKey"] = idempotency_key
     MARKET.save()
     log.info("title: gift %d: car %d (make %d) to %016X", gid, model, make, recipient)
     notifications.send(recipient, notifications.GIFT_CAR, {
         "GiftId": gid, "MakeId": make, "ModelId": model, "SenderXuid": sender,
-        "SenderGamerTag": sender_tag, "Reason": 0})
+        "SenderGamerTag": sender_tag, "Reason": 0}, idempotency_key=idempotency_key)
     return gid
 
 

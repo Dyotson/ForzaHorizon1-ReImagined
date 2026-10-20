@@ -140,6 +140,7 @@ set(FORZA_SOURCES
     src/kernel/live_lsp.cpp
     src/kernel/live_tcp.cpp
     src/kernel/live_friends.cpp
+    src/kernel/live_events.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
     src/kernel/module_resident.cpp

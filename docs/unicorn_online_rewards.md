@@ -1,9 +1,10 @@
 # Event-earned unicorns in multiplayer: investigation
 
-Status: source trace against main `3e975fd`, plus a one-client native TU4 trace on
-a loopback-only server, 2026-10-20. The opt-in local eligibility experiment passed
-the native cases below; no server reward service is implemented. Remote-player validation remains
-unproven.
+Status: source trace against main `3e975fd`, followed by one-client native TU4
+tests on a loopback-only server, 2026-10-20. The local experiment and the subsequent
+organizer-controlled server reward service passed the native cases below.
+See [server_events.md](server_events.md) for operation, persistence and protocol
+limits. Remote-player enforcement remains unproven.
 
 ## Agreed scope
 
@@ -126,7 +127,7 @@ For the observed TU4 local-human player implementation, vtable `0x8202682C`:
 | Lotus loaded into custom race | 330 | 4 |
 
 The distinction between highlight and commit is now observed, rather than inferred
-from the save. There is currently no server grant check: locally added unicorns
+from the save. At that baseline there was no server grant check: locally added unicorns
 can be chosen online and the Lotus loaded into a race.
 
 Native TU4 paths inspected in the local executable image:
@@ -159,16 +160,17 @@ are not committed; neither are raw decoded game code, screenshots, saves or keys
 ## Opt-in local eligibility experiment
 
 `src/hooks/unicorn_eligibility.cpp` (under `forza-recomp/`) wraps TU4's native
-`0x829457A0` check. With the environment variable absent, it returns the original
-result unchanged. The disc build contains no experimental hook because its
+`0x829457A0` check. With the environment variable absent, the local experiment
+is disabled; a participating server's reward policy is applied independently.
+The disc build contains no experimental hook because its
 corresponding function/layout has not been validated.
 
 * `FORZA_UNICORN_ELIGIBILITY_TEST=deny`: reject the seven unicorn IDs for the
   local player while networking and the online game mode are active. The native
   caller handles the failed eligibility result; the hook does not delete cars,
   change the selected car or directly write lobby status bytes.
-* `FORZA_UNICORN_ELIGIBILITY_TEST=grant`: simulate permission, preserving native
-  class/event restrictions. This is a local test input, not an organizer-issued grant.
+* `FORZA_UNICORN_ELIGIBILITY_TEST=grant`: simulate local permission, preserving native
+  class/event restrictions. It cannot override a server's denial and is not an organizer-issued grant.
 * Missing or unrecognized values disable the experiment. Remote players and AI are
   left to native behavior, as is single player (online mode zero / networking off).
 
@@ -263,6 +265,42 @@ join-in-progress, in-world garage changes, remote enforcement, authenticated
 event rewards, or host migration. The restriction remains off by default. Private
 receipts and native screenshots are under `build/unicorn-eligibility-test-20261020/`,
 outside Git and separate from #191.
+
+### Organizer service native validation
+
+The subsequent server implementation is documented in `server_events.md`. A
+fresh disposable profile used the actual `--event-unlocks` server with the local
+deny/grant environment variable **unset**:
+
+* The owned Saleen 1197 loaded into single-player free roam while connected to
+  the restricted server. Its name was confirmed in the native pause menu.
+* An organizer explicitly enrolled that test identity. Before an award, selecting
+  the Saleen in Horizon World was denied with the native Event Unlock Required
+  dialog, status 2, outside the world.
+* A named event for the observed session recorded attendance through client polls.
+  The organizer approved the Saleen with `owned_models=[1197]`. The database
+  recorded one permanent grant and delivery state `owned`, without a car gift.
+* Selecting the same Saleen again was accepted; it loaded into online free roam
+  with model 1197/status 4. The Message Center displayed both the community event
+  announcement and the reward-unlocked News message.
+* Revoking that event grant blocked the next Saleen selection after returning to
+  the lobby. Owned Lancer 1009 recovered normally and loaded with status 4.
+* After normal shutdown, the authenticated garage audit still found every unicorn
+  exactly once and the source fixture inventory was unchanged.
+
+Server tests cover durable grants, delivery retries after partial persistence,
+notification deduplication after clearing/restart, enrollment mismatches, the
+organizer HTTP boundary and old-client capability handling. Standalone native
+cache assertions cover stale/reordered replies, expiration, registration changes
+and revocation. Both TU4/disc client sources compile and the private TU4 link
+passes. A final WELCOME extension installs the policy before sign-in completes;
+its wire contents and cache handling are also covered by the protocol tests.
+
+Private receipts and screenshots are in `build/server-events-test-20261020/` and
+the fixture `build/unicorn-eligibility-test-20261020/server-event-online/`, outside
+Git. These are cooperative one-client tests, not proof of remote admission or
+resistance to modified clients. Ownership confirmation for gift suppression is
+explicitly manual in this first organizer workflow.
 
 ## Remaining native trace and acceptance criteria
 

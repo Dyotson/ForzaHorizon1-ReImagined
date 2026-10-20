@@ -171,18 +171,25 @@ def key(xuid):
     return "%016X" % xuid
 
 
-def send(recipient, ntype, params, keep_days=KEEP_DAYS):
+def send(recipient, ntype, params, keep_days=KEEP_DAYS, idempotency_key=None):
     """Queues a notification of type ntype (TYPES) for recipient; returns its id."""
     if ntype not in TYPES:
         raise ValueError("unknown notification type %#x" % ntype)
     x.encode(TYPES[ntype][1], params)  # fails now rather than in a reply
     with STORE.lock:
         d = STORE.load()
+        # Keep receipts even after the notification is cleared or expires.
+        receipts = d.setdefault("receipts", {})
+        if idempotency_key is not None and idempotency_key in receipts:
+            STORE.save()  # retry a previous failed persistence before acknowledging it
+            return receipts[idempotency_key]
         nid = d["nextId"]
         d["nextId"] += 1
         d["byRecipient"].setdefault(key(recipient), []).append({
             "id": nid, "type": ntype, "params": params, "sent": time.time(),
             "expires": time.time() + keep_days * 86400, "read": False})
+        if idempotency_key is not None:
+            receipts[idempotency_key] = nid
         STORE.save()
     log.info("title: notification %d to %016X: %s %s", nid, recipient, TYPES[ntype][0],
              {k: v for k, v in params.items() if not k.endswith("Xuid")})

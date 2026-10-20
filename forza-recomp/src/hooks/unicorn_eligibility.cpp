@@ -1,6 +1,6 @@
-// Opt-in local denial experiment at TU4's native per-player car eligibility check.
-// FORZA_UNICORN_ELIGIBILITY_TEST=deny / grant; unset leaves the native result alone.
-// Not an authenticated server policy. See docs/unicorn_online_rewards.md.
+// Server event rewards at TU4's native per-player car eligibility check.
+// Optional local deny/grant experiment remains available for disposable tests.
+// Client-side cooperation, not authoritative remote-car enforcement.
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/unicorn_eligibility.h"
@@ -39,7 +39,11 @@ uint64_t NowMs() {
       std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 std::atomic<uint64_t> denial_until{0};
+std::atomic<forza::EventPermission> denial_reason{forza::EventPermission::Denied};
+std::atomic<bool> denial_test{false};
 thread_local uint32_t event_dialog = 0;
+thread_local forza::EventPermission dialog_reason = forza::EventPermission::Denied;
+thread_local bool dialog_test = false;
 
 // Same native reference-counted UTF-16 text construction used by graphics_menu.
 // The parameter object retains its own reference; neither scratch nor the caller's
@@ -90,7 +94,7 @@ extern "C" REX_FUNC(sub_829457A0) {
   const uint32_t player = ctx.r4.u32;
   __imp__sub_829457A0(ctx, base);
   const auto mode = Mode();
-  if (mode == forza::unicorn::TestMode::Off || !player || !forza::NetworkOn()) return;
+  if (!player || !forza::NetworkOn()) return;
 
   const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
   if (!game) return;
@@ -110,18 +114,28 @@ extern "C" REX_FUNC(sub_829457A0) {
   if (!descriptor) return;
   const uint32_t model = Read32(base, descriptor + 8);
   const bool native_result = ctx.r3.u8 != 0;
-  const bool denied = forza::unicorn::TestDenies(mode, true, online_mode, local, model);
-  ctx.r3.u64 = forza::unicorn::Eligible(native_result, mode, true, online_mode, local, model);
+  const auto permission = forza::LiveEventPermission(model);
+  if (mode == forza::unicorn::TestMode::Off && permission == forza::EventPermission::Unrestricted) return;
+  const bool server_denied = permission != forza::EventPermission::Unrestricted &&
+                             permission != forza::EventPermission::Allowed;
+  const bool test_denied = forza::unicorn::TestDenies(mode, true, online_mode, local, model);
+  const bool denied = server_denied || test_denied;
+  ctx.r3.u64 = native_result && !denied;
 
   // This check may run repeatedly. Show/log a changed decision once, not every frame.
   static std::atomic<uint64_t> previous{~uint64_t{0}};
   const uint64_t decision = uint64_t(model) << 3 | uint64_t(denied) << 2 |
                             uint64_t(native_result) << 1 | uint64_t(ctx.r3.u8 != 0);
   if (previous.exchange(decision) != decision) {
-    REXLOG_INFO("UNICORN TEST: model {} mode {} native {} denied {} eligible {} (local experiment)",
-                model, online_mode, native_result, denied, ctx.r3.u8 != 0);
+    REXLOG_INFO("UNICORN {}: model {} mode {} native {} denied {} eligible {} permission {}",
+                mode == forza::unicorn::TestMode::Off ? "REWARD" : "TEST",
+                model, online_mode, native_result, denied, ctx.r3.u8 != 0, int(permission));
   }
-  if (denied && native_result) denial_until.store(NowMs() + 5000);
+  if (denied && native_result) {
+    denial_reason.store(server_denied ? permission : forza::EventPermission::Denied);
+    denial_test.store(!server_denied && test_denied);
+    denial_until.store(NowMs() + 5000);
+  }
 }
 
 // TU4 popup 19 is RuleChangeInvalidatedCar; 24 is NoCarsAvailable, used when
@@ -132,28 +146,51 @@ extern "C" REX_FUNC(sub_827931E8) {
   const uint32_t popup = ctx.r4.u32;
   const uint64_t until = denial_until.load();
   const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
-  event_dialog = (popup == 19 || popup == 24) && Mode() == forza::unicorn::TestMode::Deny &&
+  event_dialog = (popup == 19 || popup == 24) &&
                  forza::NetworkOn() && game && Read32(base, game + 0x28) &&
                  until && NowMs() <= until ? popup : 0;
-  if (event_dialog) denial_until.store(0);
+  const auto previous_reason = dialog_reason;
+  const bool previous_test = dialog_test;
+  if (event_dialog) {
+    denial_until.store(0);
+    dialog_reason = denial_reason.load();
+    dialog_test = denial_test.load();
+  }
   __imp__sub_827931E8(ctx, base);
   event_dialog = previous;
+  dialog_reason = previous_reason;
+  dialog_test = previous_test;
 }
 
 extern "C" REX_FUNC(sub_82675B00) {
   if (event_dialog && ctx.r4.u32 == 0xF1 && ctx.r5.u32) {
     const uint32_t parameters = Read32(base, ctx.r5.u32);
     if (parameters) {
-      SetText(ctx, base, parameters + 0xC, "EVENT UNLOCK REQUIRED - LOCAL TEST");
-      SetText(ctx, base, parameters + 0x10,
-          event_dialog == 19 ?
+      const char* title = dialog_test ? "EVENT UNLOCK REQUIRED - LOCAL TEST" : "EVENT UNLOCK REQUIRED";
+      const char* message = event_dialog == 19 ?
               "This unicorn needs an event reward unlock for multiplayer. "
               "A rental car has been assigned. Use Select Car to choose another car. "
               "You can still use your unicorn in single player." :
               "This unicorn needs an event reward unlock for online free roam. "
               "Use Select Car to choose another car before joining. "
-              "You can still use your unicorn in single player.");
-      REXLOG_INFO("UNICORN TEST: native event-unlock dialog substituted (popup {})", event_dialog);
+              "You can still use your unicorn in single player.";
+      if (dialog_reason == forza::EventPermission::Pending) {
+        title = "CHECKING EVENT UNLOCKS";
+        message = "Your event unlocks are being checked. Try Select Car again shortly, or choose another car. "
+                  "You can still use your unicorn in single player.";
+      } else if (dialog_reason == forza::EventPermission::Unavailable) {
+        title = "COULDN'T VERIFY EVENT UNLOCK";
+        message = "The server's event unlock could not be verified. Retry Select Car, choose another car, "
+                  "or return to single player. Your garage has not been changed.";
+      } else if (dialog_reason == forza::EventPermission::EnrollmentRequired) {
+        title = "EVENT REGISTRATION REQUIRED";
+        message = "Ask the server organizer to register your player identity for event rewards. "
+                  "Choose another car for multiplayer. You can still use your unicorn in single player.";
+      }
+      SetText(ctx, base, parameters + 0xC, title);
+      SetText(ctx, base, parameters + 0x10, message);
+      REXLOG_INFO("UNICORN {}: native event-unlock dialog substituted (popup {})",
+                  dialog_test ? "TEST" : "REWARD", event_dialog);
     }
   }
   __imp__sub_82675B00(ctx, base);
