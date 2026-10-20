@@ -56,6 +56,10 @@ class ForzaApp : public rex::ReXApp {
   // Runs after forza.toml and the command line are applied, before the window opens.
   void OnPostInitLogging() override { ApplyForzaCvarDefaults(); }
 
+  void OnConfigureFonts(ImFontAtlas* atlas) override {
+    forza::ConfigurePerformanceFont(atlas);
+  }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";

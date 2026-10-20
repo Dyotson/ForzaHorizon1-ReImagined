@@ -229,12 +229,12 @@ std::vector<Setting> applying_settings;
 std::string applying_request;
 uint64_t request_id = 0;
 bool save_requested = false;
-size_t selected_setting = 7;
+size_t selected_setting = 8;
 std::vector<std::pair<std::string, std::string>> preview_baseline;
 
 bool IsLive(const Setting &setting) {
   return setting.key == "vsync" || setting.key == "anisotropic_override" ||
-         setting.key == "forza_hud_edges";
+         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay";
 }
 
 void RememberPreview() {
@@ -269,9 +269,9 @@ bool ApplyPreview() {
   return success;
 }
 
-constexpr size_t kAntiAliasing = 8;
-// Preset first, then image quality, frame pacing and HUD.
-constexpr std::array<size_t, 9> kDisplayOrder{7, 0, 1, kAntiAliasing, 2, 5, 3, 4, 6};
+constexpr size_t kAntiAliasing = 9;
+// Preset first, then image quality, frame pacing, HUD and monitoring.
+constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 4, 6, 7};
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
@@ -343,6 +343,8 @@ void Snapshot() {
        "Ultrawide HUD",
        "",
        {{"false", "Centered"}, {"true", "Screen edges"}}},
+      {"forza_performance_overlay", "forza_performance_overlay", "Performance overlay", "",
+       {{"off", "Off"}, {"fps", "FPS"}, {"graph", "FPS + frame-time graph"}}},
       {"preset", "", "Quality preset", "custom",
        {{"custom", "Custom"}, {"auto", "Auto (recommended)"}, {"low", "Low"},
         {"medium", "Medium"}, {"high", "High"}}},
@@ -513,6 +515,7 @@ std::string Help(size_t i) {
       "Synchronize presentation with the display. Save applies this change.",
       "Improve texture detail on roads and distant surfaces. Save applies this change.",
       "Move ultrawide HUD anchors to the center or edges. Save applies this change when HUD layout is enabled.",
+      "Show measured game FPS, optionally with recent frame times in milliseconds. Save applies this change.",
       "Adjust reconstruction and filtering together. Auto uses available features and output size, not a benchmark. HUD and FPS limit stay unchanged.",
       "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method."};
   return i < std::size(help) ? help[i] : "Save applies graphics changes without restarting.";
@@ -597,7 +600,7 @@ void SyncSettings(Native &ui, uint8_t *base) {
   const auto previous_mode = settings[1].value;
   const auto previous_scale = settings[2].value;
   const auto previous_filtering = settings[5].value;
-  const auto previous_preset = settings[7].value;
+  const auto previous_preset = settings[8].value;
   const auto previous_aa = settings[kAntiAliasing].value;
   for (size_t i = 0; i < native_rows.size(); ++i) {
     const auto choice = Read(base, native_rows[i] + 8);
@@ -606,14 +609,14 @@ void SyncSettings(Native &ui, uint8_t *base) {
   }
   const auto old_aa_choices = settings[kAntiAliasing].choices;
   bool refresh = false;
-  if (settings[7].value != previous_preset && settings[7].value != "custom") {
+  if (settings[8].value != previous_preset && settings[8].value != "custom") {
     const auto &modes = settings[1].choices;
     auto available = [&](const char *mode) {
       return std::any_of(modes.begin(), modes.end(), [&](const Choice &choice) {
         return choice.value == mode;
       });
     };
-    const auto preset = ChoosePreset(settings[7].value, settings[0].value,
+    const auto preset = ChoosePreset(settings[8].value, settings[0].value,
                                      available("quality"), available("fsr3_quality"));
     settings[1].value = preset.mode;
     settings[kAntiAliasing].value = "game";
@@ -622,7 +625,7 @@ void SyncSettings(Native &ui, uint8_t *base) {
     refresh = true;
   } else if (settings[0].value != previous_output || settings[1].value != previous_mode || settings[2].value != previous_scale ||
              settings[5].value != previous_filtering || settings[kAntiAliasing].value != previous_aa) {
-    settings[7].value = "custom";
+    settings[8].value = "custom";
     refresh = true;
   }
   AntiAliasingChoices();
@@ -637,7 +640,7 @@ void SyncSettings(Native &ui, uint8_t *base) {
   }
   refresh |= UpdateRelevance(base);
   if (refresh) {
-    for (size_t i : {size_t(1), size_t(2), size_t(5), size_t(7), kAntiAliasing}) {
+    for (size_t i : {size_t(1), size_t(2), size_t(5), size_t(8), kAntiAliasing}) {
       for (size_t j = 0; j < settings[i].choices.size(); ++j)
         if (settings[i].choices[j].value == settings[i].value)
           Write(base, native_rows[i] + 8, uint32_t(j));
@@ -895,6 +898,7 @@ extern "C" REX_FUNC(sub_82836928) {
 
 namespace forza::graphics_menu {
 void Tick(PPCContext& ctx, uint8_t* base) {
+  UpdatePerformanceOverlay();
   RefreshRelevance(ctx, base);
   if (title_layout_pending && main_menu && Read(base, main_menu + 0x260) == 12) {
     const auto component = Read(base, main_menu + 0x170);
@@ -1010,6 +1014,6 @@ void Tick(PPCContext& ctx, uint8_t* base) {
 } // namespace forza::graphics_menu
 #else
 namespace forza::graphics_menu {
-void Tick(PPCContext&, uint8_t*) {}
+void Tick(PPCContext&, uint8_t*) { UpdatePerformanceOverlay(); }
 }
 #endif // FORZA_TU4

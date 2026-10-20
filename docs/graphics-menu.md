@@ -50,3 +50,23 @@ on/off disabled and restored AA/scene-scale rows without hovering them. Earlier
 checks covered main-menu entry, presets, runtime failure rollback and restart
 persistence. The split menu's import tests and standalone preset test cover
 persistence, rejected requests, file-save failure and capability fallbacks.
+
+## Performance overlay
+
+The final menu row offers Off, FPS, and FPS + frame-time graph. It applies only
+when saved and does not change quality presets. The launcher exposes the same
+choice. It counts guest VdSwap intervals, not simulation ticks or UI repaints.
+FPS uses a rolling second; the graph retains the last 240 intervals and expands
+its range to include long hitches. Stale samples expire when frames stop.
+
+White text appears at the top right without a background, border or input focus.
+The optional graph is transparent. It uses an installed bold font (Arial Bold
+on Windows or DejaVu Sans Condensed Bold on Linux), falling back to the SDK font.
+It does not use the game's proprietary vector font. SDK patch 0078 allows this
+passive dialog to draw with game frames without driving continuous presenter
+redraws; interactive dialogs keep their existing input/animation repainting.
+
+Validation: standalone tests cover steady rates, hitches, stale samples, ring
+wraparound and invalid samples. Launcher tests cover persistence of all three
+modes and invalid values. Earlier native-1440p gameplay checks compared the
+overlay with the independent frame log; these are smoke tests, not benchmarks.

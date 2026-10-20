@@ -17,6 +17,8 @@
 
 #include <string>
 
+struct ImFontAtlas;
+
 namespace rex::ui {
 class ImGuiDrawer;
 class Window;
@@ -28,6 +30,11 @@ namespace forza {
 // ForzaApp::OnCreateDialogs.
 void InstallHud(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext& app_context,
                 rex::ui::Window* window);
+
+// Passive performance overlay: Off / FPS / FPS with frame-time history.
+void ConfigurePerformanceFont(ImFontAtlas* atlas);
+void PerformanceOverlayFrame();  // called only for guest VdSwap, any thread
+void UpdatePerformanceOverlay(); // checks its hot cvar, any thread
 
 constexpr char kHudHighlight = '\x01';
 

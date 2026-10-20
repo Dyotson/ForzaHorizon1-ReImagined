@@ -76,6 +76,25 @@ jobs:
             -I"$HOME/rexglue-sdk-src-forza/sdk/thirdparty/fmt/include" \
             tools/test_sdk_clock_conversions.cpp
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
+      - name: Compile performance overlay against stock nightly headers
+        run: |
+          # Also runs on an SDK cache hit: game sources aren't part of that cache key.
+          if [ ! -x "$HOME/llvm/bin/clang++" ]; then
+            python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
+          fi
+          if [ ! -x "$HOME/cmake/bin/cmake" ]; then
+            python3 launcher/packaging/ci_fetch.py cmake-linux "$HOME/cmake" --strip 1
+          fi
+          if [ ! -d "$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64/include" ]; then
+            python3 launcher/packaging/ci_fetch.py sdk-linux "$HOME/rexglue-sdk-nightly/0.10.0.24"
+          fi
+          tools/build_rexglue_sdk.sh --source-only
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/overlay-sdk -B "$RUNNER_TEMP/overlay-sdk" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64" \
+            -DFORZA_PATCHED_SDK_SOURCE="$HOME/rexglue-sdk-src-forza/sdk"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/overlay-sdk" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/overlay-sdk" --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-overlay-linux
