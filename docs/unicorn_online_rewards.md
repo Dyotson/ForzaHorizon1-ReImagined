@@ -172,9 +172,10 @@ corresponding function/layout has not been validated.
 * Missing or unrecognized values disable the experiment. Remote players and AI are
   left to native behavior, as is single player (online mode zero / networking off).
 
-A changed denial shows a short HUD message naming the local test and directing
-the player to Select Car. Repeated checks of the same decision are coalesced. This
-is not yet the full actionable prompt or HUD arbitration proposed above.
+A denial now changes the game's own dialog to explain the event unlock and direct
+the player to Select Car. It retains the native OK action. Decision logging is
+coalesced; no separate HUD overlay is shown. This remains a local experiment,
+explicitly labeled in the dialog, rather than the full chooser proposed above.
 
 The standalone `tests/unicorn_eligibility_test.cpp` covers all seven models,
 ordinary/unknown models, disabled/granted/denied modes, offline/online contexts,
@@ -218,6 +219,50 @@ separate native race attempts.
 Receipts and the native denial screenshot are kept outside Git under
 `build/unicorn-eligibility-test-20261020/`. The environment variable is intentionally
 not exposed as a player-facing setting, and the feature remains disabled by default.
+
+### Native dialog and free-roam follow-up
+
+TU4's lobby popup builder is `0x827931E8`: its second argument indexes a
+32-byte descriptor table. Popup 19 is the restriction/rental notice; popup 24 is
+No Cars Available. The builder opens screen `0xF1` through `0x82675B00`, passing
+a parameter reference with title at `+0xC` and body at `+0x10`. Native text
+references use the same allocation, UTF-16 construction, assignment and release
+sequence already used by the native graphics menu.
+
+The experiment scopes replacement to those two popup constructions following a
+new local policy denial (five-second, consumed ticket, online context required).
+Other dialog IDs and global localization entries are untouched. It preserves
+all caller registers around the extra native text calls and retains the game's
+existing callbacks. No custom Choose Car/Cancel callback has been implemented.
+
+Two additional independent disposable profiles exercised the following:
+
+* Custom lobby: Saleen 1197 was denied, the native rental notice displayed the
+  event-unlock explanation, and OK returned control. Unrelated Game Setup and
+  Quit confirmations retained their original text.
+* Horizon World entry, mode 7/preset 7: confirming Saleen 1197 returned false
+  despite native eligibility being true. Native status became 2, the player
+  stayed out of the world, and the corrected native dialog directed them to
+  Select Car. Unlike the custom race, this path did **not** allocate a rental;
+  its old No Cars Available/purchase-content text was misleading.
+* Selecting owned Lancer 1009 after that denial returned true and status 0;
+  the normal countdown resumed and the Lancer loaded into free roam with status
+  4. The earlier profile also tested denial when returning from an active world
+  to its lobby and selecting another car for the next free-roam session.
+
+The mode-7 skip in `0x82929818` is not a demonstrated bypass: the picker return
+still calls `0x829457A0` directly and blocks the denied selection. No speculative
+patch to that skip was added. Policy assertions now include custom modes 8/9
+as well as 5/7/10. TU4 compilation, disc no-op compilation and private link passed.
+Both follow-up games were closed normally after leaving their online sessions.
+Authenticated garage audits still found each unicorn exactly once, and both
+source fixture inventories were unchanged.
+
+These remain one-client, localhost tests. They do not validate a second player's
+join-in-progress, in-world garage changes, remote enforcement, authenticated
+event rewards, or host migration. The restriction remains off by default. Private
+receipts and native screenshots are under `build/unicorn-eligibility-test-20261020/`,
+outside Git and separate from #191.
 
 ## Remaining native trace and acceptance criteria
 
