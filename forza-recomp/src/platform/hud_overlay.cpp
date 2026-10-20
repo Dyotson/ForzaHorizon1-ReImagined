@@ -36,6 +36,15 @@ namespace {
 using Clock = std::chrono::steady_clock;
 ImFont* performance_font = nullptr;
 
+// UI thread only. Removal forgets the hint, so restore it on each registration.
+void AddPassiveDialog(rex::ui::ImGuiDrawer* drawer, rex::ui::ImGuiDialog* dialog) {
+  drawer->AddDialog(dialog);
+  using SetRepaint = void (*)(const void*, bool);
+  static const auto set_repaint = reinterpret_cast<SetRepaint>(
+      SdkSymbol("rexui_SetDialogContinuousRepaint"));
+  if (set_repaint) set_repaint(dialog, false);
+}
+
 class HudDialog final : public rex::ui::ImGuiDialog {
  public:
   HudDialog(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext& app_context,
@@ -192,13 +201,7 @@ class PerformanceDialog final : public rex::ui::ImGuiDialog {
     }
     context_.CallInUIThread([this] {
       if (mode_.load()) {
-        drawer_->AddDialog(this);
-        // Optional C extension: Linux builds use the stock nightly class layouts.
-        // RemoveDialog forgets the hint, so restore it on every registration.
-        using SetRepaint = void (*)(const void*, bool);
-        static const auto set_repaint = reinterpret_cast<SetRepaint>(
-            SdkSymbol("rexui_SetDialogContinuousRepaint"));
-        if (set_repaint) set_repaint(this, false);
+        AddPassiveDialog(drawer_, this);
       } else {
         drawer_->RemoveDialog(this);
       }
@@ -277,7 +280,6 @@ public:
       : ImGuiDialog(drawer), drawer_(drawer), context_(context) {
     drawer_->RemoveDialog(this);
   }
-  bool WantsContinuousRepaint() const override { return false; }
   void Update() {
     const bool visible =
         benchmark::Snapshot().screen != benchmark::Screen::hidden;
@@ -285,7 +287,7 @@ public:
       return;
     context_.CallInUIThread([this] {
       if (visible_.load())
-        drawer_->AddDialog(this);
+        AddPassiveDialog(drawer_, this);
       else
         drawer_->RemoveDialog(this);
     });
