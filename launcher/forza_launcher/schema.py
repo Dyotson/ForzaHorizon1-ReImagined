@@ -47,8 +47,8 @@ def add(*a, **k):
 
 # --- Display ---------------------------------------------------------------------------
 add("frame_rate", "Frame rate", "Display", "fps", 30,
-    "30 is the console's rate; 60 to 240 (60, 120, 144, ...) run the game faster. Physics and "
-    "race timing keep their speed (docs/framerate.md).", "Frame rate")
+    "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
+    "physics speed.", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
@@ -56,10 +56,10 @@ add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
 add("video_mode_refresh_rate", "Guest refresh rate (Hz)", "Display", "float", 0.0,
     "0 picks it from the frame rate. Set it to override.", "Frame rate", lo=0, hi=480, step=1)
-add("fullscreen", "Fullscreen", "Display", "bool", True,
-    "Start in fullscreen (borderless at the desktop mode).", "Window")
+add("fullscreen", "Borderless fullscreen", "Display", "bool", True,
+    "Start in borderless fullscreen (recommended).", "Window")
 add("fullscreen_exclusive", "Exclusive fullscreen", "Display", "bool", False,
-    "Switch the display mode instead of staying borderless.", "Window")
+    "Start in exclusive fullscreen (switches the display mode).", "Window")
 add("window_width", "Window width", "Display", "int", 0,
     "Logical pixels for windowed mode. 0 uses the default.", "Window", lo=0, hi=8192, step=10)
 add("window_height", "Window height", "Display", "int", 0,
@@ -170,7 +170,7 @@ if IS_WINDOWS:
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
     "Keys stand in for a controller (the bindings below).", "Keyboard")
 add("mnk_mouse", "Mouse moves the right stick", "Controls", "bool", False,
-    "Look around (and aim the photo mode camera) with the mouse; the pointer is captured "
+    "Look around (and aim the Photo Mode camera) with the mouse; the pointer is captured "
     "while the game has focus. Off: the right stick comes from its keys only.", "Keyboard")
 add("mnk_sensitivity", "Mouse sensitivity", "Controls", "float", 1.0,
     "1.0 turns the right stick halfway at 1000 pixels a second.", "Keyboard",

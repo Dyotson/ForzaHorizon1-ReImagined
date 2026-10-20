@@ -78,7 +78,7 @@ class SettingsSearchTests(unittest.TestCase):
         self.window.write_toml.assert_not_called()
 
     def test_metadata_search_includes_help_choices_and_all_query_words(self):
-        self.assertTrue(self.query("console physics"))
+        self.assertTrue(self.query("default physics"))
         self.assertIn("Frame rate", [t.label for t in self.query("FRAME_RATE")])
         self.assertTrue(self.query("borderless fullscreen"))
         self.assertFalse(self.query("borderless impossibleword"))

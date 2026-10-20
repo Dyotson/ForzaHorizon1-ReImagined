@@ -183,7 +183,7 @@ class SettingRow(QWidget):
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
         col.addWidget(self.warning)
-        self.dependency = label("", "help")
+        self.dependency = label("", "reason")
         self.dependency.hide()
         col.addWidget(self.dependency)
         lay.addLayout(col, 1)
