@@ -1,8 +1,8 @@
 # Event-earned unicorns in multiplayer: investigation
 
 Status: source trace against main `3e975fd`, plus a one-client native TU4 trace on
-a loopback-only server, 2026-10-20. An opt-in local eligibility experiment is under
-test; no server reward service is implemented. Remote-player validation remains
+a loopback-only server, 2026-10-20. The opt-in local eligibility experiment passed
+the native cases below; no server reward service is implemented. Remote-player validation remains
 unproven.
 
 ## Agreed scope
@@ -148,11 +148,9 @@ Native TU4 paths inspected in the local executable image:
 * Round start `0x829269E8` and status setter `0x8291AEA0` were observed in both
   modes. Do not make network requests synchronously from either path.
 
-The best next experiment is an opt-in **local** denial at the native eligibility
-boundary, preserving the original result for ordinary cars, single player and AI.
-Prove that the native status-2 path permits choosing another car without freezing
-the lobby, then trace and validate the corresponding remote-player path. Returning
-false locally must not be presented as server-authoritative enforcement.
+The local experiment below exercises denial at this boundary. Next trace and
+validate the corresponding remote-player path. Returning false locally must not
+be presented as server-authoritative enforcement.
 
 Private receipts are under `build/unicorn-online-trace-20261020/` in the workspace:
 `trace-results.json`, game/server logs and labeled bounded state snapshots. They
@@ -184,6 +182,42 @@ local versus other players, and preservation of a native rejection. Compile with
 assertions enabled and run it as the other standalone C++ tests in this project.
 Native behavior must additionally be validated; policy tests alone cannot prove
 that a denied car selection returns control or that another car can launch.
+
+### Native experiment results
+
+Two disposable profiles were copied independently from the validated unicorn
+fixture and run on a loopback-only server. The candidate was linked privately
+against the existing instrumented TU4 objects and SDK; the normal installed game
+was not replaced. Both TU4 and the disc no-op translation unit compiled, the
+standalone policy assertions passed, and the private TU4 link succeeded.
+
+| Test | Observed result |
+| --- | --- |
+| Single player with `deny`, while connected to the local server | Saleen S5S Raptor loaded normally in free roam and appeared by name in the pause menu. |
+| Confirm the same Saleen in a private custom lobby with `deny` | Native eligibility was true; the hook returned false. Status changed `1 -> 2`, the experimental HUD explained the event unlock, and the game showed its own Change Your Car dialog. |
+| Recover from denial with owned Lancer Evo X (1009) | Native eligibility and final result were true. Status returned `1 -> 0`; the Lancer subsequently loaded into the race with status 4. No lobby deadlock occurred in this one-client test. |
+| Fresh run with `grant`, same Saleen (1197) | Native eligibility and final result were true. Status returned `1 -> 0`, and the Saleen loaded into the custom race with model 1197/status 4. |
+| Garage preservation after the denial/recovery run | Authenticated database audit still found exactly one of each of the seven unicorns. Source fixture save hashes were unchanged. |
+
+The native rejection flow **allocates a rental** and explicitly informs the
+player; it does not hold the original selection behind the proposed custom dialog.
+That is an observed behavior of reusing the existing eligibility failure path,
+not the finished UI design. The prototype does not remove the owned unicorn or
+rewrite the garage to delete it. A production chooser needs to handle this native
+fallback deliberately rather than promise that a false eligibility result alone
+implements the mockup.
+
+Both game sessions left their races/party through the native Quit confirmation,
+then their windows were closed normally. The private test command's host-quit
+callback was unavailable in this candidate; normal window close was used instead.
+No real multiplayer service, second player, long race, anti-spoofing defense or
+server-issued reward was tested. Native denial was exercised with the Saleen; the
+other six model IDs were covered by the standalone policy matrix, not seven
+separate native race attempts.
+
+Receipts and the native denial screenshot are kept outside Git under
+`build/unicorn-eligibility-test-20261020/`. The environment variable is intentionally
+not exposed as a player-facing setting, and the feature remains disabled by default.
 
 ## Remaining native trace and acceptance criteria
 
