@@ -357,6 +357,12 @@ shutdown handling as backups. Run `python -m unittest test_save_editor test_save
 for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
 or game-generated saves.
 
+The editor's **Unicorn cars** section offers **Add missing unicorns**.
+It authenticates the selected save's garage database, keeps a full safety backup,
+and adds only missing models from the seven-car unicorn list. Existing cars,
+upgrades, tuning and the selected car are preserved. This is an offline edit;
+no server or Message Center collection is needed. See [garage format and validation](unicorn_cars.md).
+
 Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
 The editor's profile-table addresses and XUID derivation were checked against the local
 executables and a disposable game-generated profile. A no-edit round trip reproduced the

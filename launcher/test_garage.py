@@ -1,0 +1,182 @@
+"""Synthetic garage saves: no game-generated rows, assets, or key material."""
+import hmac
+from pathlib import Path
+import sqlite3
+import struct
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from forza_launcher import garage, saves, save_editor, unicorns
+from forza_launcher.config import Config
+
+KEYS = (bytes(range(16)), bytes(range(32)))
+STOCK_CAR = garage.stock_car
+
+
+def database(owned=(309,), extra=False):
+    db = sqlite3.connect(':memory:')
+    db.execute('PRAGMA page_size=512')
+    columns = ['"Id" INTEGER PRIMARY KEY']+[f'"{name}" '+('TEXT' if name in ('Guid','Thumbnail','OriginalOwner','LiveryFileName') else 'INT')
+               for name in sorted(garage.GARAGE_COLUMNS-{'Id'})]
+    db.execute('CREATE TABLE Career_Garage ('+','.join(columns)+')')
+    db.execute('CREATE TABLE LastUsedGarageId (LastUsedGarageId INTEGER PRIMARY KEY)')
+    db.execute('INSERT INTO LastUsedGarageId VALUES (50)')
+    db.execute('CREATE TABLE OtherProgress (value TEXT)')
+    db.execute("INSERT INTO OtherProgress VALUES ('preserved')")
+    for i, cid in enumerate(owned, 1):
+        db.execute('INSERT INTO Career_Garage(Id,CarId,Engine,Guid) VALUES (?,?,?,?)', (i,cid,987654,'existing'))
+    if extra:
+        db.execute('ALTER TABLE Career_Garage ADD COLUMN Unsupported INT')
+    db.commit()
+    raw = db.serialize()
+    db.close()
+    return raw
+
+
+def envelope(data, spare=16384, overstate=0):
+    body = garage._deflate(data)
+    iv = bytes(range(16))
+    seed = struct.pack('>I',len(body)^save_editor.reduce(save_editor.operator.xor,struct.unpack('>4I',iv)))+iv
+    payload = seed+save_editor._encrypt_cbc(KEYS[0],body+b'\xbb'*(-len(body)%16),iv)
+    raw = b'cmss'+struct.pack('>I',32+len(payload)+overstate)+hmac.digest(KEYS[1],payload,'sha256')+payload
+    return raw+bytes(max(spare,overstate))
+
+
+class GarageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.cfg = Config(self.root/'launcher.json')
+        self.cfg.advanced['data_root'] = str(self.root/'data')
+        self.cfg.d['game_root'] = str(self.root/'game')
+        self.profile = saves.profile_for(self.cfg)
+        self.path = self.profile.folder/'ForzaProfile/PlayerDatabase'
+        self.path.parent.mkdir(parents=True)
+        self.original = envelope(database())
+        self.path.write_bytes(self.original)
+        self.companion = self.path.with_name('ForzaProfile')
+        self.companion.write_bytes(b'unchanged profile and active-car choice')
+        source = self.cfg.game_files()/'media/db/gamedb.slt'
+        source.parent.mkdir(parents=True)
+        sqlite3.connect(source).close()
+        self.patches = [patch.object(garage,'_keys',return_value=(KEYS,)),
+                        patch.object(unicorns,'check_files'),patch.object(garage,'stock_car',side_effect=self.stock)]
+        for p in self.patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    @staticmethod
+    def stock(_source,cid,ordinal,columns):
+        return {c['name']:(ordinal if c['name']=='Id' else cid if c['name']=='CarId' else
+                          'fixture' if c['type']=='TEXT' else 0) for c in columns}
+
+    def test_roundtrip_noop_and_overstated_outer_stream(self):
+        for extra in (0,240):
+            raw = envelope(database(),overstate=extra)
+            doc = garage.decode(self.profile,raw,(KEYS,))
+            self.assertEqual(garage.encode(doc,doc.database),raw)
+
+    def test_multiple_compression_blocks_and_bounded_bad_data(self):
+        data = b'SQLite format 3\0'+bytes(100000)
+        self.assertEqual(garage._inflate(garage._deflate(data)),data)
+        with self.assertRaises(saves.SaveError): garage._inflate(struct.pack('>III',2**31,1,1)+b'x')
+        with self.assertRaises(saves.SaveError): garage._inflate(garage._deflate(data)[:-1])
+
+    def test_add_preserves_rows_progress_companions_and_uses_unique_ids(self):
+        result = garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(set(result.added),{c[0] for c in unicorns.CARS})
+        self.assertEqual((result.backup.path/'save/ForzaProfile/PlayerDatabase').read_bytes(),self.original)
+        self.assertEqual(self.companion.read_bytes(),b'unchanged profile and active-car choice')
+        doc = garage.decode(self.profile,self.path.read_bytes(),(KEYS,))
+        with garage._open(doc.database) as db:
+            self.assertEqual(tuple(db.execute('SELECT Id,CarId,Engine,Guid FROM Career_Garage WHERE Id=1').fetchone()),(1,309,987654,'existing'))
+            self.assertEqual(db.execute('SELECT value FROM OtherProgress').fetchone()[0],'preserved')
+            self.assertEqual(db.execute('SELECT min(Id),max(Id) FROM Career_Garage WHERE Id>1').fetchone()[:],(51,57))
+            self.assertEqual(db.execute('SELECT LastUsedGarageId FROM LastUsedGarageId').fetchone()[0],57)
+        after = self.path.read_bytes()
+        again = garage.add_missing(self.cfg,self.profile)
+        self.assertFalse(again.added)
+        self.assertIsNone(again.backup)
+        self.assertEqual(self.path.read_bytes(),after)
+        self.assertEqual(len(saves.snapshots(self.profile)[0]),1)
+        saves.restore(self.profile,result.backup)
+        self.assertEqual(self.path.read_bytes(),self.original)
+
+    def test_partial_and_duplicate_owned_models_are_skipped(self):
+        self.path.write_bytes(envelope(database((320,320,326))))
+        result = garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(result.already_owned,(320,326))
+        self.assertEqual(len(result.added),5)
+
+    def test_bad_mac_unknown_schema_and_backup_failure_never_replace(self):
+        broken = bytearray(self.original);broken[8]^=1;self.path.write_bytes(broken)
+        with self.assertRaises(saves.SaveError):garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(self.path.read_bytes(),broken)
+        unknown = envelope(database(extra=True));self.path.write_bytes(unknown)
+        with self.assertRaisesRegex(saves.SaveError,'schema'):garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(self.path.read_bytes(),unknown)
+        self.path.write_bytes(self.original)
+        with patch.object(saves,'_create',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(self.path.read_bytes(),self.original)
+
+    def test_failed_replace_keeps_current_save_and_full_backup(self):
+        replace = garage.os.replace
+        def fail(source,target):
+            if Path(source).name.startswith('.garage-edit-'):raise PermissionError('fixture')
+            return replace(source,target)
+        with patch.object(garage.os,'replace',side_effect=fail):
+            with self.assertRaises(PermissionError):garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(self.path.read_bytes(),self.original)
+        self.assertEqual(len(saves.snapshots(self.profile)[0]),1)
+        self.assertFalse(list(self.path.parent.glob('.garage-edit-*')))
+
+    def test_cancel_and_save_change_during_backup_block_replacement(self):
+        with self.assertRaises(saves.Cancelled):garage.add_missing(self.cfg,self.profile,cancelled=lambda:True)
+        create = saves._create
+        def changed(*args):
+            backup=create(*args)
+            self.path.write_bytes(self.original+b'changed externally')
+            return backup
+        with patch.object(saves,'_create',side_effect=changed):
+            with self.assertRaisesRegex(saves.SaveError,'changed'):garage.add_missing(self.cfg,self.profile)
+        self.assertEqual(self.path.read_bytes(),self.original+b'changed externally')
+
+    def test_stock_lookup_uses_stock_markers_and_parent_ids(self):
+        db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
+        db.row_factory = sqlite3.Row
+        db.execute('CREATE TABLE Data_Car (Id INT, IsUnicorn INT, PerformanceIndex REAL, Thumbnail TEXT)')
+        db.execute("INSERT INTO Data_Car VALUES (320,1,0.5,'native-car-card')")
+        db.execute('CREATE TABLE Data_Engine (EngineID INT, "StockBoost-bar" REAL)')
+        db.execute('INSERT INTO Data_Engine VALUES (74,1)')
+        def table(name,group,value,identifier,extra=''):
+            db.execute(f'CREATE TABLE {name} (Id INT, {group} INT, IsStock INT{extra})')
+            db.execute(f'INSERT INTO {name}(Id,{group},IsStock) VALUES (?,?,1)',(identifier,value))
+        for name,parent in [('Engine',74),('Drivetrain',73),('CarBody',320000)]:
+            table('List_Upgrade'+name,'Ordinal',320,320000,','+name+'ID INT')
+            db.execute('UPDATE List_Upgrade'+name+' SET '+name+'ID=?',(parent,))
+        table('List_UpgradeMotor','Ordinal',999,-1,',MotorID INT')
+        # Nonzero stock IDs ensure this isn't inferred as carId*1000 or Level=0.
+        for name in ('Brakes','SpringDamper','AntiSwayFront','AntiSwayRear','TireCompound','RearWing','RimSizeFront','RimSizeRear'):
+            table('List_Upgrade'+name,'Ordinal',320,320007)
+        for suffix in ('Camshaft','Valves','Displacement','PistonsCompression','FuelSystem','Ignition','Exhaust','Intake','Flywheel',
+                       'Manifold','RestrictorPlate','OilCooling','TurboSingle','TurboTwin','TurboQuad','CSC','DSC','Intercooler'):
+            table('List_UpgradeEngine'+suffix,'EngineID',74,74007)
+        for name in ('Clutch','Transmission','Driveline','Differential'):
+            table('List_UpgradeDrivetrain'+name,'DrivetrainID',73,73007)
+        for name in ('FrontBumper','RearBumper','Hood','SideSkirt','TireWidthFront','TireWidthRear','Weight','ChassisStiffness'):
+            table('List_UpgradeCarBody'+name,'CarBodyID',320000,320008)
+        table('List_UpgradeMotorParts','MotorID',999,1)
+        columns=[{'name':n,'type':'TEXT' if n in ('Guid','Thumbnail','OriginalOwner','LiveryFileName') else 'INT'} for n in garage.GARAGE_COLUMNS]
+        row=STOCK_CAR(db,320,10,columns)
+        self.assertEqual((row['Id'],row['CarId'],row['RimSizeFront'],row['Camshaft'],row['Transmission'],row['FrontBumper']),
+                         (10,320,320007,74007,73007,320008))
+        self.assertEqual((row['Motor'],row['MotorParts']),(-1,-1))
+        self.assertEqual(row['PeakIntakePSI'],14.7)
+        self.assertEqual(row['Tuning_firstGear'],-1.0)
+        self.assertEqual(len(row['Guid']),35)
+        db.execute('INSERT INTO List_UpgradeBrakes VALUES (320008,320,1)')
+        with self.assertRaisesRegex(saves.SaveError,'ambiguous'):STOCK_CAR(db,320,11,columns)
