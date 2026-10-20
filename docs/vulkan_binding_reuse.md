@@ -1,6 +1,6 @@
 # Unchanged Vulkan texture/sampler bindings
 
-Local opt-in experiment based on main `54d5177`. SDK patch 0094; no PR.
+Opt-in experiment based on main `54d5177`. SDK patch 0094.
 `FORZA_VK_BINDING_REUSE=1` enables all three reuse paths. Default is off.
 
 ## Reuse and invalidation
@@ -171,4 +171,4 @@ main `54d5177`'s 67 public SDK patches plus 0094, with no private SDK extras.
 The frozen seed is hashed and verified unchanged. Binary hashes, exact SDK trees,
 patch hash, all retained runs, excluded diagnostics and overlap proofs are in
 [the portable results](benchmarks/vulkan-binding-reuse-2026-10-20.json). Raw logs,
-captures and private builds remain under `build/binding-reuse`. No PR was created.
+captures and private builds remain under `build/binding-reuse`.
