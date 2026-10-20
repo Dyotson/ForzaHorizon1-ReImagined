@@ -1,8 +1,8 @@
 # Event-earned unicorns in multiplayer: investigation
 
-Status: source trace against main `3e975fd`, 2026-10-20. No multiplayer
-restriction or reward service is implemented by this investigation. No native
-multiplayer reproduction has been run for it yet.
+Status: source trace against main `3e975fd`, plus a one-client native TU4 trace on
+a loopback-only server, 2026-10-20. No multiplayer restriction or reward service
+is implemented by this investigation. Remote-player validation remains unproven.
 
 ## Agreed scope
 
@@ -88,7 +88,76 @@ brief toast for a blocked transition. Never silently substitute or delete a car.
 Use the existing Message Center for reward delivery/history. Coalesce repeated
 checks so messages do not appear every frame, and avoid exposing credentials in logs.
 
-## Next native trace and acceptance criteria
+## First native trace: confirmed observations
+
+Used a new disposable copy of the previously validated ten-car garage, the existing
+instrumented TU4 executable (rexglue `0.10.0.24-dev.gbd833a2`, SHA-256
+`0d29408ae38d152ef13c3f2233ed380f06acba18084c660a082b95403dfca472`), and this
+branch's localhost server. Only the owned process was inspected, through bounded
+read-only memory reads. No memory patches or new native hooks were used.
+
+Entered Find Game / Horizon World, loaded the solo online free roam, returned to
+the party, created a private custom circuit lobby, selected the locally inserted
+Saleen and Lotus, and loaded the Lotus into the native custom race. Quit normally,
+then closed the host. The source fixture's save-file inventory was unchanged.
+
+The custom lobby is mode 5; Find Game was mode 7. Both reached status 3 (loading)
+and 4 (in game). This directly confirms why a world-playlist-only hook is insufficient.
+Initial online selections were Ford GT and VW Rabbit, independently of the save's
+single-player active car.
+
+For the observed TU4 local-human player implementation, vtable `0x8202682C`:
+
+* Virtual method `+0x70`, `0x82601F08`, returns the pointer at `player + 0xD0`.
+  Byte `+6` of that record is the observed player status.
+* Virtual method `+0x78`, `0x825E7218`, lazily allocates/returns the car descriptor
+  at `player + 0xD4`. Big-endian u32 at descriptor `+8` matched `Data_Car.Id` in
+  every observation below. These offsets are not established for other builds or
+  remote-player implementations.
+
+| Observed screen/state | Live model ID | Player status |
+| --- | --- | --- |
+| Ford GT, world lobby | 348 | 0 |
+| VW Rabbit GTI, custom lobby | 1107 | 0 |
+| Saleen S5S, committed custom-lobby choice | 1197 | 0 |
+| Lotus highlighted in car picker, before confirming | **1197 (Saleen remains committed)** | 1 |
+| Lotus confirmed, back in lobby | 330 | 0 |
+| Lotus loaded into custom race | 330 | 4 |
+
+The distinction between highlight and commit is now observed, rather than inferred
+from the save. There is currently no server grant check: locally added unicorns
+can be chosen online and the Lotus loaded into a race.
+
+Native TU4 paths inspected in the local executable image:
+
+* `0x827B2048` opens the custom-lobby car selector. Its call to status setter
+  `0x8291AEA0` returns at `0x827B2074`, matching the live log's transition to 1.
+* Picker return routine `0x82792F88` reads the picker result and populates the
+  player's car descriptor. The garage-result path calls `0x825E7720` at
+  `0x82793084`; the alternate descriptor path calls `0x825E6738` at `0x827930F0`.
+  These are source-traced paths, not independently instrumented call counts.
+* The return routine calls the existing per-player eligibility function
+  `0x829457A0(status_record, player)` at `0x8279312C`. Its false branch sets status
+  2; the normal valid branch can set status 0 at `0x827931A0`. Both observed
+  confirmed selections logged status `1 -> 0` with return address `0x827931A4`.
+* `0x829457A0` obtains that player's descriptor through vfunc `+0x78`, evaluates
+  bucket/game restrictions, and returns a boolean. It is a candidate to combine
+  native eligibility with a cached event entitlement. It is not yet a validated
+  enforcement hook: we have not forced a denial or tested all its callers.
+* Round start `0x829269E8` and status setter `0x8291AEA0` were observed in both
+  modes. Do not make network requests synchronously from either path.
+
+The best next experiment is an opt-in **local** denial at the native eligibility
+boundary, preserving the original result for ordinary cars, single player and AI.
+Prove that the native status-2 path permits choosing another car without freezing
+the lobby, then trace and validate the corresponding remote-player path. Returning
+false locally must not be presented as server-authoritative enforcement.
+
+Private receipts are under `build/unicorn-online-trace-20261020/` in the workspace:
+`trace-results.json`, game/server logs and labeled bounded state snapshots. They
+are not committed; neither are raw decoded game code, screenshots, saves or keys.
+
+## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with
 `FORZA_LOBBY_LOG=1`, `FORZA_EVENT_TRACE=1` and `FORZA_WORLD_TRACE=1`. Existing logs
