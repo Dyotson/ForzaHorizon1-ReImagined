@@ -1,8 +1,9 @@
 # Event-earned unicorns in multiplayer: investigation
 
 Status: source trace against main `3e975fd`, plus a one-client native TU4 trace on
-a loopback-only server, 2026-10-20. No multiplayer restriction or reward service
-is implemented by this investigation. Remote-player validation remains unproven.
+a loopback-only server, 2026-10-20. An opt-in local eligibility experiment is under
+test; no server reward service is implemented. Remote-player validation remains
+unproven.
 
 ## Agreed scope
 
@@ -157,15 +158,40 @@ Private receipts are under `build/unicorn-online-trace-20261020/` in the workspa
 `trace-results.json`, game/server logs and labeled bounded state snapshots. They
 are not committed; neither are raw decoded game code, screenshots, saves or keys.
 
+## Opt-in local eligibility experiment
+
+`src/hooks/unicorn_eligibility.cpp` (under `forza-recomp/`) wraps TU4's native
+`0x829457A0` check. With the environment variable absent, it returns the original
+result unchanged. The disc build contains no experimental hook because its
+corresponding function/layout has not been validated.
+
+* `FORZA_UNICORN_ELIGIBILITY_TEST=deny`: reject the seven unicorn IDs for the
+  local player while networking and the online game mode are active. The native
+  caller handles the failed eligibility result; the hook does not delete cars,
+  change the selected car or directly write lobby status bytes.
+* `FORZA_UNICORN_ELIGIBILITY_TEST=grant`: simulate permission, preserving native
+  class/event restrictions. This is a local test input, not an organizer-issued grant.
+* Missing or unrecognized values disable the experiment. Remote players and AI are
+  left to native behavior, as is single player (online mode zero / networking off).
+
+A changed denial shows a short HUD message naming the local test and directing
+the player to Select Car. Repeated checks of the same decision are coalesced. This
+is not yet the full actionable prompt or HUD arbitration proposed above.
+
+The standalone `tests/unicorn_eligibility_test.cpp` covers all seven models,
+ordinary/unknown models, disabled/granted/denied modes, offline/online contexts,
+local versus other players, and preservation of a native rejection. Compile with
+assertions enabled and run it as the other standalone C++ tests in this project.
+Native behavior must additionally be validated; policy tests alone cannot prove
+that a denied car selection returns control or that another car can launch.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with
 `FORZA_LOBBY_LOG=1`, `FORZA_EVENT_TRACE=1` and `FORZA_WORLD_TRACE=1`. Existing logs
-provide lobby/status timing; they do not yet prove the model-selection mapping.
-Trace the native car-list filter, selection commit, per-player model serialization
-and receive/validation path before adding a new hook. Correlate model IDs with the
-garage database and distinguish model ID from garage row ID, including borrowed
-and rental cars. Keep raw game memory and derived code outside Git.
+provide lobby/status timing. Extend the established local model-selection mapping
+to remote-player serialization and receive/validation, including borrowed and
+rental cars. Keep raw game memory and derived code outside Git.
 
 Exercise host and joiner entry, public/custom sessions, invites (including restart
 to accept), free-roam join in progress, lobby and in-world car switches, race
