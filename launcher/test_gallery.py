@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import threading
 import time
@@ -17,6 +18,7 @@ try:
     from PySide6.QtCore import QByteArray, QBuffer, QCoreApplication, QEvent, QIODevice, Qt
     from PySide6.QtGui import QImage, QColor
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
 except ImportError:
     QApplication = None
 
@@ -191,6 +193,108 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(page.grid.count(), 0)
         self.assertIn("No saved photos", page.empty.text())
         self.assertFalse((self.root / "other").exists())
+
+    def test_compact_grid_fits_two_thumbnails_per_row(self):
+        for name in ('One', 'Two', 'Three'):
+            self.photo(name)
+        page = self.page_ready()
+        page.resize(640, 720)
+        self.app.processEvents()
+        self.assertGreaterEqual(page.grid.viewport().width(), 440)
+        self.assertLess(page.grid.viewport().width(), 660)
+        first, second, third = [page.grid.visualItemRect(page.grid.item(i)) for i in range(3)]
+        self.assertEqual(first.top(), second.top())
+        self.assertGreater(third.top(), first.top())
+        self.assertLess(second.right(), page.grid.viewport().width())
+
+    def test_click_enlarges_original_and_exports_full_resolution(self):
+        image = QImage(2400, 1350, QImage.Format_RGB32)
+        image.fill(QColor("white"))
+        image.setPixelColor(1234, 567, QColor("red"))
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.WriteOnly)
+        self.assertTrue(image.save(buffer, "PNG"))
+        self.photo(data=bytes(data))
+        page = self.page_ready()
+        item = page.grid.item(0)
+        self.assertLessEqual(item.icon().availableSizes()[0].width(), 400)
+        QTest.mouseClick(page.grid.viewport(), Qt.LeftButton,
+                         pos=page.grid.visualItemRect(item).center())
+        self.wait(lambda: page.preview is not None and page.preview.task is None)
+        preview = page.preview
+        self.assertEqual(preview.image.size(), image.size())
+        self.assertEqual(preview.image.pixelColor(1234, 567), QColor("red"))
+        self.assertLess(preview.canvas.pixmap().width(), image.width())
+        QTest.mouseClick(preview.canvas, Qt.LeftButton, pos=preview.canvas.rect().center())
+        self.app.processEvents()
+        self.assertTrue(preview.actual_size)
+        self.assertEqual(preview.canvas.pixmap().size(), image.size())
+        self.assertEqual(preview.canvas.pixmap().toImage().pixelColor(1234, 567), QColor("red"))
+        self.assertGreater(preview.scroll.horizontalScrollBar().maximum(), 0)
+        self.assertGreater(preview.scroll.verticalScrollBar().maximum(), 0)
+        destination = self.root / "full-quality.png"
+        with patch("forza_launcher.ui.gallery_page.QFileDialog.getSaveFileName",
+                   return_value=(str(destination), "PNG image (*.png)")):
+            preview.export_current()
+            self.wait(lambda: preview.task is None)
+        exported, width, height = gallery.read_photo(destination)
+        self.assertEqual((width, height), (2400, 1350))
+        self.assertEqual(exported.pixelColor(1234, 567), QColor("red"))
+        preview.zoom.click()
+        self.app.processEvents()
+        self.assertFalse(preview.actual_size)
+        self.assertLess(preview.canvas.pixmap().width(), image.width())
+
+    def test_navigation_returns_to_fit_and_small_sources_are_not_upscaled(self):
+        self.photo("Large", self.encoded(2400, 1350))
+        self.photo("Small", self.encoded(120, 90))
+        page = self.page_ready()
+        page.sort.setCurrentIndex(1)
+        page.open_photo(page.grid.item(0))
+        self.wait(lambda: page.preview.task is None)
+        preview = page.preview
+        preview.set_actual_size(True)
+        preview.resize(760, 560)
+        self.app.processEvents()
+        self.assertEqual(preview.canvas.pixmap().width(), 2400)
+        preview.navigate(1)
+        self.wait(lambda: preview.task is None)
+        self.assertFalse(preview.actual_size)
+        self.assertEqual(preview.image.width(), 120)
+        self.assertLessEqual(preview.canvas.pixmap().width(), 120)
+
+    def test_actual_size_on_a_real_two_x_qt_surface(self):
+        path = self.photo(data=self.encoded(2400, 1350))
+        script = '''
+from pathlib import Path
+import sys, time
+sys.path.insert(0, sys.argv[1])
+from PySide6.QtWidgets import QApplication
+from forza_launcher import gallery
+from forza_launcher.ui.gallery_page import PhotoPreview
+app = QApplication([])
+path = Path(sys.argv[2])
+preview = PhotoPreview([gallery.Photo(path, path.stat().st_mtime, 2400, 1350)], 0, path.parent, None)
+preview.show()
+end = time.monotonic() + 5
+while preview.task is not None and time.monotonic() < end:
+    app.processEvents()
+    time.sleep(.005)
+assert preview.task is None and preview.image is not None
+preview.set_actual_size(True)
+app.processEvents()
+assert preview.canvas.devicePixelRatioF() == 2
+assert preview.canvas.width() == 1200
+assert preview.canvas.pixmap().width() == 2400
+assert preview.canvas.pixmap().devicePixelRatio() == 2
+preview.reject()
+app.processEvents()
+'''
+        env = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'QT_SCALE_FACTOR': '2'}
+        result = subprocess.run([sys.executable, '-c', script, str(Path(__file__).parent), str(path)],
+                                env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_profile_change_during_scan_discards_previous_results(self):
         self.photo()

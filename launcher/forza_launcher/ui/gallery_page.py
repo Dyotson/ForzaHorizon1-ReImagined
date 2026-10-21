@@ -2,11 +2,11 @@
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QThread, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialog,
                                QHBoxLayout, QLabel, QListView, QListWidget,
-                               QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+                               QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import gallery, paths
 from . import theme
@@ -48,13 +48,26 @@ class PhotoGrid(QListWidget):
     def layout_photos(self):
         width = max(1, self.viewport().width())
         columns = max(1, width // 220)
-        cell = width // columns
+        # QListView also reserves spacing at the row edges. Without this room,
+        # an exact-width row wraps its last thumbnail onto the next line.
+        cell = max(1, (width - 2 * self.spacing()) // columns)
         picture = max(1, cell - 28)
         height = round(picture * 9 / 16)
         self.setIconSize(QSize(picture, height))
         self.setGridSize(QSize(cell, height + 28))
         for i in range(self.count()):
             self.item(i).setSizeHint(QSize(max(1, cell - 12), height + 16))
+
+
+class PhotoCanvas(QLabel):
+    clicked = Signal(object)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(event.position().toPoint())
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
 
 class PhotoPreview(QDialog):
@@ -64,16 +77,26 @@ class PhotoPreview(QDialog):
         self.task = None
         self.closing = False
         self.image = None
+        self.source_pixmap = None
+        self.actual_size = False
         self.resize(1000, 720)
         self.setMinimumSize(600, 440)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         self.heading = text_label(name="cardTitle")
         layout.addWidget(self.heading)
-        self.canvas = QLabel()
+        self.canvas = PhotoCanvas()
         self.canvas.setAlignment(Qt.AlignCenter)
         self.canvas.setMinimumSize(1, 1)
-        layout.addWidget(self.canvas, 1)
+        self.canvas.setCursor(Qt.PointingHandCursor)
+        self.canvas.clicked.connect(self.toggle_zoom)
+        self.scroll = QScrollArea()
+        self.scroll.setAlignment(Qt.AlignCenter)
+        self.scroll.setFrameShape(QScrollArea.NoFrame)
+        self.scroll.setWidget(self.canvas)
+        self.scroll.viewport().installEventFilter(self)
+        layout.addWidget(self.scroll, 1)
         self.details = text_label(name="muted")
         layout.addWidget(self.details)
         self.message = text_label(name="muted")
@@ -81,19 +104,24 @@ class PhotoPreview(QDialog):
         buttons = QHBoxLayout()
         self.previous = QPushButton("Previous")
         self.next = QPushButton("Next")
+        self.zoom = QPushButton("100%")
         self.export = QPushButton("Export photo…")
         close = QPushButton("Close")
         self.previous.clicked.connect(lambda: self.navigate(-1))
         self.next.clicked.connect(lambda: self.navigate(1))
+        self.zoom.clicked.connect(lambda: self.toggle_zoom())
         self.export.clicked.connect(self.export_current)
         close.clicked.connect(self.reject)
-        for button in (self.previous, self.next, self.export):
+        for button in (self.previous, self.next, self.zoom, self.export):
             buttons.addWidget(button)
         buttons.addStretch()
         buttons.addWidget(close)
         layout.addLayout(buttons)
         QShortcut(QKeySequence(Qt.Key_Left), self, activated=lambda: self.navigate(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self, activated=lambda: self.navigate(1))
+        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.set_actual_size(True))
+        QShortcut(QKeySequence("Ctrl+0"), self, activated=lambda: self.set_actual_size(False))
+        self.set_actual_size(False)
         self.load()
 
     def start(self, work, receive):
@@ -108,6 +136,7 @@ class PhotoPreview(QDialog):
         self.previous.setEnabled(ready and self.index > 0)
         self.next.setEnabled(ready and self.index + 1 < len(self.photos))
         self.export.setEnabled(ready and self.image is not None)
+        self.zoom.setEnabled(ready and self.image is not None)
 
     def finished_task(self):
         self.task.deleteLater()
@@ -119,23 +148,66 @@ class PhotoPreview(QDialog):
     def load(self):
         photo = self.photos[self.index]
         self.image = None
+        self.source_pixmap = None
         self.canvas.clear()
+        self.canvas.resize(1, 1)
+        self.set_actual_size(False)
         self.setWindowTitle("Photo gallery")
         self.heading.setText(f"Photo {self.index + 1} of {len(self.photos)}")
-        self.details.setText(f"{photo.width} × {photo.height}  ·  File modified "
+        self.details.setText(f"Source: {photo.width} × {photo.height}  ·  File modified "
                              + datetime.fromtimestamp(photo.modified).strftime("%d %b %Y, %H:%M"))
         self.message.setText("Loading photo…")
         self.start(lambda task: gallery.read_photo(photo.path)[0], self.loaded)
 
     def loaded(self, image):
         self.image = image
+        self.source_pixmap = QPixmap.fromImage(image)
         self.message.setText("")
         self.paint_photo()
 
     def paint_photo(self):
-        if self.image is not None:
-            self.canvas.setPixmap(QPixmap.fromImage(self.image).scaled(
-                self.canvas.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if self.source_pixmap is None:
+            return
+        dpr = self.scroll.viewport().devicePixelRatioF()
+        pixmap = QPixmap(self.source_pixmap)
+        if not self.actual_size:
+            bounds = QSize(max(1, round(self.scroll.viewport().width() * dpr)),
+                           max(1, round(self.scroll.viewport().height() * dpr)))
+            # Never enlarge a small source and present interpolation as detail.
+            pixmap = pixmap.scaled(bounds.boundedTo(pixmap.size()),
+                                   Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # At 100%, one source pixel maps to one display pixel, including HiDPI.
+        pixmap.setDevicePixelRatio(dpr)
+        self.canvas.setPixmap(pixmap)
+        self.canvas.resize(pixmap.deviceIndependentSize().toSize())
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll.viewport() and event.type() == QEvent.Resize:
+            self.paint_photo()
+        return super().eventFilter(watched, event)
+
+    def set_actual_size(self, enabled):
+        self.actual_size = enabled
+        self.zoom.setText("Fit to window" if enabled else "100%")
+        hint = ("Click to fit the photo to the window. Scroll to explore."
+                if enabled else "Click to view at 100% (one image pixel per display pixel).")
+        self.canvas.setToolTip(hint)
+        self.zoom.setToolTip("Fit to window (Ctrl+0)" if enabled else "Actual size (Ctrl+1)")
+        policy = Qt.ScrollBarAsNeeded if enabled else Qt.ScrollBarAlwaysOff
+        self.scroll.setHorizontalScrollBarPolicy(policy)
+        self.scroll.setVerticalScrollBarPolicy(policy)
+        self.paint_photo()
+
+    def toggle_zoom(self, point=None):
+        if self.task is not None or self.image is None:
+            return
+        # Keep the clicked part of a fitted image in view when enlarging it.
+        x = point.x() / max(1, self.canvas.width()) if point is not None else .5
+        y = point.y() / max(1, self.canvas.height()) if point is not None else .5
+        self.set_actual_size(not self.actual_size)
+        if self.actual_size:
+            self.scroll.horizontalScrollBar().setValue(round(x * self.canvas.width() - self.scroll.viewport().width() / 2))
+            self.scroll.verticalScrollBar().setValue(round(y * self.canvas.height() - self.scroll.viewport().height() / 2))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -233,6 +305,7 @@ class GalleryPage(QWidget):
             f"border-radius: 10px; padding: 6px; }} "
             f"QListWidget::item:selected {{ border: 2px solid {theme.ORANGE}; background: {theme.PANEL2}; }}")
         self.grid.itemActivated.connect(self.open_photo)
+        self.grid.itemClicked.connect(self.open_photo)
         self.grid.itemSelectionChanged.connect(self.selection_changed)
         outer.addWidget(self.grid, 1)
         self.empty = text_label("No saved photos yet.\n\nIn the game, open Photo Mode, take a picture, "
