@@ -218,7 +218,7 @@ class GalleryTests(unittest.TestCase):
         self.photo(data=bytes(data))
         page = self.page_ready()
         item = page.grid.item(0)
-        self.assertLessEqual(item.icon().availableSizes()[0].width(), 400)
+        self.assertEqual(item.icon().availableSizes()[0].width(), 800)
         QTest.mouseClick(page.grid.viewport(), Qt.LeftButton,
                          pos=page.grid.visualItemRect(item).center())
         self.wait(lambda: page.preview is not None and page.preview.task is None)
@@ -264,6 +264,24 @@ class GalleryTests(unittest.TestCase):
         self.assertEqual(preview.image.width(), 120)
         self.assertLessEqual(preview.canvas.pixmap().width(), 120)
 
+    def test_thumbnails_keep_detail_without_upscaling_small_originals(self):
+        large = self.photo("Large", self.encoded(2400, 1350))
+        small = self.photo("Small", self.encoded(120, 90))
+        for size in ((800, 450), (1200, 675)):
+            with self.subTest(size=size):
+                _, image = gallery.load_group(large.parent, [large], thumbnail_size=size)
+                self.assertEqual((image.width(), image.height()), size)
+                _, image = gallery.load_group(small.parent, [small], thumbnail_size=size)
+                self.assertEqual((image.width(), image.height()), (120, 90))
+
+    def test_display_scale_change_reloads_sharper_thumbnails(self):
+        self.photo(data=self.encoded(2400, 1350))
+        page = self.page_ready()
+        with patch.object(page.grid, "devicePixelRatioF", return_value=3):
+            QApplication.sendEvent(page, QEvent(QEvent.DevicePixelRatioChange))
+            self.wait(lambda: page.task is None)
+        self.assertEqual(page.grid.item(0).icon().availableSizes()[0].width(), 1200)
+
     def test_actual_size_on_a_real_two_x_qt_surface(self):
         path = self.photo(data=self.encoded(2400, 1350))
         script = '''
@@ -272,7 +290,8 @@ import sys, time
 sys.path.insert(0, sys.argv[1])
 from PySide6.QtWidgets import QApplication
 from forza_launcher import gallery
-from forza_launcher.ui.gallery_page import PhotoPreview
+from forza_launcher.config import Config
+from forza_launcher.ui.gallery_page import GalleryPage, PhotoPreview
 app = QApplication([])
 path = Path(sys.argv[2])
 preview = PhotoPreview([gallery.Photo(path, path.stat().st_mtime, 2400, 1350)], 0, path.parent, None)
@@ -290,9 +309,30 @@ assert preview.canvas.pixmap().width() == 2400
 assert preview.canvas.pixmap().devicePixelRatio() == 2
 preview.reject()
 app.processEvents()
+cfg = Config(path.parent / 'launcher.json')
+cfg.advanced['data_root'] = sys.argv[3]
+page = GalleryPage(cfg, None)
+page.resize(430, 720)
+page.show()
+page.refresh()
+end = time.monotonic() + 5
+while page.task is not None and time.monotonic() < end:
+    app.processEvents()
+    time.sleep(.005)
+assert page.task is None and page.grid.count() == 1
+assert page.grid.devicePixelRatioF() == 2
+icon = page.grid.item(0).icon()
+assert icon.availableSizes()[0].width() == 800
+assert icon.availableSizes()[0].width() >= page.grid.iconSize().width() * 2
+pixmap = icon.pixmap(page.grid.iconSize(), 2.0)
+assert pixmap.width() >= page.grid.iconSize().width() * 2
+page.shutdown()
+page.close()
+app.processEvents()
 '''
         env = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen', 'QT_SCALE_FACTOR': '2'}
-        result = subprocess.run([sys.executable, '-c', script, str(Path(__file__).parent), str(path)],
+        result = subprocess.run([sys.executable, '-c', script, str(Path(__file__).parent), str(path),
+                                 str(self.root / 'data')],
                                 env=env, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

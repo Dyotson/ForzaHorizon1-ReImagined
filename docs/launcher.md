@@ -121,7 +121,8 @@ for taking and saving the first picture.
   or oldest; ordering uses the image file's modification time, which can change when
   saves are copied or restored.
 - Click a tile, select **View photo**, or press Enter to enlarge the original image.
-  The grid keeps lightweight thumbnails; the viewer loads the source at full
+  The grid keeps thumbnails up to 800 pixels wide (larger at display scaling above
+  200%) so tiles stay sharp as the window resizes; the viewer loads the source at full
   resolution. Click the enlarged picture or select **100%** to inspect its detail,
   with one image pixel per display pixel even on a scaled display. Scroll to explore,
   then click again or select **Fit to window** to see the whole picture. Ctrl+1 selects

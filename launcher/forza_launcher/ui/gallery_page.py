@@ -1,5 +1,6 @@
 """Local photo gallery, with cancellable background discovery and image decoding."""
 from datetime import datetime
+from math import ceil
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QThread, QSize, Qt, QUrl, Signal
@@ -325,6 +326,13 @@ class GalleryPage(QWidget):
         outer.addLayout(bottom)
         self.grid.hide()
 
+    def event(self, event):
+        result = super().event(event)
+        if (event.type() == QEvent.DevicePixelRatioChange and hasattr(self, "grid")
+                and not self.stopping):
+            self.refresh()
+        return result
+
     def refresh(self):
         if self.stopping:
             return
@@ -355,13 +363,19 @@ class GalleryPage(QWidget):
         self.grid.hide()
         self.refresh_button.setEnabled(False)
         profile = self.profile
+        # Tiles stay below 400 logical pixels at every window width. Keep enough
+        # detail for their largest size, including HiDPI, without caching originals.
+        # Two samples per logical pixel also give smooth downsampling at 100% scale.
+        scale = max(2.0, self.grid.devicePixelRatioF())
+        thumbnail_size = (ceil(400 * scale), ceil(225 * scale))
 
         def scan(task):
             skipped = 0
             for directory, files in gallery.photo_groups(profile, task.isInterruptionRequested):
                 if task.isInterruptionRequested():
                     break
-                result = gallery.load_group(directory, files, task.isInterruptionRequested)
+                result = gallery.load_group(directory, files, task.isInterruptionRequested,
+                                            thumbnail_size=thumbnail_size)
                 if result:
                     task.photo.emit(*result)
                 else:
