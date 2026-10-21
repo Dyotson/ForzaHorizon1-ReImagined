@@ -151,7 +151,7 @@ class ExtractTarLinkTests(unittest.TestCase):
         def refuse(*args, **kwargs):
             raise OSError(1, "Operation not permitted")
         with patch.object(os, "symlink", os.symlink if symlinks else refuse):
-            fetch.extract_tar(self.archive(folder), out, strip=1, only=lambda n: n != "bin/skipped")
+            fetch.extract_tar(self.archive(folder), out, strip=1, only=lambda n: Path(n).as_posix() != "bin/skipped")
         return out
 
     def test_without_symlinks_links_become_copies_and_later_files_still_unpack(self):
