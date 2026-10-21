@@ -315,6 +315,37 @@ FLATPAK_LLVM_CMD = "flatpak install flathub org.freedesktop.Sdk.Extension.llvm22
 FLATPAK_LLVM_HINT = ("The compiler extension of this Flatpak is not installed (a .flatpak bundle does not bring it). "
                      "Run this once, then restart the launcher: " + FLATPAK_LLVM_CMD +
                      " (about 0.5 GB, instead of the 2 GB LLVM download below).")
+# SteamOS is read-only and ships no C++ headers, so the .tar.gz launcher points at the Flatpak (#135).
+STEAMOS_FLATPAK_HINT = (
+    "SteamOS has no C++ development headers, so this launcher can't build the game here. "
+    "Use the Flatpak version of the launcher instead (it brings its own compiler): download "
+    "ForzaHorizon1-ReImagined-x86_64.flatpak from the releases page and install it in Desktop Mode "
+    "(Discover can open it). Your saves and settings can stay where they are.")
+OS_RELEASE = "/etc/os-release"
+
+
+def is_steamos(os_release=None) -> bool:
+    """True when os-release names SteamOS (ID=steamos, or ID_LIKE contains steamos). `os_release`
+    defaults to OS_RELEASE. A missing or unreadable file is False; this never raises."""
+    try:
+        text = Path(OS_RELEASE if os_release is None else os_release).read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    ident = like = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key.strip() == "ID":
+            ident = value
+        elif key.strip() == "ID_LIKE":
+            like = value
+    return ident == "steamos" or "steamos" in like.split()
 
 
 def _flatpak_path():
@@ -390,10 +421,13 @@ def _detect_tools(root: Path, prefer_downloaded=False) -> Tools:
         env["PATH"] = os.pathsep.join(t.path_dirs + [env.get("PATH", "")])
         why = cxx_works(t.cxx, env)
         if why:
-            t.problems.append(
-                "The compiler cannot build a C++23 program (" + why + "). Install your system's "
-                "C++ development packages: g++ and libstdc++ headers (Debian/Ubuntu: build-essential; "
-                "Fedora: gcc-c++; Arch: gcc), then try again.")
+            if is_steamos() and not paths.IN_FLATPAK:
+                t.problems.append(STEAMOS_FLATPAK_HINT)
+            else:
+                t.problems.append(
+                    "The compiler cannot build a C++23 program (" + why + "). Install your system's "
+                    "C++ development packages: g++ and libstdc++ headers (Debian/Ubuntu: build-essential; "
+                    "Fedora: gcc-c++; Arch: gcc), then try again.")
     return t
 
 

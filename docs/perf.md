@@ -68,6 +68,19 @@ PERF: scene= src=<guest|present> t= fps= p50= p95= p99= max= low1= stutters= hit
 - `RECOMP_PERF_CSV=<file>` writes every frame; `RECOMP_PERF_SCENE` names the first scene;
   `SCENE:<name>` on the input FIFO starts a new one.
 
+## Long frames (FORZA_STALL)
+
+Always on (`src/debug/stall_watch.cpp`, #187): when the game hands no frame to VdSwap for
+200 ms, `forza.log` gets a `FORZA_STALL: no frame for <ms> ms at t=<s>` line followed by the
+guest call chains of the main loop's thread and the render thread at that moment, and when
+the frame comes, `FORZA_STALL: frame took <ms> ms from t=<s>`. `main loop N frames` says
+whether the main loop kept running (N > 0: the render thread was held up) or was stuck too.
+Nothing is logged in the first minute; at most one chain dump every 10 s (50 a session).
+No frame for 10 s logs `not presenting` once and `presenting again` at the end. Loading
+screens can log long frames too. A player who sees a hitch can attach these lines to an
+issue: the chains are guest return addresses (look them up in Ghidra). `FORZA_STALL_TEST=1`
+makes the main loop sleep 500 ms once, 90 s after the first frame, to check the lines.
+
 ## Scenarios
 
 `tools/perf_scenario.sh SCENARIO DIR [cold|warm] [flags]` drives the game through the

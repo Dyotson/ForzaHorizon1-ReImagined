@@ -25,6 +25,8 @@ project's alone):
 | 0050 | Timer queue (runtime) | On Linux and macOS the timer thread blocks on a condition variable until the next timer is due or a new one comes (disruptorplus' blocking wait strategy, whose two timed waits passed their arguments in the wrong order and did not compile); its timer slack is 1 us. Windows keeps the spin strategy (whole-tick deadlines there) | The spin strategy polled between timers (pause loops, `sched_yield` 19 times in 20, then a 1 ms sleep): with the 1 ms timestamp timer, 5-7% of a core in a race, and up to 1 ms late in its sleep phase (#45) |
 | 0051 | Pipelines (Vulkan) | New setting `sync_pipeline_creation` (default off): while set, a draw whose pipeline is a placeholder waits for the creation thread's real pipeline (up to 10 s) instead of being skipped, and new pipelines are created at once, whatever `async_shader_compilation` says. Direct3D 12 not covered | A render made once and read back loses every draw skipped for a placeholder for good: with an empty pipeline cache the car's picture saved at a purchase had no car (#74). The game sets it around the picture and the livery renders of a car load (`src/hooks/thumbnail_sync.cpp`, #77); nothing else uses it |
 | 0052 | Textures (Vulkan, Direct3D 12) | New setting `scaled_resolve_min_coverage_percent` (default 50; 0 = old behaviour): with a resolution scale above 1, a texture is loaded from the scaled resolve buffer only if resolves wrote at least that share of its guest memory range, not on any overlap of one page | A resolve that overlapped only the last mip pages of a 1024x1024 DXT5 texture made the whole texture a "scaled resolve" texture, read from a buffer that is zero where nothing was resolved: black (#77). Resolve targets are covered by their own resolve and stay scaled |
+| 0095 | Codegen: multiply-add | `fmadd`, `fmsub`, `fnmadd`, `fnmsub` and their single forms call `ppc_fma` instead of `std::fma`. It is defined in the generated `forza_pch.h` (template `codegen/_ppc_fma.inja`): the inline FMA instruction when the code is built with FMA; otherwise `std::fma` on a CPU with FMA (results unchanged) and a multiply, then an add, on one without (CPUID FMA and OSXSAVE, XCR0 AVX state; checked once at startup). `REX_PPC_FMA=0` forces the multiply-add, `REX_PPC_FMA=1` `std::fma` | On CPUs without FMA (Ivy Bridge and older, #160, #112) `std::fma` is a software routine: about 30 ns a call in the Windows CRT (1.4 ns with FMA), 9.6 ns in glibc. A race makes 30-40 million calls a second, most on the audio thread: the sound slowed down and frames stalled. The multiply-add may differ from the fused result in the last bit. The helper is in generated code, not the SDK headers, because Linux builds use the stock nightly headers |
+| 0096 | Codegen: headers as build outputs | The codegen custom command in the `generated/rexglue.cmake` template also lists the generated `<project>_pch.h` and `<project>_init.h` as outputs | The precompiled header and `main.cpp` knew those headers only from their depfiles, so ninja judged them up to date before codegen ran. When a new codegen tool changed `forza_pch.h` (0095), it was rewritten mid-build and every source compiled after it failed: "forza_pch.h has been modified since the precompiled header was built". A second build worked. Codegen rewrites `generated/rexglue.cmake` from this template on every run, so the fix belongs in the template |
 
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
@@ -163,6 +165,86 @@ a public member or virtual function. The game compiles with the stock nightly
 headers; older runtimes without the export safely retain continuous repainting.
 Linux SDK CI compiles the actual HUD adapter against those stock headers, even
 on an SDK cache hit, and tests passive/mixed dialog policy and hint cleanup.
+
+0079 registers generated functions by iterating the existing null-terminated
+`PPCFuncMappings` table rather than emitting one virtual call per guest function.
+AppleClang's ARM64 SelectionDAG construction spent several minutes on the base
+game's 77,344-call straight-line routine, including with optimization disabled.
+The table has the same filtering, addresses, targets and order as the old calls
+(all 77,344 entries compared equal in the base build). The generated DLL entry
+points retain their exported names and use each module's own mapping table.
+
+0080 finalizes the SPIR-V rectangle fallback's next-program-counter `OpPhi` after
+emitting its next-guest-vertex path. Previously that path appended its `(0, block)`
+operands after the instruction had already been built, so shaders with guest
+control flow lacked a predecessor in their Phi. On devices without geometry
+shaders, Forza's tone-mapping rectangle was lost: scene textures contained the
+colored world, but the screen showed only the HUD. The M4 Pro opening drive renders
+after the fix and responds to throttle and steering. The geometry-shader path is
+unchanged. See [macOS validation](macos.md).
+
+0081 adds an opt-in Vulkan sampler fallback, `vulkan_force_base_mip`. It clamps
+2D texture sampling to mip 0 and disables anisotropy. It remains available for
+diagnostics, but is no longer enabled by the macOS play script: patch 0082 removes
+the tested crosshatch without sacrificing mip filtering.
+
+0082 allows arithmetic contraction in Apple GPU color shaders, following the
+contraction portion of [Pinyon Shift's macOS pixel-math tuning](https://github.com/arcanite24/shiftglue-sdk/commit/524c6fb61cf439ac54664a4bccf5eeaf8784ba9c).
+It retains this SDK's existing SM3 multiplication rules. Vertex shaders, shaders
+writing depth, memory exports and synthetic depth-only shaders stay precise.
+`spirv_pixel_shader_contraction` defaults on for macOS and is gated to Apple GPUs;
+it requires a restart. Its value is part of the shader modification key, and the
+pipeline storage version is advanced. On M4 Pro, an on/off TU4 comparison changes
+crosshatched Viper stripes and roughly 21–24 fps to solid stripes and the 30 fps cap,
+with normal mipmaps and anisotropy. See [macOS validation](macos.md).
+
+A trial backport of ShiftGlue's 4 KB shared-memory tracking is **not included**.
+It passed isolated neighboring/direct/cross-page invalidation checks but caused
+HUD corruption in both game builds with this older Xenos renderer. The source,
+regression helper and captures are retained in the ignored validation directory;
+see [the Pinyon comparison](macos.md#pinyon-shift-comparison).
+
+0083 requests Cocoa fullscreen after showing the SDL window. The request made
+while the window was hidden left the tested app windowed despite `fullscreen=true`.
+It preserves the requested state before creating/showing the window, since
+visibility notifications can publish the initial windowed state synchronously.
+It raises the visible window before entering fullscreen when fullscreen was requested.
+The local app bundle now enters a native fullscreen Space on launch; macOS's
+GamePolicy log confirms that Game Mode becomes active. Other platforms retain
+their existing window-creation order.
+
+0084 adds experimental Apple MetalFX temporal and spatial scene reconstruction.
+It exports Vulkan images as Metal textures, imports two Metal shared events as
+Vulkan timeline semaphores, and splits the Vulkan command buffer around the
+native Metal pass. A separate Metal queue avoids waiting behind MoltenVK work
+that depends on the upscale. There is no CPU texture readback or per-frame CPU
+GPU wait. The existing game-derived depth/motion decoder and projection jitter
+feed temporal reconstruction; the HUD renders afterward at 1440p. Descriptor
+sets rotate across frames, and dynamic graphics state is rebound after the
+command-buffer split. Ordinary submissions keep their allocation-free path.
+Mac command pools reserve the continuation buffer before MetalFX is active, so
+the shared graphics transaction can enable either MetalFX mode during native
+play. Unsupported output sizes are rejected before replacing render caches.
+
+The native bridge is built only on macOS. Unsupported initialization reports an
+error and retains native rendering. MetalFX output is restricted to the existing
+integer HUD scales; a 1080p trial cropped the UI and is rejected. A register-level
+MSAA reduction trial corrupted reflections/vegetation and is not included.
+See [MetalFX usage and measurements](macos.md#apple-metalfx).
+
+0085 copies packed scene/HUD resolve texels as whole words. The common 1x-to-2x
+path repeats 8/16-bit texels with masks and shifts and 32/64/128-bit texels with
+word loads. Other integer scales use the same nearest-sample mapping; unaligned
+sources retain the original byte path. The diagnostic flag
+`fh1_fast_resolve_copy=false` selects the original algorithm. This changes no
+MSAA, mip filtering, shader precision, or scene/HUD resolution.
+
+Reference comparisons covered 270 format/scale/alignment combinations. A live
+TU4 MetalFX Spatial session alternated the original and optimized algorithms:
+the original averaged 40.4–41.8 fps and the optimized windows 49.4–54.8 fps.
+The world, HUD and solid stripes rendered correctly. These were background
+opening-scene samples with concurrent media analysis, not verified 1440p/60
+foreground performance. See [1440p target](macos.md#1440p-at-60-fps-target).
 
 0090 adds Xbox impulse trigger output to the SDL input driver. The optional C
 export `ForzaInputTriggerRumble(user_mask, left, right, duration_ms)` routes only
