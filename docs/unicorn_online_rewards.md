@@ -388,6 +388,46 @@ This adds an owned-car workshop acceptance test, not authoritative enforcement
 against modified clients or validation of borrowed/clan cars and every game
 mode. Raw assets, screenshots, memory and disposable saves remain outside Git.
 
+### Additional multiplayer mode tests (2026-10-21)
+
+Fresh copies of the stopped two-client fixtures used a separate loopback server
+data directory and room. EventEarned still had only its existing Saleen grant;
+EventUnearned had no grants. The local eligibility override remained unset.
+The following tests used public **custom** lobbies, not the matchmade Races or
+Playground Games playlists:
+
+| Game type | Unearned Saleen | Earned client / unearned client loaded models | Extent |
+| --- | --- | --- | --- |
+| Circuit | Event Unlock Required; ordinary selection recovered | Saleen 1197 / owned Lancer 1009 | Two-client race start, then retirement |
+| Point-to-point | Event Unlock Required; ordinary selection recovered | Saleen 1197 / owned Lancer 1009 | Two-client race start, then retirement |
+| Street | Event Unlock Required; ordinary selection recovered | Saleen 1197 / owned Lancer 1009 | Two-client race start, then retirement |
+| Infected | Event Unlock Required; ordinary rental fallback | Saleen 1197 / rental Gallardo 1322 | Short timed round completed, XP results returned |
+| King | Event Unlock Required; ordinary rental fallback | Saleen 1197 / rental Gallardo 1322 | Short timed round completed, XP results returned |
+| Cat & Mouse | Event Unlock Required; ordinary rental fallback | Saleen 1197 / rental Gallardo 1322 | Opposing mouse teams after Auto Balance; race start, then exit |
+
+Native memory confirmed local status 4 and `in_game = 1` for both clients in
+each recorded start. Infected and King were configured to class S for the
+Saleen test. Cat & Mouse used class S for both roles; this did not test switching
+roles during a race. Default game-type restrictions first rejected the rewarded
+Saleen as natively ineligible: the grant did not override class restrictions.
+An initial Infected round used ordinary rentals on both clients; the rewarded
+Saleen was then explicitly selected and tested in the subsequent short round.
+
+The Rental Garage list and Rabbit preview/color UI were opened, but explicit
+rental confirmation was not completed; only automatic rental recovery and its
+subsequent race loading are established above. Club borrowing is not yet
+validated: the server fixture has a local club with both members, but the native
+picker still reports no membership until the festival Car Club initialization
+flow is entered. Rally, private custom lobbies and the two matchmade playlists
+also remain outside this test matrix.
+
+Before the input-harness restart, both clients exited normally and the stopped
+save audit authenticated both garages, retained all seven unicorns exactly once,
+and verified the source fixture inventories were unchanged. Private state
+receipts and logs are in `build/two-client-modes-20261021/` outside Git. A separate
+private runtime expands only the test command's ordinary controller-input
+whitelist for map/club navigation; it does not change entitlement decisions.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with
