@@ -264,8 +264,12 @@ add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "left=14,right=15. The d-pad hat is used as is. G29 and G923 have their own map built in.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
-    "Approximate: a centring spring and a vibration taken from the game's rumble motors. "
-    "Untested on real wheels.", "Racing wheel", restart=True)
+    "The game's own wheel forces: the car's steering force, a centring spring that grows with "
+    "speed, a light damper, and its rumble as a vibration. Not yet tested on a real wheel.",
+    "Racing wheel", restart=True)
+add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
+    "Turn on if the wheel pulls away from the centre in corners instead of towards it (wheel "
+    "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
