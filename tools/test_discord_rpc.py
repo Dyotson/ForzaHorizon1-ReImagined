@@ -161,12 +161,16 @@ class DiscordTests(unittest.TestCase):
             try:
                 child = subprocess.run([str(EXE), "123456789012345678"], env=env,
                                        capture_output=True, text=True, timeout=15)
+            except subprocess.TimeoutExpired as error:
+                self.fail(f"IPC client timed out: stdout={error.stdout!r}, "
+                          f"stderr={error.stderr!r}, messages={messages!r}, errors={errors!r}")
             finally:
                 for endpoint in endpoints:
                     endpoint.close()
                 thread.join(2)
             self.assertFalse(thread.is_alive(), "fixture thread did not stop")
-            self.assertFalse(errors, errors)
+            self.assertFalse(errors, f"{errors!r}; stdout={child.stdout!r}; stderr={child.stderr!r}; "
+                             f"messages={messages!r}")
             self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
             self.assertIn("READY", child.stdout)
             handshakes = [body for kind, body in messages if kind == "handshake"]

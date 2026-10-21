@@ -40,6 +40,9 @@ bool BaseConnection::Open() {
       for (int i = 0; i < 10; ++i) {
         sockaddr_un address{};
         address.sun_family = AF_UNIX;
+#ifdef __APPLE__
+        address.sun_len = sizeof(address);
+#endif
         const auto path = std::string(root) + suffix + "/" + kPrefix + std::to_string(i);
         if (path.size() >= sizeof(address.sun_path)) continue;
         struct stat st{};
@@ -61,8 +64,14 @@ bool BaseConnection::Open() {
         }
 #endif
         if (connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
+#ifdef FORZA_DISCORD_TEST_TRANSPORT
+          std::fprintf(stderr, "IPC fixture connected: %s\n", path.c_str());
+#endif
           self->socket = fd; isOpen = true; return true;
         }
+#ifdef FORZA_DISCORD_TEST_TRANSPORT
+        std::fprintf(stderr, "IPC fixture connect failed: %s (%d)\n", path.c_str(), errno);
+#endif
         close(fd);
       }
     }
