@@ -58,8 +58,18 @@ fi
     def test_persistent_failure_stops_before_downloads(self):
         result, commands = self.run_setup(99)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(sum(row.startswith("apt-get ") and "g++-14" in row for row in commands), 3)
+        self.assertEqual(sum(row.startswith("apt-get ") and "g++-14" in row for row in commands), 6)
+        self.assertTrue(any(row.startswith("sed ") for row in commands))
         self.assertFalse(any(row.startswith("python3 ") for row in commands))
+
+    def test_failed_downloads_fall_back_to_old_host(self):
+        result, commands = self.run_setup(3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(row.startswith("apt-get ") and "g++-14" in row for row in commands), 4)
+        sed = [i for i, row in enumerate(commands) if row.startswith("sed ")]
+        self.assertEqual(len(sed), 1)
+        self.assertTrue(commands[sed[0] + 1].endswith(" update"))
+        self.assertEqual(sum(row.startswith("python3 ") for row in commands), 3)
 
     def test_success_does_not_retry(self):
         result, commands = self.run_setup(0)
