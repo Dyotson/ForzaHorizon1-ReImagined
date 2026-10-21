@@ -239,6 +239,9 @@ add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float",
     "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
+add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
+    "The game uses its full-range (900\u00b0) wheel steering. Off uses the Xbox 360 wheel's "
+    "270\u00b0 mode, which filters the steering like a gamepad.", "Racing wheel", restart=True)
 add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
     "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
     choices=[("auto", "Separate (detected)"), ("separate", "Separate"), ("combined", "Combined")])
