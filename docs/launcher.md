@@ -120,9 +120,15 @@ for taking and saving the first picture.
 - The grid shows pictures without captions and fits the window width. Sort by newest
   or oldest; ordering uses the image file's modification time, which can change when
   saves are copied or restored.
-- Select **View photo**, double-click a tile, or press Enter for a larger preview.
-  Previous/Next and the arrow keys navigate the gallery. Dimensions and the file's
-  modification date are shown in the preview.
+- Click a tile, select **View photo**, or press Enter to enlarge the original image.
+  The grid keeps thumbnails up to 800 pixels wide (larger at display scaling above
+  200%) so tiles stay sharp as the window resizes; the viewer loads the source at full
+  resolution. Click the enlarged picture or select **100%** to inspect its detail,
+  with one image pixel per display pixel even on a scaled display. Scroll to explore,
+  then click again or select **Fit to window** to see the whole picture. Ctrl+1 selects
+  100%; Ctrl+0 fits to the window. Small source images are not enlarged artificially.
+  Previous/Next and the arrow keys navigate the gallery. Source dimensions and the
+  file's modification date are shown in the preview.
 - **Export photo** saves a separate PNG or JPEG. PNG avoids another lossy encoding;
   JPEG is saved at quality 95. A date-based filename is suggested automatically.
   Exports cannot overwrite files inside the save folder.
