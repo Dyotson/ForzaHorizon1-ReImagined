@@ -14,6 +14,7 @@ ERR = "#ff7b7b"
 from pathlib import Path
 
 ARROW = (Path(__file__).resolve().parent / "down.svg").as_posix()
+CHECK = (Path(__file__).resolve().parent / "check.svg").as_posix()
 
 QSS = f"""
 * {{ font-size: 14px; }}
@@ -92,7 +93,13 @@ QRadioButton::indicator {{ width: 16px; height: 16px; border-radius: 9px; border
 QRadioButton::indicator:checked {{ border-color: {ORANGE}; background: qradialgradient(cx:0.5,cy:0.5,radius:0.5,
   fx:0.5,fy:0.5, stop:0 {ORANGE}, stop:0.55 {ORANGE}, stop:0.6 #130c2c, stop:1 #130c2c); }}
 QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px; border: 2px solid {BORDER}; background: #130c2c; }}
-QCheckBox::indicator:checked {{ background: {ORANGE}; border-color: {ORANGE}; }}
-QCheckBox:focus::indicator, QRadioButton:focus::indicator {{ border-color: {ORANGE}; }}
+QCheckBox::indicator:hover {{ border-color: {MUTED}; }}
+QCheckBox::indicator:checked {{ background: {ORANGE}; border-color: {ORANGE}; image: url("{CHECK}"); }}
+QCheckBox::indicator:checked:hover {{ border-color: {CREAM}; }}
+QCheckBox:disabled {{ color: #6f6494; }}
+QCheckBox::indicator:disabled {{ background: #17102f; border-color: #2b2055; }}
+QCheckBox::indicator:checked:disabled {{ background: #6f6494; border-color: #6f6494; }}
+QCheckBox:focus::indicator {{ border-color: {CREAM}; }}
+QRadioButton:focus::indicator {{ border-color: {ORANGE}; }}
 QToolTip {{ background: {PANEL2}; color: {TEXT}; border: 1px solid {ORANGE}; padding: 6px; }}
 """
