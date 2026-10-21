@@ -138,9 +138,10 @@ def make_control(s: schema.Setting, value, on_change, note=None):
     if s.kind == "fps":
         w = Combo()
         w.setEditable(True)
-        for v in (30, 60, 90, 120, 144, 165, 240):
+        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
         w.lineEdit().setValidator(QIntValidator(1, 999))
+        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
