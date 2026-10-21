@@ -38,6 +38,17 @@ class InGameGraphicsTests(unittest.TestCase):
         self.assertEqual(saved.settings["anisotropic_override"], 5)
         self.assertFalse(saved.settings["forza_hud_edges"])
 
+    def test_native_720p_output_survives_save_and_reload(self):
+        self.request(output="720p", upscaler="off", anti_aliasing="game",
+                     resolution_scale="1")
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        saved = Config(self.cfg.path)
+        self.assertEqual(saved.settings["resolution"], "720p")
+        self.assertEqual(saved.settings["resolution_scale"], 1)
+        self.assertEqual(saved.settings["forza_antialiasing"], "game")
+        # Reconstruction selectors have separate, higher-output schemas.
+        self.assertIn(saved.settings["fsr3_output_resolution"], ("1080p", "1440p", "4k"))
+
     @unittest.skipUnless("fh1_upscaler" in schema.BY_KEY, "Windows NVIDIA setting")
     def test_dlss_choice_preserves_native_output_setting(self):
         self.request(output="1440p", upscaler="quality")

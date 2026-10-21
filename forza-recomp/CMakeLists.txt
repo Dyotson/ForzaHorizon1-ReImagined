@@ -124,6 +124,11 @@ set(FORZA_SOURCES
     src/hooks/ultrawide_projection.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/pause_menu.cpp
+    src/hooks/fh2_pause_scene.cpp
+    src/hooks/offline_cars.cpp
+    src/hooks/festival_travel.cpp
+    src/hooks/car_recovery.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
@@ -185,6 +190,28 @@ endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+set(FORZA_FH2_NAVIGATION_DIR "" CACHE PATH "Private translated FH2 pause navigation directory")
+if(FORZA_FH2_NAVIGATION_DIR)
+    if(NOT FORZA_TITLE_UPDATE STREQUAL "4")
+        message(FATAL_ERROR "The FH2 pause adapter currently requires FH1 Title Update 4")
+    endif()
+    if(NOT EXISTS "${FORZA_FH2_NAVIGATION_DIR}/pause_navigation.inc")
+        message(FATAL_ERROR "Generate pause_navigation.inc with tools/extract_horizon2_navigation.py")
+    endif()
+    target_include_directories(forza PRIVATE "${FORZA_FH2_NAVIGATION_DIR}")
+    target_compile_definitions(forza PRIVATE FORZA_FH2_PAUSE=1)
+endif()
+set(FORZA_FH2_GRID_EVENTS_DIR "" CACHE PATH "Private translated FH2 grid and button events directory")
+if(FORZA_FH2_GRID_EVENTS_DIR)
+    if(NOT FORZA_FH2_NAVIGATION_DIR)
+        message(FATAL_ERROR "The FH2 scene requires FORZA_FH2_NAVIGATION_DIR")
+    endif()
+    if(NOT EXISTS "${FORZA_FH2_GRID_EVENTS_DIR}/grid_events.inc")
+        message(FATAL_ERROR "Generate grid_events.inc with tools/extract_horizon2_grid_events.py")
+    endif()
+    target_include_directories(forza PRIVATE "${FORZA_FH2_GRID_EVENTS_DIR}")
+    target_compile_definitions(forza PRIVATE FORZA_FH2_PAUSE_SCENE=1)
+endif()
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client

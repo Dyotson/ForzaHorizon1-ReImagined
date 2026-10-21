@@ -2,6 +2,8 @@
 // tu_address_map: TU4 addresses
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
+#include "../platform/pause_menu.h"
+#include "../platform/fh2_pause_scene.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
 #include "../platform/guest_addr.h"
@@ -299,7 +301,8 @@ void Snapshot() {
        "resolution",
        "Output resolution",
        "",
-       {{"1080p", "1920 x 1080"},
+       {{"720p", "1280 x 720"},
+        {"1080p", "1920 x 1080"},
         {"1440p", "2560 x 1440"},
         {"4k", "3840 x 2160"}}},
       {"upscaler", "fh1_upscaler", "Upscaling", "", {{"off", "Off"}}},
@@ -441,6 +444,7 @@ extern "C" REX_FUNC(MenuBind) {
   using namespace forza::graphics_menu;
   active_menu = ctx.r3.u32;
   from_main_menu = false;
+  if(forza::fh2_pause_scene::Owns(active_menu))return;
   Native ui(ctx, base);
   if (ui) {
     ui.Add(active_menu, kGraphics, "GRAPHICS");
@@ -461,7 +465,12 @@ extern "C" REX_FUNC(MenuBind) {
     }
     REXLOG_INFO("Graphics menu: native pause entry added");
   }
+  const auto pause_owner = ctx.r3.u32;
+  forza::pause_menu::Bind(ctx, base);
   OriginalBind(ctx, base);
+  auto pause_context = ctx;
+  pause_context.r3.u64 = pause_owner;
+  forza::pause_menu::AfterBind(pause_context, base);
 }
 namespace forza::graphics_menu {
 namespace {
@@ -471,6 +480,8 @@ std::vector<uint32_t> native_rows;
 std::vector<uint32_t> retired_choices;
 uint32_t empty_pause_source = 0;
 void PauseRows(Native &ui, uint8_t *base, bool show) {
+  if(forza::fh2_pause_scene::Page(ui.context(),base,active_menu,show))return;
+  forza::pause_menu::Page(base, active_menu, show);
   auto component = Read(base, active_menu + 0x170);
   const auto source = from_main_menu ? Read(base, active_menu + 0x174) : active_menu + 0x174;
   if (!show && !empty_pause_source) {
@@ -494,6 +505,7 @@ std::string Help(size_t i) {
   if (i == 1 || i == 2 || i == kAntiAliasing) {
     const auto mode = BackendMode();
     const auto output = settings[0].value == "4k" ? "3840 x 2160" :
+        settings[0].value == "720p" ? "1280 x 720" :
         settings[0].value == "1080p" ? "1920 x 1080" : "2560 x 1440";
     std::string scene;
     if (mode == "off") {
@@ -775,12 +787,13 @@ extern "C" REX_FUNC(sub_827142C0) {
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_827142C0(ctx, base);
+    forza::fh2_pause_scene::Page(ctx,base,active_menu,true);
     return;
   }
   Native ui(ctx, base);
   if (!ui)
     return;
-  if (empty_pause_source)
+  if (empty_pause_source || forza::fh2_pause_scene::Owns(active_menu))
     PauseRows(ui, base, true);
   RestorePreview();
   for (uint32_t row : native_rows) {
@@ -851,6 +864,7 @@ void OpenGraphics(PPCContext &ctx, uint8_t *base) {
 }
 extern "C" REX_FUNC(MenuSelect) {
   using namespace forza::graphics_menu;
+  if (forza::pause_menu::Select(ctx, base)) return;
   if (ctx.r3.u32 == active_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics) {
     from_main_menu = false;
     OpenGraphics(ctx, base);
@@ -898,6 +912,7 @@ extern "C" REX_FUNC(sub_82836928) {
 
 namespace forza::graphics_menu {
 void Tick(PPCContext& ctx, uint8_t* base) {
+  forza::pause_menu::Tick(ctx, base);
   UpdatePerformanceOverlay();
   RefreshRelevance(ctx, base);
   if (title_layout_pending && main_menu && Read(base, main_menu + 0x260) == 12) {
@@ -970,8 +985,10 @@ void Tick(PPCContext& ctx, uint8_t* base) {
       message = "Live graphics requires the updated Vulkan renderer.";
     } else {
       const auto output = settings[0].value;
-      const auto width = output == "4k" ? "3840" : output == "1080p" ? "1920" : "2560";
-      const auto height = output == "4k" ? "2160" : output == "1080p" ? "1080" : "1440";
+      const auto width = output == "4k" ? "3840" : output == "720p" ? "1280" :
+          output == "1080p" ? "1920" : "2560";
+      const auto height = output == "4k" ? "2160" : output == "720p" ? "720" :
+          output == "1080p" ? "1080" : "1440";
       applying_settings = settings;
       applying_request = std::to_string(++request_id) + " " + width + " " + height +
           " " + settings[2].value + " " + BackendMode();

@@ -28,6 +28,7 @@ class Setting:
     step: float = 1
     platform: str = ""  # "linux" or "windows": shown only there
     restart: bool = False
+    max_length: int | None = None  # optional string input limit
     legacy: dict = field(default_factory=dict)  # value an older version offered -> the one it became
 
     def applies(self) -> bool:
@@ -297,7 +298,7 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
     "Up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
-    "Identity")
+    "Identity", max_length=15)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
     "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
@@ -378,6 +379,7 @@ def coerce(setting, value):
                 if str(c) == str(value):
                     return c
             return setting.default
-        return str(value)
+        text = str(value)
+        return text[:setting.max_length] if setting.max_length is not None else text
     except (TypeError, ValueError):
         return setting.default

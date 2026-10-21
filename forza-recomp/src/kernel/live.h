@@ -11,6 +11,10 @@ namespace forza {
 // The virtual network is on (FORZA_NET or a Forza Live server).
 bool NetworkOn();
 
+// A validated server welcome arrived within the last 20 seconds. Unlike
+// NetworkOn/LiveSignin, this checks recent server contact, not configuration.
+bool LiveConnected();
+
 // The Forza Live server's IPv4 address (host order) and the TCP port of its title
 // servers (HTTP). False without FORZA_SERVER, or before the server welcomed us.
 // TCP connections the game opens to this address are sent to that port.
