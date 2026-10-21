@@ -42,6 +42,12 @@ permits native play. Saved choices are written atomically to
 `graphics-settings.json`; the launcher validates and imports them at startup
 and before launching again. Unrelated configuration and profile data remain.
 
+The native macOS app also updates its external `forza.toml` on Save, since it
+starts without the Python launcher. Mac-only choices include native 720p output
+and MetalFX Temporal/Spatial reconstruction at 1440p or 4K output. Unsupported
+MetalFX output sizes are rejected before rebuilding the renderer. At 720p,
+presets retain a native 1x scene and adjust filtering.
+
 Validation: the combined Windows TU4 build was tested on an RTX 5060 Ti using
 disposable copied saves at 2560x1440 with a 120 FPS cap. MSAA 720p scene/native
 1440p HUD, MSAA 1440p, SMAA 1440p and DLSS changes were exercised. Changing a
@@ -61,7 +67,7 @@ its range to include long hitches. Stale samples expire when frames stop.
 
 White text appears at the top right without a background, border or input focus.
 The optional graph is transparent. It uses an installed bold font (Arial Bold
-on Windows or DejaVu Sans Condensed Bold on Linux), falling back to the SDK font.
+on Windows and macOS or DejaVu Sans Condensed Bold on Linux), falling back to the SDK font.
 It does not use the game's proprietary vector font. SDK patch 0078 allows this
 passive dialog to draw with game frames without driving continuous presenter
 redraws; interactive dialogs keep their existing input/animation repainting.
