@@ -302,6 +302,55 @@ Git. These are cooperative one-client tests, not proof of remote admission or
 resistance to modified clients. Ownership confirmation for gift suppression is
 explicitly manual in this first organizer workflow.
 
+### Two-client free-roam validation
+
+Two independent disposable TU4 clients used one loopback `--event-unlocks`
+server, separate UDP ports, saves/caches, online XUIDs and credentials. Both were
+explicitly enrolled and owned all seven unicorns; only EventEarned received the
+organizer's Saleen 1197 grant. The local deny/grant test override was unset.
+
+* Before its award, the host's Saleen was denied. Actual session attendance and
+  the organizer award allowed that same car to load. Delivery stayed `owned`,
+  with no gift or duplicate car. The unlock survived a client restart.
+* EventUnearned joined the running world in an ordinary native rental (Scion on
+  the first run, Ford GT on the repeat). Its lobby displayed EventEarned's Saleen;
+  the server reported both humans in the same world and relayed their traffic.
+* After End Free Roam returned both clients to the lobby, EventUnearned selected
+  its owned Saleen. The native check denied it, displayed Event Unlock Required,
+  and retained local model 1197/status 2. The host continued to launch and drive
+  its Saleen with status 4; the rejected choice did not freeze the host.
+* This exposed a recovery defect: the running-world lobby replaces Select Car
+  with Jump In, whose native preflight looped No Cars Available for status 2.
+  The fix retains the exact local policy-rejected game/player/model. Only the
+  two launch callbacks, in mode 7 with a running world and that same rejected
+  local status, reopen the existing World picker and stop that launch attempt.
+  The automatic lobby-construction preflight is deliberately not redirected.
+* On the rebuilt client, Jump In reopened Garage Select. Selecting owned Lancer
+  1009 was accepted, and a subsequent Jump In loaded it with status 4 into the
+  host's still-running world. Native memory and the rendered Lancer confirmed
+  recovery. Existing native menu construction/return paths can still show the
+  old No Cars Available notice for an invalid choice; the launch action now
+  provides the recovery picker.
+* The rewarded host switched Saleen 1197 -> Lancer 1009 -> Saleen 1197 through
+  End Free Roam and Select Car, loading each with status 4 while the unearned
+  player remained in the shared session. The server database still contained
+  exactly one active grant for EventEarned and none for EventUnearned.
+
+The explicit `FORZA_LIVE_IDENTITY_FILE` development override is necessary here:
+different `user_data_root` save directories alone still use the installation's
+shared online identity. Its normal default path remains unchanged.
+
+Both clients left multiplayer normally and were closed before authenticated
+garage audits. Each retained all seven unicorns exactly once; source fixture
+inventories were unchanged. TU4/disc compilation, policy/cache assertions and
+the private TU4 link passed. Receipts, process logs and memory snapshots are in
+`build/two-client-events-20261020/`, outside Git.
+
+These tests cover ordinary join in progress and lobby selection/recovery with
+two cooperating local clients. They do not establish an in-world garage change,
+an unearned unicorn already selected before an initial join, remote validation
+against modified clients, all seven model assets, invites or host migration.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with

@@ -152,11 +152,21 @@ boundary. The organizer pins a verified credential instead of trusting an XUID
 header, but HELLO still carries that credential over the existing unencrypted
 protocol. This is a cooperative community-server feature, not secure account
 authentication against an on-path attacker or anti-cheat. Modified clients can
-lie about session membership/cars or ignore the local gate. Remote-car admission,
-join-in-progress, in-world changes and revocation of an already-driving car still
-need independent multi-client/native validation before claiming full enforcement.
+lie about session membership/cars or ignore the local gate. Two local TU4 clients
+have exercised shared free roam, ordinary join in progress, an earned Saleen,
+denied joiner selection, recovery to a Lancer, and lobby car changes (see
+`unicorn_online_rewards.md`). In-world garage changes, remote-car enforcement
+against a modified client and revocation of an already-driving car still need
+independent validation before claiming full enforcement.
 The first release does not automatically award race finishes, migrate grants
 between servers, or recover an identity from a new key.
+
+For isolated multi-client development, set `FORZA_LIVE_IDENTITY_FILE` to a
+different private identity file for each process, along with separate save/cache
+roots and `FORZA_NET_PORT` values. Changing `user_data_root` alone does not change
+the installation's online identity. The explicit file override preserves the
+normal default identity location; never commit its credential contents or the
+disposable profiles.
 
 ## Checks
 

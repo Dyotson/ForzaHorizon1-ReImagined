@@ -22,6 +22,8 @@ extern "C" REX_FUNC(__imp__sub_829457A0);
 extern "C" REX_FUNC(__imp__sub_828653D8);
 extern "C" REX_FUNC(__imp__sub_827931E8);
 extern "C" REX_FUNC(__imp__sub_82675B00);
+extern "C" REX_FUNC(__imp__sub_8279D608);
+extern "C" REX_FUNC(__imp__sub_827B2048);
 
 namespace {
 uint32_t Read32(uint8_t* base, uint32_t address) {
@@ -41,6 +43,10 @@ uint64_t NowMs() {
 std::atomic<uint64_t> denial_until{0};
 std::atomic<forza::EventPermission> denial_reason{forza::EventPermission::Denied};
 std::atomic<bool> denial_test{false};
+// A rejected World choice may outlive the countdown: the other players can
+// launch while this player remains in the lobby. Retain the precise rejected
+// choice so Jump In can reopen the picker instead of looping No Cars Available.
+std::atomic<uint32_t> rejected_game{0}, rejected_player{0}, rejected_model{0};
 thread_local uint32_t event_dialog = 0;
 thread_local forza::EventPermission dialog_reason = forza::EventPermission::Denied;
 thread_local bool dialog_test = false;
@@ -113,6 +119,9 @@ extern "C" REX_FUNC(sub_829457A0) {
   const uint32_t descriptor = Read32(base, player + 0xD4);
   if (!descriptor) return;
   const uint32_t model = Read32(base, descriptor + 8);
+  rejected_game.store(0);
+  rejected_player.store(0);
+  rejected_model.store(0);
   const bool native_result = ctx.r3.u8 != 0;
   const auto permission = forza::LiveEventPermission(model);
   if (mode == forza::unicorn::TestMode::Off && permission == forza::EventPermission::Unrestricted) return;
@@ -132,10 +141,44 @@ extern "C" REX_FUNC(sub_829457A0) {
                 model, online_mode, native_result, denied, ctx.r3.u8 != 0, int(permission));
   }
   if (denied && native_result) {
+    rejected_game = game;
+    rejected_player = player;
+    rejected_model = model;
     denial_reason.store(server_denied ? permission : forza::EventPermission::Denied);
     denial_test.store(!server_denied && test_denied);
     denial_until.store(NowMs() + 5000);
   }
+}
+
+// The two native launch callbacks call this preflight before starting/loading.
+// Only a previously policy-rejected local World choice gets this recovery.
+// Calling the normal World picker preserves its callbacks and eligibility check.
+extern "C" REX_FUNC(sub_8279D608) {
+  const uint32_t caller = uint32_t(ctx.lr);
+  if ((caller == 0x8279D710 || caller == 0x8279D7D0) &&
+      rejected_game && forza::NetworkOn()) {
+    const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
+    if (game == rejected_game && Read32(base, ctx.r3.u32 + 0x174) == game &&
+        Read32(base, game + 0x28) == 7 && Read32(base, game + 0x30) == 1) {
+      const PPCContext saved = ctx;
+      ctx.r3.u64 = game;
+      __imp__sub_828653D8(ctx, base);
+      const uint32_t player = ctx.r3.u32;
+      ctx = saved;
+      if (player == rejected_player) {
+        const uint32_t status = Read32(base, player + 0xD0);
+        const uint32_t descriptor = Read32(base, player + 0xD4);
+        if (status && descriptor && forza::GuestPtr(base, status)[6] == 2 &&
+            Read32(base, descriptor + 8) == rejected_model) {
+          REXLOG_INFO("UNICORN REWARD: Jump In reopening rejected World car selection");
+          __imp__sub_827B2048(ctx, base);
+          ctx.r3.u64 = 1;  // Stop the launch callback while the picker is open.
+          return;
+        }
+      }
+    }
+  }
+  __imp__sub_8279D608(ctx, base);
 }
 
 // TU4 popup 19 is RuleChangeInvalidatedCar; 24 is NoCarsAvailable, used when
