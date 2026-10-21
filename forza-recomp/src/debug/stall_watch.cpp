@@ -16,8 +16,9 @@
 // cut short or a frame behind, but nothing is suspended or signalled, so the watchdog
 // cannot deadlock the game or stop it in a lock. Only these two threads, which live for
 // the whole session: a stack of a thread that exits is released, and reading it could
-// fault. The host side is not sampled: another thread's host stack can only be taken by
-// interrupting it with a signal.
+// fault. The app stops and joins the watchdog before terminating the title, and before
+// destroying its runtime. The host side is not sampled: another thread's host stack
+// can only be taken by interrupting it with a signal.
 //
 // Nothing is logged in the first 60 s after the first frame (boot and the first loads).
 // At most one chain dump every 10 s and 50 a session, at most 100 "frame took" lines a
@@ -37,7 +38,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <mutex>
 #include <string>
 #include <thread>
 
@@ -86,11 +86,12 @@ void LogThread(const char* name, uint32_t handle) {
   if (!line.empty()) REXLOG_WARN("FORZA_STALL:   {} {}", name, line);
 }
 
-void Watch() {
+void Watch(const std::atomic<bool>& stop) {
   int dumps = 0;
   int64_t last_dump = 0, seen_gap = 0;
-  for (;;) {
+  while (!stop.load(std::memory_order_relaxed)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    if (stop.load(std::memory_order_relaxed)) return;
     const int64_t first = g_first_swap.load(), last = g_last_swap.load();
     const int64_t now = Now();
     if (!first || !last || now - first < kGrace || now - last < kStall) continue;
@@ -117,9 +118,16 @@ void Watch() {
 
 }  // namespace
 
-void Start() {
-  static std::once_flag once;
-  std::call_once(once, [] { std::thread(Watch).detach(); });
+void Watchdog::Start() {
+  if (worker_.joinable()) return;
+  stop_.store(false, std::memory_order_relaxed);
+  worker_ = std::thread([this] { Watch(stop_); });
+}
+
+void Watchdog::Stop() {
+  if (!worker_.joinable()) return;
+  stop_.store(true, std::memory_order_relaxed);
+  worker_.join();  // Includes any in-flight DescribeGuestThread/guest stack reads.
 }
 
 void OnGuestSwap() {
