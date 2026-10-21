@@ -6,8 +6,8 @@ from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QProgressBar,
                                QPushButton, QSpinBox, QVBoxLayout)
 
-from .. import save_editor
-from .widgets import label
+from .. import save_editor, garage
+from .widgets import Disclosure, label
 
 
 class ProfileEditor(QDialog):
@@ -54,6 +54,17 @@ class ProfileEditor(QDialog):
         layout.addLayout(form)
         layout.addWidget(label('A full backup is kept before applying changes. Wristband selects the festival tier; '
                                'XP is edited separately. This does not complete races, change level or award cars.', 'muted'))
+        unicorns = Disclosure('Unicorn cars')
+        unicorns.content.addWidget(label(
+            'Add the seven rare cars to this selected save: Honda CR-X, Ferrari Dino, Lotus Elan, '
+            'Ford Fiesta, Saleen S5S, Mazda MX-5 Superlight and MINI JCW Coupé.', 'muted'))
+        unicorns.content.addWidget(label(
+            'A full backup is kept before editing the garage. Only missing models are added; '
+            'existing cars, upgrades and tuning are preserved.', 'muted'))
+        self.unicorn_button = QPushButton('Add missing unicorns')
+        self.unicorn_button.clicked.connect(self.add_unicorns)
+        unicorns.content.addWidget(self.unicorn_button)
+        layout.addWidget(unicorns)
         self.message = label('Reading and checking the encrypted profile…', 'muted')
         layout.addWidget(self.message)
         self.progress = QProgressBar()
@@ -79,6 +90,7 @@ class ProfileEditor(QDialog):
         for control in self.controls.values():
             control.setEnabled(not busy and self.document is not None)
         self.apply_button.setEnabled(not busy and self.document is not None)
+        self.unicorn_button.setEnabled(not busy and self.document is not None)
         self.reload_button.setEnabled(not busy)
         self.close_button.setText('Cancel' if busy else 'Close')
 
@@ -128,14 +140,37 @@ class ProfileEditor(QDialog):
         self.page._run('Opening profile editor…', lambda t: save_editor.load(self.cfg, self.profile, t.cancelled),
                        self._loaded, failed=self._failed)
 
-    def apply(self):
-        if self.document is None or self.page.busy():
-            return
+    def _changes(self):
         changes = {}
         for path, control in self.controls.items():
             value = control.currentData() if control is self.wristband else control.value()
             if value != self.document.values[path].value:
                 changes[path] = value
+        return changes
+
+    def add_unicorns(self):
+        if self.document is None or self.page.busy():
+            return
+        if self._changes():
+            self.message.setText('Apply your profile changes or reload before adding cars.')
+            return
+        document = self.document
+        self._set_busy(True)
+        self.message.setText('Checking the garage and backing up before adding missing cars…')
+
+        def complete(result):
+            message = (f'Added {len(result.added)} unicorn car(s). {len(result.already_owned)} already owned. '
+                       'A “Before adding unicorn cars” backup was kept.' if result.added else
+                       'All seven unicorn cars are already in this garage. Nothing was changed.')
+            self._loaded(document, message)
+
+        self.page._run('Adding unicorn cars…', lambda t: garage.add_missing(self.cfg, self.profile,
+                       t.cancelled, self.page._copy_progress(t)), complete, failed=self._failed)
+
+    def apply(self):
+        if self.document is None or self.page.busy():
+            return
+        changes = self._changes()
         if not changes:
             self.message.setText('No values have changed.')
             return
