@@ -262,3 +262,34 @@ linked and exported the entry point. A probe with real SDL virtual controllers
 verified trigger amplitudes, routing to guest users, unsupported-device rejection,
 body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
 USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.
+
+### Photo directory failures (#211)
+
+0097 keeps host directory-creation errors inside the existing guest filesystem
+failure path. `HostPathEntry::CreateEntryInternal` previously used the throwing
+`std::filesystem::create_directories` overload. A host filename rejected by Windows,
+a file occupying the directory name, or access denial could therefore unwind out
+of `NtCreateFile` and abort the process. The error-code overload logs the path and
+host error, then returns null; `VirtualFileSystem::OpenFile` already translates
+that failure to `X_STATUS_ACCESS_DENIED`. No exception catch or success fallback
+hides a failed save. The patch also makes cached host-existence checks non-throwing.
+
+Reproduced on Windows/D3D12 with a copied profile and an existing private TU4
+development host: take a normal-size photo and save it as `invalid:Photo1`.
+A private naming-dialog fixture supplied the text through the runtime's usual
+asynchronous completion; the baseline filesystem code was unchanged. The process
+aborted with `lr=831AD110` and all eleven guest return addresses matching the
+reporter's log. The reporter's actual filename and host error are unknown, so
+the colon is a demonstrated trigger rather than a claim about their input.
+
+With the candidate, that same native D3D12 save reports **FILE OPEN FAILED** and
+returns to the pause menu after dismissal, instead of aborting. A normally named
+photo on Vulkan reports **SAVE SUCCESSFUL** and writes its image, thumbnail and
+metadata to the copied profile. The source fixture's hashes are unchanged. These
+are development-host functional checks, not a full rebuild of current main, a
+photo-quality assessment, a large-photo upload test, or a reporter retest.
+
+`tools/tests/sdk-filesystem` builds the real-runtime test from
+`tools/test_vfs_host_errors.cpp` on Windows, in addition to #213's Linux coverage.
+The Windows SDK job runs it before packaging and caching the overlay. Full CI
+builds and reporter retesting remain necessary.
