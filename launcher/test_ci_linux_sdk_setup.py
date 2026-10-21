@@ -32,7 +32,7 @@ if [ "$name" = apt-cache ]; then
 fi
 '''
             for name in ("id", "apt-get", "apt-cache", "add-apt-repository", "sed", "sleep",
-                         "python3"):
+                         "python3", "curl"):
                 target = root / name
                 target.write_text(stub)
                 target.chmod(0o755)
@@ -58,8 +58,9 @@ fi
     def test_persistent_failure_stops_before_downloads(self):
         result, commands = self.run_setup(99)
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(sum(row.startswith("apt-get ") and "g++-14" in row for row in commands), 6)
+        self.assertEqual(sum(row.startswith("apt-get ") and "g++-14" in row for row in commands), 9)
         self.assertTrue(any(row.startswith("sed ") for row in commands))
+        self.assertTrue(any(row.startswith("curl ") for row in commands))
         self.assertFalse(any(row.startswith("python3 ") for row in commands))
 
     def test_failed_downloads_fall_back_to_old_host(self):
@@ -91,6 +92,19 @@ fi
         self.assertTrue(any(row.startswith("sed ") and "http://ppa.launchpad.net/" in row
                             for row in commands))
         self.assertEqual(sum(row.endswith(" update") for row in commands), 3)
+
+    def test_both_ppa_hosts_down_use_launchpad_files(self):
+        result, commands = self.run_setup(6)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        files = [row for row in commands if row.startswith("curl ")]
+        listed = [line for line in SCRIPT.with_name("ci_toolchain_debs.txt").read_text().splitlines()
+                  if line and not line.startswith("#")]
+        self.assertEqual(len(files), len(listed))
+        self.assertTrue(all("launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test/+files/" in row
+                            for row in files))
+        installs = [row for row in commands if row.startswith("apt-get ") and "install" in row]
+        self.assertIn(".deb", installs[-1])
+        self.assertEqual(sum(row.startswith("python3 ") for row in commands), 3)
 
     def test_reachable_ppa_keeps_its_host(self):
         result, commands = self.run_setup(0)
