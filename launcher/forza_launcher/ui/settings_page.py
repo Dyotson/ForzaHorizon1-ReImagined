@@ -355,6 +355,14 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+        shifter = self.cfg.settings.get("wheel_shifter", "off")
+        states["wheel_invert_clutch"] = (bool(self.cfg.settings.get("wheel_clutch", True)),
+                                         "Turn on Clutch pedal to adjust this setting.")
+        states["wheel_shifter_buttons"] = (shifter != "off", "Choose a shifter to set its buttons.")
+        states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_clutch_threshold"] = (
+            shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
+            "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")
 
         hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")

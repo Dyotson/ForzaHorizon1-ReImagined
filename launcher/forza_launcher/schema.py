@@ -268,6 +268,27 @@ add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "Untested on real wheels.", "Racing wheel", restart=True)
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+# Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
+add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
+    "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",
+    "Shifter and clutch")
+add("wheel_invert_clutch", "Invert clutch", "Controls", "bool", False,
+    "Turn on when the clutch works backwards.", "Shifter and clutch")
+add("wheel_shifter", "Shifter", "Controls", "choice", "off",
+    "H-pattern: the shifter's gear selects the gear (the game's manual transmission; no gear "
+    "is neutral). Sequential: its up and down buttons shift like the paddles.",
+    "Shifter and clutch",
+    choices=[("off", "None"), ("h", "H-pattern"), ("sequential", "Sequential")], restart=True)
+add("wheel_shifter_buttons", "Shifter buttons", "Controls", "str", "",
+    "e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18 (gears 1 to 7 and reverse) or up=..,down=.. "
+    "(sequential). Empty uses the Logitech Driving Force Shifter on a G29, G920 or G923.",
+    "Shifter and clutch", restart=True)
+add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
+    "H-pattern: a gear engages only with the clutch pressed; without it the car stays in neutral.",
+    "Shifter and clutch")
+add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
+    "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
+    lo=0.1, hi=1, step=0.05)
 
 KEYBINDS = [
     ("a", "A", "Semicolon,Space"), ("b", "B", "Quote,Backspace"), ("x", "X", "L"),
