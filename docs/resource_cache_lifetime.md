@@ -70,3 +70,36 @@ The PR description records the tested commit, game runtime provenance and
 completed runtime checks. CI does not compile or run the player-owned game.
 Reporter-specific online free-roam reproduction and before/after validation
 remain necessary before claiming #182 resolved.
+
+### The later streamed-block reports (#182/#232)
+
+The `82DDA3C4 82E10758 ...` chain is a different failure site from the original
+`0x8` / `82D2EC34` report. LR `82DDA118` calls `sub_82DD20C8` to relocate a
+streamed collision block. Its producer reads a `CCompressedCacheStream` into a
+new allocation and wraps it in `CRefCountedStreamedData`; the completion queue
+copies that owner before erasing its node. The owner's reference count is
+already atomic. Neither this relocation nor its queue handoff is one of this
+PR's guarded cache-copy sites. An upstream connection is possible, but the
+crash reports alone do not establish one or prove that this buffer was freed.
+
+`FORZA_RESOURCE_STREAM_TRACE=1` enables a separate TU4 diagnostic for this
+path. It reports short producer reads, compares the first 64 bytes at queue
+publication and relocation, and reports an owner destroyed before its message
+is consumed. Duplicate loads legitimately skip relocation; consumption is
+tracked separately so their destruction is not flagged. Ordinary reads and
+relocations are sampled; changed headers, short reads and destruction before
+consumption are always reported. Pending snapshots are
+bounded to 4,096 entries. The trace leaves all guest behavior unchanged and
+is disabled by default. Include the full log, rather than only its tail, when
+testing the later failure. This diagnostic is not an additional crash fix.
+
+On 21 October, an isolated development TU4 host linked both #177 and #184,
+including all 20 generated load/unload hook sites. With official DLC and a
+copied Golf R save, native FR26 (VW Dub Club) loading, race start, ordinary
+pause/retire and return to free roam completed. All 185 streamed reads were
+full-length; all 185 queued headers matched relocation; no repeated relocation
+or matching fault occurred. The cache guard executed. Both current ownership
+regressions were rebuilt and passed. Native event entry bypassed career
+progression, and this was offline Windows/NVIDIA testing with other game
+processes running, so it neither reproduces the reporter's public AMD session
+nor measures performance. Exact #232 coverage remains unconfirmed.
