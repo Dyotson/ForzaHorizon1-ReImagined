@@ -1,4 +1,4 @@
-"""The main window: Play, Photo gallery, Setup, Settings and About."""
+"""The main window: Play, Photo gallery, Setup, Settings, Controls and About."""
 import sys
 import threading
 
@@ -13,6 +13,8 @@ from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .controls_page import ControlsPage
+from .saves_page import SavesPage
 
 
 class MainWindow(QMainWindow):
@@ -29,11 +31,13 @@ class MainWindow(QMainWindow):
         self.session_plan = None
         self._last_start_error = None
         self._dlss_session_status = None
+        self._shader_warmup_status = None
         self._busy = False
         self._dlss_task = None
         self._dlss_prepared = None
         self._dlss_result = (False, "")
         self._close_after_dlss = False
+        self._close_after_game = False
         self.setWindowTitle(APP_NAME)
         icon = paths.asset("forza.ico" if sys.platform == "win32" else "logo.png")
         if icon.is_file():
@@ -83,12 +87,17 @@ class MainWindow(QMainWindow):
         self.settings = SettingsPage(cfg, self)
         self.about = AboutPage(cfg, self)
         self.gallery = GalleryPage(cfg, self)
+        self.controls = ControlsPage(cfg, self)
+        self.controls.haptics_changed.connect(self.update_haptics)
+        self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
+        self.saves = SavesPage(cfg, self)
         self.navs = QButtonGroup(self)
         for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
                                           ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery))):
+                                          ("Photo gallery", self.gallery), ("Controls", self.controls),
+                                          ("Saves", self.saves))):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -98,9 +107,13 @@ class MainWindow(QMainWindow):
             # beside Play in the sidebar without renumbering those destinations.
             if page is self.gallery:
                 sl.insertWidget(2, btn)
+            elif page is self.controls:
+                sl.insertWidget(5, btn)
             else:
                 sl.addWidget(btn)
             self.stack.addWidget(page)
+        sl.insertWidget(sl.indexOf(self.navs.button(self.stack.indexOf(self.about))),
+                        self.navs.button(self.stack.indexOf(self.saves)))
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
         self.version = QLabel(f"Launcher {__version__}")
@@ -164,6 +177,8 @@ class MainWindow(QMainWindow):
             self.about.refresh()
         elif i == 4:
             self.gallery.refresh()
+        elif self.stack.widget(i) is self.saves:
+            self.saves.refresh()
         self.status("")
 
     def refresh_all(self):
@@ -172,6 +187,11 @@ class MainWindow(QMainWindow):
         install, _ = game.find_game(self.cfg)
         self.version.setText(f"Launcher {__version__}\nGame: {game.game_version(install)}")
         self.write_toml()
+
+    def show_control_settings(self):
+        from .. import schema
+        self.settings.tabs.setCurrentIndex(schema.GROUPS.index('Controls'))
+        self.show_page(2)
 
     def status(self, text, error=False):
         self.footer.setText(text)
@@ -182,6 +202,9 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if not self.saves.shutdown():
+            e.ignore()
+            return
         if self.about.updates.busy():
             if self.about.updates.installing:
                 self.status("Installing the update. The launcher will restart when it's ready…")
@@ -210,8 +233,21 @@ class MainWindow(QMainWindow):
             self.status("Finishing photo tasks before closing…")
             e.ignore()
             return
+        if self.running():
+            self._close_after_game = True
+            self.stop_game()
+            self.status("Waiting for the game to close…")
+            e.ignore()
+            return
         # Installation flushed settings before handing off. Avoid writing the old config
         # over migrations made by a newly started Flatpak launcher.
+        service = getattr(self.session, 'haptics', None)
+        if service and service.running:
+            service.stop()
+            self.status('Releasing adaptive triggers…')
+            QTimer.singleShot(50, self.close)
+            e.ignore()
+            return
         if not self.about.updates.restarting:
             self.settings.flush()
         self.stop_game()
@@ -283,7 +319,7 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
-        if self.running() or self._dlss_task is not None:
+        if self.running() or self._dlss_task is not None or self.saves.busy() or self._busy:
             return
         install, looked = game.find_game(self.cfg)
         if install is None:
@@ -301,18 +337,30 @@ class MainWindow(QMainWindow):
         self._dlss_prepared = None
         try:
             plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t))
+        except (RuntimeError, OSError) as e:
+            self._start_failed(e)
+            return
+        self.saves.before_launch(plan, lambda: self._start_plan(plan))
+
+    def _start_failed(self, error):
+        if str(error) != self._last_start_error:
+            self._last_start_error = str(error)
+            paths.log_error("start the game", error)
+        self.play.show_message(f"Could not start the game: {error}\nLog: {paths.launcher_log()}", True, keep=True)
+
+    def _start_plan(self, plan):
+        try:
             session = game.Session(plan)
             session.start()
         except (RuntimeError, OSError) as e:
-            if str(e) != self._last_start_error:   # a player who presses Play again gets the same text, not a log line each time (#124)
-                self._last_start_error = str(e)
-                paths.log_error("start the game", e)
-            self.play.show_message(f"Could not start the game: {e}\nLog: {paths.launcher_log()}", True, keep=True)
+            self._start_failed(e)
             return
         self._last_start_error = None
         self.session = session
         self.session_plan = plan
         self._dlss_session_status = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         self.play.clear_message()
         if plan.notes:   # what the player set up but the game will not find (TU4, DLC): keep it in view
             self.play.show_message("The game is running. " + " ".join(plan.notes), True, keep=True)
@@ -392,6 +440,9 @@ class MainWindow(QMainWindow):
                 self.play.show_message(f"Could not set up NVIDIA DLSS: {message}", True, keep=True)
 
     def stop_game(self):
+        if self.saves.busy():
+            self.saves.cancel()
+            return
         if self._dlss_task is not None:
             self._dlss_task.cancel()
             self.status("Cancelling the DLSS download…")
@@ -399,19 +450,28 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.session.stop()
 
+    def update_haptics(self, settings):
+        if self.session and self.session.haptics:
+            self.session.haptics.update(settings)
+
     def _poll(self):
         if self.session is None:
             self.poll.stop()
             return
         code = self.session.poll()
         if code is None:
+            monitor = getattr(self.session, "shader_warmup", None)
+            warmup = monitor.poll() if monitor is not None else None
+            if warmup != self._shader_warmup_status:
+                self._shader_warmup_status = warmup
+                self.play.set_shader_warmup(warmup)
             status = dlss.session_status(self.session_plan)
             if status and status != self._dlss_session_status:
                 self._dlss_session_status = status
                 error, message = status
                 self.play.show_message(message, error, keep=error)
             return
-        if code == game.RELAUNCH_EXIT_CODE:
+        if code == game.RELAUNCH_EXIT_CODE and not self._close_after_game:
             try:
                 if self.session.relaunch():
                     return
@@ -421,6 +481,8 @@ class MainWindow(QMainWindow):
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         plan = self.session_plan
         self.play.clear_message()
         if not game.exit_is_crash(plan, code, stopped):
@@ -428,6 +490,9 @@ class MainWindow(QMainWindow):
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)
         self.play.refresh()
+
+        if self._close_after_game:
+            self.close()
 
 
 def run(argv):
@@ -437,11 +502,9 @@ def run(argv):
     app = QApplication([sys.argv[0]] + argv)
     app.setApplicationName("forza-reimagined-launcher")
     app.setDesktopFileName(paths.FLATPAK_ID or "forza-reimagined")
-    if paths.IN_FLATPAK:
-        # The portal's file chooser hands out /run/user/.../doc paths for the one file picked, so a
-        # Games on Demand package would lose its <name>.data folder. The Flatpak is given read access
-        # to the home folder and removable media instead, and the Qt dialog shows the real paths.
-        app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
+    # Qt file dialogs participate in controller navigation. In Flatpak they also keep
+    # the real paths needed for a Games on Demand package and its adjacent .data folder.
+    app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app.setStyleSheet(theme.QSS)
 
     def report(exc_type, exc, tb):
@@ -457,5 +520,10 @@ def run(argv):
     sys.excepthook = report
     threading.excepthook = lambda a: report(a.exc_type, a.exc_value, a.exc_traceback)
     win = MainWindow(Config())
+    from .gamepad import Navigation
+    navigation = Navigation(win)
+    app.aboutToQuit.connect(navigation.close)
     win.show()
+    win.play.play.setFocus()
+    QTimer.singleShot(0, navigation.start)
     return app.exec()
