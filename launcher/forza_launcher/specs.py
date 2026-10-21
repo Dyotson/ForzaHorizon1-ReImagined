@@ -508,8 +508,8 @@ def warnings(s: Specs, settings: dict) -> list:
                         f"{_gpu_label(s)} has little to spare; the game's own is cheaper.",
                         {"forza_antialiasing": "game"}))
     if s.avx2 is False:
-        out.append(Warn("", f"{_cpu_label(s)} is an older CPU without AVX2; the game runs much slower on it "
-                        "whatever the settings (#160)."))
+        out.append(Warn("", f"{_cpu_label(s)} is an older CPU without AVX2: expect a lower frame rate, "
+                        "above all in free roam; 30 fps is the safe choice."))
     if 0 < s.ram_gb < RAM_LOW_GB:
         out.append(Warn("", f"This PC has {_gb(s.ram_gb)} GB of RAM; the game wants 8 GB or more."))
     return out
