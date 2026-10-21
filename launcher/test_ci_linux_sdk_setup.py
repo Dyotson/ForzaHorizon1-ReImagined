@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).parent / "packaging/ci_linux_sdk_setup.sh"
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires a POSIX shell")
 class LinuxSdkSetupTests(unittest.TestCase):
-    def run_setup(self, failures):
+    def run_setup(self, failures, *args):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             log = root / "commands"
@@ -32,7 +32,7 @@ fi
             env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
                        CI_TEST_LOG=str(log), CI_TEST_COUNT=str(root / "count"),
                        CI_TEST_FAILURES=str(failures))
-            result = subprocess.run(["bash", str(SCRIPT)], env=env, text=True,
+            result = subprocess.run(["bash", str(SCRIPT), *args], env=env, text=True,
                                     capture_output=True, timeout=10)
             return result, log.read_text().splitlines()
 
@@ -57,6 +57,14 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sum("g++-14" in row for row in commands), 1)
         self.assertFalse(any(row.startswith("sleep ") for row in commands))
+
+    def test_cache_hit_installs_compiler_without_sdk_downloads(self):
+        result, commands = self.run_setup(0, "--compiler-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installs = [row for row in commands if row.startswith("apt-get ") and "install" in row]
+        self.assertTrue(any(row.endswith("install -y g++-14") for row in installs))
+        self.assertFalse(any("libvulkan-dev" in row for row in installs))
+        self.assertFalse(any(row.startswith("python3 ") for row in commands))
 
 
 if __name__ == "__main__":
