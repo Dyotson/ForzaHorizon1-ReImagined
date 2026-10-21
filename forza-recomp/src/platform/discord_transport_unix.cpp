@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <string>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -14,6 +15,11 @@
 
 namespace {
 struct Connection : BaseConnection { int socket = -1; } connection;
+#ifdef MSG_NOSIGNAL
+constexpr int kNoSignal = MSG_NOSIGNAL;
+#else
+constexpr int kNoSignal = 0;  // macOS uses SO_NOSIGPIPE on the socket instead.
+#endif
 #ifdef FORZA_DISCORD_TEST_TRANSPORT
 constexpr const char* kPrefix = "forza-discord-test-ipc-";
 #else
@@ -39,8 +45,21 @@ bool BaseConnection::Open() {
         struct stat st{};
         if (stat(path.c_str(), &st) || !S_ISSOCK(st.st_mode) || st.st_uid != getuid()) continue;
         std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
-        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0) return false;
+        const int status_flags = fcntl(fd, F_GETFL);
+        const int descriptor_flags = fcntl(fd, F_GETFD);
+        if (status_flags < 0 || descriptor_flags < 0 ||
+            fcntl(fd, F_SETFL, status_flags | O_NONBLOCK) < 0 ||
+            fcntl(fd, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+          close(fd); return false;
+        }
+#ifdef SO_NOSIGPIPE
+        const int no_sigpipe = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe))) {
+          close(fd); return false;
+        }
+#endif
         if (connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
           self->socket = fd; isOpen = true; return true;
         }
@@ -60,7 +79,7 @@ bool BaseConnection::Write(const void* bytes, size_t size) {
   auto* self = static_cast<Connection*>(this);
   if (self->socket < 0) return false;
   ssize_t sent;
-  do { sent = send(self->socket, bytes, size, MSG_NOSIGNAL); } while (sent < 0 && errno == EINTR);
+  do { sent = send(self->socket, bytes, size, kNoSignal); } while (sent < 0 && errno == EINTR);
   if (sent == ssize_t(size)) return true;
   // A partial write cannot be retried as a new frame. Disconnect and let the RPC
   // client's backoff/reconnect logic resend the most recent complete activity.
@@ -73,12 +92,12 @@ bool BaseConnection::Read(void* bytes, size_t size) {
   if (ioctl(self->socket, FIONREAD, &available)) { Close(); return false; }
   if (available < int(size)) {
     char check;
-    const auto peek = recv(self->socket, &check, 1, MSG_PEEK | MSG_NOSIGNAL);
+    const auto peek = recv(self->socket, &check, 1, MSG_PEEK | kNoSignal);
     if (peek == 0 || (peek < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) Close();
     return false;
   }
   ssize_t received;
-  do { received = recv(self->socket, bytes, size, MSG_NOSIGNAL); } while (received < 0 && errno == EINTR);
+  do { received = recv(self->socket, bytes, size, kNoSignal); } while (received < 0 && errno == EINTR);
   if (received == ssize_t(size)) return true;
   Close(); return false;
 }
