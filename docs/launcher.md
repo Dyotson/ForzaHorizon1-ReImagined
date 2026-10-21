@@ -237,8 +237,11 @@ with its MIT license and source revision included in
 bundled locally, so the guide works offline.
 
 The **DualSense adaptive triggers** card saves throttle resistance, brake
-resistance and overall intensity. Effects default off and can be changed during
-play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
+resistance and overall intensity. Effects default off. The launcher starts the
+loopback telemetry service only when either haptics option is enabled at game
+launch. If both were off, enabling an effect during play requires a game restart;
+Controls shows a restart hint. Once telemetry is running, effects can be changed
+during play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
 or DualSense Edge. This first version uses default-layout LT/RT inputs; RPM,
 tire slip, ABS and surface effects are not mapped yet. Status shows whether the
 controller and driving telemetry are ready. See [telemetry.md](telemetry.md) for

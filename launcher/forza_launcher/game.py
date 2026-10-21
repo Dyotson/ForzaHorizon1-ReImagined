@@ -687,7 +687,11 @@ class Session:
         env.pop('FORZA_TELEMETRY_PORT', None)
         env.pop('FORZA_TELEMETRY_TOKEN', None)
         from .haptics.service import HapticsService, supported, supports_xbox
-        if self.haptics is None and supported(plan.cwd):
+        wanted = plan.haptics_settings.get('enabled') or plan.haptics_settings.get('xbox_enabled')
+        if not wanted and self.haptics:
+            self.haptics.stop()
+            self.haptics = None
+        if wanted and self.haptics is None and supported(plan.cwd):
             try:
                 self.haptics = HapticsService(plan.haptics_settings, xbox_capable=supports_xbox(plan.cwd))
                 self.haptics.start()
@@ -695,13 +699,19 @@ class Session:
                 self.log(f'Adaptive triggers unavailable: {exc}')
         if self.haptics:
             env.update(self.haptics.new_stream())
-        elif plan.haptics_settings.get('enabled') or plan.haptics_settings.get('xbox_enabled'):
+        elif wanted:
             self.log('Controller haptics need a game build with the FH1 telemetry bridge.')
         try:
             self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
         except BaseException:
             self.cleanup()
             raise
+
+    def update_haptics(self, settings):
+        from .haptics.settings import normalize
+        self.plan.haptics_settings = normalize(settings)
+        if self.haptics:
+            self.haptics.update(self.plan.haptics_settings)
 
     def relaunch(self):
         """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running.
