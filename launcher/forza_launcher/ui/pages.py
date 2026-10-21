@@ -150,7 +150,13 @@ class PlayPage(QWidget):
             details.append(f"Online server: {PUBLIC_SERVER}")
         self.install_paths.setText("\n".join(details))
         ready = files_ok and install is not None
-        if self.window._dlss_task is not None:
+        save_page = getattr(self.window, 'saves', None)
+        if save_page is not None and save_page.busy():
+            self.play.setText("Preparing saves…")
+            self.play.setEnabled(False)
+            self.stop.setText("Cancel")
+            self.stop.show()
+        elif self.window._dlss_task is not None:
             self.play.setText("Preparing DLSS…")
             self.play.setEnabled(False)
             self.stop.setText("Cancel")

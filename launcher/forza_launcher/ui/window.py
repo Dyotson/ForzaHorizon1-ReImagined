@@ -14,6 +14,7 @@ from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
 from .controls_page import ControlsPage
+from .saves_page import SavesPage
 
 
 class MainWindow(QMainWindow):
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self._dlss_prepared = None
         self._dlss_result = (False, "")
         self._close_after_dlss = False
+        self._close_after_game = False
         self.setWindowTitle(APP_NAME)
         icon = paths.asset("forza.ico" if sys.platform == "win32" else "logo.png")
         if icon.is_file():
@@ -90,10 +92,12 @@ class MainWindow(QMainWindow):
         self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
+        self.saves = SavesPage(cfg, self)
         self.navs = QButtonGroup(self)
         for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
                                           ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery), ("Controls", self.controls))):
+                                          ("Photo gallery", self.gallery), ("Controls", self.controls),
+                                          ("Saves", self.saves))):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -108,6 +112,8 @@ class MainWindow(QMainWindow):
             else:
                 sl.addWidget(btn)
             self.stack.addWidget(page)
+        sl.insertWidget(sl.indexOf(self.navs.button(self.stack.indexOf(self.about))),
+                        self.navs.button(self.stack.indexOf(self.saves)))
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
         self.version = QLabel(f"Launcher {__version__}")
@@ -171,6 +177,8 @@ class MainWindow(QMainWindow):
             self.about.refresh()
         elif i == 4:
             self.gallery.refresh()
+        elif self.stack.widget(i) is self.saves:
+            self.saves.refresh()
         self.status("")
 
     def refresh_all(self):
@@ -194,6 +202,9 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if not self.saves.shutdown():
+            e.ignore()
+            return
         if self.about.updates.busy():
             if self.about.updates.installing:
                 self.status("Installing the update. The launcher will restart when it's ready…")
@@ -220,6 +231,12 @@ class MainWindow(QMainWindow):
         if not self.gallery.shutdown():
             self._close_after_gallery = True
             self.status("Finishing photo tasks before closing…")
+            e.ignore()
+            return
+        if self.running():
+            self._close_after_game = True
+            self.stop_game()
+            self.status("Waiting for the game to close…")
             e.ignore()
             return
         # Installation flushed settings before handing off. Avoid writing the old config
@@ -302,7 +319,7 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
-        if self.running() or self._dlss_task is not None:
+        if self.running() or self._dlss_task is not None or self.saves.busy() or self._busy:
             return
         install, looked = game.find_game(self.cfg)
         if install is None:
@@ -320,13 +337,23 @@ class MainWindow(QMainWindow):
         self._dlss_prepared = None
         try:
             plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t))
+        except (RuntimeError, OSError) as e:
+            self._start_failed(e)
+            return
+        self.saves.before_launch(plan, lambda: self._start_plan(plan))
+
+    def _start_failed(self, error):
+        if str(error) != self._last_start_error:
+            self._last_start_error = str(error)
+            paths.log_error("start the game", error)
+        self.play.show_message(f"Could not start the game: {error}\nLog: {paths.launcher_log()}", True, keep=True)
+
+    def _start_plan(self, plan):
+        try:
             session = game.Session(plan)
             session.start()
         except (RuntimeError, OSError) as e:
-            if str(e) != self._last_start_error:   # a player who presses Play again gets the same text, not a log line each time (#124)
-                self._last_start_error = str(e)
-                paths.log_error("start the game", e)
-            self.play.show_message(f"Could not start the game: {e}\nLog: {paths.launcher_log()}", True, keep=True)
+            self._start_failed(e)
             return
         self._last_start_error = None
         self.session = session
@@ -413,6 +440,9 @@ class MainWindow(QMainWindow):
                 self.play.show_message(f"Could not set up NVIDIA DLSS: {message}", True, keep=True)
 
     def stop_game(self):
+        if self.saves.busy():
+            self.saves.cancel()
+            return
         if self._dlss_task is not None:
             self._dlss_task.cancel()
             self.status("Cancelling the DLSS download…")
@@ -441,7 +471,7 @@ class MainWindow(QMainWindow):
                 error, message = status
                 self.play.show_message(message, error, keep=error)
             return
-        if code == game.RELAUNCH_EXIT_CODE:
+        if code == game.RELAUNCH_EXIT_CODE and not self._close_after_game:
             try:
                 if self.session.relaunch():
                     return
@@ -460,6 +490,9 @@ class MainWindow(QMainWindow):
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)
         self.play.refresh()
+
+        if self._close_after_game:
+            self.close()
 
 
 def run(argv):
