@@ -34,8 +34,8 @@ def database(owned=(309,), extra=False):
     return raw
 
 
-def envelope(data, spare=16384, overstate=0):
-    body = garage._deflate(data)
+def envelope(data, spare=16384, overstate=0, chunk_size=garage.CHUNK):
+    body = garage._deflate(data, chunk_size)
     iv = bytes(range(16))
     seed = struct.pack('>I',len(body)^save_editor.reduce(save_editor.operator.xor,struct.unpack('>4I',iv)))+iv
     payload = seed+save_editor._encrypt_cbc(KEYS[0],body+b'\xbb'*(-len(body)%16),iv)
@@ -83,6 +83,42 @@ class GarageTests(unittest.TestCase):
         self.assertEqual(garage._inflate(garage._deflate(data)),data)
         with self.assertRaises(saves.SaveError): garage._inflate(struct.pack('>III',2**31,1,1)+b'x')
         with self.assertRaises(saves.SaveError): garage._inflate(garage._deflate(data)[:-1])
+
+    def test_single_64k_block_and_larger_blocks_remain_bounded(self):
+        for chunk_size in (65536, 131072):
+            data = b'SQLite format 3\0'+bytes(chunk_size-16)
+            body = garage._deflate(data, chunk_size)
+            self.assertEqual(struct.unpack_from('>I', body, 8)[0], chunk_size)
+            self.assertEqual(garage._inflate(body, with_chunk_size=True), (data, chunk_size))
+        with self.assertRaises(saves.SaveError):
+            garage._inflate(struct.pack('>III', 65536, 1, garage.MAX_DATABASE+1)+b'x')
+        with self.assertRaises(saves.SaveError):
+            garage._deflate(data, garage.MAX_DATABASE+1)
+
+    def test_add_preserves_64k_garage_blocks_backup_and_noop(self):
+        with garage._open(database()) as db:
+            db.execute('CREATE TABLE Padding (payload BLOB)')
+            db.execute('INSERT INTO Padding VALUES (zeroblob(131072))')
+            db.commit()
+            data = db.serialize()
+        original = envelope(data, chunk_size=65536)
+        self.path.write_bytes(original)
+        before = garage.decode(self.profile, original, (KEYS,))
+        self.assertEqual(before.chunk_size, 65536)
+        self.assertEqual(garage.encode(before, before.database), original)
+        result = garage.add_missing(self.cfg, self.profile)
+        self.assertEqual(len(result.added), 7)
+        self.assertEqual((result.backup.path/'save/ForzaProfile/PlayerDatabase').read_bytes(), original)
+        updated = self.path.read_bytes()
+        after = garage.decode(self.profile, updated, (KEYS,))
+        self.assertEqual(after.chunk_size, 65536)
+        with garage._open(after.database) as db:
+            self.assertEqual(db.execute('SELECT length(payload) FROM Padding').fetchone()[0], 131072)
+            self.assertEqual(db.execute('SELECT value FROM OtherProgress').fetchone()[0], 'preserved')
+        self.assertFalse(garage.add_missing(self.cfg, self.profile).added)
+        self.assertEqual(self.path.read_bytes(), updated)
+        saves.restore(self.profile, result.backup)
+        self.assertEqual(self.path.read_bytes(), original)
 
     def test_add_preserves_rows_progress_companions_and_uses_unique_ids(self):
         result = garage.add_missing(self.cfg,self.profile)

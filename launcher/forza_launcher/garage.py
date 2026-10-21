@@ -39,6 +39,7 @@ class Document:
     database: bytes = field(repr=False)
     aes_key: bytes = field(repr=False)
     mac_key: bytes = field(repr=False)
+    chunk_size: int = CHUNK
 
 
 @dataclass(frozen=True)
@@ -57,19 +58,19 @@ def _keys(cfg):
                   bytes(((t[16+i] ^ owner[(i-1) % 8])+2*i) % 256 for i in range(32))) for t in tables)
 
 
-def _inflate(body):
+def _inflate(body, *, with_chunk_size=False):
     if len(body) < 12:
         raise saves.SaveError('Truncated garage compression header.')
     size = struct.unpack_from('>I', body)[0]
     if not 512 <= size <= MAX_DATABASE:
         raise saves.SaveError('Unsupported garage database size.')
-    out, pos = bytearray(), 4
+    out, pos, chunk_size = bytearray(), 4, 0
     while len(out) < size:
         if pos+8 > len(body):
             raise saves.SaveError('Truncated garage compression block.')
         compressed, unpacked = struct.unpack_from('>II', body, pos)
         pos += 8
-        if not 0 < unpacked <= CHUNK or len(out)+unpacked > size or not 0 < compressed <= len(body)-pos:
+        if not 0 < unpacked <= MAX_DATABASE or len(out)+unpacked > size or not 0 < compressed <= len(body)-pos:
             raise saves.SaveError('Invalid garage compression block.')
         decoder = zlib.decompressobj(-15)
         try:
@@ -79,16 +80,19 @@ def _inflate(body):
         if len(part) != unpacked or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
             raise saves.SaveError('Invalid compressed garage data length.')
         out.extend(part)
+        chunk_size = max(chunk_size, unpacked)
         pos += compressed
     if pos != len(body) or not out.startswith(b'SQLite format 3\0'):
         raise saves.SaveError('Unsupported garage database format.')
-    return bytes(out)
+    return (bytes(out), chunk_size) if with_chunk_size else bytes(out)
 
 
-def _deflate(database):
+def _deflate(database, chunk_size=CHUNK):
+    if not 0 < chunk_size <= MAX_DATABASE:
+        raise saves.SaveError('Unsupported garage compression block size.')
     result = bytearray(struct.pack('>I', len(database)))
-    for start in range(0, len(database), CHUNK):
-        part = database[start:start+CHUNK]
+    for start in range(0, len(database), chunk_size):
+        part = database[start:start+chunk_size]
         encoder = zlib.compressobj(6, zlib.DEFLATED, -15)
         compressed = encoder.compress(part)+encoder.flush()
         result.extend(struct.pack('>II', len(compressed), len(part)))
@@ -115,9 +119,9 @@ def decode(profile, raw, keys):
         cipher = payload[20:]
         ecb = profile_editor._aes_tools().aes_decrypt(aes, cipher, cbc=False)
         plain = bytes(a ^ b for a, b in zip(ecb, payload[4:20]+cipher[:-16]))
-        database = _inflate(plain[:length])
+        database, chunk_size = _inflate(plain[:length], with_chunk_size=True)
         _open(database).close()
-        return Document(profile, raw, database, aes, mac)
+        return Document(profile, raw, database, aes, mac, chunk_size)
     raise saves.SaveError('The garage integrity check failed. Nothing was changed.')
 
 
@@ -144,7 +148,7 @@ def _open(database):
 def encode(document, database):
     if database == document.database:
         return document.original
-    body = _deflate(database)
+    body = _deflate(database, document.chunk_size)
     iv = os.urandom(16)
     seed = struct.pack('>I', len(body) ^ profile_editor.reduce(profile_editor.operator.xor,
                        struct.unpack('>4I', iv)))+iv
