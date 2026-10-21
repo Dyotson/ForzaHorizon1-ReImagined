@@ -723,7 +723,8 @@ org.freedesktop.Sdk.Extension.llvm22//26.08`; big files go to `~/.cache/forza-fl
 
 Design: the app's runtime is `org.freedesktop.Sdk//26.08` itself (glibc 2.44, g++ 16 headers, cmake 4.4,
 ninja, python 3.14 are there at run time), and `org.freedesktop.Sdk.Extension.llvm22` (clang 22.1.8,
-accepted: the launcher needs >= 21) is declared as the app's extension with `autodownload`. The
+accepted: the launcher needs >= 21) is declared as the app's extension with `autodownload`. On SteamOS
+(the Steam Deck) the .tar.gz launcher has no C++ headers and points the player at this Flatpak (#135). The
 launcher runs from source with the SDK's python; PySide6-Essentials 6.12 and shiboken6 are pinned
 wheels in the manifest. `stage.py` copies what the launcher needs (launcher, tools, project sources,
 server, the CI-built SDK overlay, licenses; no game code, data or generated code) into
