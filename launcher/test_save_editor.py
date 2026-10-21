@@ -1,4 +1,5 @@
 """Synthetic authenticated profiles; no real game keys or save data in fixtures."""
+import sys
 from pathlib import Path
 import hmac
 import os
@@ -6,6 +7,8 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from forza_launcher import save_editor as editor, saves
 

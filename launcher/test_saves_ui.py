@@ -1,4 +1,5 @@
 """Qt save lifecycle checks using only disposable data and fake game processes."""
+import sys
 import os
 import importlib.util
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
@@ -14,6 +15,8 @@ try:
     from PySide6.QtWidgets import QApplication, QMessageBox
 except ImportError:
     QApplication = None
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from forza_launcher import game, saves
 from forza_launcher.config import Config
