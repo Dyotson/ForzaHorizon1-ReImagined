@@ -58,7 +58,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   **Friends (#92):** the server keeps your friends list; the game's friends list (who is
   online, what they are doing, joining a friend's game) shows only your friends. Press `F8`
   (`live_friends_key` in `forza.toml`) or hold the left stick press (`F` with `mnk_mode`)
-  to open the friends screen over the game; B or Escape closes it. Its tabs (LB/RB or
+  to open the friends screen over the game (Settings → Online → Controller friends shortcut
+  turns the left stick hold off for players who hold it while driving, #194); B or Escape closes it. Its tabs (LB/RB or
   Left/Right): **Friends**, **Requests** (asks you, or waiting for an answer), **Add
   friend** and **Blocked**. On Add friend, type part of a gamertag (keyboard) or press Y
   for the on-screen keyboard (D-pad moves, A types, X deletes, Y space, B done); it lists
