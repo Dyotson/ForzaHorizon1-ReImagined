@@ -484,6 +484,44 @@ seven unicorns exactly once, and verified the source inventories were unchanged.
 In-world club-loan coverage remains blocked by the loading failure. Private
 receipts, DLC copies and native traces are under `build/`, outside Git.
 
+### Borrowed-car loading fix (2026-10-21)
+
+The loading stall above was traced to the shared undamaged texture
+`game:\media\cars\nul_car_00\nodamage.xds`. Its first load through the car picker
+could inherit the temporary compressed GPU pool. The borrowed car retained the
+texture while the world loader waited in state 22 for that pool to empty: one
+716,800-byte GPU allocation remained live. An earlier diagnostic hypothesis about
+a club thumbnail was incorrect; the native resource name identified the mask.
+
+The TU4 resource-queue hook now assigns this exact shared texture to the fixed GPU
+pool before its first queued load. It changes only the unassigned/inherit-pool
+state under the native resource lock. Allocation, reference counting, failure
+handling and unloading remain native; no live texture is freed or retargeted.
+The hook is inactive for the disc build.
+
+The diagnostic candidate loaded the other player's Saleen (model 1197, shared car
+5) in a two-client Beaumont Circuit, with both clients reaching status 4. The
+Saleen drove and both clients retired to the lobby. A subsequent executable
+containing the actual production hook, including its resource lock and without
+the temporary resource tracing hooks, loaded the same loan in custom free roam
+(native mode 9). Both clients reached status 4; the other client used the ordinary
+Rabbit (1107). The compressed GPU pool drained to zero, the borrowed Saleen drove,
+and ending free roam returned both clients to the lobby. The unearned client's
+Club Garage unicorn choice still displayed Event Unlock Required and recovered
+to an ordinary rental before this run.
+
+The production hook compiled for TU4 and the disc build and linked into the
+isolated test executable. That executable uses the earlier private host baseline
+with the current eligibility wording and new resource hook; this is not a full
+native rebuild of the latest main. All 152 server tests pass. Both clients were
+closed normally and the authenticated audit preserved all seven unicorns exactly
+once in both garages, with source inventories unchanged. Screenshots, binary fixtures, DLC and raw
+traces remain under `build/`, outside Git.
+
+This resolves the earned-loan loading blocker. In-world Club Garage selection
+after entering free roam remains an explicit uncompleted acceptance check; the
+passing lobby-loan tests do not establish that callback's coverage.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with
