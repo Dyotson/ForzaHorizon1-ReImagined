@@ -1,0 +1,48 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -4966,8 +4966,27 @@
+           REXCVAR_GET(fh1_output_width), REXCVAR_GET(fh1_output_height));
+   }
+ 
+-  if (is_rasterization_done && normalized_color_mask && ui::vulkan::GetHdrOutputState().active)
+-    CaptureHdrScene();
++  bool hdr_menu_background = false;
++  if (is_rasterization_done && normalized_color_mask && ui::vulkan::GetHdrOutputState().active) {
++    const auto surface = regs.Get<reg::RB_SURFACE_INFO>();
++    const auto color = regs.Get<reg::RB_COLOR_INFO>();
++    const bool ui_target = surface.surface_pitch == 1280 &&
++        surface.msaa_samples == xenos::MsaaSamples::k1X &&
++        color.color_format == xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10;
++    const uint64_t shader = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
++    // FH1 enters the UI target before drawing the title/menu movie. Its first
++    // untextured backdrop draw is not the scene/HUD boundary: capturing there
++    // makes the entire movie look like UI to the difference mask (#214).
++    const bool menu_backdrop = ui_target && shader == 0xA39E23E2FD1F8A8Bull;
++    if (ui_target && shader == 0xCAE1DB68AFFA9D3Cull) {
++      const auto texture = regs.GetTextureFetch(0);
++      hdr_menu_background = texture.dimension == xenos::DataDimension::k2DOrStacked &&
++          texture.size_2d.width == 1279 && texture.size_2d.height == 719 &&
++          texture.format == xenos::TextureFormat::k_8_8_8_8_AS_16_16_16_16;
++    }
++    if (!menu_backdrop && !hdr_menu_background)
++      CaptureHdrScene();
++  }
+ 
+   // Create the pipeline (for this, need the render pass from the render target
+   // cache), translating the shaders - doing this now to obtain the used
+@@ -5360,6 +5379,14 @@
+             : VK_INDEX_TYPE_UINT32);
+     deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
+                                               0, 0, 0);
++  }
++
++  if (hdr_menu_background) {
++    // Include the decoded 1280x720 movie, but not the following logo, text or
++    // selection controls. The title movie need not have a preceding 3D draw.
++    // CaptureHdrScene's per-frame guard still permits only one snapshot.
++    hdr_scene_base_ = regs.Get<reg::RB_COLOR_INFO>().color_base;
++    CaptureHdrScene();
+   }
+ 
+   // Invalidate textures in memexported memory and watch for changes.
