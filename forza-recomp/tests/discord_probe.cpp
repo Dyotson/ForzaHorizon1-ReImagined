@@ -1,6 +1,7 @@
 #include "../src/platform/discord_model.h"
 #include <discord_rpc.h>
 #include <cassert>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -35,6 +36,12 @@ int main(int argc, char** argv) {
   if (argc == 1) { std::puts("Discord model PASS"); return 0; }
   // A local Discord-compatible IPC fixture exercises the actual pinned client.
   DiscordEventHandlers handlers{};
+  std::atomic<bool> fixture_saw_activity{false};
+  // Private fixture acknowledges receipt via an inbound event; finish only after
+  // it has observed the required activity, including the resend after reconnect.
+  static std::atomic<bool>* completed;
+  completed = &fixture_saw_activity;
+  handlers.joinGame = [](const char*) { completed->store(true); };
   handlers.ready = [](const DiscordUser*) { std::puts("READY"); std::fflush(stdout); };
   handlers.errored = [](int, const char*) { std::puts("ERROR"); std::fflush(stdout); };
   Discord_Initialize(argv[1], &handlers, 0, nullptr);
@@ -44,8 +51,8 @@ int main(int argc, char** argv) {
   presence.details = activity.details.c_str(); presence.state = activity.state.c_str();
   presence.startTimestamp = 1000;
   Discord_UpdatePresence(&presence);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
-  while (std::chrono::steady_clock::now() < deadline) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+  while (!fixture_saw_activity && std::chrono::steady_clock::now() < deadline) {
     Discord_RunCallbacks(); std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   std::fputs("IPC fixture polling complete\n", stderr);
@@ -54,5 +61,6 @@ int main(int argc, char** argv) {
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   Discord_Shutdown();
   std::fputs("IPC fixture shutdown complete\n", stderr);
+  assert(fixture_saw_activity && "fixture did not acknowledge the expected activity");
   std::puts("Discord IPC PASS");
 }

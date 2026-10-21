@@ -147,6 +147,9 @@ class DiscordTests(unittest.TestCase):
                                 if reconnect and index == 0 and body.get("args", {}).get("activity"):
                                     endpoint.close()
                                     break
+                                if body.get("args", {}).get("activity"):
+                                    endpoint.send(1, {"cmd": "DISPATCH", "evt": "ACTIVITY_JOIN",
+                                                      "data": {"secret": "fixture-observed-activity"}})
                 except EOFError:
                     pass
                 except BaseException as error:
