@@ -18,7 +18,7 @@
 #   unit      unit tests: server/test_*.py, launcher/test_*.py
 #   boot      the TU4 build to the main menu on a scratch profile (a copy of the Xenia save,
 #             $FORZA_XENIA_CONTENT, never ~/.local/share/forza) once per present_effect bilinear,
-#             cas, fsr, fsr3 (temporal, Performance at 1440p); the base build once. "Main menu
+#             cas, fsr, fsr3 (temporal, Performance at 1440p), smaa (SMAA 1x at 1440p, #132); the base build once. "Main menu
 #             reached" = the game still runs, its log has no fault, the frame rate is above
 #             5 fps and the window shows a changed, non-flat image after START (the title
 #             screen is gone). Needs Pillow and 10 GB of free memory.
@@ -167,6 +167,9 @@ game_run() {
     [ "$effect" = fsr3 ] && args=(--user_data_root="$ud" --present_effect=fsr --resolution=1440p
         --resolution_scale=2 --fh1_output_width=2560 --fh1_output_height=1440
         --fh1_upscaler=fsr3_performance)
+    [ "$effect" = smaa ] && args=(--user_data_root="$ud" --present_effect=fsr --resolution=1440p
+        --swap_post_effect=none --fh1_upscaler=smaa --fh1_scene_720p_native_hud=true
+        --fh1_native_scene_scale=2 --resolution_scale=2 --fh1_output_width=2560 --fh1_output_height=1440)
     [[ "$build" == *tu4* ]] && args+=(--update_data_root="${FORZA_UPDATE:-$ROOT/extracted/tu4}")
     GAME_DIR="$d"
     env "$@" FORZA_BUILD="$build" FORZA_XUID="$xuid" FORZA_FPSLOG=1 FORZA_LOG_LEVEL=info \
@@ -214,7 +217,7 @@ EOF
 
 check_boot() {
     local rc=0 summary="" cfg build effect d
-    for cfg in "linux-tu4 bilinear" "linux-tu4 cas" "linux-tu4 fsr" "linux-tu4 fsr3" "linux fsr"; do
+    for cfg in "linux-tu4 bilinear" "linux-tu4 cas" "linux-tu4 fsr" "linux-tu4 fsr3" "linux-tu4 smaa" "linux fsr"; do
         set -- $cfg; build=$1; effect=$2
         [ -x "$BUILD_ROOT/$build/forza" ] || { echo "no build $build"; rc=1; continue; }
         d="boot-$build-$effect"

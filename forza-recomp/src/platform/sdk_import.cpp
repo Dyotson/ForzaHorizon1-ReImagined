@@ -10,13 +10,17 @@
 
 namespace forza {
 
-GuestFunc SdkImport(const char* name) {
+void* SdkSymbol(const char* name) {
 #ifdef _WIN32
   static HMODULE runtime = GetModuleHandleA("rexruntime.dll");
-  return runtime ? reinterpret_cast<GuestFunc>(GetProcAddress(runtime, name)) : nullptr;
+  return runtime ? reinterpret_cast<void*>(GetProcAddress(runtime, name)) : nullptr;
 #else
-  return reinterpret_cast<GuestFunc>(dlsym(RTLD_NEXT, name));
+  return dlsym(RTLD_NEXT, name);
 #endif
+}
+
+GuestFunc SdkImport(const char* name) {
+  return reinterpret_cast<GuestFunc>(SdkSymbol(name));
 }
 
 }  // namespace forza

@@ -48,16 +48,19 @@ def add(*a, **k):
 
 # --- Display ---------------------------------------------------------------------------
 add("frame_rate", "Frame rate", "Display", "fps", 30,
-    "30 is the console's rate; 60 to 240 (60, 120, 144, ...) run the game faster. Physics and "
-    "race timing keep their speed (docs/framerate.md).", "Frame rate")
+    "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
+    "physics speed.", "Frame rate")
+add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
+    "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
+    "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
 add("video_mode_refresh_rate", "Guest refresh rate (Hz)", "Display", "float", 0.0,
     "0 picks it from the frame rate. Set it to override.", "Frame rate", lo=0, hi=480, step=1)
-add("fullscreen", "Fullscreen", "Display", "bool", True,
-    "Start in fullscreen (borderless at the desktop mode).", "Window")
+add("fullscreen", "Borderless fullscreen", "Display", "bool", True,
+    "Start in borderless fullscreen (recommended).", "Window")
 add("fullscreen_exclusive", "Exclusive fullscreen", "Display", "bool", False,
-    "Switch the display mode instead of staying borderless.", "Window")
+    "Start in exclusive fullscreen (switches the display mode).", "Window")
 add("window_width", "Window width", "Display", "int", 0,
     "Logical pixels for windowed mode. 0 uses the default.", "Window", lo=0, hi=8192, step=10)
 add("window_height", "Window height", "Display", "int", 0,
@@ -117,10 +120,10 @@ add("present_effect", "Upscaling filter", "Display", "choice", "bilinear",
     restart=True, legacy={"fsr2": "fsr"})
 add("fsr3_mode", "FSR 3 quality", "Display", "choice", "performance",
     "The scene's input size for AMD FSR 3: Quality 1/1.5 of the output per axis, Balanced 1/1.7, "
-    "Performance 1/2 (720p for 1440p), Native AA the output size; never below the game's native 1280x720, "
+    "Performance 1/2 (720p for 1440p); never below the game's native 1280x720, "
     "so at a 1080p output Balanced and Performance also use 720p. Only with the AMD FSR 3 filter.",
     "AMD FSR 3", choices=[("quality", "Quality"), ("balanced", "Balanced"),
-                          ("performance", "Performance"), ("native", "Native AA")], restart=True)
+                          ("performance", "Performance")], restart=True)
 add("fsr3_output_resolution", "FSR 3 output resolution", "Display", "choice", "1440p",
     "The reconstructed picture and native UI resolution for AMD FSR 3.", "AMD FSR 3",
     choices=[("1080p", "1920 x 1080"), ("1440p", "2560 x 1440"), ("4k", "3840 x 2160 (4K)")],
@@ -128,17 +131,24 @@ add("fsr3_output_resolution", "FSR 3 output resolution", "Display", "choice", "1
 if IS_WINDOWS:
     add("fh1_upscaler", "NVIDIA DLSS", "Display", "choice", "off",
         "Reconstruct the scene with NVIDIA's recommended input size for the selected mode, "
-        "or use output-sized input with DLAA. Menus, HUD and car labels stay at output resolution. "
+        "with integrated temporal anti-aliasing. Menus, HUD and car labels stay at output resolution. "
         "The scene uses an integer emulator scale, then resamples between scales; these modes may cost extra. "
         "Requires an RTX GPU; the NVIDIA runtime downloads automatically on first use.",
         "NVIDIA DLSS", choices=[("off", "Off"), ("quality", "Quality"), ("balanced", "Balanced"),
-                                ("dlss", "Performance"), ("dlaa", "DLAA (native input)")],
+                                ("dlss", "Performance")],
         platform="windows", restart=True)
     add("fh1_output_resolution", "Output resolution", "Display", "choice", "1440p",
         "The reconstructed picture and native UI resolution. Restart the game after changing it.",
         "NVIDIA DLSS", choices=[("1080p", "1920 x 1080"), ("1440p", "2560 x 1440"),
                                 ("4k", "3840 x 2160 (4K)")], platform="windows", restart=True)
 
+add("forza_antialiasing", "Anti-aliasing", "Display", "choice", "game",
+    "Game default preserves guest MSAA. SMAA 1x is spatial and needs no NVIDIA runtime. "
+    "DLAA and FSR Native AA are temporal at output resolution. A separate method is available "
+    "only with upscaling off; filtering occurs before the native HUD.", "Picture",
+    choices=[("game", "Game default (MSAA)"), ("smaa", "SMAA 1x"),
+             *([("dlaa", "NVIDIA DLAA")] if IS_WINDOWS else []),
+             ("fsr3_native", "FSR Native AA (TAA)")], restart=True)
 add("swap_post_effect", "Anti-aliasing post effect", "Display", "choice", "none",
     "FXAA on the final image.", "Picture",
     choices=[("none", "None"), ("fxaa", "FXAA"), ("fxaa_extreme", "FXAA extreme")], restart=True)
@@ -148,8 +158,8 @@ add("present_cas_additional_sharpness", "CAS extra sharpness", "Display", "float
     "0 to 1, for the CAS filter.", "Picture", lo=0, hi=1, step=0.05)
 add("present_dither", "Output dithering", "Display", "bool", False,
     "Dither the final image to hide banding.", "Picture", restart=True)
-add("native_2x_msaa", "Native 2x MSAA", "Display", "bool", True,
-    "Use the GPU's own 2x multisampling.", "Picture")
+add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
+    "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
 if IS_WINDOWS:
     add("gpu_backend", "Graphics API", "Display", "choice", "vulkan",
         "Vulkan includes this project's fixes and is recommended; Direct3D 12 is the SDK's own and "
@@ -187,7 +197,7 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
     "Keys stand in for a controller (the bindings below).", "Keyboard")
 add("mnk_mouse", "Mouse moves the right stick", "Controls", "bool", False,
-    "Look around (and aim the photo mode camera) with the mouse; the pointer is captured "
+    "Look around (and aim the Photo Mode camera) with the mouse; the pointer is captured "
     "while the game has focus. Off: the right stick comes from its keys only.", "Keyboard")
 add("mnk_sensitivity", "Mouse sensitivity", "Controls", "float", 1.0,
     "1.0 turns the right stick halfway at 1000 pixels a second.", "Keyboard",
@@ -347,6 +357,9 @@ add("vulkan_allow_present_mode_fifo_latest_ready", "Use FIFO latest ready", "Adv
     "refresh rate, if the driver offers it. Off: plain FIFO.", "GPU")
 add("store_shaders", "Keep a shader cache", "Advanced", "bool", True,
     "Fewer stutters the second time you play.", "GPU")
+add("vulkan_store_pipeline_cache", "Keep compiled Vulkan pipelines", "Advanced", "bool", True,
+    "Reuse local GPU driver data when preparing cached shaders at startup. Requires the shader "
+    "cache and Vulkan. New scenes may still compile shaders; driver changes rebuild the cache.", "GPU", restart=True)
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,
     "", "GPU")
 add("present_safe_area_x", "Safe area width %", "Advanced", "int", 90, "", "GPU",

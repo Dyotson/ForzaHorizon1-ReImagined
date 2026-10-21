@@ -205,7 +205,7 @@ class GalleryPage(QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         heading.addWidget(self.refresh_button)
         outer.addLayout(heading)
-        outer.addWidget(text_label("Your saved photo mode pictures, ready to view and export.", "pageLead"))
+        outer.addWidget(text_label("Your saved Photo Mode pictures, ready to view and export.", "pageLead"))
         controls = QHBoxLayout()
         self.location = text_label(name="muted")
         controls.addWidget(self.location, 1)

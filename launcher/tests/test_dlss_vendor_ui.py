@@ -57,6 +57,34 @@ class VendorControls(unittest.TestCase):
                 for key in ("gpu_backend", "resolution", "resolution_scale", "present_effect"):
                     self.assertEqual(self.page.rows[key].control.isEnabled(), not supported)
 
+    def test_separate_aa_disabled_while_upscaling_and_dlaa_vendor_gated(self):
+        aa = self.page.rows["forza_antialiasing"].control
+        self.assertFalse(aa.isEnabled())
+        self.page.set_value("fh1_upscaler", "off")
+        self.assertTrue(aa.isEnabled())
+        self.cfg.gpu["vendor"] = "amd"
+        self.page._apply_dependencies()
+        self.assertFalse(aa.model().item(aa.findData("dlaa")).isEnabled())
+        self.page.set_value("forza_antialiasing", "smaa")
+        self.page.set_value("present_effect", "fsr3")
+        self.assertEqual(self.cfg.settings["forza_antialiasing"], "game")
+        self.assertFalse(aa.isEnabled())
+
+    def test_scene_scale_disabled_for_native_aa_and_restored_for_msaa(self):
+        self.page.set_value("fh1_upscaler", "off")
+        self.cfg.settings["resolution_scale"] = 1
+        control = self.page.rows["resolution_scale"].control
+        for aa in ("smaa", "dlaa", "fsr3_native", "game", "smaa", "game"):
+            with self.subTest(aa=aa):
+                self.page.set_value("forza_antialiasing", aa)
+                self.assertEqual(control.isEnabled(), aa == "game")
+                self.assertEqual(control.property("dependencyEnabled"), aa == "game")
+                self.assertAlmostEqual(self.page.rows["resolution_scale"].graphicsEffect().opacity(),
+                                       1.0 if aa == "game" else 0.55)
+                self.assertEqual(self.cfg.settings["resolution_scale"], 1)
+        self.page.set_value("fh1_upscaler", "quality")
+        self.assertFalse(control.isEnabled())
+
     def test_stale_mode_does_not_change_native_settings_on_amd(self):
         self.cfg.gpu["vendor"] = "amd"
         self.cfg.settings.update(gpu_backend="d3d12", resolution="720p", resolution_scale=1)
