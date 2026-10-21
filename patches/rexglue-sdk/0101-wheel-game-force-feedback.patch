@@ -269,7 +269,7 @@ index 51dd35c..804ba27 100644
    std::chrono::steady_clock::time_point last_scan_{};
    std::chrono::steady_clock::time_point last_pump_{};
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 1fd18ca..f9a70f7 100644
+index 1fd18ca..5367b8a 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -6,16 +6,21 @@
@@ -295,7 +295,19 @@ index 1fd18ca..f9a70f7 100644
  #include <map>
  #include <string_view>
  
-@@ -91,16 +96,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
+@@ -41,8 +46,9 @@ REXCVAR_DEFINE_DOUBLE(wheel_deadzone, 0.0, "Input", "Steering deadzone, 0 to 0.5
+     .range(0.0, 0.5);
+ REXCVAR_DEFINE_DOUBLE(wheel_steer_offset, 0.05, "Input",
+                       "Steering pre-compensation, 0 to 0.3: the part of the game's full steering that "
+-                      "any wheel movement beyond a hair already gives, to cancel the game's own inner "
+-                      "steering deadzone for wheels (0: off)")
++                      "any wheel movement beyond a hair already gives, to cancel an inner steering "
++                      "deadzone (0: off). Only with wheel_900_steering off: full-range steering "
++                      "follows the wheel from the centre")
+     .range(0.0, 0.3);
+ REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
+ REXCVAR_DEFINE_BOOL(wheel_900_steering, true, "Input",
+@@ -91,16 +97,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
                        "0.1 to 1")
      .range(0.1, 1.0);
  REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
@@ -324,7 +336,7 @@ index 1fd18ca..f9a70f7 100644
  constexpr auto kScanEvery = std::chrono::milliseconds(500);
  constexpr auto kPumpEvery = std::chrono::milliseconds(2);
  
-@@ -231,6 +246,13 @@ struct WheelInputDriver::Wheel {
+@@ -231,6 +247,13 @@ struct WheelInputDriver::Wheel {
    int spring_fx = -1;
    int sine_fx = -1;
    bool sine_running = false;
@@ -338,7 +350,7 @@ index 1fd18ca..f9a70f7 100644
    std::string name;
    std::string guid;
    int num_axes = 0, num_buttons = 0, num_hats = 0;
-@@ -248,6 +270,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
+@@ -248,6 +271,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
      : InputDriver(window, window_z_order) {}
  
  WheelInputDriver::~WheelInputDriver() {
@@ -347,7 +359,7 @@ index 1fd18ca..f9a70f7 100644
    std::lock_guard lock(mutex_);
    for (auto& w : wheels_) {
      CloseLocked(*w);
-@@ -265,6 +289,7 @@ X_STATUS WheelInputDriver::Setup() {
+@@ -265,6 +290,7 @@ X_STATUS WheelInputDriver::Setup() {
      }
    }
    sdl_ready_ = true;
@@ -355,7 +367,7 @@ index 1fd18ca..f9a70f7 100644
    REXLOG_INFO("Wheel: driver ready (wheel_mode={})", REXCVAR_GET(wheel_mode));
    return X_STATUS_SUCCESS;
  }
-@@ -326,6 +351,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+@@ -326,6 +352,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
      return;
    }
    auto w = std::make_unique<Wheel>();
@@ -364,7 +376,7 @@ index 1fd18ca..f9a70f7 100644
    w->jid = jid;
    w->joy = joy;
    w->id = static_cast<DeviceId>(next_id_++ | (uint64_t(0x57) << 56));
-@@ -412,8 +439,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -412,8 +440,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
    }
    if (f & SDL_HAPTIC_AUTOCENTER) {
      SDL_SetHapticAutocenter(w.haptic, 0);  // the spring below centres instead
@@ -375,7 +387,7 @@ index 1fd18ca..f9a70f7 100644
      SDL_HapticEffect e{};
      e.type = SDL_HAPTIC_SPRING;
      e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
-@@ -445,15 +473,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -445,15 +474,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
        REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
      }
    }
@@ -402,7 +414,7 @@ index 1fd18ca..f9a70f7 100644
      // Light centring always, firmer while the game drives the motors hard.
      const float c = strength * (0.2f + 0.6f * motor);
      SDL_HapticEffect e{};
-@@ -464,15 +501,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -464,15 +502,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
      e.condition.right_coeff[0] = e.condition.left_coeff[0] = static_cast<Sint16>(c * 32767.0f);
      SDL_UpdateHapticEffect(w.haptic, w.spring_fx, &e);
    }
@@ -431,7 +443,7 @@ index 1fd18ca..f9a70f7 100644
      if (amp > 0.0f && !w.sine_running) {
        w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
      } else if (amp <= 0.0f && w.sine_running) {
-@@ -482,6 +530,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -482,6 +531,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
    }
  }
  
@@ -626,6 +638,23 @@ index 1fd18ca..f9a70f7 100644
  WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
    for (auto& w : wheels_) {
      if (w->id == id) {
+@@ -589,9 +826,13 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+   const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
+   const float as = std::fabs(s);
+   s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
+-  // The game has its own inner deadzone for wheels (and a 900 degree wheel turned 50 degrees is only
+-  // 5.5 percent of its range): everything beyond a hair already gives `off` of the full steering.
+-  const float off = static_cast<float>(REXCVAR_GET(wheel_steer_offset));
++  // An inner steering deadzone (and a 900 degree wheel turned 50 degrees is only 5.5 percent of its
++  // range): everything beyond a hair already gives `off` of the full steering. Not with full-range
++  // steering: the game then follows the wheel's angle from the centre (its wheel deadzones are its
++  // own options), and the step of `off` at the centre only made the car twitch left and right
++  // there (#219).
++  const float off =
++      REXCVAR_GET(wheel_900_steering) ? 0.0f : static_cast<float>(REXCVAR_GET(wheel_steer_offset));
+   if (off > 0.0f && std::fabs(s) > 0.001f) {
+     s = std::copysign(off + (1.0f - off) * std::fabs(s), s);
+   }
 diff --git a/src/kernel/xam/xam_input.cpp b/src/kernel/xam/xam_input.cpp
 index 80c3634..e9f0a6f 100644
 --- a/src/kernel/xam/xam_input.cpp
