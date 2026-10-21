@@ -1,5 +1,6 @@
 """Synthetic garage saves: no game-generated rows, assets, or key material."""
 import hmac
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import struct
@@ -180,7 +181,7 @@ class GarageTests(unittest.TestCase):
             with self.assertRaisesRegex(saves.SaveError,'changed'):garage.add_missing(self.cfg,self.profile)
         self.assertEqual(self.path.read_bytes(),self.original+b'changed externally')
 
-    def test_stock_lookup_uses_stock_markers_and_parent_ids(self):
+    def stock_database(self):
         db = sqlite3.connect(':memory:')
         self.addCleanup(db.close)
         db.row_factory = sqlite3.Row
@@ -206,6 +207,10 @@ class GarageTests(unittest.TestCase):
         for name in ('FrontBumper','RearBumper','Hood','SideSkirt','TireWidthFront','TireWidthRear','Weight','ChassisStiffness'):
             table('List_UpgradeCarBody'+name,'CarBodyID',320000,320008)
         table('List_UpgradeMotorParts','MotorID',999,1)
+        return db
+
+    def test_stock_lookup_uses_stock_markers_and_parent_ids(self):
+        db = self.stock_database()
         columns=[{'name':n,'type':'TEXT' if n in ('Guid','Thumbnail','OriginalOwner','LiveryFileName') else 'INT'} for n in garage.GARAGE_COLUMNS]
         row=STOCK_CAR(db,320,10,columns)
         self.assertEqual((row['Id'],row['CarId'],row['RimSizeFront'],row['Camshaft'],row['Transmission'],row['FrontBumper']),
@@ -216,3 +221,45 @@ class GarageTests(unittest.TestCase):
         self.assertEqual(len(row['Guid']),35)
         db.execute('INSERT INTO List_UpgradeBrakes VALUES (320008,320,1)')
         with self.assertRaisesRegex(saves.SaveError,'ambiguous'):STOCK_CAR(db,320,11,columns)
+
+    def test_base_disc_database_adds_all_seven_without_unicorn_flags(self):
+        db = self.stock_database()
+        db.execute('UPDATE Data_Car SET IsUnicorn=0')
+        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE name LIKE 'List_Upgrade%'")]
+        for cid, _, _ in unicorns.CARS:
+            if cid == 320:
+                continue
+            db.execute('INSERT INTO Data_Car SELECT ?,0,PerformanceIndex,Thumbnail FROM Data_Car WHERE Id=320', (cid,))
+            for table in tables:
+                names = [row[1] for row in db.execute(f'PRAGMA table_info("{table}")')]
+                if 'Ordinal' in names:
+                    values = ','.join('?' if name == 'Ordinal' else '"'+name+'"' for name in names)
+                    db.execute(f'INSERT INTO "{table}" SELECT {values} FROM "{table}" WHERE Ordinal=320', (cid,))
+        db.commit()
+        source = self.cfg.game_files()/'media/db/gamedb.slt'
+        with closing(sqlite3.connect(source)) as target:
+            db.backup(target)
+        source_before = source.read_bytes()
+        with patch.object(garage, 'stock_car', STOCK_CAR):
+            result = garage.add_missing(self.cfg, self.profile)
+        self.assertEqual(set(result.added), {cid for cid, _, _ in unicorns.CARS})
+        with garage._open(garage.decode(self.profile, self.path.read_bytes(), (KEYS,)).database) as edited:
+            self.assertEqual(edited.execute('SELECT count(*) FROM Career_Garage WHERE Id>50').fetchone()[0], 7)
+            self.assertEqual(edited.execute('SELECT count(*) FROM Career_Garage WHERE Id>50 AND Brakes=320007').fetchone()[0], 7)
+        self.assertEqual(source.read_bytes(), source_before)
+        saves.restore(self.profile, result.backup)
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_missing_model_and_non_allowlisted_model_are_refused(self):
+        db = self.stock_database()
+        with self.assertRaisesRegex(saves.SaveError, 'Unsupported unicorn'):
+            STOCK_CAR(db, 309, 1, [])
+        db.execute('DELETE FROM Data_Car')
+        db.commit()
+        with closing(sqlite3.connect(self.cfg.game_files()/'media/db/gamedb.slt')) as target:
+            db.backup(target)
+        with patch.object(garage, 'stock_car', STOCK_CAR):
+            with self.assertRaisesRegex(saves.SaveError, 'missing from the game database'):
+                garage.add_missing(self.cfg, self.profile)
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertFalse(saves.snapshots(self.profile)[0])

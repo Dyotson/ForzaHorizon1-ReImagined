@@ -185,8 +185,12 @@ def _stock_part(db, table, group, value, required=False):
 
 def stock_car(db, cid, ordinal, columns):
     """Build stock parts from the player's game database, never from another owned car."""
+    if cid not in {model for model, _, _ in unicorns.CARS}:
+        raise saves.SaveError('Unsupported unicorn car model.')
     car = db.execute('SELECT * FROM Data_Car WHERE Id=?', (cid,)).fetchone()
-    if car is None or not car['IsUnicorn']:
+    # The disc database has these models but leaves IsUnicorn unset. Only the
+    # explicit seven-model allowlist identifies this action's supported cars.
+    if car is None:
         raise saves.SaveError('The unicorn car is missing from the game database.')
     row = {c['name']: ('' if c['type'] == 'TEXT' else 0) for c in columns}
     for name in row.keys() & car.keys():

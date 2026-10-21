@@ -21,7 +21,10 @@ Message Center download, or game launch. Existing car rows, purchased parts,
 tuning, other progress tables, the selected car, and companion files are preserved.
 New stock parts and ratings come from the player's own `media/db/gamedb.slt`;
 no car records or game key bytes are bundled. The seven model IDs are explicit:
-`Data_Car.IsUnicorn` also includes nine barn finds, which this action does not add.
+the base-disc database leaves `Data_Car.IsUnicorn` unset, while the TU4 database
+also marks nine barn finds. Neither value is used to identify these seven models,
+and this action does not add barn finds. A normal base + TU4 install can use the
+base database without extracting the database from TU4's `media.zip`.
 
 Duplicate detection uses `Career_Garage.CarId`, including cars acquired by any
 other route. Existing duplicates are left alone. Each new garage row receives a
@@ -41,7 +44,8 @@ length is derived from the seed and bounded by both outer length and file capaci
 
 The plaintext begins with a big-endian uncompressed database size. Each subsequent
 block has big-endian compressed and uncompressed sizes, followed by raw DEFLATE;
-blocks contain at most 32 KiB of uncompressed data. Their concatenation is a SQLite
+the editor preserves the original block size, including 64 KiB blocks and larger
+blocks within its bounded database limit. Their concatenation is a SQLite
 database. The codec bounds decompression, requires exact block lengths and stream
 termination, and checks SQLite integrity before editing. Unknown garage schemas
 are refused. The known schema includes `MirroredPerformanceIndex`.
@@ -63,6 +67,14 @@ save change, bad integrity, or failed replacement leaves the current file in pla
 The full backup is available through the existing Saves restore action.
 
 ## Validation
+
+The base-disc flag regression covers all seven supported IDs with `IsUnicorn=0`,
+using the real stock-row builder. Missing records and IDs outside the allowlist
+are refused before a backup or replacement. A disposable copy of the installed
+game database with those flags cleared also added all seven to a copied native
+save; duplicate insertion was a no-op and backup restoration was byte-identical.
+The installed database and source save were unchanged. This latest check did not
+repeat in-game or multiplayer validation.
 
 `python -m unittest test_garage test_save_editor test_saves test_saves_ui` exercises
 synthetic authenticated saves, multiple compression blocks, overstated stream size,
