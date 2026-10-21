@@ -27,6 +27,7 @@ project's alone):
 | 0052 | Textures (Vulkan, Direct3D 12) | New setting `scaled_resolve_min_coverage_percent` (default 50; 0 = old behaviour): with a resolution scale above 1, a texture is loaded from the scaled resolve buffer only if resolves wrote at least that share of its guest memory range, not on any overlap of one page | A resolve that overlapped only the last mip pages of a 1024x1024 DXT5 texture made the whole texture a "scaled resolve" texture, read from a buffer that is zero where nothing was resolved: black (#77). Resolve targets are covered by their own resolve and stay scaled |
 | 0095 | Codegen: multiply-add | `fmadd`, `fmsub`, `fnmadd`, `fnmsub` and their single forms call `ppc_fma` instead of `std::fma`. It is defined in the generated `forza_pch.h` (template `codegen/_ppc_fma.inja`): the inline FMA instruction when the code is built with FMA; otherwise `std::fma` on a CPU with FMA (results unchanged) and a multiply, then an add, on one without (CPUID FMA and OSXSAVE, XCR0 AVX state; checked once at startup). `REX_PPC_FMA=0` forces the multiply-add, `REX_PPC_FMA=1` `std::fma` | On CPUs without FMA (Ivy Bridge and older, #160, #112) `std::fma` is a software routine: about 30 ns a call in the Windows CRT (1.4 ns with FMA), 9.6 ns in glibc. A race makes 30-40 million calls a second, most on the audio thread: the sound slowed down and frames stalled. The multiply-add may differ from the fused result in the last bit. The helper is in generated code, not the SDK headers, because Linux builds use the stock nightly headers |
 | 0096 | Codegen: headers as build outputs | The codegen custom command in the `generated/rexglue.cmake` template also lists the generated `<project>_pch.h` and `<project>_init.h` as outputs | The precompiled header and `main.cpp` knew those headers only from their depfiles, so ninja judged them up to date before codegen ran. When a new codegen tool changed `forza_pch.h` (0095), it was rewritten mid-build and every source compiled after it failed: "forza_pch.h has been modified since the precompiled header was built". A second build worked. Codegen rewrites `generated/rexglue.cmake` from this template on every run, so the fix belongs in the template |
+| 0097 | Host save directories | Use the error-code form of `create_directories`, log the host error, and return a failed create through the existing VFS status path. An already-present directory remains usable | Photo-save crash investigation (#211): the guest stack enters `NtCreateFile` with a directory-create request. A failed host directory creation previously threw an uncaught filesystem exception. Invalid Windows names and file/directory collisions reproduce that exception; the reporter's exact failing path is unknown. No public headers or class layouts change |
 
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
@@ -261,3 +262,38 @@ linked and exported the entry point. A probe with real SDL virtual controllers
 verified trigger amplitudes, routing to guest users, unsupported-device rejection,
 body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
 USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.
+
+### Photo directory failures (#211)
+
+0097 keeps host directory-creation errors inside the existing guest filesystem
+failure path. `HostPathEntry::CreateEntryInternal` previously used the throwing
+`std::filesystem::create_directories` overload. A host filename rejected by Windows,
+a file occupying the directory name, or access denial could therefore unwind out
+of `NtCreateFile` and abort the process. The error-code overload logs the path and
+host error, then returns null; `VirtualFileSystem::OpenFile` already translates
+that failure to `X_STATUS_ACCESS_DENIED`. No exception catch or success fallback
+hides a failed save. An already-existing host directory is accepted when there
+is no error, covering a directory appearing after the VFS scan.
+
+Reproduced on Windows/D3D12 with a copied profile and an existing private TU4
+development host: take a normal-size photo and save it as `invalid:Photo1`.
+A private naming-dialog fixture supplied the text through the runtime's usual
+asynchronous completion; the baseline filesystem code was unchanged. The process
+aborted with `lr=831AD110` and all eleven guest return addresses matching the
+reporter's log. The reporter's actual filename and host error are unknown, so
+the colon is a demonstrated trigger rather than a claim about their input.
+
+With the candidate, that same native D3D12 save reports **FILE OPEN FAILED** and
+returns to the pause menu after dismissal, instead of aborting. A normally named
+photo on Vulkan reports **SAVE SUCCESSFUL** and writes its image, thumbnail and
+metadata to the copied profile. The source fixture's hashes are unchanged. These
+are development-host functional checks, not a full rebuild of current main, a
+photo-quality assessment, a large-photo upload test, or a reporter retest.
+
+`tools/tests/sdk-filesystem` links the real SDK runtime without game files. It
+checks successful directory creation, a file/directory collision without throwing
+or altering existing data, no failed entry left in the VFS cache, a directory
+appearing after mounting, invalid Windows names returning a guest error, and a
+successful directory open after the failure. The Windows test fails with the old
+runtime and passes with the candidate. Both SDK CI builds run it before packaging
+and caching the overlay. Linux execution and the complete SDK builds require CI.
