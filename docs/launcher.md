@@ -137,6 +137,53 @@ executable. The shared `forza-recomp/resources/forza.ico` includes nine sizes fr
 resource into both base-game and TU4 builds. Existing game executables receive
 the icon on their next rebuild. See `forza-recomp/resources/README.md` to regenerate
 the icon from the project artwork.
+## Gamepad navigation
+
+The SDL controller backend leaves process signal handling to the host. On Linux,
+SIGTERM terminates the launcher normally instead of becoming a discarded SDL quit
+event. A subprocess regression test checks this; the CI window smoke test also has
+a forced-kill deadline and a five-minute step limit.
+
+The launcher accepts SDL-mapped controllers on Windows and Linux, including the Steam
+Deck's gamepad mode. Connect a controller, release its buttons/stick, and use:
+
+| Control (Xbox / PlayStation) | Action |
+| --- | --- |
+| D-pad or left stick up/down | Previous/next control; scrolls it into view |
+| Left/right | Change a list, dropdown, number or slider; otherwise move focus |
+| A / cross | Activate the focused button/toggle, or open a dropdown |
+| B / circle | Close a dropdown/dialog; otherwise return to Play |
+| LB/RB / L1/R1 | Previous/next launcher page (wraps) |
+
+Play starts focused. An orange outline marks the focused control, skipping page containers
+and descriptive labels. The focused action button carries an A badge; sidebar page tabs
+stay text-only. **Settings > Controls** shows launcher button hints and connected,
+paused, unavailable or disconnected status. When the separate controller-guide
+feature is installed, the same card appears on its **Controls** page alongside
+the diagrams and haptics. Settings resets preserve the status card.
+Shoulders follow the sidebar's visible page order. Left/right switches the Settings
+and Setup category tabs; search results support up/down, A to select and B to dismiss.
+Dropdowns use up/down and A to select, B to close.
+File pickers use Qt dialogs so controller focus works there too. Text entry still needs a
+keyboard or the system's on-screen keyboard. Steam Input users should select a gamepad
+layout; a mouse/keyboard layout continues to work through normal Qt input.
+
+Input is ignored while the launcher is inactive or the game is running. Reconnects and
+returning to the launcher require neutral input before another action. Directions repeat
+after 400 ms, then every 120 ms; action buttons never repeat. The left stick has a roughly
+49% dead zone. One controller is used at a time; unplugging it allows another to take over.
+Unsupported/unmapped devices do not prevent mouse/keyboard use. Initialization or read
+errors appear in Controls and in the launcher log.
+
+PySDL2 and `pysdl2-dll` supply the controller mappings/native runtime, with no SDL video or
+audio initialization. Both standalone bundles and the Flatpak include these dependencies.
+The Flatpak already grants controller device access. `launcher/test_gamepad.py` covers
+state/repeat logic, real SDL virtual-device mapping and hotplug, Qt focus and settings,
+modal dialogs, game launch signals and input suspension. Run it on either OS with
+`python -m unittest discover -s launcher -p 'test_gamepad.py' -v`; Qt tests use the offscreen
+platform. Release CI also runs `launcher/packaging/gamepad_smoke.py` through each frozen
+launcher to verify its bundled SDL library. These automated virtual-device checks do not
+replace a physical-controller/Steam Deck acceptance check.
 
 ## Controller guide
 

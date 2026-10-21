@@ -197,9 +197,13 @@ jobs:
           pyinstaller --noconfirm forza-launcher.spec
           dist/forza-launcher/forza-launcher --version
       - name: Smoke test the window
+        timeout-minutes: 5
         run: |
           sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3
-          QT_QPA_PLATFORM=offscreen timeout 10 launcher/dist/forza-launcher/forza-launcher || [ $? -eq 124 ]
+          QT_QPA_PLATFORM=offscreen python -m unittest discover -s launcher -p 'test_gamepad.py' -v
+          launcher/dist/forza-launcher/forza-launcher --run-script launcher/packaging/gamepad_smoke.py gamepad-smoke.txt
+          test -s gamepad-smoke.txt
+          QT_QPA_PLATFORM=offscreen timeout --kill-after=5s 10s launcher/dist/forza-launcher/forza-launcher || [ $? -eq 124 ]
       - name: Package
         run: |
           python launcher/packaging/make_package.py --platform linux \
@@ -232,9 +236,12 @@ jobs:
         shell: bash
         run: |
           pip install -r launcher/requirements.txt -r launcher/requirements-build.txt pillow
+          QT_QPA_PLATFORM=offscreen python -m unittest discover -s launcher -p 'test_gamepad.py' -v
           cd launcher
           pyinstaller --noconfirm forza-launcher.spec
           dist/forza-launcher/forza-launcher.exe --version
+          dist/forza-launcher/forza-launcher.exe --run-script packaging/gamepad_smoke.py gamepad-smoke.txt
+          test -s gamepad-smoke.txt
       - name: Smoke test the packaged window
         shell: bash
         run: python launcher/packaging/smoke_gui.py launcher/dist/forza-launcher/forza-launcher.exe

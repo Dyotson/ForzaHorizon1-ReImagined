@@ -226,6 +226,7 @@ def section_card(lay, title, index=None):
 
 class SettingsPage(QWidget):
     changed = Signal()
+    rebuilt = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -835,3 +836,4 @@ class SettingsPage(QWidget):
         self.stack.setCurrentIndex(cur)
         self._apply_dependencies()
         self.search.refresh()
+        self.rebuilt.emit()

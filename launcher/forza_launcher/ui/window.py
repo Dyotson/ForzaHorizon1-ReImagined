@@ -502,11 +502,9 @@ def run(argv):
     app = QApplication([sys.argv[0]] + argv)
     app.setApplicationName("forza-reimagined-launcher")
     app.setDesktopFileName(paths.FLATPAK_ID or "forza-reimagined")
-    if paths.IN_FLATPAK:
-        # The portal's file chooser hands out /run/user/.../doc paths for the one file picked, so a
-        # Games on Demand package would lose its <name>.data folder. The Flatpak is given read access
-        # to the home folder and removable media instead, and the Qt dialog shows the real paths.
-        app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
+    # Qt file dialogs participate in controller navigation. In Flatpak they also keep
+    # the real paths needed for a Games on Demand package and its adjacent .data folder.
+    app.setAttribute(_Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     app.setStyleSheet(theme.QSS)
 
     def report(exc_type, exc, tb):
@@ -522,5 +520,10 @@ def run(argv):
     sys.excepthook = report
     threading.excepthook = lambda a: report(a.exc_type, a.exc_value, a.exc_traceback)
     win = MainWindow(Config())
+    from .gamepad import Navigation
+    navigation = Navigation(win)
+    app.aboutToQuit.connect(navigation.close)
     win.show()
+    win.play.play.setFocus()
+    QTimer.singleShot(0, navigation.start)
     return app.exec()

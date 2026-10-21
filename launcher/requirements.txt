@@ -1,4 +1,6 @@
 PySide6-Essentials>=6.8,<7
+PySDL2>=0.9.17,<1
+pysdl2-dll>=2.32.10,<3
 hidapi>=0.15,<1; sys_platform != 'linux'
 # TLS: truststore lets Windows/macOS verify with the OS certificate store, certifi is the fallback bundle (#85)
 truststore>=0.10.4,<1
