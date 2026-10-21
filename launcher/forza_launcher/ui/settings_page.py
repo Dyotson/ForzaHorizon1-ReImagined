@@ -1,8 +1,8 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, Signal
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
@@ -140,7 +140,7 @@ def make_control(s: schema.Setting, value, on_change, note=None):
         w.setEditable(True)
         for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
-        w.lineEdit().setValidator(QIntValidator(1, 999))
+        w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
         w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
@@ -152,7 +152,9 @@ def make_control(s: schema.Setting, value, on_change, note=None):
         def changed(_=None, w=w):
             digits = "".join(c for c in w.currentText() if c.isdigit())
             if digits:
-                on_change(schema.coerce(s, int(digits)))
+                rate = schema.coerce(s, int(digits))
+                w.setEditText(f"{rate} fps")
+                on_change(rate)
         w.currentIndexChanged.connect(changed)
         w.lineEdit().editingFinished.connect(changed)
         return w
