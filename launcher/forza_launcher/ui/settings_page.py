@@ -183,7 +183,7 @@ class SettingRow(QWidget):
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
         col.addWidget(self.warning)
-        self.dependency = label("", "help")
+        self.dependency = label("", "reason")
         self.dependency.hide()
         col.addWidget(self.dependency)
         lay.addLayout(col, 1)
@@ -226,6 +226,7 @@ def section_card(lay, title, index=None):
 
 class SettingsPage(QWidget):
     changed = Signal()
+    rebuilt = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -353,6 +354,14 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+
+        hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
+        states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
+        for key in self.rows:
+            if key.startswith("present_hdr_"):
+                states[key] = (hdr_supported and bool(self.cfg.settings.get("present_hdr")),
+                               "Enable HDR output with Vulkan to adjust this setting.")
+
         for key, dep in DEPENDS.items():
             states[key] = (bool(self.cfg.settings.get(dep)), "")
         scaling = self.cfg.settings.get("fh1_upscaler", "off") != "off" or self.cfg.settings.get("present_effect") == "fsr3"
@@ -379,6 +388,10 @@ class SettingsPage(QWidget):
         if "resolution_scale" in self.rows:
             self.rows["resolution_scale"].control.setToolTip(
                 scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
+        states["vulkan_store_pipeline_cache"] = (
+            bool(self.cfg.settings.get("store_shaders")) and
+            self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan",
+            "Enable shader storage with Vulkan to keep compiled pipelines.")
         for s in schema.S:
             if s.key.startswith("keybind_"):
                 states[s.key] = (bool(self.cfg.settings.get("mnk_mode")), "")
@@ -831,3 +844,4 @@ class SettingsPage(QWidget):
         self.stack.setCurrentIndex(cur)
         self._apply_dependencies()
         self.search.refresh()
+        self.rebuilt.emit()
