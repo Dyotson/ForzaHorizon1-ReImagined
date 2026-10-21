@@ -451,8 +451,8 @@ class MainWindow(QMainWindow):
             self.session.stop()
 
     def update_haptics(self, settings):
-        if self.session and self.session.haptics:
-            self.session.haptics.update(settings)
+        if self.session:
+            self.session.update_haptics(settings)
 
     def _poll(self):
         if self.session is None:
