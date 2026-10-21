@@ -347,9 +347,46 @@ the private TU4 link passed. Receipts, process logs and memory snapshots are in
 `build/two-client-events-20261020/`, outside Git.
 
 These tests cover ordinary join in progress and lobby selection/recovery with
-two cooperating local clients. They do not establish an in-world garage change,
+two cooperating local clients. They do not establish
 an unearned unicorn already selected before an initial join, remote validation
 against modified clients, all seven model assets, invites or host migration.
+
+### In-world workshop follow-up (2026-10-21)
+
+The same two disposable profiles exposed a separate bypass in Dak's Garage:
+EventUnearned could select and drive its owned Saleen while in the shared world.
+The workshop accepts a database row through TU4 `sub_827C73F0`, without calling
+the lobby's per-player eligibility function. Its row's native `CarId` field is
+the model ordinal used by the server reward cache.
+
+The workshop callback now checks that permission before the native callback
+changes player choices, saves, or closes the picker. This guard requires an
+active multiplayer game; the single-player callback continues unchanged. A
+rejected choice opens the native OK dialog above the retained picker, with
+workshop-specific event-unlock text and the same pending/unavailable/enrollment
+messages as the lobby. It does not assign a rental or change lobby status.
+
+On the rebuilt client, with the local test override unset:
+
+* EventUnearned's owned Saleen 1197 was denied with Event Unlock Required. Its
+  original Fiat 1115 and status 4 remained intact. OK returned to the picker.
+* From that picker, owned Lancer 1009 was accepted and loaded into free roam
+  with status 4. The rendered Lancer confirmed the ordinary-car recovery.
+* EventEarned changed Saleen -> Lancer -> Saleen through the workshop. The
+  final Saleen was accepted with server permission Allowed, retained status 4,
+  and drove in the shared world. Both clients initially occupied the same
+  garage exit; moving the host clear confirmed the rendered Saleen separately.
+* The server still reported two humans in one world, exactly one active Saleen
+  grant for EventEarned, and zero grants for EventUnearned.
+
+TU4/disc compilation, policy/cache assertions and the private TU4 link passed.
+Both clients exited multiplayer normally and were closed before the final
+authenticated save audit. Both garages retained all seven unicorns exactly
+once, and the source-save inventories were unchanged. Private receipts are in
+`build/garage-unicorn-test-20261021/` and `build/two-client-events-20261020/`.
+This adds an owned-car workshop acceptance test, not authoritative enforcement
+against modified clients or validation of borrowed/clan cars and every game
+mode. Raw assets, screenshots, memory and disposable saves remain outside Git.
 
 ## Remaining native trace and acceptance criteria
 

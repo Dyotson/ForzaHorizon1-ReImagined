@@ -24,6 +24,8 @@ extern "C" REX_FUNC(__imp__sub_827931E8);
 extern "C" REX_FUNC(__imp__sub_82675B00);
 extern "C" REX_FUNC(__imp__sub_8279D608);
 extern "C" REX_FUNC(__imp__sub_827B2048);
+extern "C" REX_FUNC(__imp__sub_827C73F0);
+extern "C" REX_FUNC(sub_827931E8);
 
 namespace {
 uint32_t Read32(uint8_t* base, uint32_t address) {
@@ -50,6 +52,7 @@ std::atomic<uint32_t> rejected_game{0}, rejected_player{0}, rejected_model{0};
 thread_local uint32_t event_dialog = 0;
 thread_local forza::EventPermission dialog_reason = forza::EventPermission::Denied;
 thread_local bool dialog_test = false;
+thread_local bool workshop_dialog = false;
 
 // Same native reference-counted UTF-16 text construction used by graphics_menu.
 // The parameter object retains its own reference; neither scratch nor the caller's
@@ -95,6 +98,45 @@ forza::unicorn::TestMode Mode() {
   return mode;
 }
 }  // namespace
+
+// The in-world garage accepts a database row directly, bypassing the lobby's
+// per-player eligibility check. Check CarId before the native callback updates
+// the player's choices or closes the picker. Leave the old car and save intact.
+extern "C" REX_FUNC(sub_827C73F0) {
+  const uint32_t screen = ctx.r3.u32;
+  const uint32_t row = ctx.r4.u32;
+  const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
+  if (screen && row && forza::NetworkOn() && game &&
+      Read32(base, game + 0x28) && Read32(base, game + 0x30) == 1) {
+    PPCContext lookup = ctx;
+    lookup.r3.u64 = row;
+    lookup.r4.u64 = 0x82007E8C;  // Native database field name: CarId.
+    rex::runtime::ResolveIndirectFunction(Read32(base, Read32(base, row) + 0x14))(lookup, base);
+    const uint32_t model = lookup.r3.u32;
+    const auto permission = forza::LiveEventPermission(model);
+    const bool server_denied = permission != forza::EventPermission::Unrestricted &&
+                               permission != forza::EventPermission::Allowed;
+    const bool test_denied = forza::unicorn::TestDenies(
+        Mode(), true, Read32(base, game + 0x28), true, model);
+    REXLOG_INFO("UNICORN REWARD: workshop model {} denied {} permission {}",
+                model, server_denied || test_denied, int(permission));
+    if (server_denied || test_denied) {
+      denial_reason.store(server_denied ? permission : forza::EventPermission::Denied);
+      denial_test.store(!server_denied && test_denied);
+      denial_until.store(NowMs() + 5000);
+      const bool previous = workshop_dialog;
+      workshop_dialog = true;
+      lookup = ctx;
+      lookup.r3.u64 = screen;
+      lookup.r4.u64 = 24;  // Native OK dialog; retain the car picker underneath.
+      lookup.r5.u64 = screen;
+      sub_827931E8(lookup, base);
+      workshop_dialog = previous;
+      return;
+    }
+  }
+  __imp__sub_827C73F0(ctx, base);
+}
 
 extern "C" REX_FUNC(sub_829457A0) {
   const uint32_t player = ctx.r4.u32;
@@ -217,6 +259,11 @@ extern "C" REX_FUNC(sub_82675B00) {
               "This unicorn needs an event reward unlock for online free roam. "
               "Use Select Car to choose another car before joining. "
               "You can still use your unicorn in single player.";
+      if (workshop_dialog) {
+        message = "This unicorn needs an event reward unlock for multiplayer. "
+                  "Choose another car, or go back to keep your current car. "
+                  "You can still use your unicorn in single player.";
+      }
       if (dialog_reason == forza::EventPermission::Pending) {
         title = "CHECKING EVENT UNLOCKS";
         message = "Your event unlocks are being checked. Try Select Car again shortly, or choose another car. "
