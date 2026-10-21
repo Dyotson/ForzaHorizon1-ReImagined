@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_vfs_host_errors.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -78,6 +78,10 @@ jobs:
           clang++ -std=c++20 -pthread -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             tools/test_driver_pipeline_cache.cpp -o "$RUNNER_TEMP/driver-cache-test"
           "$RUNNER_TEMP/driver-cache-test"
+          overlay="$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64"
+          clang++ -std=c++23 -pthread -I"$overlay/include" tools/test_vfs_host_errors.cpp \
+            -L"$overlay/lib" -lrexruntime -Wl,-rpath,"$overlay/lib" -o "$RUNNER_TEMP/vfs-host-errors-test"
+          "$RUNNER_TEMP/vfs-host-errors-test"
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
       - name: Compile performance overlay against stock nightly headers
         run: |
