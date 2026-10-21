@@ -183,7 +183,7 @@ class SettingRow(QWidget):
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
         col.addWidget(self.warning)
-        self.dependency = label("", "help")
+        self.dependency = label("", "reason")
         self.dependency.hide()
         col.addWidget(self.dependency)
         lay.addLayout(col, 1)
@@ -379,6 +379,10 @@ class SettingsPage(QWidget):
         if "resolution_scale" in self.rows:
             self.rows["resolution_scale"].control.setToolTip(
                 scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
+        states["vulkan_store_pipeline_cache"] = (
+            bool(self.cfg.settings.get("store_shaders")) and
+            self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan",
+            "Enable shader storage with Vulkan to keep compiled pipelines.")
         for s in schema.S:
             if s.key.startswith("keybind_"):
                 states[s.key] = (bool(self.cfg.settings.get("mnk_mode")), "")

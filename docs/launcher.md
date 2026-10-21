@@ -138,6 +138,39 @@ resource into both base-game and TU4 builds. Existing game executables receive
 the icon on their next rebuild. See `forza-recomp/resources/README.md` to regenerate
 the icon from the project artwork.
 
+## Controller guide
+
+**Controls** in the sidebar opens a controller reference with Xbox, DualSense,
+and DualShock 4 artwork. Select a button, or Tab to it and press Space, to see its
+driving action and the matching Xbox prompt. The **All driving controls** section
+provides the same reference as text. The guide describes the default layout;
+the in-game control layout and transmission settings can change some actions.
+
+The controller selector changes the guide, not the game's bindings or prompts.
+**Control settings** opens Settings > Controls for the existing keyboard, mouse,
+player, and racing-wheel options.
+
+Artwork comes from [e7d/gamepad-viewer](https://github.com/e7d/gamepad-viewer),
+with its MIT license and source revision included in
+`launcher/forza_launcher/ui/controller_art/`. The images and button sprites are
+bundled locally, so the guide works offline.
+
+The **DualSense adaptive triggers** card saves throttle resistance, brake
+resistance and overall intensity. Effects default off and can be changed during
+play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
+or DualSense Edge. This first version uses default-layout LT/RT inputs; RPM,
+tire slip, ABS and surface effects are not mapped yet. Status shows whether the
+controller and driving telemetry are ready. See [telemetry.md](telemetry.md) for
+the protocol, hardware limitations and validation.
+
+**Xbox trigger vibration** adds separate LT brake and RT throttle vibration for
+Xbox One/Series controllers. Enable it and adjust overall intensity or either
+trigger independently. Normal body rumble continues through the game. Status
+reports whether the current controller/driver exposes impulse triggers, or
+whether the launcher and game need an update/rebuild. Xbox 360 controllers keep
+their normal body rumble. The default game control layout is required for the
+LT/RT effect mapping.
+
 ## Launcher updates
 
 **About > Launcher updates** checks the project's latest stable GitHub release and offers

@@ -1,4 +1,4 @@
-"""The main window: Play, Photo gallery, Setup, Settings and About."""
+"""The main window: Play, Photo gallery, Setup, Settings, Controls and About."""
 import sys
 import threading
 
@@ -13,6 +13,7 @@ from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .controls_page import ControlsPage
 from .saves_page import SavesPage
 
 
@@ -30,6 +31,7 @@ class MainWindow(QMainWindow):
         self.session_plan = None
         self._last_start_error = None
         self._dlss_session_status = None
+        self._shader_warmup_status = None
         self._busy = False
         self._dlss_task = None
         self._dlss_prepared = None
@@ -85,13 +87,16 @@ class MainWindow(QMainWindow):
         self.settings = SettingsPage(cfg, self)
         self.about = AboutPage(cfg, self)
         self.gallery = GalleryPage(cfg, self)
+        self.controls = ControlsPage(cfg, self)
+        self.controls.haptics_changed.connect(self.update_haptics)
+        self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
         self.saves = SavesPage(cfg, self)
         self.navs = QButtonGroup(self)
         for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
                                           ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery),
+                                          ("Photo gallery", self.gallery), ("Controls", self.controls),
                                           ("Saves", self.saves))):
             btn = QPushButton(name)
             btn.setObjectName("nav")
@@ -102,6 +107,8 @@ class MainWindow(QMainWindow):
             # beside Play in the sidebar without renumbering those destinations.
             if page is self.gallery:
                 sl.insertWidget(2, btn)
+            elif page is self.controls:
+                sl.insertWidget(5, btn)
             else:
                 sl.addWidget(btn)
             self.stack.addWidget(page)
@@ -181,6 +188,11 @@ class MainWindow(QMainWindow):
         self.version.setText(f"Launcher {__version__}\nGame: {game.game_version(install)}")
         self.write_toml()
 
+    def show_control_settings(self):
+        from .. import schema
+        self.settings.tabs.setCurrentIndex(schema.GROUPS.index('Controls'))
+        self.show_page(2)
+
     def status(self, text, error=False):
         self.footer.setText(text)
         self.footer.setVisible(bool(text))
@@ -229,6 +241,13 @@ class MainWindow(QMainWindow):
             return
         # Installation flushed settings before handing off. Avoid writing the old config
         # over migrations made by a newly started Flatpak launcher.
+        service = getattr(self.session, 'haptics', None)
+        if service and service.running:
+            service.stop()
+            self.status('Releasing adaptive triggers…')
+            QTimer.singleShot(50, self.close)
+            e.ignore()
+            return
         if not self.about.updates.restarting:
             self.settings.flush()
         self.stop_game()
@@ -312,7 +331,7 @@ class MainWindow(QMainWindow):
             return
         self.settings.flush()
         preparation = (self.cfg.data_home(), install.dir, self.cfg.settings.get("fh1_upscaler"))
-        if dlss.enabled(self.cfg) and self._dlss_prepared != preparation:
+        if (dlss.enabled(self.cfg) or dlss.menu_runtime_enabled(self.cfg)) and self._dlss_prepared != preparation:
             self._prepare_dlss(install.dir)
             return
         self._dlss_prepared = None
@@ -340,6 +359,8 @@ class MainWindow(QMainWindow):
         self.session = session
         self.session_plan = plan
         self._dlss_session_status = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         self.play.clear_message()
         if plan.notes:   # what the player set up but the game will not find (TU4, DLC): keep it in view
             self.play.show_message("The game is running. " + " ".join(plan.notes), True, keep=True)
@@ -407,8 +428,16 @@ class MainWindow(QMainWindow):
             self._dlss_prepared = self._dlss_preparing
             self.start_game()
         else:
-            self._dlss_prepared = None
-            self.play.show_message(f"Could not set up NVIDIA DLSS: {message}", True, keep=True)
+            if not dlss.enabled(self.cfg) and dlss.menu_runtime_enabled(self.cfg):
+                # DLSS is optional in a native session. A failed download must
+                # not prevent playing offline with native rendering.
+                self._dlss_prepared = self._dlss_preparing
+                self.start_game()
+                self.play.show_message(f"Native rendering is available. Could not set up NVIDIA DLSS: {message}",
+                                       True, keep=True)
+            else:
+                self._dlss_prepared = None
+                self.play.show_message(f"Could not set up NVIDIA DLSS: {message}", True, keep=True)
 
     def stop_game(self):
         if self.saves.busy():
@@ -421,12 +450,21 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.session.stop()
 
+    def update_haptics(self, settings):
+        if self.session and self.session.haptics:
+            self.session.haptics.update(settings)
+
     def _poll(self):
         if self.session is None:
             self.poll.stop()
             return
         code = self.session.poll()
         if code is None:
+            monitor = getattr(self.session, "shader_warmup", None)
+            warmup = monitor.poll() if monitor is not None else None
+            if warmup != self._shader_warmup_status:
+                self._shader_warmup_status = warmup
+                self.play.set_shader_warmup(warmup)
             status = dlss.session_status(self.session_plan)
             if status and status != self._dlss_session_status:
                 self._dlss_session_status = status
@@ -443,6 +481,8 @@ class MainWindow(QMainWindow):
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         plan = self.session_plan
         self.play.clear_message()
         if not game.exit_is_crash(plan, code, stopped):

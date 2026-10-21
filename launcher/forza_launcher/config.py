@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, gpu, paths, schema
+from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
@@ -16,6 +17,7 @@ FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
 def _default():
     return {
         "version": 1,
+        "haptics": dict(HAPTICS_DEFAULTS),
         "save_manager": {"automatic": True, "keep_automatic": 10},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
@@ -83,6 +85,7 @@ class Config:
               self.d["settings"].get("fsr3_mode") == "native"):
             self.d["settings"].update(present_effect="bilinear", fsr3_mode="quality",
                                       forza_antialiasing="fsr3_native")
+        self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
         prefs = self.d.get('save_manager')
         if not isinstance(prefs, dict):
             prefs = {}
@@ -96,6 +99,8 @@ class Config:
         online = self.d["online"]
         if online.get("mode") == "custom" and online.get("custom_server", "").strip() in OLD_PUBLIC_SERVERS:
             online["mode"], online["custom_server"] = "public", ""
+        from . import ingame
+        ingame.import_pending(self)
 
     def save(self):
         _atomic_write(self.path, json.dumps(self.d, indent=2) + "\n")
