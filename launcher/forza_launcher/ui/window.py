@@ -29,6 +29,7 @@ class MainWindow(QMainWindow):
         self.session_plan = None
         self._last_start_error = None
         self._dlss_session_status = None
+        self._shader_warmup_status = None
         self._busy = False
         self._dlss_task = None
         self._dlss_prepared = None
@@ -313,6 +314,8 @@ class MainWindow(QMainWindow):
         self.session = session
         self.session_plan = plan
         self._dlss_session_status = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         self.play.clear_message()
         if plan.notes:   # what the player set up but the game will not find (TU4, DLC): keep it in view
             self.play.show_message("The game is running. " + " ".join(plan.notes), True, keep=True)
@@ -405,6 +408,11 @@ class MainWindow(QMainWindow):
             return
         code = self.session.poll()
         if code is None:
+            monitor = getattr(self.session, "shader_warmup", None)
+            warmup = monitor.poll() if monitor is not None else None
+            if warmup != self._shader_warmup_status:
+                self._shader_warmup_status = warmup
+                self.play.set_shader_warmup(warmup)
             status = dlss.session_status(self.session_plan)
             if status and status != self._dlss_session_status:
                 self._dlss_session_status = status
@@ -421,6 +429,8 @@ class MainWindow(QMainWindow):
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        self._shader_warmup_status = None
+        self.play.set_shader_warmup(None)
         plan = self.session_plan
         self.play.clear_message()
         if not game.exit_is_crash(plan, code, stopped):

@@ -618,6 +618,8 @@ class Session:
 
     def _start_game(self, extra):
         plan = self.plan
+        from .shader_warmup import Monitor
+        self.shader_warmup = Monitor(log_path_of(plan))
         env = cleanenv.clean_environment()
         for k in plan.unset:
             env.pop(k, None)

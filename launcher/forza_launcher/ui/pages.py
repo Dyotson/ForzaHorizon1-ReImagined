@@ -91,6 +91,14 @@ class PlayPage(QWidget):
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
+        self.shader_label = label("", "muted")
+        self.shader_label.hide()
+        lay.addWidget(self.shader_label)
+        self.shader_progress = QProgressBar()
+        self.shader_progress.setTextVisible(False)
+        self.shader_progress.setMaximumHeight(10)
+        self.shader_progress.hide()
+        lay.addWidget(self.shader_progress)
         lay.addWidget(c)
         self.install_details = Disclosure("Installation details")
         self.install_paths = label("", "help")
@@ -149,7 +157,8 @@ class PlayPage(QWidget):
             self.stop.show()
         elif self.window.running():
             self.stop.setText("Stop")
-            self.play.setText("Playing...")
+            warmup = getattr(self.window, "_shader_warmup_status", None)
+            self.play.setText("Preparing shaders…" if warmup and warmup.active else "Playing...")
             self.play.setEnabled(False)
             self.stop.show()
         else:
@@ -170,6 +179,18 @@ class PlayPage(QWidget):
         self.warn.hide()
         self.msg.setText("")
         self.msg.hide()
+
+    def set_shader_warmup(self, status):
+        active = status is not None and status.active
+        self.shader_label.setVisible(active)
+        self.shader_progress.setVisible(active)
+        if active:
+            self.shader_label.setText(status.message)
+            self.shader_progress.setRange(0, status.total)
+            self.shader_progress.setValue(status.done)
+            self.play.setText("Preparing shaders…")
+        elif self.window.running():
+            self.play.setText("Playing...")
 
     def show_message(self, text, warn=False, keep=False):
         """A warning stays until the next start: refresh() runs right after it and used to hide
