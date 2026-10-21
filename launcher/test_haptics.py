@@ -120,6 +120,7 @@ class ServiceTests(unittest.TestCase):
             root = Path(d)
             (root/'forza-telemetry.json').write_text('{"protocol":"FH1T","version":1}')
             plan = LaunchPlan(None, root, ['missing-game'], {}, [], root/'forza.toml', '')
+            plan.haptics_settings = {**DEFAULTS, 'enabled': True}
             session = Session(plan)
             with patch('forza_launcher.game.subprocess.Popen', side_effect=OSError('missing')):
                 with self.assertRaises(OSError): session.start()
@@ -142,6 +143,32 @@ class ServiceTests(unittest.TestCase):
 
 
 class SettingsUiTests(unittest.TestCase):
+    def test_enabling_during_a_session_without_telemetry_requests_restart(self):
+        from types import SimpleNamespace
+        from PySide6.QtWidgets import QApplication
+        from forza_launcher.config import Config
+        from forza_launcher.ui.controls_page import ControlsPage
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            metadata = root/'forza-telemetry.json'
+            metadata.write_text('{"protocol":"FH1T","version":1,"xbox_trigger_rumble":1}')
+            session = SimpleNamespace(haptics=None, plan=SimpleNamespace(cwd=root))
+            page = ControlsPage(Config(root/'launcher.json'), SimpleNamespace(session=session))
+            try:
+                page.haptics_enabled.setChecked(True)
+                page.xbox_enabled.setChecked(True)
+                self.assertIn('restart the game', page.haptics_status.text())
+                self.assertIn('restart the game', page.xbox_status.text())
+                metadata.unlink()
+                page.refresh_haptics()
+                self.assertIn('Rebuild', page.haptics_status.text())
+                self.assertIn('Rebuild', page.xbox_status.text())
+            finally:
+                page.close()
+                page.deleteLater()
+                app.processEvents()
+
     def test_controls_preferences_persist_without_changing_game_settings(self):
         from PySide6.QtWidgets import QApplication
         from forza_launcher.config import Config

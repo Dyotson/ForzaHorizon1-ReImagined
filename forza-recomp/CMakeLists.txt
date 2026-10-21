@@ -33,7 +33,16 @@ endif()
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
 # builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
 # Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
-set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/bin/rexglue"
+if(APPLE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(_forza_sdk_platform mac-arm64)
+    else()
+        set(_forza_sdk_platform mac-amd64)
+    endif()
+else()
+    set(_forza_sdk_platform linux-amd64)
+endif()
+set(FORZA_REXGLUE "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/${_forza_sdk_platform}/bin/rexglue"
     CACHE FILEPATH "Patched rexglue to run codegen with instead of the SDK's")
 
 # generated/rexglue.cmake lists the generated sources at configure time, so on a fresh
@@ -112,6 +121,7 @@ set(FORZA_SOURCES
     src/debug/fault_guard.cpp
     src/debug/fiber_trace.cpp
     src/debug/lobby_log.cpp
+    src/debug/stall_watch.cpp
     src/debug/frame_stats.cpp
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
@@ -154,6 +164,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
@@ -164,6 +175,9 @@ set(FORZA_SOURCES
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
+endif()
 if(WIN32)
     # The icon is optional: a toolchain without a resource compiler (no llvm-rc next to
     # clang-cl, no rc.exe on PATH) still builds the game, just without it.
@@ -179,7 +193,6 @@ if(WIN32)
     else()
         message(STATUS "No resource compiler found: forza.exe is built without its icon")
     endif()
-    list(REMOVE_ITEM FORZA_SOURCES src/debug/fiber_trace.cpp)
     add_executable(forza WIN32 ${FORZA_SOURCES} ${FORZA_ICON_RC})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
@@ -191,6 +204,10 @@ rexglue_setup_target(forza GPU_PLUGINS xenos)
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+
+# The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
+include(cmake/CpuTarget.cmake)
+forza_configure_cpu_target(forza)
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client
@@ -209,17 +226,18 @@ endif()
 # tools/build_rexglue_sdk.sh builds a patched plugin; this copies it over the SDK
 # one that rexglue_setup_target() stages next to the binary.
 # This project's overlay first; RecompiledHaloReach's (same patch set so far) otherwise.
-set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/librexgpu-xenos.so")
+set(_forza_plugin_name "${CMAKE_SHARED_LIBRARY_PREFIX}rexgpu-xenos${CMAKE_SHARED_LIBRARY_SUFFIX}")
+set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched-forza/0.10.0.24/${_forza_sdk_platform}/lib/${_forza_plugin_name}")
 if(NOT EXISTS "${_forza_plugin}")
-    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/linux-amd64/lib/librexgpu-xenos.so")
+    set(_forza_plugin "$ENV{HOME}/rexglue-sdk-patched/0.10.0.24/${_forza_sdk_platform}/lib/${_forza_plugin_name}")
 endif()
 set(FORZA_XENOS_PLUGIN "${_forza_plugin}"
-    CACHE FILEPATH "Patched librexgpu-xenos.so to ship instead of the SDK's")
-if(UNIX AND NOT APPLE)
+    CACHE FILEPATH "Patched Xenos GPU plugin to ship instead of the SDK's")
+if(UNIX)
     if(EXISTS "${FORZA_XENOS_PLUGIN}")
         add_custom_command(TARGET forza POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${FORZA_XENOS_PLUGIN}" "$<TARGET_FILE_DIR:forza>/librexgpu-xenos.so"
+                "${FORZA_XENOS_PLUGIN}" "$<TARGET_FILE_DIR:forza>/${_forza_plugin_name}"
             VERBATIM)
     else()
         message(WARNING "Patched GPU plugin not found at ${FORZA_XENOS_PLUGIN}; "
@@ -227,9 +245,9 @@ if(UNIX AND NOT APPLE)
     endif()
 endif()
 
-# The SDK runtime dlopen()s guest-DLL modules by bare target name on Linux
-# (no "lib" prefix, no ".so" suffix), so emit the libraries under that name.
-if(UNIX AND NOT APPLE)
+# The SDK runtime dlopen()s guest-DLL modules by bare target name on POSIX
+# (no "lib" prefix or platform suffix), so emit the libraries under that name.
+if(UNIX)
     foreach(_module forza_XMediaFacade_default forza_SpeechFacade_default)
         if(TARGET ${_module})
             set_target_properties(${_module} PROPERTIES PREFIX "" SUFFIX "")

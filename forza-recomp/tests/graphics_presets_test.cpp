@@ -3,6 +3,8 @@
 #include <cassert>
 int main() {
   using forza::graphics_menu::ChoosePreset;
+  assert(ChoosePreset("auto", "720p", true, true).mode == "off");
+  assert(ChoosePreset("high", "720p", false, true).scene_scale == 1);
   assert(ChoosePreset("auto", "1080p", true, true).mode == "off");
   assert(ChoosePreset("auto", "1440p", true, true).mode == "quality");
   assert(ChoosePreset("auto", "4k", false, true).mode == "fsr3_quality");

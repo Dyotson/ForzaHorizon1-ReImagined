@@ -10,6 +10,12 @@
 > from your own copy, no build steps needed. [Announcement](https://github.com/Dyotson/ForzaHorizon1-ReImagined/discussions/21)
 > · [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/yu7zScdcWw)
 
+> [!IMPORTANT]
+> **macOS users: this is the first experimental macOS version.** Native Apple Silicon
+> support currently requires a source build; the launcher does not yet support macOS.
+> Compatibility and performance are still being validated, including full races,
+> save/reload and physical controllers. [macOS setup and known limits](docs/macos.md)
+
 <p align="center">
   The original 2012 Forza Horizon, running natively on PC and rebuilt around the modern
   Horizon experience: a shared online open world, leaderboards and rivals, high frame rates.
@@ -48,6 +54,7 @@ C++ is generated from your copy on your machine; no binaries are published here.
 - [Install with the launcher](#install-with-the-launcher)
 - [Building (Linux)](#building-linux)
 - [Windows](#windows)
+- [macOS experiment](#macos-experiment)
 - [Playing](#playing)
   - [Playing online](#playing-online)
 - [More documentation](#more-documentation)
@@ -222,6 +229,38 @@ redistributable, extract your game files with `python xcontent_extract.py` and r
 `play.bat C:\path\to\extracted\game` (`--offline` for no Xbox LIVE; it starts a local
 Forza Live server when Python is installed, or uses `FORZA_SERVER` / `live_server` in
 `forza.toml`). Saves, the online identity and the log go to `Documents\forza`.
+
+## macOS experiment
+
+**This is the first experimental macOS version, for Apple Silicon Macs.**
+
+An experimental native Apple Silicon build path is available through
+`tools/build_macos.sh`. Both base-game and TU4 builds boot on macOS. SDK patch 0080 fixes the black
+3D world; both opening drives now render and respond to driving input. Following a
+comparison with Pinyon Shift, patch 0082 restores solid vehicle stripes with normal
+mip filtering. This remains experimental and needs broader gameplay validation. See [`docs/macos.md`](docs/macos.md) for
+setup, checks that do not need game data, an isolated offline launch script, and
+`tools/package_macos.sh` for a local app with native fullscreen and Game Mode support.
+Patch 0084 adds experimental native MetalFX temporal/spatial reconstruction with a
+1440p HUD; use `tools/play_macos.sh --tu4 --skip-intro --metalfx` or package with
+`tools/package_macos.sh --tu4 --metalfx`. The responsive 720p preset remains faster.
+`--balanced` selects 720p with two queued GPU frames; the tested TU4 opening scene
+held approximately 60 fps, with more queuing than the one-frame responsive preset.
+`--max-fps` retains 720p with two queued frames, raises the ceiling to 240 fps and
+uses one FSR presentation pass. The M4 Pro opening-drive sample averaged about
+66 fps; the ceiling is not a performance guarantee. Both play and package scripts
+accept the preset, with a separate app/profile for the packaged version.
+That preset renders the world and HUD at 720p. Native 1440p measured about
+30 fps on this M4 Pro. Patch 0085 improves MetalFX's scene/HUD copies; paired
+1440p-output samples rose from 40–42 to 49–55 fps, with a 720p world and native
+1440p HUD. Steady 1440p/60 still needs verification; see the
+[1440p target and exact resolutions](docs/macos.md#1440p-at-60-fps-target).
+`--1440p-performance` selects MetalFX Spatial with that native HUD and releases
+guest VSync pacing. Its background opening-scene sample averaged 59.1 fps;
+a fresh unlocked fullscreen sample averaged 53.8 fps with Simulator also
+active. Native 1440p measured 26.7 fps in that session. Steady 60 fps remains
+unachieved.
+The launcher does not yet support macOS.
 
 ## Playing
 

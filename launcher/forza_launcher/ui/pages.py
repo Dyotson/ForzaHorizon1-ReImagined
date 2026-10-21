@@ -91,6 +91,11 @@ class PlayPage(QWidget):
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
+        self.crash_report = QPushButton("Review crash report…")
+        self.crash_report.setObjectName("link")
+        self.crash_report.hide()
+        self.crash_report.clicked.connect(window.review_crash_report)
+        lay.addWidget(self.crash_report, 0, Qt.AlignLeft)
         self.shader_label = label("", "muted")
         self.shader_label.hide()
         lay.addWidget(self.shader_label)
@@ -151,7 +156,11 @@ class PlayPage(QWidget):
         self.install_paths.setText("\n".join(details))
         ready = files_ok and install is not None
         save_page = getattr(self.window, 'saves', None)
-        if save_page is not None and save_page.busy():
+        if self.window._crash_probe is not None:
+            self.play.setText("Reading crash report…")
+            self.play.setEnabled(False)
+            self.stop.hide()
+        elif save_page is not None and save_page.busy():
             self.play.setText("Preparing saves…")
             self.play.setEnabled(False)
             self.stop.setText("Cancel")

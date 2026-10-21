@@ -55,9 +55,11 @@ machine from their own copy:
    setting) and `--base`.
 3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
-   result is staged into `<data>/runtime`. The build is repeated only when the launcher or
-   project version changes, or the title update is added, removed or replaced (a hash of
-   `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
+   result is staged into `<data>/runtime`. The generated code is compiled for x86-64-v3 (AVX2, FMA,
+   BMI2, MOVBE) when this PC's CPU has all of it, else for any x86-64 CPU (`-DFORZA_CPU_TARGET`,
+   [CPU target](perf.md#cpu-target-x86-64-v3-220-2026-10-21)). The build is repeated only when the launcher or
+   project version changes, the title update is added, removed or replaced, or the CPU target changes (a hash of
+   `forza-recomp/` sources, the launcher version, the SDK pin, the TU4 package and the CPU target). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -79,6 +81,35 @@ Searching does not change configuration. Disabled settings remain disabled with
 their existing explanations, and unsupported graphics options stay hidden. Search
 indexes descriptions, not personal field values such as paths or server addresses.
 
+## Crash reports
+
+After an unexpected game exit, **Play > Review crash report…** shows an editable report
+with the fault, host/guest call chain when logged, launcher/game versions, OS, GPU,
+launch-time graphics settings and the last 200 log lines (at most 64 KiB). Startup GPU
+and driver details are also collected from the first 32 KiB. Collection runs in the
+background; Play waits until collection finishes so another launch cannot replace
+the log being read. Navigation remains available. Normal closes, launcher Stop and
+successful game relaunches do not offer a crash report.
+If startup fails before writing a new log, the previous run's log is excluded from
+both crash classification and the report.
+
+Known folders, profile IDs, custom server addresses and common secret fields are
+removed on a best-effort basis. Arbitrary environment variables, command lines,
+profile data and game files are excluded. Review the text for anything else personal
+and add reproduction steps. **Copy report** and **Save report…** work without a browser.
+The report stays in memory until the next successful launch or launcher exit; saving
+is explicit. The original log is unchanged.
+
+**Open GitHub issue** opens a prefilled draft on this project's Issues page. It does
+not submit an issue. If the reviewed report exceeds the browser link limit, the full
+text is copied and the launcher asks you to paste it into the draft description.
+Nothing is uploaded automatically. `test_crash_report.py`, `test_game_exit.py` and
+`test_launcher_ui.py` cover bounded reads, missing logs, redaction, report actions,
+unexpected/normal exits, and background collection with a disposable child process.
+Secret redaction handles JSON-style quoted keys, quoted values containing spaces
+or escaped quotes, and common authorization/API-key/token spellings. Reports
+remain editable for review before the player chooses to copy, save or open a draft.
+
 ## Photo gallery
 
 Open **Photo gallery** in the launcher sidebar to browse locally saved photo-mode
@@ -91,9 +122,15 @@ for taking and saving the first picture.
 - The grid shows pictures without captions and fits the window width. Sort by newest
   or oldest; ordering uses the image file's modification time, which can change when
   saves are copied or restored.
-- Select **View photo**, double-click a tile, or press Enter for a larger preview.
-  Previous/Next and the arrow keys navigate the gallery. Dimensions and the file's
-  modification date are shown in the preview.
+- Click a tile, select **View photo**, or press Enter to enlarge the original image.
+  The grid keeps thumbnails up to 800 pixels wide (larger at display scaling above
+  200%) so tiles stay sharp as the window resizes; the viewer loads the source at full
+  resolution. Click the enlarged picture or select **100%** to inspect its detail,
+  with one image pixel per display pixel even on a scaled display. Scroll to explore,
+  then click again or select **Fit to window** to see the whole picture. Ctrl+1 selects
+  100%; Ctrl+0 fits to the window. Small source images are not enlarged artificially.
+  Previous/Next and the arrow keys navigate the gallery. Source dimensions and the
+  file's modification date are shown in the preview.
 - **Export photo** saves a separate PNG or JPEG. PNG avoids another lossy encoding;
   JPEG is saved at quality 95. A date-based filename is suggested automatically.
   Exports cannot overwrite files inside the save folder.
@@ -208,8 +245,11 @@ with its MIT license and source revision included in
 bundled locally, so the guide works offline.
 
 The **DualSense adaptive triggers** card saves throttle resistance, brake
-resistance and overall intensity. Effects default off and can be changed during
-play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
+resistance and overall intensity. Effects default off. The launcher starts the
+loopback telemetry service only when either haptics option is enabled at game
+launch. If both were off, enabling an effect during play requires a game restart;
+Controls shows a restart hint. Once telemetry is running, effects can be changed
+during play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
 or DualSense Edge. This first version uses default-layout LT/RT inputs; RPM,
 tire slip, ABS and surface effects are not mapped yet. Status shows whether the
 controller and driving telemetry are ready. See [telemetry.md](telemetry.md) for
@@ -356,6 +396,12 @@ rejected without replacing the save. The work uses the same cancellable worker a
 shutdown handling as backups. Run `python -m unittest test_save_editor test_saves_ui -v`
 for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
 or game-generated saves.
+
+The editor's **Unicorn cars** section offers **Add missing unicorns**.
+It authenticates the selected save's garage database, keeps a full safety backup,
+and adds only missing models from the seven-car unicorn list. Existing cars,
+upgrades, tuning and the selected car are preserved. This is an offline edit;
+no server or Message Center collection is needed. See [garage format and validation](unicorn_cars.md).
 
 Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
 The editor's profile-table addresses and XUID derivation were checked against the local
@@ -514,6 +560,19 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
   filter, frame rate, shader switches). A launcher that already holds settings keeps every one: it only learns the
   vendor. Changing the vendor asks "Use the recommended settings for X now?" (No changes only the markings);
   the button "Use the recommended settings for this card" applies them again. Reset settings restores the preset.
+* **PC specs** (#206, `launcher/forza_launcher/specs.py`, no Qt): the launcher also reads the CPU (name, physical cores,
+  AVX2 as a stand-in for FMA3), the RAM and the card (name, video memory, integrated or not) and keeps them in
+  `launcher.json` under `specs`; they are detected again when the graphics card changes or with "Check this PC again".
+  Linux reads `/proc/cpuinfo`, `/proc/meminfo`, amdgpu's `mem_info_vram_total`, `nvidia-smi` and `lspci -mm`; Windows
+  uses the same single PowerShell query (video memory from the display class registry key, as `AdapterRAM` stops at
+  4 GB) and `IsProcessorFeaturePresent(40)`. `FORZA_SPECS="cpu_cores=4,avx2=0,ram=8,vram=4,integrated=0"` overrides.
+  Two tiers: CPU (limits the frame rate): low = no AVX2, under 4 cores, under 8 GB RAM or a Steam Deck, mid = under
+  6 cores, high = 6+ cores with AVX2; graphics (limits render scale, FSR 3, anti-aliasing): low = integrated or under
+  4 GB, mid = 4 to 7 GB or a GTX / RX 400-500 / Vega-era card, high = 8 GB+ on a newer card. A new launcher gets 30 fps
+  (low CPU) or 60 fps, and render scale 2 only with a high-end card, on top of the vendor preset (whose known problems
+  always win). Settings that are heavy for the PC get an orange line with the numbers (render scale 2 renders 2560x1440
+  ...). A launcher with existing settings is never changed silently: a banner on the Settings page offers "Use
+  recommended" (only the settings that warn) or "Keep mine", and comes back only when the hardware changes.
 * **Known problems** are never forbidden: the option keeps working, with an orange line under it giving the reason
   and the issue number while it holds the problem value, and the choice is marked ("Direct3D 12 (flickers on
   NVIDIA, #46)"). The explicit choice of the player always wins.
@@ -691,7 +750,8 @@ org.freedesktop.Sdk.Extension.llvm22//26.08`; big files go to `~/.cache/forza-fl
 
 Design: the app's runtime is `org.freedesktop.Sdk//26.08` itself (glibc 2.44, g++ 16 headers, cmake 4.4,
 ninja, python 3.14 are there at run time), and `org.freedesktop.Sdk.Extension.llvm22` (clang 22.1.8,
-accepted: the launcher needs >= 21) is declared as the app's extension with `autodownload`. The
+accepted: the launcher needs >= 21) is declared as the app's extension with `autodownload`. On SteamOS
+(the Steam Deck) the .tar.gz launcher has no C++ headers and points the player at this Flatpak (#135). The
 launcher runs from source with the SDK's python; PySide6-Essentials 6.12 and shiboken6 are pinned
 wheels in the manifest. `stage.py` copies what the launcher needs (launcher, tools, project sources,
 server, the CI-built SDK overlay, licenses; no game code, data or generated code) into
