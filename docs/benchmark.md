@@ -25,3 +25,11 @@ Writable profiles are copied byte-for-byte; no profile is hard-linked. Installed
 ## Focused tests
 
 Compile and run `forza-recomp/tests/benchmark_stats_test.cpp` and `benchmark_profile_test.cpp` as standalone C++20 programs. They check time-weighted FPS, percentile/1% low behavior, real stalls, invalid samples and save-copy independence. End-to-end validation additionally needs the user's TU4 game data and a disposable saved profile.
+
+For scripted title-menu navigation, use explicit short taps such as
+`FORZA_AUTOPRESS="28:DOWN:0.08,29:DOWN:0.08,30:DOWN:0.08,35:DOWN:0.08"`
+after reaching the menu. The default 0.3-second hold can trigger native button
+repeat after about 0.2 seconds, even with a full second between presses. With
+0.08-second taps, four Down presses from Single Player should select Multiplayer,
+Horizon Rally, Graphics, then Benchmark. Check the hold duration when diagnosing
+skipped rows; test timing is relative to the first input poll, not process launch.
