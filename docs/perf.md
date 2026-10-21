@@ -68,6 +68,19 @@ PERF: scene= src=<guest|present> t= fps= p50= p95= p99= max= low1= stutters= hit
 - `RECOMP_PERF_CSV=<file>` writes every frame; `RECOMP_PERF_SCENE` names the first scene;
   `SCENE:<name>` on the input FIFO starts a new one.
 
+## Long frames (FORZA_STALL)
+
+Always on (`src/debug/stall_watch.cpp`, #187): when the game hands no frame to VdSwap for
+200 ms, `forza.log` gets a `FORZA_STALL: no frame for <ms> ms at t=<s>` line followed by the
+guest call chains of the main loop's thread and the render thread at that moment, and when
+the frame comes, `FORZA_STALL: frame took <ms> ms from t=<s>`. `main loop N frames` says
+whether the main loop kept running (N > 0: the render thread was held up) or was stuck too.
+Nothing is logged in the first minute; at most one chain dump every 10 s (50 a session).
+No frame for 10 s logs `not presenting` once and `presenting again` at the end. Loading
+screens can log long frames too. A player who sees a hitch can attach these lines to an
+issue: the chains are guest return addresses (look them up in Ghidra). `FORZA_STALL_TEST=1`
+makes the main loop sleep 500 ms once, 90 s after the first frame, to check the lines.
+
 ## Scenarios
 
 `tools/perf_scenario.sh SCENARIO DIR [cold|warm] [flags]` drives the game through the
@@ -482,12 +495,99 @@ time the game uses. On a Deck the busy wait took one of its 8 hardware threads (
 that core, and power from the shared CPU/GPU budget), so that is where the gain should show; a Deck log is
 still needed to tell.
 
-An opt-in `FORZA_GUEST_FMA` experiment now builds generated code with `-mfma` behind a CPU/OS check;
-see [the Pinyon comparison and BC-250 validation plan](bc250-performance.md). It defaults off and has
-no confirmed BC-250 fps result. FMA3 is not available on every x86-64 CPU, so keep the portable build.
+The launcher now selects guarded [x86-64-v3 generated code](#cpu-target-x86-64-v3-220-2026-10-21)
+on supported CPUs (#233). The narrower Linux-only `FORZA_GUEST_FMA` experiment remains off by
+default for manual comparisons with `FORZA_CPU_TARGET=baseline`; see
+[the Pinyon comparison and BC-250 validation plan](bc250-performance.md). Neither change has
+a confirmed BC-250 fps result.
+
 Other ideas left: cache Vulkan descriptor sets in
 `UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
 write-back instead of the 50 us sleeps.
+
+## CPU target x86-64-v3 (#220, 2026-10-21)
+
+The SDK compiles the generated code for SSE4.1 (`-msse4.1`, `rexglue_helpers.cmake`). `-DFORZA_CPU_TARGET=x86-64-v3`
+(`forza-recomp/cmake/CpuTarget.cmake`) compiles it, its precompiled header and the two facade DLLs with
+`-march=x86-64-v3 -ffp-contract=off` (clang-cl: `/clang:-march=x86-64-v3 /clang:-ffp-contract=off`): AVX2, FMA,
+BMI1/2, F16C, LZCNT and MOVBE, which every Intel CPU since Haswell (2013), AMD since Excavator / Zen and the Steam
+Deck have. The host code keeps the baseline. The launcher passes it when the build machine's CPU and OS have all
+of it (`specs.x86_64_v3`: `/proc/cpuinfo` flags on Linux, CPUID and XGETBV on Windows) and `baseline` otherwise;
+`FORZA_CPU_TARGET=baseline|x86-64-v3` in the launcher's environment overrides. Adapted from the guarded FMA
+experiment of #176 (`-mfma -ffp-contract=off` on Linux, early CPU check).
+
+What changes in the generated code (TU4, 246 objects): the 7,314 calls of libm's `fma` (`ppc_fma` without
+`__FMA__`: a runtime CPU test, then a call) become 11,064 inline `vfmadd`/`vfmsub` instructions; 728,000
+big-endian loads and stores use `movbe` instead of a load and `bswap` (`bswap` 798,000 to 105,000); BMI2 shifts
+(`shlx`, `shrx`, `rorx`) and AVX2 broadcasts and permutes appear; 6.9% fewer instructions overall.
+
+**Same results.** `-ffp-contract=off` keeps the compiler from fusing any multiply and add of its own: only
+`ppc_fma`, already fused by `std::fma`, uses FMA instructions, and both round once. #176's arithmetic check
+(`tests/guest_fma` there: 4,334,912 cases, float and double, four rounding modes, all FTZ/DAZ combinations)
+passes bit for bit with these flags, and a separate multiply and add still compiles to `vmulsd` + `vaddsd`. The
+race itself is not reproducible from run to run, whatever the build: the throttle starts on a host timer, so after
+the 26 s the cars of two runs of the same build stood 20-56 m apart (mean over the 8 cars), and runs of the two
+builds 16-59 m apart. That shows no difference, and could not show a small one.
+
+Measured: TU4, `tools/perf_scenario.sh race` and `freeroam` (copy of the Xenia save, warm shared
+`--cache_root`, `--present_effect=fsr`, `frame_rate = 30`, `PERF_CPUPROF=1`), A (baseline) and B (x86-64-v3)
+alternating, three runs each, BENCH lock held, every run CLEAN. CPU ms per frame = a thread's 1 ms CPU
+samples in the scene / its guest frames; threads by their guest entry function (`eu-stack` at the end of the scene):
+main loop `sub_825CEC88`, render `sub_8261E178`, audio `sub_83075D18` (four threads, the game's mixer and DSP, the
+most `ppc_fma` calls). Mean [min-max]:
+
+| Scene | Build | fps | p99 ms | All threads | Game code (`forza`) | libm | Main loop | Render | Audio | GPU commands |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| race | A | 30.0 | 35.0 | 22.2 [21.4-22.9] | 10.8 [10.0-11.4] | 0.39 | 2.21 [1.86-2.39] | 2.32 [1.89-2.59] | 5.03 [4.91-5.09] | 7.25 |
+| race | B | 30.0 | 34.9 | 21.0 [20.5-21.9] | 9.6 [9.3-10.4] | 0.06 | 1.96 [1.75-2.38] | 2.04 [1.77-2.48] | 4.19 [4.14-4.23] | 7.46 |
+| free roam | A | 30.0 | 35.1 | 35.7 [34.5-36.9] | 27.5 [27.1-28.2] | 1.17 | 2.54 [2.44-2.62] | 20.2 [20.0-20.3] | 4.04 [3.86-4.17] | 3.76 |
+| free roam | B | 30.0 | 35.1 | 33.0 [29.7-34.8] | 25.4 [21.9-27.2] | 0.03 | 2.19 [2.07-2.26] | 18.3 [15.3-19.9] | 3.34 [3.27-3.46] | 4.17 |
+
+- The audio threads use 17% less CPU in both scenes (the ranges do not overlap), the main loop 14% less in free
+  roam. In the race the main loop and render threads change by 0-6% between runs of the same mode: both builds
+  had runs at about 2.4 and at about 1.8 ms, the means differ by 11-12% only because two of the three B runs
+  fell in the lower mode.
+- The render thread spends about 20 ms of every free-roam frame whatever the scene (also with the car stuck
+  against a rail) and whatever the build (B: 19.8 and 19.9, once 15.3); its hottest function is `sub_82468E50`
+  (29%, float math, called from `sub_82CE8948`). In the main menu behind the "MISSING CONTENT" notice that
+  thread uses a whole core. Faster code does not shorten it, so it looks like work that fills a time budget,
+  not a fixed amount. Worth a look for slow CPUs.
+- The GPU command processor (SDK plugin, not rebuilt) and the frame rate (capped at 30) do not change.
+
+**A slower CPU.** With [the approximation above](#steam-deck-approximation-45) (4 cores, each shared with 4 busy
+loops: every thread gets 20% of a core), race, two runs each, alternating: A 23.6 and 23.6 fps (p95 53.4 and 57.2
+ms, on target 35 and 37%), B 24.0 and 23.6 fps (54.2 and 57.4 ms, 41 and 36%): within the noise, like every
+setting #45 tried there (the frame waits for each thread to get the CPU back, not for its CPU time). B used 18.5
+and 19.2 ms of CPU per frame against 19.7 and 19.8, the audio threads 3.9 against 4.9-5.1. A Deck is a Zen 2 at
+2.4-3.5 GHz within a 15 W budget shared with the GPU, roughly 2 to 2.5 times this machine's time per instruction:
+the same 8-11% less work in the game's code (17% in the audio threads, 14% in the free-roam main loop) means more
+idle time on its 8 hardware threads and less power drawn from that budget, which helps where the CPU is busy
+(free roam at 60 fps) more than in this approximation. The x86-64-v3 code uses no PDEP/PEXT (slow microcode on Zen
+2). A Deck log is still needed to tell the fps.
+
+The build with the CMake option (generated code only, host at the baseline, guard included) ran the race normally:
+21.4 ms of CPU per frame, game code 10.2, audio 4.1, libm 0.06.
+
+**Guard.** A built game can be copied to an older PC, where the first AVX2 instruction would end it with SIGILL at
+a random point. `src/platform/cpu_target.cpp` (compiled with the baseline flags) checks CPUID (leaf 1, leaf 7,
+0x80000001) and XCR0 for every x86-64-v2 and v3 feature before any generated code runs: on Linux from
+`.preinit_array`, which runs even before the shared libraries' initializers (the SDK runtime's static constructors
+can call inline functions the executable exports, and those may come from a generated-code object); on Windows from
+a constructor of priority 101 (`.CRT$XCA00101`, before every C++ initializer; a DLL never calls into the
+executable). On a CPU without them it prints which features are missing and "Rebuild the game on this PC: in the
+launcher, Setup > Build" (a message box too on Windows when not started by the launcher) and exits with code 76,
+which the launcher explains instead of offering a crash report. The launcher also refuses Play itself for its own
+v3 build on such a CPU, and records the target in `build/state.json` (`cpu_target`) and in the build id, so a
+changed CPU (or a data folder moved to another PC) shows "Rebuild needed". Tests: `launcher/test_cpu_target.py`,
+`forza-recomp/tests/cpu_target_test.cpp` (feature bits; `-DFORZA_CPU_TARGET_V3=1` also runs the guard before
+`main`). With gdb clearing BMI1/2, AVX2 and MOVBE in the CPUID words, the TU4 game's guard printed them from
+`_dl_init` and exited with 76; under Wine (GE-Proton 9-27), the guard cross-compiled for Windows with AVX2 hidden
+did the same before the C++ initializers and `main`. The launcher's Windows CPUID machine code, run on Linux behind
+an argument shim, read the same words as the game.
+
+The TU4 game also builds for Windows with the option (cross clang-cl with xwin, `tools/cmake/windows-clang-cl.cmake`):
+the generated objects have the FMA and MOVBE instructions and no `fma` calls, the guard's object none of them.
+Not verified: the Windows game running (no Windows PC with a GPU here; measured on Linux only) and a Steam Deck.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 

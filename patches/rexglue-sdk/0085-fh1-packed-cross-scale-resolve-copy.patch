@@ -1,0 +1,95 @@
+Subject: [PATCH] Copy FH1 cross-scale resolve texels as packed words
+
+Avoid repeated byte extraction and runtime divisions in the scene/HUD mirror.
+Replicate 1x-to-2x packed pixels directly, and preserve the original byte path
+for unaligned and sub-word cases. Retain an explicit diagnostic fallback.
+
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -68,6 +68,9 @@
+ #include <rex/ui/vulkan/util.h>
+ 
+ // Legacy backend compatibility aliases for shared readback controls.
++REXCVAR_DEFINE_BOOL(fh1_fast_resolve_copy, true, "GPU/Vulkan",
++    "Use bit-exact whole-word FH1 cross-scale resolve copies")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ REXCVAR_DEFINE_BOOL(fh1_scene_720p_native_hud, false, "GPU/Vulkan",
+                     "Experimental FH1: 720p world with a separate native 1440p HUD")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+@@ -5418,7 +5421,7 @@
+   if (!destination.CommitScaledResolveRange(address, length) ||
+       !destination.GetScaledResolveRange(address, length, 0, dest_start, dest_length)) return false;
+   if (!fh1_resolve_pipeline_) {
+-    VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 6 * sizeof(uint32_t)};
++    VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, 7 * sizeof(uint32_t)};
+     const auto set_layout = GetSingleTransientDescriptorLayout(SingleTransientDescriptorLayout::kStorageBufferPairCompute);
+     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+     layout.setLayoutCount = 1; layout.pSetLayouts = &set_layout;
+@@ -5429,7 +5432,7 @@
+ layout(binding=0,std430) readonly buffer Source { uint src[]; };
+ layout(binding=1,std430) writeonly buffer Destination { uint dst[]; };
+ layout(push_constant) uniform Parameters { uint sourceScale; uint destScale; uint pixelBytes;
+-  uint byteCount; uint sourceOffset; uint destOffset; };
++  uint byteCount; uint sourceOffset; uint destOffset; uint fastCopy; };
+ uint loadByte(uint offset) {
+   uint pixel = offset / pixelBytes;
+   uint component = offset % pixelBytes;
+@@ -5444,6 +5447,47 @@
+   uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*65535u*256u;
+   uint offset=i*4u;
+   if(offset>=byteCount) return;
++  // A 1x-to-2x copy repeats each 8-bit pixel four times, or each
++  // 16-bit pixel twice per word. The aligned source load preserves all bits.
++  if (fastCopy != 0u && sourceScale == 1u && destScale == 2u) {
++    if (pixelBytes == 1u) {
++      uint sourceByte = sourceOffset + i;
++      uint value = (src[sourceByte>>2u] >> ((sourceByte&3u)*8u)) & 255u;
++      dst[(destOffset+offset)>>2u] = value * 0x01010101u;
++      return;
++    }
++    if (pixelBytes == 2u && (sourceOffset & 1u) == 0u) {
++      uint sourceByte = sourceOffset + (i>>1u)*2u;
++      uint value = (src[sourceByte>>2u] >> ((sourceByte&3u)*8u)) & 65535u;
++      dst[(destOffset+offset)>>2u] = value | (value<<16u);
++      return;
++    }
++  }
++  // Packed 32/64/128-bit pixels can be copied a whole word at a time.
++  // The common 720p-to-1440p path only repeats each guest pixel four times;
++  // avoid four byte loads and runtime integer divisions for every output word.
++  if (fastCopy != 0u && sourceScale == 1u && destScale == 2u &&
++      (pixelBytes == 4u || pixelBytes == 8u || pixelBytes == 16u) &&
++      (sourceOffset & 3u) == 0u) {
++    uint componentBits = uint(findLSB(pixelBytes)) - 2u;
++    uint componentMask = (1u << componentBits) - 1u;
++    uint sourceWord = ((i >> (componentBits + 2u)) << componentBits) |
++                      (i & componentMask);
++    dst[(destOffset+offset)>>2u] = src[(sourceOffset>>2u)+sourceWord];
++    return;
++  }
++  if (fastCopy != 0u && pixelBytes >= 4u && (sourceOffset & 3u) == 0u) {
++    uint pixelWords = pixelBytes >> 2u;
++    uint pixel = i / pixelWords;
++    uint component = i % pixelWords;
++    uint subpixel = pixel % (destScale*destScale);
++    uint guestPixel = pixel / (destScale*destScale);
++    uint x = ((subpixel%destScale)*2u+1u)*sourceScale/(destScale*2u);
++    uint y = ((subpixel/destScale)*2u+1u)*sourceScale/(destScale*2u);
++    uint sourceWord = (guestPixel*sourceScale*sourceScale+y*sourceScale+x)*pixelWords+component;
++    dst[(destOffset+offset)>>2u] = src[(sourceOffset>>2u)+sourceWord];
++    return;
++  }
+   uint value=0u;
+   for(uint b=0u;b<4u;++b) value|=loadByte(offset+b)<<(8u*b);
+   dst[(destOffset+offset)>>2u]=value;
+@@ -5474,7 +5518,8 @@
+   SubmitBarriers(true);
+   BindExternalComputePipeline(fh1_resolve_pipeline_);
+   const uint32_t constants[] = {source_scale,destination_scale,pixel_bytes,uint32_t(dest_length),
+-      uint32_t(source_start-source_base),uint32_t(dest_start-dest_base)};
++      uint32_t(source_start-source_base),uint32_t(dest_start-dest_base),
++      uint32_t(REXCVAR_GET(fh1_fast_resolve_copy))};
+   deferred_command_buffer_.CmdVkBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,fh1_resolve_layout_,0,1,&set,0,nullptr);
+   deferred_command_buffer_.CmdVkPushConstants(fh1_resolve_layout_,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(constants),constants);
+   const uint32_t groups = uint32_t((dest_length+1023)/1024);

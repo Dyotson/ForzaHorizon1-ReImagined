@@ -2,6 +2,12 @@
 
 ## Scope and evidence
 
+Current main includes #233's guarded `FORZA_CPU_TARGET=x86-64-v3` path, which the
+launcher selects on supported CPUs. This draft retains the narrower Linux-only
+`FORZA_GUEST_FMA` option for manual comparisons with `FORZA_CPU_TARGET=baseline`;
+it is not the launcher's CPU-target implementation. BC-250 runtime validation is
+still pending for both paths.
+
 Report: CachyOS, Mesa 26.2.4, standalone ReImagined 0.1.17 at 35–42 fps;
 Pinyon 0.5.1 and 0.6.0 reportedly hold 60 fps at 1440p. The reporter subsequently confirmed the same result on 0.1.23, with 40 GPU CUs
 unlocked and six CPU cores. Aggregate CPU/GPU utilization was below 100%;

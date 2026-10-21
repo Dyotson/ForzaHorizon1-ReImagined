@@ -4,6 +4,7 @@ from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QHBoxLayout, QLabel, QPushButton,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget, QCheckBox)
 from ..haptics.settings import normalize
+from ..haptics.service import supported, supports_xbox
 
 from . import theme
 from .controller_artwork import compose
@@ -276,6 +277,8 @@ class ControlsPage(QWidget):
             status = service.status
         elif not enabled:
             status = 'Adaptive triggers off'
+        elif session and supported(session.plan.cwd):
+            status = 'Saved · restart the game to enable adaptive triggers'
         elif session:
             status = 'This game build has no FH1 telemetry bridge. Rebuild the game to enable adaptive triggers.'
         else:
@@ -288,6 +291,8 @@ class ControlsPage(QWidget):
             xbox_status = service.xbox_status
         elif not xbox_enabled:
             xbox_status = 'Xbox trigger vibration off'
+        elif session and supports_xbox(session.plan.cwd):
+            xbox_status = 'Saved · restart the game to enable Xbox trigger vibration'
         elif session:
             xbox_status = 'Rebuild the game to add Xbox trigger vibration support'
         else:
