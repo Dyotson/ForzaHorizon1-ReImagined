@@ -7,6 +7,7 @@ holds its default is not written, so the file stays small. `default` is what "un
 for the game (a few use 0/"" as "automatic").
 """
 from dataclasses import dataclass, field
+import math
 
 from .paths import IS_WINDOWS
 
@@ -165,6 +166,32 @@ if IS_WINDOWS:
         "flickers on some NVIDIA cards (greenish reflections, issue #46).", "Picture",
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
+
+# scRGB requires an HDR-enabled desktop and a surface advertising the format.
+add("present_hdr", "HDR output", "Display", "bool", False,
+    "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
+    "enabled in the OS. Unsupported displays keep SDR. This does not restore native HDR detail.",
+    "HDR", restart=True)
+add("present_hdr_paper_white_nits", "Paper white (nits)", "Display", "float", 200.0,
+    "Brightness of white HUD elements and ordinary white. Start at 200 and adjust for your room.",
+    "HDR", lo=80, hi=1000, step=10, restart=True)
+add("present_hdr_peak_nits", "Display peak (nits)", "Display", "float", 1000.0,
+    "Set to your display's HDR peak brightness. At or below paper white, highlight expansion is off.",
+    "HDR", lo=80, hi=10000, step=10, restart=True)
+add("present_hdr_highlights", "Highlight strength", "Display", "float", 0.5,
+    "0 keeps the scene at paper white; 1 expands bright scene pixels toward the selected peak. "
+    "HUD coverage stays at paper white. Translucent overlays may suppress highlights beneath them.",
+    "HDR", lo=0, hi=1, step=0.05, restart=True)
+add("present_hdr_gamma", "HDR source gamma", "Display", "float", 2.2,
+    "2.2 matches the game's SDR curve. 0 uses the piecewise sRGB curve.",
+    "HDR", lo=0, hi=3, step=0.1, restart=True)
+add("present_hdr_compare", "Compare SDR / HDR", "Display", "bool", False,
+    "Left: SDR at paper white. Right: HDR. Both halves use the HDR output, with a white divider.",
+    "HDR", restart=True)
+add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
+    "Show a calibration strip over the picture. Turn off when finished. "
+    "An SDR screenshot cannot show the physical brightness.", "HDR",
+    choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
@@ -373,6 +400,8 @@ def coerce(setting, value):
             return max(lo, min(hi, v))
         if setting.kind == "float":
             v = float(value)
+            if not math.isfinite(v):
+                return setting.default
             lo = -1e9 if setting.lo is None else setting.lo
             hi = 1e9 if setting.hi is None else setting.hi
             return max(lo, min(hi, v))
