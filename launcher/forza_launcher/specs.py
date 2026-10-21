@@ -374,6 +374,92 @@ def detect_windows() -> Specs:
     return s
 
 
+# --- x86-64-v3 ---------------------------------------------------------------------------------------
+# #220: the launcher compiles the game for it when the CPU has all of it (builder.cpu_target).
+# /proc/cpuinfo names: pni = SSE3, abm = LZCNT, cx16 = CMPXCHG16B, lahf_lm = LAHF/SAHF. The kernel clears avx
+# (and with it avx2, fma, f16c) when it does not save the AVX registers.
+V3_CPUINFO_FLAGS = ("pni", "ssse3", "sse4_1", "sse4_2", "popcnt", "cx16", "lahf_lm",
+                    "avx", "avx2", "bmi1", "bmi2", "fma", "f16c", "movbe", "abm")
+
+
+def missing_v3_flags(cpuinfo_text: str):
+    """The x86-64-v3 flags the first CPU of /proc/cpuinfo lacks ([] = none), or None without a flags line."""
+    m = re.search(r"^flags\s*:(.*)$", cpuinfo_text or "", re.M)
+    if not m:
+        return None
+    have = set(m.group(1).split())
+    return [f for f in V3_CPUINFO_FLAGS if f not in have]
+
+
+# Windows x64 machine code (Python cannot run CPUID): cpuid(leaf=rcx, subleaf=rdx, out=r8 -> eax ebx ecx edx)
+# and xgetbv(index=rcx) -> rax. IsProcessorFeaturePresent knows AVX2 but not BMI, MOVBE, F16C or LZCNT.
+_CPUID_CODE = bytes.fromhex("53 89c8 89d1 0fa2 418900 41895804 41894808 4189500c 5b c3".replace(" ", ""))
+_XGETBV_CODE = bytes.fromhex("0f01d0 48c1e220 4809d0 c3".replace(" ", ""))
+
+
+def v3_from_cpuid(regs, xgetbv) -> bool:
+    """x86-64-v3 from CPUID: regs(leaf, subleaf) -> (eax, ebx, ecx, edx), xgetbv(0) -> XCR0. The same test as
+    the game's own check at start (forza-recomp/src/platform/cpu_target.cpp)."""
+    max_leaf = regs(0, 0)[0]
+    ecx1 = regs(1, 0)[2] if max_leaf >= 1 else 0
+    ebx7 = regs(7, 0)[1] if max_leaf >= 7 else 0
+    ext = regs(0x80000001, 0)[2] if regs(0x80000000, 0)[0] >= 0x80000001 else 0
+    need1 = [0, 9, 12, 13, 19, 20, 22, 23, 27, 28, 29]  # SSE3 SSSE3 FMA CX16 SSE4.1 SSE4.2 MOVBE POPCNT OSXSAVE AVX F16C
+    if not all(ecx1 >> b & 1 for b in need1):
+        return False
+    if not all(ebx7 >> b & 1 for b in (3, 5, 8)) or not all(ext >> b & 1 for b in (0, 5)):  # BMI1 AVX2 BMI2; LAHF LZCNT
+        return False
+    return xgetbv(0) & 6 == 6   # the OS saves the SSE and AVX registers
+
+
+def _windows_v3():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.VirtualAlloc.restype = ctypes.c_void_p
+    k32.VirtualAlloc.argtypes = [ctypes.c_void_p, ctypes.c_size_t, wintypes.DWORD, wintypes.DWORD]
+    k32.VirtualProtect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    k32.VirtualFree.argtypes = [ctypes.c_void_p, ctypes.c_size_t, wintypes.DWORD]
+    size = 4096
+    mem = k32.VirtualAlloc(None, size, 0x3000, 0x04)   # MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    if not mem:
+        return None
+    try:
+        ctypes.memmove(mem, _CPUID_CODE, len(_CPUID_CODE))
+        ctypes.memmove(mem + 64, _XGETBV_CODE, len(_XGETBV_CODE))
+        old = wintypes.DWORD()
+        if not k32.VirtualProtect(mem, size, 0x20, ctypes.byref(old)):   # PAGE_EXECUTE_READ
+            return None
+        cpuid = ctypes.CFUNCTYPE(None, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32 * 4))(mem)
+        xgetbv = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_uint32)(mem + 64)
+
+        def regs(leaf, sub):
+            out = (ctypes.c_uint32 * 4)()
+            cpuid(leaf, sub, ctypes.byref(out))
+            return tuple(out)
+        return v3_from_cpuid(regs, xgetbv)
+    finally:
+        k32.VirtualFree(mem, 0, 0x8000)   # MEM_RELEASE
+
+
+_V3 = []
+
+
+def x86_64_v3():
+    """Can this PC run code compiled for x86-64-v3 (AVX2, FMA, BMI1/2, F16C, LZCNT, MOVBE)? True / False, None
+    when it cannot tell. Asked once per launcher run."""
+    if not _V3:
+        try:
+            if IS_WINDOWS:
+                _V3.append(_windows_v3())
+            else:
+                missing = missing_v3_flags(gpu._read("/proc/cpuinfo"))
+                _V3.append(None if missing is None else not missing)
+        except Exception:   # detection must never stop the launcher
+            _V3.append(None)
+    return _V3[0]
+
+
 # --- override and entry points -------------------------------------------------------------------
 _TRUE = ("1", "true", "yes", "on")
 

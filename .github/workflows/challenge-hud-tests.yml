@@ -30,6 +30,10 @@ jobs:
           clang-cl /nologo /std:c++17 /EHsc /W4 /WX /Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp /Fe:stall-watch-test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\stall-watch-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX /DFORZA_CPU_TARGET_V3=1 forza-recomp/tests/cpu_target_test.cpp forza-recomp/src/platform/cpu_target.cpp user32.lib /Fe:cpu-target-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\cpu-target-test.exe
       - if: runner.os != 'Windows'
         run: |
           g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/challenge_hud_test.cpp -o challenge-hud-test
@@ -38,3 +42,7 @@ jobs:
           ./achievement-hud-test
           g++ -std=c++17 -pthread -Wall -Wextra -Werror -Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp -o stall-watch-test
           ./stall-watch-test
+      - if: runner.os == 'Linux'
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -DFORZA_CPU_TARGET_V3=1 forza-recomp/tests/cpu_target_test.cpp forza-recomp/src/platform/cpu_target.cpp -o cpu-target-test
+          ./cpu-target-test

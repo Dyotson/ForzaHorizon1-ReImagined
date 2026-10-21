@@ -163,6 +163,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
@@ -202,6 +203,10 @@ rexglue_setup_target(forza GPU_PLUGINS xenos)
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+
+# The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
+include(cmake/CpuTarget.cmake)
+forza_configure_cpu_target(forza)
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client

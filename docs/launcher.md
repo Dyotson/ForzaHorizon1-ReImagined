@@ -55,9 +55,11 @@ machine from their own copy:
    setting) and `--base`.
 3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
-   result is staged into `<data>/runtime`. The build is repeated only when the launcher or
-   project version changes, or the title update is added, removed or replaced (a hash of
-   `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
+   result is staged into `<data>/runtime`. The generated code is compiled for x86-64-v3 (AVX2, FMA,
+   BMI2, MOVBE) when this PC's CPU has all of it, else for any x86-64 CPU (`-DFORZA_CPU_TARGET`,
+   [CPU target](perf.md#cpu-target-x86-64-v3-220-2026-10-21)). The build is repeated only when the launcher or
+   project version changes, the title update is added, removed or replaced, or the CPU target changes (a hash of
+   `forza-recomp/` sources, the launcher version, the SDK pin, the TU4 package and the CPU target). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
