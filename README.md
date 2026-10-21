@@ -8,7 +8,7 @@
 > **The launcher is out: [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest)**
 > (Linux Flatpak for any distro, Windows installer; both experimental). It builds the game
 > from your own copy, no build steps needed. [Announcement](https://github.com/Dyotson/ForzaHorizon1-ReImagined/discussions/21)
-> · [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/DAHCbyrpFj)
+> · [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/yu7zScdcWw)
 
 > [!IMPORTANT]
 > **macOS users: this is the first experimental macOS version.** Native Apple Silicon
@@ -313,7 +313,7 @@ Every card is an issue: comment there to discuss an item or help with it.
 
 ## Community
 
-Questions, help with setup and online sessions: [Discord](https://discord.gg/DAHCbyrpFj).
+Questions, help with setup and online sessions: [Discord](https://discord.gg/yu7zScdcWw).
 Bugs and feature requests: [issues](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues)
 (the bug report template asks for your OS, GPU and log).
 
