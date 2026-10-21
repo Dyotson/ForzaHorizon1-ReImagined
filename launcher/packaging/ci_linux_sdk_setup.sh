@@ -45,7 +45,8 @@ librarian_debs() {
     echo "The toolchain PPA is unreachable; downloading its packages from Launchpad's files" >&2
     debs="$(mktemp -d)"
     local name
-    while read -r name; do
+    while IFS= read -r name || [ -n "$name" ]; do
+        name="${name%$'\r'}"
         case "$name" in ''|'#'*) continue ;; esac
         curl -fsSL --retry 3 -o "$debs/${name}_amd64.deb" \
             "https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test/+files/${name}_amd64.deb" || return 1
