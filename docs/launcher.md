@@ -546,6 +546,19 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
   filter, frame rate, shader switches). A launcher that already holds settings keeps every one: it only learns the
   vendor. Changing the vendor asks "Use the recommended settings for X now?" (No changes only the markings);
   the button "Use the recommended settings for this card" applies them again. Reset settings restores the preset.
+* **PC specs** (#206, `launcher/forza_launcher/specs.py`, no Qt): the launcher also reads the CPU (name, physical cores,
+  AVX2 as a stand-in for FMA3), the RAM and the card (name, video memory, integrated or not) and keeps them in
+  `launcher.json` under `specs`; they are detected again when the graphics card changes or with "Check this PC again".
+  Linux reads `/proc/cpuinfo`, `/proc/meminfo`, amdgpu's `mem_info_vram_total`, `nvidia-smi` and `lspci -mm`; Windows
+  uses the same single PowerShell query (video memory from the display class registry key, as `AdapterRAM` stops at
+  4 GB) and `IsProcessorFeaturePresent(40)`. `FORZA_SPECS="cpu_cores=4,avx2=0,ram=8,vram=4,integrated=0"` overrides.
+  Two tiers: CPU (limits the frame rate): low = no AVX2, under 4 cores, under 8 GB RAM or a Steam Deck, mid = under
+  6 cores, high = 6+ cores with AVX2; graphics (limits render scale, FSR 3, anti-aliasing): low = integrated or under
+  4 GB, mid = 4 to 7 GB or a GTX / RX 400-500 / Vega-era card, high = 8 GB+ on a newer card. A new launcher gets 30 fps
+  (low CPU) or 60 fps, and render scale 2 only with a high-end card, on top of the vendor preset (whose known problems
+  always win). Settings that are heavy for the PC get an orange line with the numbers (render scale 2 renders 2560x1440
+  ...). A launcher with existing settings is never changed silently: a banner on the Settings page offers "Use
+  recommended" (only the settings that warn) or "Keep mine", and comes back only when the hardware changes.
 * **Known problems** are never forbidden: the option keeps working, with an orange line under it giving the reason
   and the issue number while it holds the problem value, and the choice is marked ("Direct3D 12 (flickers on
   NVIDIA, #46)"). The explicit choice of the player always wins.

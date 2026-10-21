@@ -6,7 +6,7 @@ import platform
 import re
 from urllib.parse import urlencode
 
-from . import GITHUB_URL, __version__, game, paths
+from . import GITHUB_URL, __version__, game, paths, specs
 from .config import flatten, parse_toml
 
 # Deliberately exclude profile IDs, paths, custom servers and arbitrary extra settings.
@@ -47,6 +47,17 @@ def redact(text, private=()):
     return text.replace("```", "''' ").replace("\x00", "")
 
 
+def pc_summary(s):
+    """CPU, RAM and video memory lines for the report's system section."""
+    cpu = specs.short_cpu(s.cpu_name) or "unknown"
+    if s.cpu_cores:
+        cpu += f", {s.cpu_cores} cores" + (f" / {s.cpu_threads} threads" if s.cpu_threads else "")
+    if s.avx2 is not None:
+        cpu += ", AVX2" if s.avx2 else ", no AVX2"
+    gb = lambda v: f"{v:.1f} GB".replace(".0 GB", " GB") if v else "unknown"
+    return {"cpu": cpu, "ram": gb(s.ram_gb), "vram": gb(s.vram_gb)}
+
+
 def launch_context(cfg, plan):
     """Freeze launch-time information; Settings can change while the game is running."""
     private = [Path.home(), cfg.data_home(), cfg.game_files(), cfg.path.parent, plan.cwd,
@@ -66,6 +77,7 @@ def launch_context(cfg, plan):
     selected = {k: settings[k] for k in SETTING_KEYS if k in settings}
     return {
         "private": tuple(str(p) for p in private if p),
+        "pc": pc_summary(cfg.pc_specs()),
         "gpu": cfg.gpu.get("name") or cfg.gpu_vendor() or "Unknown (add GPU and driver)",
         "settings": selected,
         "online": cfg.online.get("mode", "unknown"),
@@ -128,6 +140,8 @@ def collect(plan, code, context):
         f"- Launcher: {__version__} ({context['packaging']})\n"
         f"- Game: {clean(version)}\n- OS: {clean(system)}\n"
         f"- GPU (launcher detection): {clean(gpu_name)}\n"
+        f"- CPU: {clean(context['pc']['cpu'])}\n- RAM: {clean(context['pc']['ram'])}\n"
+        f"- VRAM: {clean(context['pc']['vram'])}\n"
         "- GPU driver: add version if not shown below\n"
         f"- Online: {clean(context['online'])}\n- Profile: {clean(context['profile'])}\n"
         f"- Exit code: {code} (0x{code & 0xFFFFFFFF:08X})\n"
