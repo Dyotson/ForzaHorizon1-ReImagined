@@ -1,0 +1,34 @@
+diff --git a/src/filesystem/devices/host_path_entry.cpp b/src/filesystem/devices/host_path_entry.cpp
+index 6650400..dc9a252 100644
+--- a/src/filesystem/devices/host_path_entry.cpp
++++ b/src/filesystem/devices/host_path_entry.cpp
+@@ -98,7 +98,14 @@ std::unique_ptr<Entry> HostPathEntry::CreateEntryInternal(const std::string_view
+                                                           uint32_t attributes) {
+   auto full_path = host_path_ / rex::to_path(name);
+   if (attributes & kFileAttributeDirectory) {
+-    if (!std::filesystem::create_directories(full_path)) {
++    // A name the host refuses (Windows: ':' in it, or a path past MAX_PATH) must fail the
++    // guest's call, not throw through NtCreateFile into guest code.
++    std::error_code ec;
++    if (!std::filesystem::create_directories(full_path, ec)) {
++      if (ec) {
++        REXFS_WARN("CreateEntryInternal: cannot create directory '{}': {} ({})",
++                   rex::path_to_utf8(full_path), ec.message(), ec.value());
++      }
+       return nullptr;
+     }
+   } else {
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+index 682b23d..991eab6 100644
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -239,7 +239,8 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry, const std::string_view p
+       const auto* host_path_entry = dynamic_cast<const HostPathEntry*>(parent_entry);
+       if (host_path_entry) {
+         const auto file_path = host_path_entry->host_path() / rex::to_path(entry->name());
+-        if (!std::filesystem::exists(file_path)) {
++        std::error_code ec;  // a failed check keeps the entry rather than throwing
++        if (!std::filesystem::exists(file_path, ec) && !ec) {
+           entry->Delete();
+           entry = nullptr;
+         }

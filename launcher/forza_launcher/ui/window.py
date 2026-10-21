@@ -336,6 +336,10 @@ class MainWindow(QMainWindow):
         if install is None:
             self.play.show_message(game.missing_message(looked), True)
             return
+        too_old = builder.cpu_blocker(self.cfg.data_home(), install.dir)
+        if too_old:
+            self.play.show_message(too_old, True)
+            return
         ok, msg = __import__("forza_launcher.installer", fromlist=["x"]).check_game_folder(self.cfg.game_files())
         if not ok:
             self.play.show_message(msg, True)
@@ -504,7 +508,8 @@ class MainWindow(QMainWindow):
             self.play.show_message("The game closed.")
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)
-            self._prepare_crash_report(plan, code)
+            if code != game.CPU_EXIT_CODE:
+                self._prepare_crash_report(plan, code)
         self.play.refresh()
 
         if self._close_after_game:

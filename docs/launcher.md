@@ -59,9 +59,11 @@ machine from their own copy:
    setting) and `--base`.
 3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
-   result is staged into `<data>/runtime`. The build is repeated only when the launcher or
-   project version changes, or the title update is added, removed or replaced (a hash of
-   `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
+   result is staged into `<data>/runtime`. The generated code is compiled for x86-64-v3 (AVX2, FMA,
+   BMI2, MOVBE) when this PC's CPU has all of it, else for any x86-64 CPU (`-DFORZA_CPU_TARGET`,
+   [CPU target](perf.md#cpu-target-x86-64-v3-220-2026-10-21)). The build is repeated only when the launcher or
+   project version changes, the title update is added, removed or replaced, or the CPU target changes (a hash of
+   `forza-recomp/` sources, the launcher version, the SDK pin, the TU4 package and the CPU target). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
 4. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -124,9 +126,15 @@ for taking and saving the first picture.
 - The grid shows pictures without captions and fits the window width. Sort by newest
   or oldest; ordering uses the image file's modification time, which can change when
   saves are copied or restored.
-- Select **View photo**, double-click a tile, or press Enter for a larger preview.
-  Previous/Next and the arrow keys navigate the gallery. Dimensions and the file's
-  modification date are shown in the preview.
+- Click a tile, select **View photo**, or press Enter to enlarge the original image.
+  The grid keeps thumbnails up to 800 pixels wide (larger at display scaling above
+  200%) so tiles stay sharp as the window resizes; the viewer loads the source at full
+  resolution. Click the enlarged picture or select **100%** to inspect its detail,
+  with one image pixel per display pixel even on a scaled display. Scroll to explore,
+  then click again or select **Fit to window** to see the whole picture. Ctrl+1 selects
+  100%; Ctrl+0 fits to the window. Small source images are not enlarged artificially.
+  Previous/Next and the arrow keys navigate the gallery. Source dimensions and the
+  file's modification date are shown in the preview.
 - **Export photo** saves a separate PNG or JPEG. PNG avoids another lossy encoding;
   JPEG is saved at quality 95. A date-based filename is suggested automatically.
   Exports cannot overwrite files inside the save folder.
@@ -392,6 +400,12 @@ rejected without replacing the save. The work uses the same cancellable worker a
 shutdown handling as backups. Run `python -m unittest test_save_editor test_saves_ui -v`
 for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
 or game-generated saves.
+
+The editor's **Unicorn cars** section offers **Add missing unicorns**.
+It authenticates the selected save's garage database, keeps a full safety backup,
+and adds only missing models from the seven-car unicorn list. Existing cars,
+upgrades, tuning and the selected car are preserved. This is an offline edit;
+no server or Message Center collection is needed. See [garage format and validation](unicorn_cars.md).
 
 Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
 The editor's profile-table addresses and XUID derivation were checked against the local
