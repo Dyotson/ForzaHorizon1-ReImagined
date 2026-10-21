@@ -52,9 +52,11 @@ no game strings or metadata are bundled. Party counts come from the newest local
 hosted/joined presence session, not the server's global online-player roster.
 
 The native client is Discord's [MIT-licensed classic RPC implementation](https://github.com/discord/discord-rpc),
-which Discord has archived in favor of its Social SDK. `cmake/discord.cmake` pins and
-hash-checks the source archives and builds a static library, using a newer pinned
-RapidJSON revision for current compiler compatibility. The native runtime retains
+which Discord has archived in favor of its Social SDK. `cmake/discord.cmake` builds
+a static library from the pinned sources under `forza-recomp/thirdparty`, using a
+newer pinned RapidJSON revision for current compiler compatibility. Configuring
+the game does not download either dependency; revisions, archive hashes and license
+locations are recorded in `thirdparty/README.md`. The native runtime retains
 both license notices under `licenses/`, including after the launcher cleans the build
 tree. The Linux transport supports Flatpak socket paths and queues fragmented reads.
 Protocol reference: [Discord's RPC-only Rich Presence guide](https://github.com/discord/discord-rpc/blob/master/documentation/hard-mode.md).

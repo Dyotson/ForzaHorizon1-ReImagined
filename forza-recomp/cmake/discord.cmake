@@ -1,20 +1,12 @@
 # Discord's MIT-licensed classic Rich Presence client, built into the game. Sources
-# are pinned and hash-checked; no Discord binaries, tokens or game data are shipped.
-include(FetchContent)
-FetchContent_Declare(forza_discord_rpc
-    URL https://codeload.github.com/discord/discord-rpc/tar.gz/963aa9f3e5ce81a4682c6ca3d136cddda614db33
-    URL_HASH SHA256=8f4115999391f95f443615fc5b13cb2398926ac4c418d3d34ff5735f71c6faea
-    SOURCE_SUBDIR unused)
-FetchContent_Declare(forza_rapidjson
-    URL https://codeload.github.com/Tencent/rapidjson/tar.gz/24b5e7a8b27f42fa16b96fc70aade9106cf7102f
-    URL_HASH SHA256=2d2601a82d2d3b7e143a3c8d43ef616671391034bc46891a9816b79cf2d3e7a8
-    SOURCE_SUBDIR unused)
-FetchContent_MakeAvailable(forza_discord_rpc forza_rapidjson)
-set(_rpc "${forza_discord_rpc_SOURCE_DIR}")
+# are vendored at pinned revisions (see thirdparty/README.md), so configuring the
+# game never downloads these optional integration dependencies.
+set(_rpc "${CMAKE_CURRENT_LIST_DIR}/../thirdparty/discord-rpc")
+set(_rapidjson "${CMAKE_CURRENT_LIST_DIR}/../thirdparty/rapidjson")
 add_library(forza-discord-rpc STATIC
     ${_rpc}/src/discord_rpc.cpp ${_rpc}/src/rpc_connection.cpp ${_rpc}/src/serialization.cpp)
 target_include_directories(forza-discord-rpc PUBLIC ${_rpc}/include
-    PRIVATE ${forza_rapidjson_SOURCE_DIR}/include ${_rpc}/src)
+    PRIVATE ${_rapidjson}/include ${_rpc}/src)
 if(WIN32)
     set(_connection ${_rpc}/src/connection_win.cpp)
     target_sources(forza-discord-rpc PRIVATE ${_rpc}/src/discord_register_win.cpp)
@@ -43,6 +35,6 @@ add_custom_command(TARGET forza POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:forza>/licenses"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_rpc}/LICENSE"
         "$<TARGET_FILE_DIR:forza>/licenses/discord-rpc.txt"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${forza_rapidjson_SOURCE_DIR}/license.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_rapidjson}/license.txt"
         "$<TARGET_FILE_DIR:forza>/licenses/rapidjson.txt"
     VERBATIM)
