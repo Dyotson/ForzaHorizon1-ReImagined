@@ -79,10 +79,6 @@ jobs:
             "$RUNNER_TEMP/macos-ci-tests/$test"
             echo "PASS: $test"
           done 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/tests.log"
-          clang++ -std=c++17 -pthread -Wall -Wextra -Werror \
-            -Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp \
-            -o "$RUNNER_TEMP/macos-ci-tests/stall-watch"
-          "$RUNNER_TEMP/macos-ci-tests/stall-watch"
 
       - name: Cache installed patched SDK
         id: sdk-cache

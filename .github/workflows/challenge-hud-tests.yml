@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022]
+        os: [ubuntu-22.04, windows-2022, macos-15]
     steps:
       - uses: actions/checkout@v4
       - if: runner.os == 'Windows'
@@ -30,7 +30,7 @@ jobs:
           clang-cl /nologo /std:c++17 /EHsc /W4 /WX /Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp /Fe:stall-watch-test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\stall-watch-test.exe
-      - if: runner.os == 'Linux'
+      - if: runner.os != 'Windows'
         run: |
           g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/challenge_hud_test.cpp -o challenge-hud-test
           ./challenge-hud-test
