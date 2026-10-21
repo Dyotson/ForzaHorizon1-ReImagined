@@ -24,6 +24,12 @@ apt_get update
 apt_get install -y software-properties-common ca-certificates
 $SUDO add-apt-repository --no-update -y ppa:ubuntu-toolchain-r/test
 apt_get update
+# A cached SDK overlay still needs C++23 headers for the stock-header HUD check.
+# Avoid installing the SDK's complete build dependencies for that compile alone.
+if [ "${1:-}" = --compiler-only ]; then
+    apt_get install -y g++-14
+    exit 0
+fi
 # The -dev packages of PulseAudio and ALSA (and D-Bus, fribidi, libthai) matter at run time too: SDL3 inside
 # the runtime only gets those audio and input backends if its headers are present when it is built;
 # without them the game finds no audio device and stops (KeBugCheckEx).
