@@ -11,6 +11,7 @@ project's alone):
 
 | Patch | Area | What changes | Why |
 | --- | --- | --- | --- |
+| 0086 | Startup pipelines (Vulkan, Direct3D 12) | Reports existing blocking warm-up progress; Vulkan persists a validated, GPU/driver-specific `VkPipelineCache` beside the shader description cache | Makes startup preparation visible and lets the driver reuse locally compiled pipeline data. Only previously encountered pipelines can be warmed; see [Startup shader warm-up](shader_warmup.md) |
 | 0036 | Vulkan shared memory uploads | An upload of vertex or index data the CPU rewrote no longer ends the current render pass when no draw in it has read the uploaded pages: it is recorded before the render pass, and the uploads hoisted there share one barrier pair (`vulkan_hoist_shared_memory_uploads`) | Races at 144 ran 52,000 render pass instances and 133,000 barriers a second, nearly all for these uploads (10,600 and 27,000 with the patch) |
 | 0037 | Video mode (runtime) | The guest refresh rate (`video_mode_refresh_rate`, its range and `VdQueryVideoMode`'s clamp) may go up to 480 Hz instead of 240 | 144 fps (and other rates above 120) can keep the game's divider of two: a 288 Hz guest vblank. With a 144 Hz vblank and no divider, the emulated GPU's swap waits (which end on a vblank, patch 0030) turn every frame that misses 6.9 ms into a 13.9 ms one: free roam made 72 fps at a 144 fps target. `docs/framerate.md` |
 | 0038 | Vulkan submission | The deferred command buffer is replayed into Vulkan and submitted on a "Vulkan Submission" thread instead of the GPU command processor thread (`vulkan_threaded_submission`) | The replay took 11% of the command processor thread, which bounds the races above 60 fps |
@@ -142,3 +143,38 @@ The vblank worker observes refresh-rate changes without restarting. The native U
 orders NGX scratch/history accesses, enables buffer device addresses when available,
 and ties presentation semaphores to swapchain images. See
 [Rendering](rendering.md#vulkan-dlss-initialization-and-presentation-lifetime).
+
+0077 adds SMAA 1x to the FH1 scene/native-HUD bridge. It fetches pinned, hash-checked
+MIT sources and lookup tables from iryoku/smaa, packages the license, and compiles
+three Vulkan compute passes. SMAA bypasses NGX and temporal jitter/history. The
+live graphics transaction accepts the new scene mode and suppresses final-image
+FXAA while scene AA is active. Optional diagnostics log guest MSAA sample counts
+without changing the guest registers or render-target layout.
+
+0078 lets passive ImGui dialogs opt out of continuous UI repaints. The performance
+overlay draws with game frames; interactive dialogs continue to request redraws
+for input and animations. This prevents the FPS display itself from driving the
+presenter at a higher rate than the game.
+The hint lives in a private runtime side table, set through the optional C export
+`rexui_SetDialogContinuousRepaint` on the UI thread and forgotten when a dialog
+is removed or its drawer is destroyed. Neither ImGuiDialog nor ImGuiDrawer gains
+a public member or virtual function. The game compiles with the stock nightly
+headers; older runtimes without the export safely retain continuous repainting.
+Linux SDK CI compiles the actual HUD adapter against those stock headers, even
+on an SDK cache hit, and tests passive/mixed dialog policy and hint cleanup.
+
+0090 adds Xbox impulse trigger output to the SDL input driver. The optional C
+export `ForzaInputTriggerRumble(user_mask, left, right, duration_ms)` routes only
+to SDL Xbox One/Series devices that advertise trigger rumble, through the same
+device assignments and SDL gamepad handles as normal game input/rumble. It uses
+`SDL_RumbleGamepadTriggers`, leaving body motor state intact. Calls respect the
+vibration setting, UI input blockers and focus, and clamp effects to 150 ms.
+Two nonvirtual methods are added; class layouts and virtual tables are unchanged.
+The game discovers the export dynamically, so an older runtime still loads and
+the launcher explains that an update/rebuild is required. Patch number 0090 avoids the numbers reserved by the graphics, macOS and warm-up PRs. See [telemetry](telemetry.md#xbox-impulse-triggers).
+
+Windows validation: both modified SDK sources compiled; an isolated runtime DLL
+linked and exported the entry point. A probe with real SDL virtual controllers
+verified trigger amplitudes, routing to guest users, unsupported-device rejection,
+body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
+USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.

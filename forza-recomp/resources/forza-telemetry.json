@@ -1,0 +1,1 @@
+{"protocol": "FH1T", "version": 1, "xbox_trigger_rumble": 1, "capabilities": ["position", "derived_velocity", "derived_acceleration", "raw_controller_inputs"]}

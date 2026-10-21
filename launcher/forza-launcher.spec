@@ -33,6 +33,8 @@ datas = [
     (str(repo / "forza-recomp" / "resources" / "forza.ico"), "assets"),
     (str(images / "social-preview.png"), "assets"),
     (str(root / "forza_launcher" / "ui" / "down.svg"), "forza_launcher/ui"),
+    (str(root / "forza_launcher" / "ui" / "check.svg"), "forza_launcher/ui"),
+    (str(root / "forza_launcher" / "ui" / "controller_art"), "forza_launcher/ui/controller_art"),
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
     (str(repo / "tools" / "xiso_extract.py"), "tools"),
     (str(repo / "tools" / "install_dlc.py"), "tools"),
@@ -40,6 +42,10 @@ datas = [
 # certifi's cacert.pem (the fallback CA bundle of fetch.py) and truststore (the OS certificate store on
 # Windows/macOS), both imported lazily and so invisible to the import scan (#85).
 datas += collect_data_files("certifi")
+datas += [(str(root / 'forza_launcher' / 'haptics' / 'vendor' / name), 'forza_launcher/haptics/vendor')
+          for name in ('LICENSE', 'README.md')]
+if sys.platform != 'linux':
+    hidden += ['hid']
 hidden += ["certifi"] + collect_submodules("truststore")
 # PySDL2 loads SDL through ctypes; retain the wheel's DLL directory and licenses.
 datas += collect_data_files("sdl2dll")
