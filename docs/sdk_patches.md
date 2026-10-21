@@ -233,7 +233,8 @@ integer HUD scales; a 1080p trial cropped the UI and is rejected. A register-lev
 MSAA reduction trial corrupted reflections/vegetation and is not included.
 See [MetalFX usage and measurements](macos.md#apple-metalfx).
 
-0085 copies packed scene/HUD resolve texels as whole words. The common 1x-to-2x
+0085 copies packed scene/HUD resolve texels as whole words. Patch 0100 below
+corrects its original storage-layout assumption. The common 1x-to-2x
 path repeats 8/16-bit texels with masks and shifts and 32/64/128-bit texels with
 word loads. Other integer scales use the same nearest-sample mapping; unaligned
 sources retain the original byte path. The diagnostic flag
@@ -293,3 +294,12 @@ photo-quality assessment, a large-photo upload test, or a reporter retest.
 `tools/test_vfs_host_errors.cpp` on Windows, in addition to #213's Linux coverage.
 The Windows SDK job runs it before packaging and caching the overlay. Full CI
 builds and reporter retesting remain necessary.
+
+### Cross-scale scene/HUD resolve layout
+
+0100 corrects the scene/HUD resolve mirror to resample the SDK's repeated
+16-byte storage quads with the resolve's byte order. It supersedes the
+individual-pixel mapping in 0046/0085, retaining whole-word loads where safe and
+the `fh1_fast_resolve_copy` diagnostic switch. Both paths pass the standalone
+Vulkan reference matrix, including transfers to/from 3x. See
+[cross-scale minimap corruption](rendering.md#cross-scale-minimap-corruption-at-3x).
