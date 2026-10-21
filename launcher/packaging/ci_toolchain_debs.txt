@@ -1,0 +1,25 @@
+# The toolchain PPA's packages that "apt-get install g++-14" pulls on Ubuntu 22.04, for
+# ci_linux_sdk_setup.sh's last fallback: Launchpad's file links keep serving these when both
+# PPA hosts answer 503. Update the versions when the PPA moves on (a superseded file can vanish).
+cpp-14_14.3.0-12ubuntu1~22~ppa2
+cpp-14-x86-64-linux-gnu_14.3.0-12ubuntu1~22~ppa2
+g++-14_14.3.0-12ubuntu1~22~ppa2
+g++-14-x86-64-linux-gnu_14.3.0-12ubuntu1~22~ppa2
+gcc-14_14.3.0-12ubuntu1~22~ppa2
+gcc-14-base_14.3.0-12ubuntu1~22~ppa2
+gcc-14-x86-64-linux-gnu_14.3.0-12ubuntu1~22~ppa2
+gcc-16-base_16-20260315-1ubuntu1~22~ppa1
+libasan8_16-20260315-1ubuntu1~22~ppa1
+libatomic1_16-20260315-1ubuntu1~22~ppa1
+libcc1-0_16-20260315-1ubuntu1~22~ppa1
+libgcc-14-dev_14.3.0-12ubuntu1~22~ppa2
+libgcc-s1_16-20260315-1ubuntu1~22~ppa1
+libgomp1_16-20260315-1ubuntu1~22~ppa1
+libhwasan0_16-20260315-1ubuntu1~22~ppa1
+libitm1_16-20260315-1ubuntu1~22~ppa1
+liblsan0_16-20260315-1ubuntu1~22~ppa1
+libquadmath0_16-20260315-1ubuntu1~22~ppa1
+libstdc++-14-dev_14.3.0-12ubuntu1~22~ppa2
+libstdc++6_16-20260315-1ubuntu1~22~ppa1
+libtsan2_16-20260315-1ubuntu1~22~ppa1
+libubsan1_16-20260315-1ubuntu1~22~ppa1
