@@ -355,6 +355,9 @@ add("vulkan_device", "Vulkan device", "Advanced", "int", -1,
     restart=True)
 add("vulkan_allow_present_mode_immediate", "Allow tearing present mode", "Advanced", "bool",
     False, "No vsync wait. Spins the GPU; leave off.", "GPU")
+add("d3d12_allow_variable_refresh_rate_and_tearing", "Allow tearing (Direct3D 12)", "Advanced", "bool",
+    False, "Variable refresh rate (G-Sync / FreeSync) on Direct3D 12. Tears on a fixed-refresh "
+    "display; leave off unless yours has VRR.", "GPU", platform="windows")
 add("vulkan_allow_present_mode_mailbox", "Allow mailbox present mode", "Advanced", "bool",
     False, "Triple buffering.", "GPU")
 add("vulkan_allow_present_mode_fifo_relaxed", "Allow relaxed FIFO", "Advanced", "bool", False,
