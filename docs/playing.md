@@ -137,6 +137,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   a garbled picture (#54); photos saved by them stay garbled, take them again.
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
+- **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
+  what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
 
 ## Recommended picture settings
 
