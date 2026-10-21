@@ -1,0 +1,283 @@
+diff --git a/include/rex/ui/vulkan/presenter.h b/include/rex/ui/vulkan/presenter.h
+index 56ee43b..12e29a1 100644
+--- a/include/rex/ui/vulkan/presenter.h
++++ b/include/rex/ui/vulkan/presenter.h
+@@ -281,7 +281,6 @@ class VulkanPresenter final : public Presenter {
+       ~Submission();
+ 
+       VkSemaphore acquire_semaphore() const { return acquire_semaphore_; }
+-      VkSemaphore present_semaphore() const { return present_semaphore_; }
+       VkCommandPool draw_command_pool() const { return draw_command_pool_; }
+       VkCommandBuffer draw_command_buffer() const { return draw_command_buffer_; }
+ 
+@@ -292,7 +291,6 @@ class VulkanPresenter final : public Presenter {
+ 
+       const VulkanDevice* vulkan_device_;
+       VkSemaphore acquire_semaphore_ = VK_NULL_HANDLE;
+-      VkSemaphore present_semaphore_ = VK_NULL_HANDLE;
+       VkCommandPool draw_command_pool_ = VK_NULL_HANDLE;
+       VkCommandBuffer draw_command_buffer_ = VK_NULL_HANDLE;
+     };
+@@ -333,11 +331,15 @@ class VulkanPresenter final : public Presenter {
+     };
+ 
+     struct SwapchainFramebuffer {
+-      SwapchainFramebuffer(VkImageView image_view, VkFramebuffer framebuffer)
+-          : image_view(image_view), framebuffer(framebuffer) {}
++      SwapchainFramebuffer(VkImageView image_view, VkFramebuffer framebuffer,
++                           VkSemaphore present_semaphore)
++          : image_view(image_view), framebuffer(framebuffer),
++            present_semaphore(present_semaphore) {}
+ 
+       VkImageView image_view;
+       VkFramebuffer framebuffer;
++      // Reacquiring this image guarantees presentation consumed its last signal.
++      VkSemaphore present_semaphore;
+     };
+ 
+     explicit PaintContext(const VulkanDevice* const vulkan_device)
+diff --git a/src/graphics/vulkan/fh1_dlss.cpp b/src/graphics/vulkan/fh1_dlss.cpp
+index 5521b8b..97acb4d 100644
+--- a/src/graphics/vulkan/fh1_dlss.cpp
++++ b/src/graphics/vulkan/fh1_dlss.cpp
+@@ -67,6 +67,77 @@ struct Fh1Dlss::State {
+   VkBuffer temporal_constants{};
+   VkDeviceMemory temporal_memory{};
+   bool previous_temporal = false, logged_temporal = false;
++#if defined(REX_FH1_NGX)
++  bool InitializeFeatureGpu() {
++    // Finish feature creation and its lazy first evaluation before game frames
++    // can overlap on the submission thread. All GPU initialization uses private
++    // cleared inputs; the first real frame still resets temporal history.
++    const auto& f = device->functions();
++    const VkDevice d = device->device();
++    VkCommandPool pool = VK_NULL_HANDLE;
++    VkFence fence = VK_NULL_HANDLE;
++    auto cleanup = [&] {
++      if (fence) f.vkDestroyFence(d, fence, nullptr);
++      if (pool) f.vkDestroyCommandPool(d, pool, nullptr);
++    };
++    VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
++    pool_info.queueFamilyIndex = device->queue_family_graphics_compute();
++    if (f.vkCreateCommandPool(d, &pool_info, nullptr, &pool) != VK_SUCCESS) return false;
++    VkCommandBuffer command;
++    VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++    alloc.commandPool = pool; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;
++    if (f.vkAllocateCommandBuffers(d, &alloc, &command) != VK_SUCCESS) { cleanup(); return false; }
++    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++    if (f.vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) { cleanup(); return false; }
++    NVSDK_NGX_DLSS_Create_Params create{};
++    create.Feature = {width, height, output_width, output_height, quality};
++    // The scene is already tonemapped; floating-point storage isn't HDR input.
++    create.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
++        NVSDK_NGX_DLSS_Feature_Flags_AutoExposure | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
++    auto result = NGX_VULKAN_CREATE_DLSS_EXT1(d, command, 1, 1, &feature, parameters, &create);
++    if (test_failure && std::string_view(test_failure) == "create") result = NVSDK_NGX_Result_FAIL_PlatformError;
++    if (NVSDK_NGX_FAILED(result)) { cleanup(); return false; }
++    for (auto& image : images) {
++      Barrier(command, image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
++      VkClearColorValue clear{};
++      const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++      f.vkCmdClearColorImage(command, image.image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
++    }
++    std::array<NVSDK_NGX_Resource_VK, 4> resources;
++    for (unsigned i = 0; i < resources.size(); ++i) {
++      const auto& image = images[i];
++      resources[i] = NVSDK_NGX_Create_ImageView_Resource_VK(image.view, image.image,
++          {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, image.format, image.w, image.h, i == 1);
++    }
++    VkMemoryBarrier dependency{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++    dependency.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
++    dependency.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++    f.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++        0, 1, &dependency, 0, nullptr, 0, nullptr);
++    NVSDK_NGX_VK_DLSS_Eval_Params eval{};
++    eval.Feature.pInColor = &resources[0]; eval.Feature.pInOutput = &resources[1];
++    eval.pInDepth = &resources[2]; eval.pInMotionVectors = &resources[3];
++    eval.InRenderSubrectDimensions = {width, height}; eval.InMVScaleX = eval.InMVScaleY = 1.0f;
++    eval.InReset = true; eval.InPreExposure = eval.InExposureScale = 1.0f;
++    result = NGX_VULKAN_EVALUATE_DLSS_EXT(command, feature, parameters, &eval);
++    if (NVSDK_NGX_FAILED(result) || f.vkEndCommandBuffer(command) != VK_SUCCESS) { cleanup(); return false; }
++    VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++    if (f.vkCreateFence(d, &fence_info, nullptr, &fence) != VK_SUCCESS) { cleanup(); return false; }
++    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount = 1; submit.pCommandBuffers = &command;
++    VkResult submitted;
++    {
++      auto queue = device->AcquireQueue(device->queue_family_graphics_compute(), 0);
++      submitted = f.vkQueueSubmit(queue.queue(), 1, &submit, fence);
++    }
++    const bool ready = submitted == VK_SUCCESS && f.vkWaitForFences(d, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
++    cleanup();
++    images_ready = ready;
++    if (ready) REXGPU_INFO("DLSS: feature initialization completed on the GPU");
++    return ready;
++  }
++#endif
+   bool CreateTemporalPipeline() {
+     const auto& f = device->functions(); const auto d = device->device();
+     const VkDescriptorSetLayoutBinding bindings[] = {
+@@ -333,6 +404,10 @@ bool Fh1Dlss::Initialize() {
+       !s.Create(s.images[2], s.width, s.height, VK_FORMAT_R32_SFLOAT) ||
+       !s.Create(s.images[3], s.width, s.height, VK_FORMAT_R16G16_SFLOAT)) return false;
+   if (!s.update_buffer || !s.CreateTemporalPipeline()) return false;
++  if (!s.InitializeFeatureGpu()) {
++    REXGPU_ERROR("DLSS: GPU feature initialization failed");
++    return false;
++  }
+   REXGPU_INFO("DLSS: official NGX Vulkan runtime ready, no ReShade or D3D12 proxy");
+   return true;
+ #else
+@@ -372,7 +447,7 @@ void Fh1Dlss::Execute(VkCommandBuffer command, VkImage scene, VkImage destinatio
+   }
+   auto& input = s.images[0]; auto& output = s.images[1];
+   s.Barrier(command, input.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+-      VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
++      VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+   s.Blit(command, scene, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, input.image,
+       VK_IMAGE_LAYOUT_GENERAL, 1280 * s.backing_scale, 720 * s.backing_scale, s.width, s.height);
+   for (auto& image : s.images)
+@@ -387,22 +462,6 @@ void Fh1Dlss::Execute(VkCommandBuffer command, VkImage scene, VkImage destinatio
+       s.logged_temporal = true;
+     }
+   }
+-  if (!s.feature && !s.failed) {
+-    NVSDK_NGX_DLSS_Create_Params create{};
+-    create.Feature = {s.width, s.height, s.output_width, s.output_height,
+-        s.quality};
+-    // This is the game's tonemapped scene, before the HUD. A float Vulkan
+-    // resource does not make those display-referred colors HDR input.
+-    create.InFeatureCreateFlags =
+-        NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure |
+-        NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
+-    auto result = NGX_VULKAN_CREATE_DLSS_EXT1(s.device->device(), command, 1, 1, &s.feature, s.parameters, &create);
+-    if (s.test_failure && std::string_view(s.test_failure) == "create") result = NVSDK_NGX_Result_FAIL_PlatformError;
+-    if (NVSDK_NGX_FAILED(result)) {
+-      REXGPU_ERROR("DLSS: Vulkan feature creation failed: {:08X}", uint32_t(result)); s.failed = true;
+-      ReportStatus("error: NVIDIA feature creation failed. This session uses bilinear scaling; turn DLSS off and restart for native rendering. See the game log.");
+-    } else REXGPU_INFO("DLSS: created {} feature {}x{} -> {}x{}", s.mode, s.width, s.height, s.output_width, s.output_height);
+-  }
+   bool rendered = false;
+   if (s.feature && !s.failed) {
+     std::array<NVSDK_NGX_Resource_VK, 4> resources;
+@@ -420,6 +479,14 @@ void Fh1Dlss::Execute(VkCommandBuffer command, VkImage scene, VkImage destinatio
+     eval.InJitterOffsetX = -frame_input.jitter_x; eval.InJitterOffsetY = -frame_input.jitter_y;
+     eval.InReset = !temporal || !s.previous_temporal;
+     eval.InPreExposure = eval.InExposureScale = 1.0f;
++    // NGX also owns scratch buffers and history resources. Image-specific
++    // barriers for our inputs and output don't order accesses to that private
++    // state, including writes recorded while creating the feature.
++    VkMemoryBarrier ngx_dependency{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++    ngx_dependency.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++    ngx_dependency.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
++    f.vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &ngx_dependency, 0, nullptr, 0, nullptr);
+     auto result = NGX_VULKAN_EVALUATE_DLSS_EXT(command, s.feature, s.parameters, &eval);
+     if (s.test_failure && std::string_view(s.test_failure) == "evaluate" && s.frames >= 8) result = NVSDK_NGX_Result_FAIL_PlatformError;
+     rendered = NVSDK_NGX_SUCCEED(result);
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 7b24082..865e3c1 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -173,6 +173,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   // A session may enable DLSS later from the graphics menu.
+   const bool dlss_requested = with_gpu_emulation && properties.vendorID == 0x10DE;
+   bool ext_KHR_push_descriptor = false;
++  bool ext_KHR_buffer_device_address = false;
++  if (dlss_requested) {
++    requested_extensions.emplace("VK_KHR_buffer_device_address", &ext_KHR_buffer_device_address);
++  }
+   if (dlss_requested) requested_extensions.emplace("VK_KHR_push_descriptor", &ext_KHR_push_descriptor);
+   bool ext_NVX_binary_import = false, ext_NVX_image_view_handle = false;
+   if (dlss_requested) requested_extensions.emplace("VK_NVX_binary_import", &ext_NVX_binary_import);
+@@ -671,7 +675,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_FEATURE_2(features_1_2, samplerMirrorClampToEdge);
+       XE_UI_VULKAN_FEATURE_2(features_1_2, uniformBufferStandardLayout);
+       XE_UI_VULKAN_FEATURE_2(features_1_2, scalarBlockLayout);
+-      if (dlss_requested) features_1_2.enabled.shaderFloat16 = features_1_2.supported.shaderFloat16;
++      if (dlss_requested) {
++        features_1_2.enabled.shaderFloat16 = features_1_2.supported.shaderFloat16;
++        features_1_2.enabled.bufferDeviceAddress = features_1_2.supported.bufferDeviceAddress;
++      }
+     }
+   } else {
+     if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+index da26e95..fbe47d3 100644
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -135,9 +135,6 @@ VulkanPresenter::PaintContext::Submission::~Submission() {
+     dfn.vkDestroyCommandPool(device, draw_command_pool_, nullptr);
+   }
+ 
+-  if (present_semaphore_ != VK_NULL_HANDLE) {
+-    dfn.vkDestroySemaphore(device, present_semaphore_, nullptr);
+-  }
+   if (acquire_semaphore_ != VK_NULL_HANDLE) {
+     dfn.vkDestroySemaphore(device, acquire_semaphore_, nullptr);
+   }
+@@ -158,13 +155,6 @@ bool VulkanPresenter::PaintContext::Submission::Initialize() {
+         "semaphore");
+     return false;
+   }
+-  if (dfn.vkCreateSemaphore(device, &semaphore_create_info, nullptr, &present_semaphore_) !=
+-      VK_SUCCESS) {
+-    REXLOG_ERROR(
+-        "VulkanPresenter: Failed to create a swapchain image presentation "
+-        "semaphore");
+-    return false;
+-  }
+ 
+   VkCommandPoolCreateInfo command_pool_create_info;
+   command_pool_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+@@ -1039,7 +1029,16 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+       paint_context_.DestroySwapchainAndVulkanSurface();
+       return SurfacePaintConnectResult::kFailure;
+     }
+-    paint_context_.swapchain_framebuffers.emplace_back(image_view, framebuffer);
++    VkSemaphore present_semaphore;
++    const VkSemaphoreCreateInfo semaphore_info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
++    if (dfn.vkCreateSemaphore(device, &semaphore_info, nullptr, &present_semaphore) != VK_SUCCESS) {
++      REXLOG_ERROR("VulkanPresenter: Failed to create a swapchain image presentation semaphore");
++      dfn.vkDestroyFramebuffer(device, framebuffer, nullptr);
++      dfn.vkDestroyImageView(device, image_view, nullptr);
++      paint_context_.DestroySwapchainAndVulkanSurface();
++      return SurfacePaintConnectResult::kFailure;
++    }
++    paint_context_.swapchain_framebuffers.emplace_back(image_view, framebuffer, present_semaphore);
+   }
+ 
+   is_vsync_implicit_out = paint_context_.swapchain_is_fifo;
+@@ -1460,10 +1459,21 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
+   if (swapchain != VK_NULL_HANDLE) {
+     submission_tracker.AwaitAllSubmissionsCompletion();
++    // Submission fences don't cover presentation. Drain it before destroying
++    // the per-image semaphores during resize, reconnection, or shutdown.
++    if (present_queue_family != UINT32_MAX) {
++      auto queue = vulkan_device->AcquireQueue(present_queue_family, 0);
++      const auto wait_idle = reinterpret_cast<PFN_vkQueueWaitIdle>(
++          vulkan_device->vulkan_instance()->functions().vkGetDeviceProcAddr(
++              vulkan_device->device(), "vkQueueWaitIdle"));
++      assert_not_null(wait_idle);
++      wait_idle(queue.queue());
++    }
+   }
+   const VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+   for (const SwapchainFramebuffer& framebuffer : swapchain_framebuffers) {
++    dfn.vkDestroySemaphore(device, framebuffer.present_semaphore, nullptr);
+     dfn.vkDestroyFramebuffer(device, framebuffer.framebuffer, nullptr);
+     dfn.vkDestroyImageView(device, framebuffer.image_view, nullptr);
+   }
+@@ -2210,7 +2220,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+     paint_context_.ui_setup_command_buffer_current_index = SIZE_MAX;
+   }
+   command_buffers[command_buffer_count++] = draw_command_buffer;
+-  VkSemaphore present_semaphore = paint_submission.present_semaphore();
++  VkSemaphore present_semaphore =
++      paint_context_.swapchain_framebuffers[swapchain_image_index].present_semaphore;
+   VkSubmitInfo submit_info;
+   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   submit_info.pNext = nullptr;

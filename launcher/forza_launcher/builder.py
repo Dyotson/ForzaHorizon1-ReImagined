@@ -667,6 +667,12 @@ def sync_toolchain_file(root: Path) -> Path:
     return dst
 
 
+# The MSVC version clang-cl assumes when it finds no Visual Studio at all (LLVM 23: _MSC_VER
+# 1933), which is what xwin builds were tested with; pinned so an old Visual Studio on the
+# machine cannot lower it (#173).
+XWIN_MSVC_COMPAT = "19.33"
+
+
 def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     """Windows: the environment (INCLUDE, LIB, PATH) of the MSVC CRT and Windows SDK, from an
     installed Visual Studio, else from xwin, which needs the player to accept Microsoft's license."""
@@ -693,6 +699,9 @@ def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     env = cleanenv.clean_environment()
     env["INCLUDE"] = os.pathsep.join(map(str, inc))
     env["LIB"] = os.pathsep.join(map(str, lib))
+    # clang-cl takes the MSVC version from a Visual Studio it finds, which here is none or one
+    # too old for this CRT (#173); the toolchain file passes this on as -fms-compatibility-version.
+    env["FORZA_MSVC_COMPAT"] = XWIN_MSVC_COMPAT
     return env
 
 
@@ -868,6 +877,11 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     """Copy what the game needs to run into runtime/ so the build tree can be deleted."""
     rt = runtime_dir(opts.root)
     rt.mkdir(parents=True, exist_ok=True)
+    telemetry = bdir / "forza-telemetry.json"
+    if telemetry.is_file():
+        shutil.copy2(telemetry, rt / telemetry.name)
+    else:
+        (rt / telemetry.name).unlink(missing_ok=True)
     notice = bdir / "LICENSE-Pinyon-Shift"
     if notice.is_file():
         shutil.copy2(notice, rt / notice.name)

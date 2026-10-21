@@ -72,8 +72,10 @@ class LauncherUITests(unittest.TestCase):
                               [sys.executable, "-c", script, str(log), FAULT + "\n" + CHAIN,
                                f"--log_file={log}"], {}, [], self.root / "forza.toml", "frame_rate = 120")
         win = self.window
+        self.wait_for(lambda: not win.saves.busy() and not win._busy)
         with patch.object(game, "find_game", return_value=(plan.game, [])), \
                 patch("forza_launcher.installer.check_game_folder", return_value=(True, "Ready")), \
+                patch("forza_launcher.dlss.menu_runtime_enabled", return_value=False), \
                 patch.object(game, "build_plan", return_value=plan):
             win.start_game()
             self.assertIsNotNone(win.session)

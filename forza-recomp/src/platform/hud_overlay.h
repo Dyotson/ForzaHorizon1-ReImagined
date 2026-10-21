@@ -1,5 +1,5 @@
-// forza - a text box over the game for the Horizon World's head-to-head challenges
-// (src/hooks/world_challenge.cpp): prompts, countdowns, the race's distance and results.
+// forza - an overlay for friends, chat and invite screens. Head-to-head challenges
+// use the game's native HUD instead (platform/challenge_hud.h).
 //
 // Drawn with the SDK's ImGui drawer at the top centre of the window, without taking input,
 // and registered with the drawer only while it shows (as the achievement toasts are,
@@ -17,6 +17,8 @@
 
 #include <string>
 
+struct ImFontAtlas;
+
 namespace rex::ui {
 class ImGuiDrawer;
 class Window;
@@ -28,6 +30,11 @@ namespace forza {
 // ForzaApp::OnCreateDialogs.
 void InstallHud(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext& app_context,
                 rex::ui::Window* window);
+
+// Passive performance overlay: Off / FPS / FPS with frame-time history.
+void ConfigurePerformanceFont(ImFontAtlas* atlas);
+void PerformanceOverlayFrame();  // called only for guest VdSwap, any thread
+void UpdatePerformanceOverlay(); // checks its hot cvar, any thread
 
 constexpr char kHudHighlight = '\x01';
 

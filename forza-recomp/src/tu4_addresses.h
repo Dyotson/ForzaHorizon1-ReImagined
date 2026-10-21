@@ -6,6 +6,9 @@
 
 #include <cstdint>
 
+#define sub_82D4DE30 sub_82E100B0
+#define __imp__sub_82D4DE30 __imp__sub_82E100B0
+
 #define sub_823E22C8 sub_82412260
 #define __imp__sub_823E22C8 __imp__sub_82412260
 #define sub_823ED888 sub_8241D948  // check

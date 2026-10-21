@@ -142,7 +142,7 @@ class WindowTests(unittest.TestCase):
         session.poll.return_value = code
         session.stop_requested = stopped
         win = SimpleNamespace(session=session, session_plan=None, poll=MagicMock(), play=MagicMock(),
-                              _prepare_crash_report=MagicMock())
+                              _prepare_crash_report=MagicMock(), _close_after_game=False)
         with patch.object(game, "crash_reason", return_value="CRASH BOX"):
             MainWindow._poll(win)
         self.assertEqual(win._prepare_crash_report.called, crash)
