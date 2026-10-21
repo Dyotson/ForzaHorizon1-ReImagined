@@ -303,7 +303,7 @@ class SetupPage(QWidget):
         l0.addWidget(t0)
         folder_help = "Your game files, downloads, build and saves live here. Allow at least 15 GB of free space."
         if sys.platform == "win32":
-            folder_help += " Prefer a folder outside Documents, Desktop and OneDrive to avoid sync and permission problems."
+            folder_help += " Choose a folder outside Documents, Desktop and OneDrive to avoid sync and permission problems."
         l0.addWidget(label(folder_help, "help"))
         frow = QHBoxLayout()
         frow.setSpacing(12)
@@ -327,7 +327,7 @@ class SetupPage(QWidget):
         # 1. game files ---------------------------------------------------------------
         self.c1 = StepCard(1, "Your game files",
                            "Choose your Games on Demand package (the file in 4D5309C9/00007000, next to its "
-                           ".data folder), your disc 1 ISO, a default.xex, or a folder you already extracted. The base version of "
+                           ".data folder), your disc 1 ISO, a default.xex, or a folder you have already extracted. The base version of "
                            "the game is needed, without title updates.")
         row, self.pkg, _ = path_row("Package, default.xex or folder", self._pick_file, self._pick_dir)
         self.pkg.setText(cfg["game_package"])

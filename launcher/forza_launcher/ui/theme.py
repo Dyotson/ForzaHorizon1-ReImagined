@@ -33,6 +33,7 @@ QPushButton#nav:checked {{ color: {CREAM}; border-left: 3px solid {ORANGE}; back
 #cardTitle {{ font-size: 16px; font-weight: 700; color: {CREAM}; }}
 #muted {{ color: {MUTED}; font-size: 13px; }}
 #help {{ color: {MUTED}; font-size: 12px; }}
+#reason {{ color: {ORANGE}; font-size: 12px; font-style: italic; }}
 #section {{ color: {ORANGE}; font-size: 12px; font-weight: 800; letter-spacing: 2px; }}
 #ok {{ color: {OK}; }} #bad {{ color: {ERR}; }}
 #warn {{ background: #3a1530; border: 1px solid {PINK}; border-radius: 12px; padding: 12px 14px; color: #ffd6dc; }}
