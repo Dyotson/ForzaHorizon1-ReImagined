@@ -354,6 +354,14 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+
+        hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
+        states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
+        for key in self.rows:
+            if key.startswith("present_hdr_"):
+                states[key] = (hdr_supported and bool(self.cfg.settings.get("present_hdr")),
+                               "Enable HDR output with Vulkan to adjust this setting.")
+
         for key, dep in DEPENDS.items():
             states[key] = (bool(self.cfg.settings.get(dep)), "")
         scaling = self.cfg.settings.get("fh1_upscaler", "off") != "off" or self.cfg.settings.get("present_effect") == "fsr3"
