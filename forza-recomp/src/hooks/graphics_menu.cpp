@@ -949,24 +949,31 @@ extern "C" REX_FUNC(sub_8283CB68) {
 }
 extern "C" REX_FUNC(sub_82836928) {
   using namespace forza::graphics_menu;
+  const bool title_choice = ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
+                            Read(base, main_menu + 0x260) == 12;
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kBenchmark &&
       Read(base, main_menu + 0x260) == 12) {
     forza::benchmark::Show();
     return;
   }
-  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
+  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics &&
       Read(base, main_menu + 0x260) == 12) {
     title_layout_pending = false;
     RestoreTitle(base);
-  }
-  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics &&
-      Read(base, main_menu + 0x260) == 12) {
     active_menu = main_menu;
     from_main_menu = true;
     OpenGraphics(ctx, base);
     return;
   }
   __imp__sub_82836928(ctx, base);
+  if (title_choice && Read(base, main_menu + 0x260) != 12) {
+    // A stock choice can show a modal dialog and keep the title list alive.
+    // In that case its animated selected label must keep the same shifted
+    // transform as the static rows. Once the native menu really leaves, its
+    // scene owns those transforms; discard our references without touching it.
+    title_layout_pending = false;
+    title_offsets.clear();
+  }
 }
 
 namespace forza::graphics_menu {
