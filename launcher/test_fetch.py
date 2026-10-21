@@ -1,6 +1,11 @@
-"""TLS context selection and the certificate error message (#85), without the network."""
+"""TLS context selection and the certificate error message (#85), without the network;
+unpacking archives with links (#200)."""
+import io
+import os
 import ssl
 import sys
+import tarfile
+import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
@@ -106,6 +111,70 @@ class UrlopenTests(unittest.TestCase):
                 patch("forza_launcher.paths.log_error"):
             with self.assertRaisesRegex(updater.UpdateError, "api.github.com.*antivirus"):
                 updater.check()
+
+
+class ExtractTarLinkTests(unittest.TestCase):
+    """The LLVM toolchain has symlinks; a data folder that cannot hold them (exFAT, some NTFS
+    and network mounts, Windows without the symlink privilege) stopped unpacking with
+    "StreamError: seeking backwards is not allowed" (#200)."""
+
+    def archive(self, folder):
+        arc = folder / "a.tar.xz"
+        with tarfile.open(arc, "w:xz") as tar:
+            def add(name, data=None, link=None, hard=False):
+                info = tarfile.TarInfo("top/" + name)
+                if link:
+                    info.type, info.linkname = (tarfile.LNKTYPE if hard else tarfile.SYMTYPE), link
+                    tar.addfile(info)
+                else:
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+            add("bin/skipped", b"s" * 4000)
+            add("bin/clang-cl", link="clang")   # a link to a link listed after it
+            add("bin/clang", link="clang-23")
+            add("bin/clang-23", b"c" * 4000)
+            add("bin/to-skipped", link="skipped")
+            add("bin/clang++", link="clang")
+            add("bin/clang-hard", link="top/bin/clang-23", hard=True)
+            add("bin/outside", link="../../etc/passwd")
+            add("lib/later", b"l" * 4000)
+        return arc
+
+    def unpack(self, symlinks, through_symlink=False):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, folder, ignore_errors=True)
+        out = folder / "out"
+        if through_symlink:  # like /home -> /var/home on Fedora Atomic and Bazzite: one level deeper
+            (folder / "var" / "home").mkdir(parents=True)
+            os.symlink(folder / "var" / "home", folder / "home")
+            out = folder / "home" / "out"
+        def refuse(*args, **kwargs):
+            raise OSError(1, "Operation not permitted")
+        with patch.object(os, "symlink", os.symlink if symlinks else refuse):
+            fetch.extract_tar(self.archive(folder), out, strip=1, only=lambda n: n != "bin/skipped")
+        return out
+
+    def test_without_symlinks_links_become_copies_and_later_files_still_unpack(self):
+        out = self.unpack(symlinks=False)
+        self.assertEqual((out / "lib/later").read_bytes(), b"l" * 4000)
+        self.assertEqual((out / "bin/clang++").read_bytes(), b"c" * 4000)
+        self.assertFalse((out / "bin/clang++").is_symlink())
+        self.assertEqual((out / "bin/clang-hard").read_bytes(), b"c" * 4000)
+        self.assertEqual((out / "bin/clang-cl").read_bytes(), b"c" * 4000)
+        self.assertFalse(os.path.lexists(out / "bin/to-skipped"))
+        self.assertFalse(os.path.lexists(out / "bin/outside"))
+
+    def test_with_symlinks_links_stay_links(self):
+        for through_symlink in (False, True):
+            with self.subTest(through_symlink=through_symlink):
+                self.check_links(self.unpack(symlinks=True, through_symlink=through_symlink))
+
+    def check_links(self, out):
+        self.assertTrue((out / "bin/clang++").is_symlink())
+        self.assertEqual(os.readlink(out / "bin/clang++"), "clang")
+        self.assertEqual((out / "bin/clang++").read_bytes(), b"c" * 4000)
+        self.assertEqual((out / "lib/later").read_bytes(), b"l" * 4000)
+        self.assertFalse(os.path.lexists(out / "bin/outside"))
 
 
 if __name__ == "__main__":
