@@ -232,7 +232,8 @@ Any wheel SDL sees as a joystick (Logitech, Thrustmaster, Fanatec, Moza, ...) is
 **Xbox 360 Wireless Racing Wheel**: the game asks the controller for its capabilities, and a wheel answers
 SubType 2 with the force feedback and wireless flags, which is what FH1 checks for. Steering comes in on the
 left stick X over its full range, throttle and brake on the right and left trigger, the buttons on A B X Y,
-the bumpers, Back and Start, and a hat as the d-pad. Gamepads and keyboard and mouse work as before.
+the bumpers, Back and Start, and a hat as the d-pad. The clutch pedal and an H-pattern shifter go in the way
+the game reads them from the 360 wheel (below). Gamepads and keyboard and mouse work as before.
 
 Tested here with a virtual wheel (Linux uinput) and by a Logitech G29 owner on Windows (issue #4: steering,
 pedals, buttons and force feedback work). Other wheels are untested: please report the model and what works.
@@ -260,6 +261,10 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps) |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
+| `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
+| `wheel_shifter_buttons` | see below | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
+| `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
 
 **Steering feels dead for the first degrees (reported on a G29).** The game applies its own inner deadzone to
 wheels (its wheel options carry a steering deadzone), and a 900 degree wheel turned 50 degrees is only 5.5
@@ -270,14 +275,51 @@ then removes, so small movements register and the rest stays linear. Raise it if
 nothing, lower it (0 switches it off) if the car twitches when driving straight. It is an estimate taken from the
 report (about 50 degrees of 900), not read from the game.
 
-**Clutch and H-shifter are not supported.** The 360 racing wheel has no clutch (the game asks for none) and no
-H-shifter input, so the clutch pedal axis and the shifter buttons are ignored; use the paddles for gears (turn
-the clutch off in the game's options). G29/G923 paddles are the game's B and X buttons in the built-in map
-(`b=4`, `x=5`).
+**Clutch pedal and H-shifter (issue #125).** The game has both for the 360 wheel (third-party 360 wheels had
+them; on the Xbox One a G920's clutch and shifter work in this game). Its wheel layouts bind the right stick Y
+to the clutch, and when the wheel's capabilities say it has an H-pattern shifter, the car takes the gear from
+the right stick X (-1 reverse, 0 neutral, 1 to 8). So the driver sends the clutch pedal (0 released, full
+travel pressed) on the right stick Y and, with `wheel_shifter = h`, the gear of the held shifter button on the
+right stick X; no gear button held is neutral. The game's own gearbox does the shift: one shift with its normal
+shift time, also from 2nd straight to 5th. The game's *Wheel layout* screen (My Profile, Options, Controls)
+shows the rest of the wheel's controls; in Wheel layout 1 the bumpers shift up and down and A is the clutch
+button.
+
+- **Clutch:** choose *Manual with clutch* (pause menu: My Profile, Options, Difficulty, Shifting), then the
+  pedal works like the clutch on a real car (pressed, the engine revs freely and the car does not pull) and the
+  game's wheel clutch deadzones apply. The wheel's clutch axis is the one
+  from the profile (Logitech) or `wheel_axes` (`clutch=N`), else the third pedal found at start. Off with
+  `wheel_clutch = false`.
+- **H-pattern shifter:** set `wheel_shifter = h` (launcher: Controls, Shifter and clutch, Shifter: H-pattern)
+  and *Manual* or *Manual with clutch* shifting in the game; with *Automatic* the game ignores the shifter.
+  Even with *Manual with clutch* the game takes the lever's gear without the clutch (see realistic shifting).
+  The Logitech Driving Force Shifter on a G29, G920 or G923 is built in: gears 1 to 6 are buttons 12 to 17 and
+  reverse (pushed down) is 18. Other shifters need `wheel_shifter_buttons`, e.g.
+  `1=8,2=9,3=10,4=11,5=12,6=13,r=14`; up to 7 gears and reverse (the log prints the map: `Wheel: H-pattern
+  shifter, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB shifters) is
+  not read yet: only buttons of the wheel itself.
+- **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
+  least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
+  neutral until you press it. Off by default (the lever's gear engages at once).
+- **Sequential:** `wheel_shifter = sequential` with `wheel_shifter_buttons = up=N,down=M` adds a sequential
+  shifter next to the paddles (up and down act as the right and left bumper, the wheel layouts' shift up and
+  shift down). At a standstill the game's downshift drops to 1st, as with the bumpers.
+
+Tested with a virtual G29 with Driving Force Shifter and clutch pedal (Linux uinput): gears 1 to 6, reverse and
+neutral, 2nd straight to 5th at speed, the clutch holding the car while the engine revs in *Manual with clutch*,
+realistic shifting and the sequential buttons; the shifter is ignored with *Automatic*. Not tested with a real
+shifter or clutch pedal yet: please report the model and what works.
+
+The shifter type is read when the game first sees the wheel, so restart the game after changing it. The clutch
+and gear are sent only once the game has read the wheel's capabilities (the log says `Wheel: the game asked for
+capabilities`); a game that took the wheel for a gamepad would turn them into right stick movement. They share
+the right stick with any other controller connected at the same time (the stick pushed furthest wins), so a
+gamepad whose right stick drifts can disturb the gear: unplug it while driving with the wheel. Keep
+`right_stick_deadzone_percentage` at 0 for the same reason.
 
 Axis detection (wheels without a profile) reads where each axis rests when the wheel is plugged in: the one near
-the middle is the steering, those resting at an end are the pedals (throttle, brake, clutch in axis order; the
-clutch is not used by the game). **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
+the middle is the steering, those resting at an end are the pedals (throttle, brake, clutch in axis order).
+**Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
 fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
 8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=4,x=5,y=3,lb=7,rb=6,back=8,start=9,ls=11,rs=10`
