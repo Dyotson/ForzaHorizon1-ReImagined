@@ -260,7 +260,7 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
-| `wheel_steer_offset` | 0.05 | Compensates the game's own inner steering deadzone for wheels (below) |
+| `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
@@ -273,14 +273,14 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_shifter_buttons` | see below | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
 
-**Steering feels dead for the first degrees (reported on a G29).** The game applies its own inner deadzone to
-wheels (its wheel options carry a steering deadzone), and a 900 degree wheel turned 50 degrees is only 5.5
-percent of its range, so the first part of every turn did nothing. Our own deadzone is 0 and the configured
-rotation is mapped linearly onto the full steering, so the fix is `wheel_steer_offset`: any movement beyond a
-hair (about 1 degree) already gives that share of the full steering (0.05 = 5 percent), which the game's deadzone
-then removes, so small movements register and the rest stays linear. Raise it if the first degrees still do
-nothing, lower it (0 switches it off) if the car twitches when driving straight. It is an estimate taken from the
-report (about 50 degrees of 900), not read from the game.
+**Steering around the centre.** A G29 owner reported that the first degrees of every turn did nothing: the game
+took the wheel for a gamepad then (#219) and applied a gamepad's inner deadzone, and a 900 degree wheel turned 50
+degrees is only 5.5 percent of its range. `wheel_steer_offset` compensated: any movement beyond a hair (about 1
+degree) already gives that share of the full steering (0.05 = 5 percent). Now that the game knows the wheel, its
+full-range steering (`wheel_900_steering`, on by default) follows the wheel's angle from the centre, and the
+offset is not applied there: its step at the centre made the car twitch left and right when driving straight
+(#219). It still applies in the 270 degree mode (`wheel_900_steering = false`), where the game filters the
+steering. The game's own wheel deadzones are in its Advanced wheel options.
 
 **Clutch pedal and H-shifter (issue #125).** The game has both for the 360 wheel (third-party 360 wheels had
 them; on the Xbox One a G920's clutch and shifter work in this game). Its wheel layouts bind the right stick Y

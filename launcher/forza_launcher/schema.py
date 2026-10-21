@@ -234,9 +234,9 @@ add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
 add("wheel_deadzone", "Steering deadzone", "Controls", "float", 0.0,
     "Fraction of the wheel's range, 0 to 0.5.", "Racing wheel", lo=0, hi=0.5, step=0.01)
 add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float", 0.05,
-    "The game has its own inner steering deadzone for wheels; this makes any wheel movement beyond a "
-    "hair already give this fraction of the full steering (0 to 0.3). Lower it if the car twitches "
-    "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
+    "Only with full-range wheel steering off: any wheel movement beyond a hair already gives this "
+    "fraction of the full steering (0 to 0.3), to cancel an inner steering deadzone. Full-range "
+    "steering follows the wheel from the centre without it.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
 add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
