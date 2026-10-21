@@ -57,6 +57,20 @@ modules:
         sha256: 3bde565bb0890044b5c7f63808adddede5abc241e9395a2bfed61919884d6240
         only-arches: [x86_64]
 
+  # SDL's mapped controller API; the same runtime is bundled with the standalone launchers.
+  - name: launcher-gamepad
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} --no-build-isolation PySDL2 pysdl2-dll
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/5d/e2/399ea7900e7510096aeb41439e6f1540bef0bdf7e15cc2d8464e4adb71e8/PySDL2-0.9.17-py3-none-any.whl
+        sha256: fe923dbf5c7b27bbc1eb2bf58abfa793f8f13fd7ae8b27b1bc2de49920bcbd41
+      - type: file
+        url: https://files.pythonhosted.org/packages/2b/1c/91fb667c3968b420de5dd76e840259b44b876b6fc84c5889151633fcc06e/pysdl2_dll-2.32.10-py2.py3-none-manylinux_2_28_x86_64.whl
+        sha256: 1e6139e3ce832d95d8376b77f4c9288bef34d6b131f844f2a5fcc8873ce8e6da
+        only-arches: [x86_64]
+
   # certifi's CA bundle, the launcher's fallback when the runtime has none for its OpenSSL (#85).
   - name: certifi
     buildsystem: simple

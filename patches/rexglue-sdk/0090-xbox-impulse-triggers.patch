@@ -1,0 +1,102 @@
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -51,6 +51,8 @@
+   /// GetState for the emulator's own UI, which reads while the guest is blocked.
+   X_RESULT GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_state);
+   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
++  // Additive API: impulse triggers only; body rumble remains owned by SetState.
++  int SetTriggerRumble(uint32_t user_mask, uint16_t left, uint16_t right, uint32_t duration);
+   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
+
+   /// While any blocker is held the guest reads a neutral pad. Buttons still
+--- a/include/rex/input/sdl/sdl_input_driver.h
++++ b/include/rex/input/sdl/sdl_input_driver.h
+@@ -39,6 +39,7 @@
+   X_RESULT GetDeviceCapabilities(DeviceId id, uint32_t flags,
+                                  X_INPUT_CAPABILITIES* out_caps) override;
+   X_RESULT SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibration) override;
++  int SetDeviceTriggerRumble(DeviceId id, uint16_t left, uint16_t right, uint32_t duration);
+   X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                               X_INPUT_KEYSTROKE* out_keystroke) override;
+   void OnWindowAvailable(rex::ui::Window* window) override;
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -25,6 +25,7 @@
+ #include <rex/input/xinput/xinput_input_driver.h>
+ #include <rex/logging.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/runtime.h>
+
+ REXCVAR_DEFINE_STRING(input_backend, "sdl", "Input", "Input backend: sdl, xinput")
+     .allowed({"sdl", "xinput"});
+@@ -459,6 +460,28 @@
+   return any_synthetic ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED;
+ }
+
++int InputSystem::SetTriggerRumble(uint32_t user_mask, uint16_t left, uint16_t right,
++                                  uint32_t duration) {
++  if (!assignment_) return 0;
++  if (!GetVibrationEnabled() || ui_input_blockers_.load() > 0) left = right = 0;
++  RefreshDevices();
++  int count = 0;
++  bool failed = false;
++  for (uint32_t user = 0; user < kMaxGuestUsers; ++user) {
++    if (!(user_mask & (1u << user))) continue;
++    std::vector<DeviceId> ids;
++    assignment_->DevicesForUser(user, ids);
++    for (DeviceId id : ids) {
++      auto* driver = dynamic_cast<sdl::SDLInputDriver*>(DriverForDevice(id));
++      if (!driver) continue;
++      const int result = driver->SetDeviceTriggerRumble(id, left, right, duration);
++      if (result > 0) ++count;
++      if (result < 0) failed = true;
++    }
++  }
++  return failed ? -1 : count;
++}
++
+ X_RESULT InputSystem::GetKeystroke(uint32_t user_index, uint32_t flags,
+                                    X_INPUT_KEYSTROKE* out_keystroke) {
+   SCOPE_profile_cpu_f("hid");
+@@ -523,3 +546,18 @@
+ }
+
+ }  // namespace rex::input
++
++// Dynamically discovered by the opt-in FH1 bridge, so older runtimes remain
++// loadable. No class layout or virtual table changes are required.
++#if defined(_WIN32)
++#define FORZA_TRIGGER_EXPORT __declspec(dllexport)
++#else
++#define FORZA_TRIGGER_EXPORT __attribute__((visibility("default")))
++#endif
++extern "C" FORZA_TRIGGER_EXPORT int ForzaInputTriggerRumble(
++    uint32_t user_mask, uint16_t left, uint16_t right, uint32_t duration) {
++  auto* kernel = rex::system::kernel_state();
++  if (!kernel || !kernel->emulator()) return 0;
++  auto* input = dynamic_cast<rex::input::InputSystem*>(kernel->emulator()->input_system());
++  return input ? input->SetTriggerRumble(user_mask & 15u, left, right, duration) : 0;
++}
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -367,6 +367,20 @@
+                            vibration->right_motor_speed, kRumbleDurationMs)
+              ? X_ERROR_SUCCESS
+              : X_ERROR_FUNCTION_FAILED;
++}
++
++// Uses the very same SDL_Gamepad as ordinary rumble, preserving SDL's body
++// motor state when the backend assembles a combined hardware output report.
++int SDLInputDriver::SetDeviceTriggerRumble(DeviceId id, uint16_t left, uint16_t right,
++                                           uint32_t duration) {
++  auto guard = DrainAndLock();
++  auto* controller = FindController(id);
++  if (!controller || SDL_GetGamepadType(controller->sdl) != SDL_GAMEPAD_TYPE_XBOXONE ||
++      !SDL_GetBooleanProperty(SDL_GetGamepadProperties(controller->sdl),
++                              SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN, false)) return 0;
++  if (!is_active()) left = right = 0;
++  return SDL_RumbleGamepadTriggers(controller->sdl, left, right,
++                                   std::min(duration, uint32_t(150))) ? 1 : -1;
+ }
+
+ X_RESULT SDLInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,

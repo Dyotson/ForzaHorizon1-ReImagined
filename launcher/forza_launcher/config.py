@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, gpu, paths, schema
+from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
@@ -16,6 +17,8 @@ FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
 def _default():
     return {
         "version": 1,
+        "haptics": dict(HAPTICS_DEFAULTS),
+        "save_manager": {"automatic": True, "keep_automatic": 10},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
@@ -82,11 +85,22 @@ class Config:
               self.d["settings"].get("fsr3_mode") == "native"):
             self.d["settings"].update(present_effect="bilinear", fsr3_mode="quality",
                                       forza_antialiasing="fsr3_native")
+        self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
+        prefs = self.d.get('save_manager')
+        if not isinstance(prefs, dict):
+            prefs = {}
+        try:
+            keep = max(1, min(50, int(prefs.get('keep_automatic', 10))))
+        except (TypeError, ValueError, OverflowError):
+            keep = 10
+        self.d['save_manager'] = dict(automatic=prefs.get('automatic', True) is True, keep_automatic=keep)
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
         online = self.d["online"]
         if online.get("mode") == "custom" and online.get("custom_server", "").strip() in OLD_PUBLIC_SERVERS:
             online["mode"], online["custom_server"] = "public", ""
+        from . import ingame
+        ingame.import_pending(self)
 
     def save(self):
         _atomic_write(self.path, json.dumps(self.d, indent=2) + "\n")
