@@ -33,6 +33,7 @@
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
 #include "frame_stats.h"
+#include "stall_watch.h"
 #include "../hooks/frame_time.h"
 #include "../platform/ultrawide.h"
 
@@ -281,6 +282,7 @@ extern "C" REX_FUNC(__imp__VdSwap) {
   forza::perf::OnGuestFrame();
   forza::ultrawide::Frame();
   forza::frame_time::OnGuestSwap();
+  forza::stall::OnGuestSwap();
   MaybeTriggerRenderDocCapture(elapsed);
   MaybeInvalidatePhysicalMemory(elapsed);
   static const bool fps_log = [] {

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "debug/frame_stats.h"
+#include "debug/stall_watch.h"
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
@@ -147,6 +148,8 @@ class ForzaApp : public rex::ReXApp {
     // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
     // nothing else takes.
     forza::InstallFaultGuard();
+    // Long frames and where the game was during them (#187).
+    forza::stall::Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
