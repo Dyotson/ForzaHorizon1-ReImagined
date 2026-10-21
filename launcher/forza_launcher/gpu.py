@@ -150,15 +150,34 @@ def _run(args, timeout=12):
                           encoding="utf-8", errors="replace", env=cleanenv.clean_environment()).stdout
 
 
-PS_QUERY = ("$g = @(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,PNPDeviceID);"
-            "$b = (Get-CimInstance Win32_BaseBoard).Product;"
-            "ConvertTo-Json -Compress @{gpus=$g; board=$b}")
+# One PowerShell process answers both this module and specs.py (the PC's CPU, RAM and video memory).
+# Win32_VideoController.AdapterRAM is a uint32 (capped at 4 GB); the display class registry key holds the
+# real size (HardwareInformation.qwMemorySize), matched to the adapter by its driver description.
+PS_QUERY = (
+    "$g = @(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,PNPDeviceID,AdapterRAM);"
+    "$b = (Get-CimInstance Win32_BaseBoard).Product;"
+    "$c = @(Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors);"
+    "$m = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory;"
+    "$k = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}';"
+    "$v = @(Get-ChildItem $k -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^[0-9]{4}$' } |"
+    " ForEach-Object { $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue;"
+    " @{Desc=$p.DriverDesc; Mem=$p.'HardwareInformation.qwMemorySize'} });"
+    "ConvertTo-Json -Compress -Depth 4 @{gpus=$g; board=$b; cpus=$c; ram=$m; vram=$v}")
+_ps_text = None
+
+
+def powershell_text() -> str:
+    """The query's JSON, asked once per launcher session."""
+    global _ps_text
+    if _ps_text is None:
+        _ps_text = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", PS_QUERY])
+    return _ps_text
 
 
 def detect_windows() -> Detected:
     names, board = [], ""
     try:
-        names, board = parse_powershell(_run(["powershell", "-NoProfile", "-NonInteractive", "-Command", PS_QUERY]))
+        names, board = parse_powershell(powershell_text())
     except (OSError, subprocess.SubprocessError):
         pass
     source = "powershell"

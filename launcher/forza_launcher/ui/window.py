@@ -27,6 +27,11 @@ class MainWindow(QMainWindow):
                 cfg.save()
             except OSError:
                 pass
+        if cfg.detect_specs():   # once, and again when the graphics card changed (#206)
+            try:
+                cfg.save()
+            except OSError:
+                pass
         self.session = None
         self.session_plan = None
         self._last_start_error = None
@@ -308,9 +313,10 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Reset settings", "Reset every setting on the Settings page to its default?") \
                 != QMessageBox.Yes:
             return
-        from .. import config, gpu, schema
+        from .. import config, gpu, schema, specs
         self.cfg.d["settings"] = {**schema.defaults(), **config.FIRST_RUN}
         gpu.apply_preset(self.cfg.settings, self.cfg.gpu_vendor())
+        self.cfg.settings.update(specs.recommended(self.cfg.pc_specs(), self.cfg.settings, self.cfg.gpu_vendor()))
         self.cfg.d["online"] = {"mode": "public", "custom_server": ""}
         self.cfg.d["profile"] = {"mode": "own", "xenia_content": "", "xenia_xuid": ""}
         for k in ("extra_args", "extra_env", "extras_toml"):
