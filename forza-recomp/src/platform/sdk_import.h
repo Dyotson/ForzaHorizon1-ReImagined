@@ -13,6 +13,9 @@
 
 namespace forza {
 
+// Optional C entry point in the runtime, or null (also used by non-guest SDK extensions).
+void* SdkSymbol(const char* name);
+
 using GuestFunc = void (*)(PPCContext&, uint8_t*);
 
 // The runtime's `__imp__Name` (pass the full symbol name), or null.

@@ -6,6 +6,17 @@ facade DLLs (PowerPC Xenon) to C++ with the ReXGlue SDK. The approach, tooling a
 runtime fixes come from [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach)
 (same SDK, same author); files taken from it say so.
 
+## Native achievement notifications
+
+Achievement notifications now subscribe to the SDK event API and queue for the game's
+CHudCombinedNotificationControl. The native trophy texture accompanies the achievement
+name and Gamerscore; no ImGui achievement notification dialog is registered. Only the guest
+UI thread binds native elements. Unlocks retain their remaining visible time across
+loading/unbinding, ordinary alerts and challenge prompts. Duplicate pending IDs are
+suppressed; distinct unlocks keep delivery order. F7's achievement browser is unchanged.
+Standalone queue tests cover timing, interruption, ordering and concurrent delivery on
+Windows and Linux.
+
 ## The game files
 
 | | |
