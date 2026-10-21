@@ -169,7 +169,7 @@ struct RenderState {
 } render;
 
 struct SyncStats {
-  uint64_t waits = 0;
+  uint64_t waits = 0, timeouts = 0;
   double wait_ms = 0;
 } sync_stats;
 
@@ -187,9 +187,10 @@ void WaitForRender() {
   const bool behind = render.interval_ema > 1.15 * target_ticks &&
                       start < render.last_tick + freq / 10;  // swaps are coming (100 ms)
   if (behind && render.swaps == seen) {
-    render.swapped.wait_for(lock, std::chrono::milliseconds(50),
-                            [&] { return render.swaps != seen; });
+    const bool progressed = render.swapped.wait_for(lock, std::chrono::milliseconds(50),
+                                                   [&] { return render.swaps != seen; });
     sync_stats.waits += 1;
+    sync_stats.timeouts += !progressed;
     sync_stats.wait_ms +=
         double(rex::chrono::Clock::QueryGuestTickCount() - start) * 1000.0 / double(freq);
   }
@@ -210,11 +211,11 @@ void LogStats(Stats& s, uint64_t now) {
   const double n = double(s.frames), mean = s.sum / n, game_mean = s.game_sum / n;
   REXLOG_INFO(
       "FRAMETIME: frames={} on_target={:.1f}% dt mean={:.3f} sd={:.3f} min={:.3f} max={:.3f} ms; "
-      "game's ms dt mean={:.3f} sd={:.3f}; kept game's={}; render sync waits={} ({:.0f} ms)",
+      "game's ms dt mean={:.3f} sd={:.3f}; kept game's={}; render sync waits={} ({:.0f} ms), timeouts={}",
       s.frames, 100.0 * s.paced / n, mean, std::sqrt(std::max(0.0, s.sum2 / n - mean * mean)),
       s.min, s.max, game_mean,
       std::sqrt(std::max(0.0, s.game_sum2 / n - game_mean * game_mean)), s.game_kept,
-      sync_stats.waits, sync_stats.wait_ms);
+      sync_stats.waits, sync_stats.wait_ms, sync_stats.timeouts);
   sync_stats = SyncStats{};
   s = Stats{};
   s.window_start = now;
