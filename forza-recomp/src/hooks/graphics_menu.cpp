@@ -5,6 +5,10 @@
 #include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
+#ifdef __APPLE__
+#include "../platform/macos_graphics_config.h"
+#include <iterator>
+#endif
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include <algorithm>
@@ -31,8 +35,14 @@
 namespace forza::graphics_menu {
 namespace {
 std::filesystem::path pending_path;
+#ifdef __APPLE__
+std::filesystem::path native_config_path;
+#endif
 }
 void Initialize(const std::filesystem::path &root) {
+#ifdef __APPLE__
+  native_config_path = root / "forza.toml";
+#endif
   const char *path = std::getenv("FORZA_GRAPHICS_SETTINGS");
   pending_path = path && *path ? std::filesystem::path(path)
                                : root / "graphics-settings.json";
@@ -277,7 +287,8 @@ constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
-    aa.choices = {{"integrated", "Included (upscaler)"}};
+    aa.choices = {{"integrated", settings[1].value == "metalfx_spatial" ?
+        "Game MSAA (spatial upscale)" : "Included (upscaler)"}};
     aa.value = "integrated";
     return;
   }
@@ -352,6 +363,9 @@ void Snapshot() {
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
   };
+#ifdef __APPLE__
+  settings[0].choices.insert(settings[0].choices.begin(), {"720p", "1280 x 720"});
+#endif
   auto &modes = settings[1].choices;
 #ifdef _WIN32
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan" &&
@@ -363,6 +377,10 @@ void Snapshot() {
   }
 #endif
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan") {
+#ifdef __APPLE__
+    modes.insert(modes.end(), {{"metalfx_temporal", "MetalFX Temporal"},
+                              {"metalfx_spatial", "MetalFX Spatial"}});
+#endif
     modes.insert(modes.end(), {{"fsr3_quality", "FSR 3 Quality"},
                                {"fsr3_balanced", "FSR 3 Balanced"},
                                {"fsr3_performance", "FSR 3 Performance"}});
@@ -370,6 +388,18 @@ void Snapshot() {
   for (auto &setting : settings) {
     if (setting.key == "preset" || setting.key == "anti_aliasing") continue;
     setting.value = rex::cvar::GetFlagByName(setting.cvar);
+#ifdef __APPLE__
+    if (setting.key == "output" && setting.value.empty()) {
+      const auto mode = rex::cvar::GetFlagByName("fh1_upscaler");
+      const bool split = mode != "off" ||
+          rex::cvar::GetFlagByName("fh1_scene_720p_native_hud") == "true";
+      const auto extent = split ? rex::cvar::GetFlagByName("fh1_output_height") :
+          rex::cvar::GetFlagByName("resolution_scale") == "3" ? "2160" :
+          rex::cvar::GetFlagByName("resolution_scale") == "2" ? "1440" : "720";
+      setting.value = extent == "2160" ? "4k" : extent == "1440" ? "1440p" :
+          extent == "1080" ? "1080p" : "720p";
+    }
+#endif
     if (setting.value.empty())
       setting.value = setting.choices.front().value;
   }
@@ -424,6 +454,36 @@ bool Save() {
 #endif
 }
 
+#ifdef __APPLE__
+bool SaveNativeConfig() {
+  std::ifstream input(native_config_path, std::ios::binary);
+  std::error_code ec;
+  if (!input && std::filesystem::exists(native_config_path, ec)) return false;
+  const std::string original((std::istreambuf_iterator<char>(input)), {});
+  std::vector<std::pair<std::string, std::string>> updates;
+  for (const char* name : {"resolution", "frame_rate", "video_mode_refresh_rate",
+      "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
+      "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
+      "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
+      "forza_hud_edges", "forza_performance_overlay"}) {
+    auto value = rex::cvar::GetFlagByName(name);
+    if (value.empty()) continue;
+    const std::string key(name);
+    if (key == "resolution" || key == "fh1_upscaler" || key == "swap_post_effect" ||
+        key == "forza_performance_overlay") value = "\"" + value + "\"";
+    updates.emplace_back(key, value);
+  }
+  auto temporary = native_config_path;
+  temporary += ".graphics.tmp";
+  std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+  output << RewriteGraphicsConfig(original, updates);
+  output.close();
+  if (!output) return false;
+  std::filesystem::rename(temporary, native_config_path, ec);
+  return !ec;
+}
+#endif
+
 bool CommitSettings() {
   if (!ApplyPreview()) return false;
   const bool rate_changed = rex::cvar::GetFlagByName("frame_rate") != settings[3].value;
@@ -431,7 +491,10 @@ bool CommitSettings() {
   rex::cvar::SetFlagByName("video_mode_refresh_rate", std::to_string(frame_time::VblankHz()));
   if (rate_changed) frame_time::ResetRenderTiming();
   rex::cvar::SetFlagByName("resolution", settings[0].value);
-  const bool saved = Save();
+  bool saved = Save();
+#ifdef __APPLE__
+  saved = saved && SaveNativeConfig();
+#endif
   saved_settings = settings;
   RememberPreview();
   return saved;
@@ -632,7 +695,8 @@ void SyncSettings(Native &ui, uint8_t *base) {
   }
   AntiAliasingChoices();
   const bool aa_changed = old_aa_choices.size() != settings[kAntiAliasing].choices.size() ||
-      old_aa_choices.front().value != settings[kAntiAliasing].choices.front().value;
+      old_aa_choices.front().value != settings[kAntiAliasing].choices.front().value ||
+      old_aa_choices.front().label != settings[kAntiAliasing].choices.front().label;
   if (aa_changed) {
     if (const auto choices = MakeChoices(ui, base, kAntiAliasing)) {
       retired_choices.push_back(Read(base, native_rows[kAntiAliasing] + 4));
@@ -979,8 +1043,8 @@ void Tick(PPCContext& ctx, uint8_t* base) {
       message = "Live graphics requires the updated Vulkan renderer.";
     } else {
       const auto output = settings[0].value;
-      const auto width = output == "4k" ? "3840" : output == "1080p" ? "1920" : "2560";
-      const auto height = output == "4k" ? "2160" : output == "1080p" ? "1080" : "1440";
+      const auto width = output == "4k" ? "3840" : output == "1080p" ? "1920" : output == "720p" ? "1280" : "2560";
+      const auto height = output == "4k" ? "2160" : output == "1080p" ? "1080" : output == "720p" ? "720" : "1440";
       applying_settings = settings;
       applying_request = std::to_string(++request_id) + " " + width + " " + height +
           " " + settings[2].value + " " + BackendMode();

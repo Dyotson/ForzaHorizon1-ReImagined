@@ -437,6 +437,8 @@ void ConfigurePerformanceFont(ImFontAtlas* atlas) {
 #ifdef _WIN32
   if (const char* windows = std::getenv("WINDIR"))
     path = std::filesystem::path(windows) / "Fonts" / "arialbd.ttf";
+#elif defined(__APPLE__)
+  path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
 #else
   path = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf";
 #endif

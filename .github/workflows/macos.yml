@@ -1,0 +1,126 @@
+# Build the experimental Apple Silicon port without game files or generated game code.
+# Artifacts contain diagnostics only; local game apps are never packaged here.
+name: macOS
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/macos.yml
+      - forza-recomp/**
+      - patches/rexglue-sdk/**
+      - tools/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/macos.yml
+      - forza-recomp/**
+      - patches/rexglue-sdk/**
+      - tools/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apple-silicon:
+    name: Apple Silicon build and tests
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      # Standard Apple Silicon runners have limited RAM; avoid the local six-job default.
+      REXSDK_JOBS: "2"
+      FORZA_MACOS_SDK: ${{ github.workspace }}/forza-recomp/out/macos-sdk
+      REXSDK_SRC: ${{ github.workspace }}/forza-recomp/out/macos-sdk-src
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Record native toolchain
+        id: toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-ci-logs"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          {
+            uname -sm
+            sw_vers
+            echo "Runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            xcodebuild -version
+            xcrun --show-sdk-version
+            clang++ --version
+            cmake --version
+            ninja --version
+          } | tee "$RUNNER_TEMP/macos-ci-logs/toolchain.log"
+          fingerprint="$(shasum -a 256 "$RUNNER_TEMP/macos-ci-logs/toolchain.log" | cut -d ' ' -f 1)"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Check macOS shell scripts
+        run: |
+          for script in tools/build_macos.sh tools/play_macos.sh tools/package_macos.sh tools/build_rexglue_sdk.sh; do
+            bash -n "$script"
+            echo "PASS: bash -n $script"
+          done | tee "$RUNNER_TEMP/macos-ci-logs/shell.log"
+
+      - name: Run graphics settings and timing tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-ci-tests"
+          for test in graphics_presets graphics_monitor macos_graphics_config; do
+            clang++ -std=c++23 -Wall -Wextra -Werror \
+              "forza-recomp/tests/${test}_test.cpp" -o "$RUNNER_TEMP/macos-ci-tests/$test"
+            "$RUNNER_TEMP/macos-ci-tests/$test"
+            echo "PASS: $test"
+          done 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/tests.log"
+
+      - name: Cache installed patched SDK
+        id: sdk-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: forza-recomp/out/macos-sdk
+          # No partial restore: headers, codegen, runtime and plugin must be from one SDK build.
+          key: macos-sdk-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/build_macos.sh', '.github/workflows/macos.yml') }}
+
+      - name: Build and install pinned SDK with all patches
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: tools/build_macos.sh --sdk-only 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/sdk-build.log"
+
+      - name: Verify installed SDK and codegen
+        run: |
+          {
+            "$FORZA_MACOS_SDK/bin/rexglue" --version
+            for binary in bin/rexglue lib/librexruntime.dylib lib/librexgpu-xenos.dylib lib/libvulkan.1.dylib lib/libMoltenVK.dylib; do
+              lipo "$FORZA_MACOS_SDK/$binary" -verify_arch arm64
+              echo "PASS: arm64 $binary"
+            done
+            test -f "$FORZA_MACOS_SDK/share/vulkan/icd.d/MoltenVK_icd.json"
+          } 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/sdk-check.log"
+
+      - name: Compile base host sources
+        run: tools/build_macos.sh --host-check 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/host-base.log"
+
+      - name: Compile TU4 host sources
+        run: tools/build_macos.sh --host-check --tu4 2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/host-tu4.log"
+
+      - name: Link native GPU probe
+        # Compile/link only: hosted VMs do not establish rendering correctness or performance.
+        run: |
+          cmake --build forza-recomp/out/build/macos-host-0 \
+            --target forza_macos_gpu_check --parallel "$REXSDK_JOBS" \
+            2>&1 | tee "$RUNNER_TEMP/macos-ci-logs/gpu-probe-link.log"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-ci-logs
+          path: ${{ runner.temp }}/macos-ci-logs/*.log
+          if-no-files-found: warn
+          retention-days: 14

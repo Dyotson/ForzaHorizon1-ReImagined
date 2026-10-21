@@ -28,6 +28,9 @@
 
 #include <filesystem>
 #include <string>
+#ifdef __APPLE__
+#include <rex/filesystem.h>
+#endif
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
@@ -163,12 +166,19 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-  // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
-  // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
-  // update_data_root setting; default: tu4 next to the game folder).
   void OnConfigurePaths(rex::PathConfig& paths) override {
     forza::benchmark::ConfigurePaths(paths);
+#ifdef __APPLE__
+    const auto exe = rex::filesystem::GetExecutableFolder();
+    if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
+      // Settings must stay writable without changing the signed app bundle.
+      paths.config_path = paths.user_data_root / "forza.toml";
+    }
+#endif
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+    // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
+    // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
+    // update_data_root setting; default: tu4 next to the game folder).
     if (paths.update_data_root.empty()) {
       auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
       if (!game.has_filename()) game = game.parent_path();
