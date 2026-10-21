@@ -1,0 +1,190 @@
+diff --git a/resources/templates/codegen/_ppc_fma.inja b/resources/templates/codegen/_ppc_fma.inja
+new file mode 100644
+index 0000000..d9ce2d4
+--- /dev/null
++++ b/resources/templates/codegen/_ppc_fma.inja
+@@ -0,0 +1,82 @@
++//=============================================================================
++// Multiply-Add
++//
++// fmadd, fmsub, fnmadd, fnmsub and their single forms call ppc_fma. Built with
++// FMA (-mfma, /arch:AVX2, ARM64) it is the fused instruction, inline. Otherwise
++// std::fma is a library call: a few nanoseconds on a CPU with FMA, but on one
++// without (Intel before Haswell, AMD before Piledriver) a software emulation of
++// the single rounding, about 30 ns a call in the Windows CRT, and games make
++// tens of millions of these calls a second. On such CPUs ppc_fma multiplies,
++// rounds and adds instead: the result may differ from the fused one in the
++// last bit. REX_PPC_FMA=0 forces the multiply-add, REX_PPC_FMA=1 std::fma
++// (read once at startup).
++//=============================================================================
++
++#include <cmath>
++#include <cstdlib>
++
++#if defined(__FMA__) || defined(__aarch64__) || defined(_M_ARM64)
++
++inline double ppc_fma(double a, double b, double c) { return __builtin_fma(a, b, c); }
++
++#else
++
++// CPUID leaf 1: FMA (ECX bit 12), and OSXSAVE (bit 27) for XGETBV, whose XCR0
++// bits 1-2 say the OS saves the SSE and AVX registers.
++inline bool ppc_detect_host_fma() {
++#if defined(__x86_64__) || defined(_M_X64)
++  unsigned int eax, ebx, ecx, edx;
++  __asm__("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1u), "c"(0u));
++  if ((ecx & (1u << 12)) == 0 || (ecx & (1u << 27)) == 0) {
++    return false;
++  }
++  unsigned int xcr0_low, xcr0_high;
++  __asm__("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0u));
++  return (xcr0_low & 6u) == 6u;
++#else
++  return true;
++#endif
++}
++
++inline bool ppc_init_host_fma() {
++  char value[8] = {};
++#if defined(_WIN32)
++  size_t length = 0;
++  if (getenv_s(&length, value, sizeof(value), "REX_PPC_FMA") != 0) {
++    value[0] = '\0';
++  }
++#else
++  if (const char* env = std::getenv("REX_PPC_FMA")) {
++    value[0] = env[0];
++  }
++#endif
++  if (value[0] == '0') {
++    return false;
++  }
++  if (value[0] == '1') {
++    return true;
++  }
++  return ppc_detect_host_fma();
++}
++
++inline const bool ppc_host_has_fma = ppc_init_host_fma();
++
++// Two roundings. The empty asm makes the rounded product an opaque value, so
++// the compiler cannot contract a * b + c into an fma, not even under
++// -ffp-contract=fast (which ignores the contract pragma).
++inline double ppc_mul_add(double a, double b, double c) {
++  double product = a * b;
++#if defined(__x86_64__) || defined(_M_X64)
++  __asm__("" : "+x"(product));
++#endif
++  return product + c;
++}
++
++inline double ppc_fma(double a, double b, double c) {
++  if (ppc_host_has_fma) {
++    return std::fma(a, b, c);
++  }
++  return ppc_mul_add(a, b, c);
++}
++
++#endif
+diff --git a/resources/templates/codegen/pch_h.inja b/resources/templates/codegen/pch_h.inja
+index 68274d2..0ea15ef 100644
+--- a/resources/templates/codegen/pch_h.inja
++++ b/resources/templates/codegen/pch_h.inja
+@@ -253,6 +253,8 @@ extern PPCFuncMapping PPCFuncMappings[];
+ #define REX_SET_FLUSH_MODE(enable) \
+   do { if (enable) ctx.fpscr.enableFlushMode(); else ctx.fpscr.disableFlushMode(); } while (0)
+ 
++{% include "codegen/_ppc_fma.inja" %}
++
+ //=============================================================================
+ // Misc
+ //=============================================================================
+diff --git a/resources/templates/test/ppc_config_h.inja b/resources/templates/test/ppc_config_h.inja
+index 0c334f8..d0df746 100644
+--- a/resources/templates/test/ppc_config_h.inja
++++ b/resources/templates/test/ppc_config_h.inja
+@@ -110,6 +110,8 @@
+ #define REX_SET_FLUSH_MODE(enable) \
+   do { if (enable) ctx.fpscr.enableFlushMode(); else ctx.fpscr.disableFlushMode(); } while (0)
+ 
++{% include "codegen/_ppc_fma.inja" %}
++
+ //=============================================================================
+ // Misc
+ //=============================================================================
+diff --git a/src/codegen/builders/floating_point.cpp b/src/codegen/builders/floating_point.cpp
+index 1702241..f0bd859 100644
+--- a/src/codegen/builders/floating_point.cpp
++++ b/src/codegen/builders/floating_point.cpp
+@@ -199,7 +199,7 @@ bool build_fdivs(BuilderContext& ctx) {
+ 
+ bool build_fmadd(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = std::fma({}.f64, {}.f64, {}.f64);", ctx.f(ctx.insn.operands[0]),
++  ctx.println("\t{}.f64 = ppc_fma({}.f64, {}.f64, {}.f64);", ctx.f(ctx.insn.operands[0]),
+               ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -207,7 +207,7 @@ bool build_fmadd(BuilderContext& ctx) {
+ 
+ bool build_fmadds(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = double(float(std::fma({}.f64, {}.f64, {}.f64)));",
++  ctx.println("\t{}.f64 = double(float(ppc_fma({}.f64, {}.f64, {}.f64)));",
+               ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -215,7 +215,7 @@ bool build_fmadds(BuilderContext& ctx) {
+ 
+ bool build_fmsub(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = std::fma({}.f64, {}.f64, -{}.f64);", ctx.f(ctx.insn.operands[0]),
++  ctx.println("\t{}.f64 = ppc_fma({}.f64, {}.f64, -{}.f64);", ctx.f(ctx.insn.operands[0]),
+               ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -223,7 +223,7 @@ bool build_fmsub(BuilderContext& ctx) {
+ 
+ bool build_fmsubs(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = double(float(std::fma({}.f64, {}.f64, -{}.f64)));",
++  ctx.println("\t{}.f64 = double(float(ppc_fma({}.f64, {}.f64, -{}.f64)));",
+               ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -231,7 +231,7 @@ bool build_fmsubs(BuilderContext& ctx) {
+ 
+ bool build_fnmadd(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = -std::fma({}.f64, {}.f64, {}.f64);", ctx.f(ctx.insn.operands[0]),
++  ctx.println("\t{}.f64 = -ppc_fma({}.f64, {}.f64, {}.f64);", ctx.f(ctx.insn.operands[0]),
+               ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -239,7 +239,7 @@ bool build_fnmadd(BuilderContext& ctx) {
+ 
+ bool build_fnmadds(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = double(float(-std::fma({}.f64, {}.f64, {}.f64)));",
++  ctx.println("\t{}.f64 = double(float(-ppc_fma({}.f64, {}.f64, {}.f64)));",
+               ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -247,7 +247,7 @@ bool build_fnmadds(BuilderContext& ctx) {
+ 
+ bool build_fnmsub(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = -std::fma({}.f64, {}.f64, -{}.f64);", ctx.f(ctx.insn.operands[0]),
++  ctx.println("\t{}.f64 = -ppc_fma({}.f64, {}.f64, -{}.f64);", ctx.f(ctx.insn.operands[0]),
+               ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;
+@@ -255,7 +255,7 @@ bool build_fnmsub(BuilderContext& ctx) {
+ 
+ bool build_fnmsubs(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.println("\t{}.f64 = double(float(-std::fma({}.f64, {}.f64, -{}.f64)));",
++  ctx.println("\t{}.f64 = double(float(-ppc_fma({}.f64, {}.f64, -{}.f64)));",
+               ctx.f(ctx.insn.operands[0]), ctx.f(ctx.insn.operands[1]), ctx.f(ctx.insn.operands[2]),
+               ctx.f(ctx.insn.operands[3]));
+   return true;

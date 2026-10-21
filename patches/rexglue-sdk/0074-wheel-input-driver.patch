@@ -148,7 +148,7 @@ new file mode 100644
 index 0000000..459395c
 --- /dev/null
 +++ b/src/input/wheel/wheel_input_driver.cpp
-@@ -0,0 +1,708 @@
+@@ -0,0 +1,713 @@
 +/**
 + * @file        rex/input/wheel/wheel_input_driver.cpp
 + * @brief       Racing wheel input driver (see the header).
@@ -193,6 +193,9 @@ index 0000000..459395c
 +                      "steering deadzone for wheels (0: off)")
 +    .range(0.0, 0.3);
 +REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
++REXCVAR_DEFINE_BOOL(wheel_900_steering, true, "Input",
++                    "Report a 900-degree wheel, so the game uses its full-range wheel steering; "
++                    "false: the Xbox 360 wheel's 270-degree mode with its steering filter (#4)");
 +REXCVAR_DEFINE_STRING(wheel_pedals, "auto", "Input",
 +                      "Pedals: auto/separate (throttle, brake and clutch each on an axis), "
 +                      "combined (one axis, throttle one way and brake the other)")
@@ -791,7 +794,9 @@ index 0000000..459395c
 +    REXLOG_INFO("Wheel: the game asked for capabilities; answering SubType WHEEL");
 +  }
 +  // What the Xbox 360 Wireless Racing Wheel reports. FH1 takes a pad for a wheel when
-+  // SubType is 2 and both the force feedback and wireless flags are set.
++  // SubType is 2, read once when the pad slot is created (sub_82CBAFE0). The car's input
++  // frame (sub_824B7360) then uses the full-range wheel steering only when the wheel
++  // reports a thumb_lx of 900 (sub_82CB84A0), the 270-degree Xbox 360 wheel mode otherwise.
 +  std::memset(caps, 0, sizeof(*caps));
 +  caps->type = XINPUT_DEVTYPE_GAMEPAD;
 +  caps->sub_type = kSubTypeWheel;
@@ -799,7 +804,7 @@ index 0000000..459395c
 +  caps->gamepad.buttons = 0xF3FF;
 +  caps->gamepad.left_trigger = 0xFF;
 +  caps->gamepad.right_trigger = 0xFF;
-+  caps->gamepad.thumb_lx = static_cast<int16_t>(0x7FFF);
++  caps->gamepad.thumb_lx = REXCVAR_GET(wheel_900_steering) ? int16_t(900) : static_cast<int16_t>(0x7FFF);
 +  caps->vibration.left_motor_speed = 0xFFFFu;
 +  caps->vibration.right_motor_speed = 0xFFFFu;
 +  return X_ERROR_SUCCESS;

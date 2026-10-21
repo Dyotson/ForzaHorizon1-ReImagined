@@ -1,0 +1,40 @@
+name: challenge-hud-tests
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-message-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX forza-recomp/tests/challenge_hud_test.cpp /Fe:challenge-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\challenge-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX forza-recomp/tests/achievement_hud_test.cpp /Fe:achievement-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\achievement-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX /Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp /Fe:stall-watch-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\stall-watch-test.exe
+      - if: runner.os != 'Windows'
+        run: |
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/challenge_hud_test.cpp -o challenge-hud-test
+          ./challenge-hud-test
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/achievement_hud_test.cpp -o achievement-hud-test
+          ./achievement-hud-test
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror -Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp -o stall-watch-test
+          ./stall-watch-test

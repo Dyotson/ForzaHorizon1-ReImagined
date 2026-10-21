@@ -7,6 +7,7 @@ holds its default is not written, so the file stays small. `default` is what "un
 for the game (a few use 0/"" as "automatic").
 """
 from dataclasses import dataclass, field
+import math
 
 from .paths import IS_WINDOWS
 
@@ -47,8 +48,8 @@ def add(*a, **k):
 
 # --- Display ---------------------------------------------------------------------------
 add("frame_rate", "Frame rate", "Display", "fps", 30,
-    "30 is the console's rate; 60 to 240 (60, 120, 144, ...) run the game faster. Physics and "
-    "race timing keep their speed (docs/framerate.md).", "Frame rate")
+    "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
+    "physics speed.", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
@@ -56,10 +57,10 @@ add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
 add("video_mode_refresh_rate", "Guest refresh rate (Hz)", "Display", "float", 0.0,
     "0 picks it from the frame rate. Set it to override.", "Frame rate", lo=0, hi=480, step=1)
-add("fullscreen", "Fullscreen", "Display", "bool", True,
-    "Start in fullscreen (borderless at the desktop mode).", "Window")
+add("fullscreen", "Borderless fullscreen", "Display", "bool", True,
+    "Start in borderless fullscreen (recommended).", "Window")
 add("fullscreen_exclusive", "Exclusive fullscreen", "Display", "bool", False,
-    "Switch the display mode instead of staying borderless.", "Window")
+    "Start in exclusive fullscreen (switches the display mode).", "Window")
 add("window_width", "Window width", "Display", "int", 0,
     "Logical pixels for windowed mode. 0 uses the default.", "Window", lo=0, hi=8192, step=10)
 add("window_height", "Window height", "Display", "int", 0,
@@ -166,11 +167,37 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+# scRGB requires an HDR-enabled desktop and a surface advertising the format.
+add("present_hdr", "HDR output", "Display", "bool", False,
+    "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
+    "enabled in the OS. Unsupported displays keep SDR. This does not restore native HDR detail.",
+    "HDR", restart=True)
+add("present_hdr_paper_white_nits", "Paper white (nits)", "Display", "float", 200.0,
+    "Brightness of white HUD elements and ordinary white. Start at 200 and adjust for your room.",
+    "HDR", lo=80, hi=1000, step=10, restart=True)
+add("present_hdr_peak_nits", "Display peak (nits)", "Display", "float", 1000.0,
+    "Set to your display's HDR peak brightness. At or below paper white, highlight expansion is off.",
+    "HDR", lo=80, hi=10000, step=10, restart=True)
+add("present_hdr_highlights", "Highlight strength", "Display", "float", 0.5,
+    "0 keeps the scene at paper white; 1 expands bright scene pixels toward the selected peak. "
+    "HUD coverage stays at paper white. Translucent overlays may suppress highlights beneath them.",
+    "HDR", lo=0, hi=1, step=0.05, restart=True)
+add("present_hdr_gamma", "HDR source gamma", "Display", "float", 2.2,
+    "2.2 matches the game's SDR curve. 0 uses the piecewise sRGB curve.",
+    "HDR", lo=0, hi=3, step=0.1, restart=True)
+add("present_hdr_compare", "Compare SDR / HDR", "Display", "bool", False,
+    "Left: SDR at paper white. Right: HDR. Both halves use the HDR output, with a white divider.",
+    "HDR", restart=True)
+add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
+    "Show a calibration strip over the picture. Turn off when finished. "
+    "An SDR screenshot cannot show the physical brightness.", "HDR",
+    choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
+
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
     "Keys stand in for a controller (the bindings below).", "Keyboard")
 add("mnk_mouse", "Mouse moves the right stick", "Controls", "bool", False,
-    "Look around (and aim the photo mode camera) with the mouse; the pointer is captured "
+    "Look around (and aim the Photo Mode camera) with the mouse; the pointer is captured "
     "while the game has focus. Off: the right stick comes from its keys only.", "Keyboard")
 add("mnk_sensitivity", "Mouse sensitivity", "Controls", "float", 1.0,
     "1.0 turns the right stick halfway at 1000 pixels a second.", "Keyboard",
@@ -212,6 +239,9 @@ add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float",
     "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
+add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
+    "The game uses its full-range (900\u00b0) wheel steering. Off uses the Xbox 360 wheel's "
+    "270\u00b0 mode, which filters the steering like a gamepad.", "Racing wheel", restart=True)
 add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
     "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
     choices=[("auto", "Separate (detected)"), ("separate", "Separate"), ("combined", "Combined")])
@@ -274,7 +304,11 @@ add("live_accept_invites", "Show game invites", "Online", "bool", True,
     "Another player's invite asks you: hold Back + A (or Enter) to join. Off ignores them.",
     "Forza Live")
 add("live_friends_key", "Friends screen key", "Online", "str", "F8",
-    "Opens the friends screen (a controller: hold the left stick press).", "Forza Live")
+    "Opens the friends screen (a controller: hold the left stick press, unless the "
+    "controller shortcut below is off).", "Forza Live")
+add("live_friends_pad_shortcut", "Controller friends shortcut", "Online", "bool", True,
+    "Holding the left stick press opens the friends screen. Turn off if you hold the left stick "
+    "while driving; the friends and chat keys still work.", "Forza Live")
 add("live_chat_key", "Chat key", "Online", "str", "F9",
     "Opens the chat (a controller: the friends screen's Chat tab).", "Forza Live")
 add("world_drop_in", "Horizon World drop-in", "Online", "bool", True,
@@ -330,6 +364,9 @@ add("vulkan_allow_present_mode_fifo_latest_ready", "Use FIFO latest ready", "Adv
     "refresh rate, if the driver offers it. Off: plain FIFO.", "GPU")
 add("store_shaders", "Keep a shader cache", "Advanced", "bool", True,
     "Fewer stutters the second time you play.", "GPU")
+add("vulkan_store_pipeline_cache", "Keep compiled Vulkan pipelines", "Advanced", "bool", True,
+    "Reuse local GPU driver data when preparing cached shaders at startup. Requires the shader "
+    "cache and Vulkan. New scenes may still compile shaders; driver changes rebuild the cache.", "GPU", restart=True)
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,
     "", "GPU")
 add("present_safe_area_x", "Safe area width %", "Advanced", "int", 90, "", "GPU",
@@ -366,6 +403,8 @@ def coerce(setting, value):
             return max(lo, min(hi, v))
         if setting.kind == "float":
             v = float(value)
+            if not math.isfinite(v):
+                return setting.default
             lo = -1e9 if setting.lo is None else setting.lo
             hi = 1e9 if setting.hi is None else setting.hi
             return max(lo, min(hi, v))

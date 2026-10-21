@@ -280,6 +280,9 @@ class LaunchPlan:
     notes: list = field(default_factory=list)
     log_dir: Path | None = None
     dlss_status_file: Path | None = None
+    haptics_settings: dict = field(default_factory=dict)
+    save_profile: object = None
+    log_before_start: tuple | None = None  # identify a leftover log if this process never writes one
 
     def command_line(self) -> str:
         return " ".join(shlex.quote(a) for a in self.argv)
@@ -467,14 +470,27 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         if user_libs:
             libs.append(user_libs)
         env["LD_LIBRARY_PATH"] = ":".join(libs)
+    save_profile = None
+    if write:
+        from . import saves
+        root = saves.data_root_arg(args, root)
+        if not root.is_absolute():
+            root = game.dir / root
+        save_profile = saves.profile_for(cfg, root=root)
     return LaunchPlan(game, game.dir, [str(game.exe)] + args, env, unset, toml_path,
-                      toml_text, server_argv, notes, home, dlss_status_file)
+                      toml_text, server_argv, notes, home, dlss_status_file, dict(cfg.d['haptics']),
+                      save_profile=save_profile)
 
 
 def log_path_of(plan: "LaunchPlan"):
-    for a in (plan.argv if plan is not None else ()):
+    args = plan.argv if plan is not None else ()
+    for i, a in enumerate(args):
         if str(a).startswith("--log_file="):
-            return Path(str(a).split("=", 1)[1])
+            log = Path(str(a).split("=", 1)[1])
+            return log if log.is_absolute() else plan.cwd / log
+        if a == "--log_file" and i + 1 < len(args):
+            log = Path(args[i + 1])
+            return log if log.is_absolute() else plan.cwd / log
     return None
 
 
@@ -498,12 +514,38 @@ CLEAN_CLOSE_MARKERS = ("Title terminated; hard-exiting process", "Execution comp
 def _log_tail(plan: "LaunchPlan", lines=200):
     log = log_path_of(plan)
     try:
-        if log is not None and log.is_file():
-            with open(log, "r", encoding="utf-8", errors="replace") as f:
-                return f.readlines()[-lines:]
+        if log is not None and log_is_current(plan):
+            return read_log_tail(log, lines)
     except OSError:
         pass
     return []
+
+
+def log_signature(plan):
+    log = log_path_of(plan)
+    try:
+        st = log.stat() if log is not None else None
+        return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns) if st else None
+    except OSError:
+        return None
+
+
+def log_is_current(plan):
+    """An early startup failure must not inherit a previous run's clean close or fault."""
+    before = getattr(plan, "log_before_start", None)
+    return before is None or log_signature(plan) != before
+
+
+def read_log_tail(log: Path, lines=200, max_bytes=65536):
+    """Bound both I/O and memory, even when a fault loop produced a multi-GB log."""
+    with log.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        start = max(0, size - max_bytes)
+        f.seek(start)
+        raw = f.read(max_bytes)
+    if start:
+        raw = raw.partition(b"\n")[2]  # discard an incomplete first line
+    return raw.decode("utf-8", errors="replace").splitlines()[-lines:]
 
 
 def last_errors(tail, count=3):
@@ -598,8 +640,22 @@ class Session:
         self.relaunches = []   # monotonic times of the restarts (RELAUNCH_LIMIT within RELAUNCH_WINDOW)
         self.stop_requested = False   # the player stopped it from the launcher: its exit code is no crash
         self.stop_deadline = None
+        self.haptics = None
+        self._save_lock = None
 
     def start(self):
+        from . import saves
+        if self.plan.save_profile is not None:
+            guard = saves.locked(self.plan.save_profile)
+            guard.__enter__()
+            self._save_lock = guard
+        try:
+            self._start()
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def _start(self):
         plan = self.plan
         if plan.log_dir:
             plan.log_dir.mkdir(parents=True, exist_ok=True)
@@ -618,13 +674,44 @@ class Session:
 
     def _start_game(self, extra):
         plan = self.plan
+        plan.log_before_start = log_signature(plan)
+        from .shader_warmup import Monitor
+        self.shader_warmup = Monitor(log_path_of(plan))
         env = cleanenv.clean_environment()
         for k in plan.unset:
             env.pop(k, None)
         env.update(plan.env)
         env["FORZA_LAUNCHER_RELAUNCH"] = "1"
         env.update(extra)
-        self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        # Never inherit another launcher's telemetry destination or session token.
+        env.pop('FORZA_TELEMETRY_PORT', None)
+        env.pop('FORZA_TELEMETRY_TOKEN', None)
+        from .haptics.service import HapticsService, supported, supports_xbox
+        wanted = plan.haptics_settings.get('enabled') or plan.haptics_settings.get('xbox_enabled')
+        if not wanted and self.haptics:
+            self.haptics.stop()
+            self.haptics = None
+        if wanted and self.haptics is None and supported(plan.cwd):
+            try:
+                self.haptics = HapticsService(plan.haptics_settings, xbox_capable=supports_xbox(plan.cwd))
+                self.haptics.start()
+            except OSError as exc:
+                self.log(f'Adaptive triggers unavailable: {exc}')
+        if self.haptics:
+            env.update(self.haptics.new_stream())
+        elif wanted:
+            self.log('Controller haptics need a game build with the FH1 telemetry bridge.')
+        try:
+            self.proc = subprocess.Popen(plan.argv, cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL)
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def update_haptics(self, settings):
+        from .haptics.settings import normalize
+        self.plan.haptics_settings = normalize(settings)
+        if self.haptics:
+            self.haptics.update(self.plan.haptics_settings)
 
     def relaunch(self):
         """The game asked to be started again (RELAUNCH_EXIT_CODE); the server keeps running.
@@ -650,6 +737,8 @@ class Session:
         return code
 
     def stop(self):
+        if self.haptics:
+            self.haptics.stop()
         if self.proc and self.proc.poll() is None:
             self.stop_requested = True
             if paths.IS_WINDOWS:
@@ -663,9 +752,14 @@ class Session:
 
     def cleanup(self):
         """After the game ends: stop our server and free guest memory left in /dev/shm."""
+        if self.haptics:
+            self.haptics.stop()
         if self.server and self.server.poll() is None:
             self.server.terminate()
         dlss.cleanup_status(self.plan)
+        if self._save_lock is not None:
+            guard, self._save_lock = self._save_lock, None
+            guard.__exit__(None, None, None)
         if not paths.IS_WINDOWS:
             clean_shm()
 

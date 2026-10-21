@@ -17,6 +17,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   title screen (with Steam Input or Sunshine virtual pads around, your pad is often not
   the first one, and the game used to ask that pad to sign in).
   `FORZA_PAD_PER_USER=1` gives each pad its own player again.
+- **Achievements:** unlock notifications use the native HUD with the game's trophy icon,
+  achievement name and Gamerscore. Multiple unlocks queue in order; ordinary alerts and
+  challenge prompts take priority, then the interrupted unlock resumes. The F7 achievement
+  browser remains available in the overlay.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a
@@ -54,7 +58,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   **Friends (#92):** the server keeps your friends list; the game's friends list (who is
   online, what they are doing, joining a friend's game) shows only your friends. Press `F8`
   (`live_friends_key` in `forza.toml`) or hold the left stick press (`F` with `mnk_mode`)
-  to open the friends screen over the game; B or Escape closes it. Its tabs (LB/RB or
+  to open the friends screen over the game (Settings → Online → Controller friends shortcut
+  turns the left stick hold off for players who hold it while driving, #194); B or Escape closes it. Its tabs (LB/RB or
   Left/Right): **Friends**, **Requests** (asks you, or waiting for an answer), **Add
   friend** and **Blocked**. On Add friend, type part of a gamertag (keyboard) or press Y
   for the on-screen keyboard (D-pad moves, A types, X deletes, Y space, B done); it lists
@@ -133,6 +138,8 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   a garbled picture (#54); photos saved by them stay garbled, take them again.
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
+- **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
+  what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
 
 ## Recommended picture settings
 
