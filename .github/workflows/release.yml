@@ -82,6 +82,9 @@ jobs:
       - name: Compile performance overlay against stock nightly headers
         run: |
           # Also runs on an SDK cache hit: game sources aren't part of that cache key.
+          if [ ! -d /usr/include/c++/14 ]; then
+            launcher/packaging/ci_linux_sdk_setup.sh --compiler-only
+          fi
           if [ ! -x "$HOME/llvm/bin/clang++" ]; then
             python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
           fi
