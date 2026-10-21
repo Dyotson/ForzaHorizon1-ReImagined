@@ -428,6 +428,62 @@ receipts and logs are in `build/two-client-modes-20261021/` outside Git. A separ
 private runtime expands only the test command's ordinary controller-input
 whitelist for map/club navigation; it does not change entitlement decisions.
 
+### Club loans, Rally and matchmaking follow-up (2026-10-21)
+
+The actual festival Car Club entry initialized both fixture memberships. EventEarned
+shared its Saleen through the native upload flow (`UploadCarTextures`, `CreateEx`),
+and EventUnearned downloaded and test-drove that loan in single player without an
+event grant. The multiplayer Club Garage selector rejected the same loan with
+Event Unlock Required. Its ordinary Rabbit rental reached the circuit and retired.
+Selecting the owner's own shared Saleen through Club Garage was accepted, but
+stalled at loading status 3; selecting the owned Saleen through My Garage after a
+restart reached status 4 on the same circuit. The cause of the club-path stall is
+not yet established; this is not a passing earned-loan loading test.
+
+With Rally DLC loaded, EventUnearned also shared its own Saleen and EventEarned
+shared an ordinary Lancer through the native game UI. In custom free roam (native
+mode 9), EventEarned explicitly selected EventUnearned's Saleen and EventUnearned
+selected EventEarned's Lancer. Both selections were accepted. The Saleen again
+remained at loading status 3, while the ordinary loan reached status 4 and rendered
+in the world. This reproduces the unicorn-loan loading failure with a different
+owner and DLC present. The later joiner command acknowledgement timed out; its
+relationship to the host stall is not established. In-world club-loan selection
+could not be completed in this stalled session. Keep that acceptance check open.
+
+The Rally Expansion Pack was present in another local test installation, but was
+missing from these isolated user-data roots. Its extracted package and matching
+header were copied into both disposable fixtures. Both startup logs then reported
+offer 1600. Both clients started Beaumont Stage 1 (Lancia Delta S4 1630 / MINI
+1627), reached status 4, and retired to the lobby. Native Rally restrictions
+excluded the fixture's owned cars, including the rewarded Saleen; a grant did not
+override the requirement for a Rally-eligible car. This checks Rally entry,
+loading and retirement, not unicorn use with Rally upgrades.
+
+Additional distinct entry paths were exercised with actual server grants:
+
+| Path | Earned / unearned result | Loaded models |
+| --- | --- | --- |
+| Private custom circuit, native mode 5 | Saleen accepted / Saleen denied, ordinary fallback accepted | 1197 / 1115, both status 4 |
+| Find Game: Races, native mode 7 | Saleen accepted / Saleen denied, explicit rental recovery | 1197 / 1322, Red Rock Descent, both status 4 |
+| Find Game: Playground Games, native mode 7 | Saleen accepted / Saleen denied, explicit rental recovery | 1197 / 1322, Infected, both status 4 |
+
+The Playground test used the server's supported private `hoppers/2.xml` override:
+the native Infected preset with class S and a 60-second round. It does not establish
+the complete default matchmaking rotation. The timed round completed and returned
+to its lobby. Explicit Gallardo rental confirmation
+completed after changing the manufacturer color and selecting it. The no-fallback
+dialog also appears in Races and Playground lobbies; its text now says
+"multiplayer" instead of incorrectly describing every such lobby as free roam.
+The wording change compiles for TU4 and the disc build, policy assertions pass,
+and an isolated TU4 executable links. The recorded UI tests used the earlier text;
+the linked wording-only update was not launched for another visual test.
+
+After the final loan tests, both clients were closed through their normal window
+close action. The stopped-save audit authenticated both garages, retained all
+seven unicorns exactly once, and verified the source inventories were unchanged.
+In-world club-loan coverage remains blocked by the loading failure. Private
+receipts, DLC copies and native traces are under `build/`, outside Git.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with

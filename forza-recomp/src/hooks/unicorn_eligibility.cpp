@@ -256,7 +256,7 @@ extern "C" REX_FUNC(sub_82675B00) {
               "This unicorn needs an event reward unlock for multiplayer. "
               "A rental car has been assigned. Use Select Car to choose another car. "
               "You can still use your unicorn in single player." :
-              "This unicorn needs an event reward unlock for online free roam. "
+              "This unicorn needs an event reward unlock for multiplayer. "
               "Use Select Car to choose another car before joining. "
               "You can still use your unicorn in single player.";
       if (workshop_dialog) {
