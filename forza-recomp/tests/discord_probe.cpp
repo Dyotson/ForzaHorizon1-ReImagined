@@ -44,11 +44,15 @@ int main(int argc, char** argv) {
   presence.details = activity.details.c_str(); presence.state = activity.state.c_str();
   presence.startTimestamp = 1000;
   Discord_UpdatePresence(&presence);
-  for (int i = 0; i < 160; ++i) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+  while (std::chrono::steady_clock::now() < deadline) {
     Discord_RunCallbacks(); std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
+  std::fputs("IPC fixture polling complete\n", stderr);
   Discord_ClearPresence();
+  std::fputs("IPC fixture clear queued\n", stderr);
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   Discord_Shutdown();
+  std::fputs("IPC fixture shutdown complete\n", stderr);
   std::puts("Discord IPC PASS");
 }
