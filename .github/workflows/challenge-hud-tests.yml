@@ -26,9 +26,15 @@ jobs:
           clang-cl /nologo /std:c++17 /EHsc /W4 /WX forza-recomp/tests/achievement_hud_test.cpp /Fe:achievement-hud-test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\achievement-hud-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          clang-cl /nologo /std:c++17 /EHsc /W4 /WX /Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp /Fe:stall-watch-test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\stall-watch-test.exe
       - if: runner.os == 'Linux'
         run: |
           g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/challenge_hud_test.cpp -o challenge-hud-test
           ./challenge-hud-test
           g++ -std=c++17 -pthread -Wall -Wextra -Werror forza-recomp/tests/achievement_hud_test.cpp -o achievement-hud-test
           ./achievement-hud-test
+          g++ -std=c++17 -pthread -Wall -Wextra -Werror -Iforza-recomp/tests/stall-stubs forza-recomp/tests/stall_watch_test.cpp -o stall-watch-test
+          ./stall-watch-test

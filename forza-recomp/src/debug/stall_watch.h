@@ -3,10 +3,23 @@
 
 #pragma once
 
+#include <atomic>
+#include <thread>
+
 namespace forza::stall {
 
-// Starts the watchdog thread (once).
-void Start();
+// Owned by the app so the worker cannot outlive the runtime it samples.
+// Start/Stop are called on the app's lifecycle thread. Destruction also joins.
+class Watchdog {
+ public:
+  ~Watchdog() { Stop(); }
+  void Start();
+  void Stop();
+
+ private:
+  std::atomic<bool> stop_{false};
+  std::thread worker_;
+};
 
 // The render thread handed a frame to VdSwap (src/debug/frame_dump.cpp).
 void OnGuestSwap();

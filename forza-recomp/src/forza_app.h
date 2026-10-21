@@ -104,6 +104,7 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    stall_watchdog_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
       achievement_listener_ = 0;
@@ -114,6 +115,9 @@ class ForzaApp : public rex::ReXApp {
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    // The SDK terminates guest threads immediately after accepting this request.
+    // A retained XThread handle does not keep its guest stack alive.
+    stall_watchdog_.Stop();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
     return true;
@@ -149,7 +153,7 @@ class ForzaApp : public rex::ReXApp {
     // nothing else takes.
     forza::InstallFaultGuard();
     // Long frames and where the game was during them (#187).
-    forza::stall::Start();
+    stall_watchdog_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
@@ -205,6 +209,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  forza::stall::Watchdog stall_watchdog_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };
