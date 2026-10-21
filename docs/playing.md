@@ -329,8 +329,11 @@ the middle is the steering, those resting at an end are the pedals (throttle, br
 **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
 fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
-8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=4,x=5,y=3,lb=7,rb=6,back=8,start=9,ls=11,rs=10`
-(cross, right paddle, left paddle, triangle, L2, R2, Share, Options, L3, R3). Wheel buttons differ between models, so check the numbers (for example
+8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10`
+(cross, circle, square, triangle, right paddle, left paddle, Share, Options, L3, R3; R2 and L2 are free). With the
+game's Wheel layout 1 the paddles shift up and down, cross is the clutch, circle the handbrake, square Activate,
+triangle Rewind and Share the camera (the paddles were on B and X while the game took the wheel for a gamepad,
+whose layout shifts with those). Wheel buttons differ between models, so check the numbers (for example
 with `jstest-gtk`) and override as needed. Wheels that SDL also maps as a gamepad are taken by the wheel driver
 instead; Xbox (Microsoft) wheels keep using the gamepad path.
 

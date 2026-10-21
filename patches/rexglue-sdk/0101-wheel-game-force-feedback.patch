@@ -1,3 +1,51 @@
+diff --git a/include/rex/input/wheel/wheel_buttons.h b/include/rex/input/wheel/wheel_buttons.h
+new file mode 100644
+index 0000000..02ab93b
+--- /dev/null
++++ b/include/rex/input/wheel/wheel_buttons.h
+@@ -0,0 +1,42 @@
++/**
++ * @file        rex/input/wheel/wheel_buttons.h
++ * @brief       Racing wheel buttons: which SDL button presses which pad button, kept free of SDL
++ *              so it can be tested on its own.
++ *
++ * The game takes the wheel for an Xbox 360 wheel, so its wheel layouts apply (gamedb.slt
++ * WheelLayouts, layout 0): the bumpers are the 360 wheel's paddles and shift up (RB) and down
++ * (LB), A is the clutch, B the handbrake, X Activate, Y Rewind and Back the camera.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <map>
++#include <string>
++
++namespace rex::input::wheel {
++
++// Pad button name -> SDL button number (-1: none). The usual wheel order: face buttons, the right
++// and left paddle, then Share/Back and Options/Start and the stick presses. On a G29 or G923
++// (PlayStation version, 046d:c24f and c266) buttons 1 and 2 are square and circle, so B and X
++// swap; 6 and 7 (R2, L2) are not used. The paddles sat on B and X while the game took every wheel
++// for a gamepad, whose layout shifts with those (#219). `overrides` is wheel_buttons.
++inline std::map<std::string, int> WheelButtons(bool g29, const std::map<std::string, int>& overrides) {
++  std::map<std::string, int> map = {{"a", 0},     {"b", 1},     {"x", 2},     {"y", 3},
++                                    {"rb", 4},    {"lb", 5},    {"back", 8},  {"start", 9},
++                                    {"rs", 10},   {"ls", 11},   {"up", -1},   {"down", -1},
++                                    {"left", -1}, {"right", -1}};
++  if (g29) {
++    map["b"] = 2;
++    map["x"] = 1;
++  }
++  for (const auto& [k, v] : overrides) {
++    if (map.count(k)) {
++      map[k] = v;
++    }
++  }
++  return map;
++}
++
++}  // namespace rex::input::wheel
 diff --git a/include/rex/input/wheel/wheel_ff.h b/include/rex/input/wheel/wheel_ff.h
 new file mode 100644
 index 0000000..6ef480d
@@ -269,10 +317,10 @@ index 51dd35c..804ba27 100644
    std::chrono::steady_clock::time_point last_scan_{};
    std::chrono::steady_clock::time_point last_pump_{};
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 1fd18ca..5367b8a 100644
+index 1fd18ca..b917c3b 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
-@@ -6,16 +6,21 @@
+@@ -6,21 +6,27 @@
   * wheel). The game gets it as the Xbox 360 Wireless Racing Wheel: SubType 2 with the force
   * feedback and wireless flags, steering on the left stick X, the pedals on the triggers, the
   * clutch on the right stick Y and an H-pattern shifter's gear on the right stick X, which is how
@@ -295,7 +343,13 @@ index 1fd18ca..5367b8a 100644
  #include <map>
  #include <string_view>
  
-@@ -41,8 +46,9 @@ REXCVAR_DEFINE_DOUBLE(wheel_deadzone, 0.0, "Input", "Steering deadzone, 0 to 0.5
+ #include <rex/cvar.h>
+ #include <rex/input/flags.h>
++#include <rex/input/wheel/wheel_buttons.h>
+ #include <rex/input/wheel/wheel_input_driver.h>
+ #include <rex/input/wheel/wheel_shifter.h>
+ #include <rex/logging.h>
+@@ -41,8 +47,9 @@ REXCVAR_DEFINE_DOUBLE(wheel_deadzone, 0.0, "Input", "Steering deadzone, 0 to 0.5
      .range(0.0, 0.5);
  REXCVAR_DEFINE_DOUBLE(wheel_steer_offset, 0.05, "Input",
                        "Steering pre-compensation, 0 to 0.3: the part of the game's full steering that "
@@ -307,7 +361,7 @@ index 1fd18ca..5367b8a 100644
      .range(0.0, 0.3);
  REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
  REXCVAR_DEFINE_BOOL(wheel_900_steering, true, "Input",
-@@ -91,16 +97,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
+@@ -91,16 +98,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
                        "0.1 to 1")
      .range(0.1, 1.0);
  REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
@@ -336,7 +390,28 @@ index 1fd18ca..5367b8a 100644
  constexpr auto kScanEvery = std::chrono::milliseconds(500);
  constexpr auto kPumpEvery = std::chrono::milliseconds(2);
  
-@@ -231,6 +247,13 @@ struct WheelInputDriver::Wheel {
+@@ -160,7 +177,7 @@ std::map<std::string, int> ParseKv(const std::string& s) {
+ struct Profile {
+   uint16_t vid, pid;
+   const char* name;
+-  bool g29_buttons;  // the G29/G923 button numbers below; else the generic map
++  bool g29_buttons;  // the G29/G923 (PlayStation) button order (wheel_buttons.h)
+   bool df_shifter;   // a Driving Force Shifter port: its gears are buttons 12-18 (LogitechShifter)
+ };
+ constexpr Profile kProfiles[] = {
+@@ -177,11 +194,6 @@ constexpr int kProfSteer = 0, kProfThrottle = 1, kProfBrake = 2, kProfClutch = 3
+ #else
+ constexpr int kProfSteer = 0, kProfClutch = 1, kProfThrottle = 2, kProfBrake = 3;
+ #endif
+-// G29/G923 buttons (cross, paddles, triangle, R2/L2, Share/Options, stick presses), tested by a G29 owner.
+-constexpr std::pair<const char*, int> kG29Buttons[] = {
+-    {"a", 0},  {"b", 4},  {"x", 5},  {"y", 3},  {"lb", 7},  {"rb", 6},
+-    {"back", 8}, {"start", 9}, {"ls", 11}, {"rs", 10}};
+-
+ const Profile* FindProfile(uint16_t vid, uint16_t pid) {
+   for (const auto& p : kProfiles) {
+     if (p.vid == vid && p.pid == pid) {
+@@ -231,6 +243,13 @@ struct WheelInputDriver::Wheel {
    int spring_fx = -1;
    int sine_fx = -1;
    bool sine_running = false;
@@ -350,7 +425,7 @@ index 1fd18ca..5367b8a 100644
    std::string name;
    std::string guid;
    int num_axes = 0, num_buttons = 0, num_hats = 0;
-@@ -248,6 +271,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
+@@ -248,6 +267,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
      : InputDriver(window, window_z_order) {}
  
  WheelInputDriver::~WheelInputDriver() {
@@ -359,7 +434,7 @@ index 1fd18ca..5367b8a 100644
    std::lock_guard lock(mutex_);
    for (auto& w : wheels_) {
      CloseLocked(*w);
-@@ -265,6 +290,7 @@ X_STATUS WheelInputDriver::Setup() {
+@@ -265,6 +286,7 @@ X_STATUS WheelInputDriver::Setup() {
      }
    }
    sdl_ready_ = true;
@@ -367,7 +442,7 @@ index 1fd18ca..5367b8a 100644
    REXLOG_INFO("Wheel: driver ready (wheel_mode={})", REXCVAR_GET(wheel_mode));
    return X_STATUS_SUCCESS;
  }
-@@ -326,6 +352,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+@@ -326,6 +348,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
      return;
    }
    auto w = std::make_unique<Wheel>();
@@ -376,7 +451,7 @@ index 1fd18ca..5367b8a 100644
    w->jid = jid;
    w->joy = joy;
    w->id = static_cast<DeviceId>(next_id_++ | (uint64_t(0x57) << 56));
-@@ -412,8 +440,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -412,8 +436,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
    }
    if (f & SDL_HAPTIC_AUTOCENTER) {
      SDL_SetHapticAutocenter(w.haptic, 0);  // the spring below centres instead
@@ -387,7 +462,7 @@ index 1fd18ca..5367b8a 100644
      SDL_HapticEffect e{};
      e.type = SDL_HAPTIC_SPRING;
      e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
-@@ -445,15 +474,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -445,15 +470,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
        REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
      }
    }
@@ -414,7 +489,7 @@ index 1fd18ca..5367b8a 100644
      // Light centring always, firmer while the game drives the motors hard.
      const float c = strength * (0.2f + 0.6f * motor);
      SDL_HapticEffect e{};
-@@ -464,15 +502,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -464,15 +498,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
      e.condition.right_coeff[0] = e.condition.left_coeff[0] = static_cast<Sint16>(c * 32767.0f);
      SDL_UpdateHapticEffect(w.haptic, w.spring_fx, &e);
    }
@@ -443,7 +518,7 @@ index 1fd18ca..5367b8a 100644
      if (amp > 0.0f && !w.sine_running) {
        w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
      } else if (amp <= 0.0f && w.sine_running) {
-@@ -482,6 +531,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -482,6 +527,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
    }
  }
  
@@ -638,7 +713,7 @@ index 1fd18ca..5367b8a 100644
  WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
    for (auto& w : wheels_) {
      if (w->id == id) {
-@@ -589,9 +826,13 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+@@ -589,27 +822,20 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
    const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
    const float as = std::fabs(s);
    s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
@@ -655,6 +730,27 @@ index 1fd18ca..5367b8a 100644
    if (off > 0.0f && std::fabs(s) > 0.001f) {
      s = std::copysign(off + (1.0f - off) * std::fabs(s), s);
    }
+ 
+-  // Buttons: SDL numbers to the pad. Defaults suit the usual wheel layout (face buttons
+-  // first, then the paddles, then Share and Options).
+-  std::map<std::string, int> map = {{"a", 0},  {"b", 1},    {"x", 2},    {"y", 3},
+-                                    {"rb", 4}, {"lb", 5},   {"back", 8}, {"start", 9},
+-                                    {"rs", 10}, {"ls", 11}, {"up", -1},  {"down", -1},
+-                                    {"left", -1}, {"right", -1}};
+-  if (w.prof && w.prof->g29_buttons) {
+-    for (const auto& [k, v] : kG29Buttons) {
+-      map[k] = v;
+-    }
+-  }
+-  for (auto& [k, v] : ParseKv(REXCVAR_GET(wheel_buttons))) {
+-    map[k] = v;
+-  }
++  // Buttons: SDL numbers to the pad (wheel_buttons.h).
++  std::map<std::string, int> map =
++      WheelButtons(w.prof && w.prof->g29_buttons, ParseKv(REXCVAR_GET(wheel_buttons)));
+   static const std::pair<const char*, uint16_t> kBits[] = {
+       {"a", 0x1000},  {"b", 0x2000},   {"x", 0x4000},    {"y", 0x8000},
+       {"lb", 0x0100}, {"rb", 0x0200},  {"back", 0x0020}, {"start", 0x0010},
 diff --git a/src/kernel/xam/xam_input.cpp b/src/kernel/xam/xam_input.cpp
 index 80c3634..e9f0a6f 100644
 --- a/src/kernel/xam/xam_input.cpp
