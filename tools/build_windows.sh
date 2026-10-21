@@ -97,6 +97,7 @@ DIST="$ROOT/forza-recomp/out/dist/windows"
 rm -rf "$DIST"
 mkdir -p "$DIST/licenses"
 cp "$BUILD"/forza.exe "$BUILD"/forza_*.dll "$DIST/"
+cp "$BUILD/forza-telemetry.json" "$DIST/"
 for dll in "$PREFIX"/bin/*.dll; do
     case "$(basename "$dll")" in
         *d.dll | *rd.dll) ;;  # debug and RelWithDebInfo variants
@@ -114,6 +115,9 @@ fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/xiso_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 mkdir -p "$DIST/server"
 cp "$ROOT"/server/*.py "$DIST/server/"
+if [ -f "$PREFIX/share/licenses/smaa/LICENSE.txt" ]; then
+    cp "$PREFIX/share/licenses/smaa/LICENSE.txt" "$DIST/licenses/SMAA.txt"
+fi
 cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
 cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
 [ -f "$PREFIX/licenses/SDL3/LICENSE.txt" ] && cp "$PREFIX/licenses/SDL3/LICENSE.txt" "$DIST/licenses/SDL3.txt"

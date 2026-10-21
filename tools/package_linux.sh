@@ -26,6 +26,7 @@ mkdir -p "$DIST/licenses" "$DIST/server"
 # One flat directory: forza finds librexruntime.so through its $ORIGIN runpath, and the
 # runtime dlopen()s the plugin and the modules from there.
 cp "$BUILD/forza" "$DIST/"
+cp "$BUILD/forza-telemetry.json" "$DIST/"
 for module in "${MODULES[@]}"; do cp "$BUILD/$module" "$DIST/"; done
 cp -L "$SDK/lib/librexruntime.so" "$SDK/lib/librexgpu-xenos.so" "$DIST/"
 # The plugin comes out of the SDK's build tree, whose runpath points into that tree.
@@ -45,6 +46,8 @@ cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
 # AMD FidelityFX FSR 3 sources compiled into the GPU plugin (SDK patch 0072, MIT)
 fsr3_license="$SRC/out/linux-amd64/Release/AMD-FidelityFX-LICENSE.txt"
 [ -f "$fsr3_license" ] && cp "$fsr3_license" "$DIST/licenses/AMD-FidelityFX-FSR3.txt"
+smaa_license="$SRC/out/linux-amd64/Release/SMAA-LICENSE.txt"
+[ -f "$smaa_license" ] && cp "$smaa_license" "$DIST/licenses/SMAA.txt"
 cp "$ROOT/tools/dist/play.linux.sh" "$DIST/play.sh"
 chmod +x "$DIST/play.sh"
 
