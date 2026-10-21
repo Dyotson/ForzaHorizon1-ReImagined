@@ -97,6 +97,7 @@ DIST="$ROOT/forza-recomp/out/dist/windows"
 rm -rf "$DIST"
 mkdir -p "$DIST/licenses"
 cp "$BUILD"/forza.exe "$BUILD"/forza_*.dll "$DIST/"
+cp "$BUILD/forza-telemetry.json" "$DIST/"
 for dll in "$PREFIX"/bin/*.dll; do
     case "$(basename "$dll")" in
         *d.dll | *rd.dll) ;;  # debug and RelWithDebInfo variants

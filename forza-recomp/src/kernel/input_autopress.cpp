@@ -26,6 +26,8 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/benchmark.h"
+
+#include "../platform/telemetry.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -355,6 +357,7 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
   }
   if (user == 0 && forza::benchmark::WantsPad()) connected = true;
   if (!connected) {
+    if (user == 0) forza::telemetry::Input(false, 0, 0, 0, 0);
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
@@ -377,6 +380,7 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       state.buttons = buttons;
     }
   }
+  if (user == 0) forza::telemetry::Input(true, state.triggers[0], state.triggers[1], state.buttons, state.sticks[0]);
   if (buffer) {
     // The packet number changes whenever the state does.
     static std::mutex packet_mutex;

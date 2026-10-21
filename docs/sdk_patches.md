@@ -11,6 +11,8 @@ project's alone):
 
 | Patch | Area | What changes | Why |
 | --- | --- | --- | --- |
+| 0086 | Startup pipelines (Vulkan, Direct3D 12) | Reports existing blocking warm-up progress; Vulkan persists a validated, GPU/driver-specific `VkPipelineCache` beside the shader description cache | Makes startup preparation visible and lets the driver reuse locally compiled pipeline data. Only previously encountered pipelines can be warmed; see [Startup shader warm-up](shader_warmup.md) |
+| 0091 | HDR presentation and HUD coverage | Opt-in scRGB swapchain, bounded SDR highlight expansion, pre-HUD scene snapshots, conservative HUD mask, calibration and diagnostic float readback; retains the semaphore lifetime handling from 0076 | Port the PinyonShift HDR presenter without a wholesale SDK/executor update; keep HUD white controlled (#33, [setup and validation](hdr.md)) |
 | 0036 | Vulkan shared memory uploads | An upload of vertex or index data the CPU rewrote no longer ends the current render pass when no draw in it has read the uploaded pages: it is recorded before the render pass, and the uploads hoisted there share one barrier pair (`vulkan_hoist_shared_memory_uploads`) | Races at 144 ran 52,000 render pass instances and 133,000 barriers a second, nearly all for these uploads (10,600 and 27,000 with the patch) |
 | 0037 | Video mode (runtime) | The guest refresh rate (`video_mode_refresh_rate`, its range and `VdQueryVideoMode`'s clamp) may go up to 480 Hz instead of 240 | 144 fps (and other rates above 120) can keep the game's divider of two: a 288 Hz guest vblank. With a 144 Hz vblank and no divider, the emulated GPU's swap waits (which end on a vblank, patch 0030) turn every frame that misses 6.9 ms into a 13.9 ms one: free roam made 72 fps at a 144 fps target. `docs/framerate.md` |
 | 0038 | Vulkan submission | The deferred command buffer is replayed into Vulkan and submitted on a "Vulkan Submission" thread instead of the GPU command processor thread (`vulkan_threaded_submission`) | The replay took 11% of the command processor thread, which bounds the races above 60 fps |
@@ -161,3 +163,19 @@ a public member or virtual function. The game compiles with the stock nightly
 headers; older runtimes without the export safely retain continuous repainting.
 Linux SDK CI compiles the actual HUD adapter against those stock headers, even
 on an SDK cache hit, and tests passive/mixed dialog policy and hint cleanup.
+
+0090 adds Xbox impulse trigger output to the SDL input driver. The optional C
+export `ForzaInputTriggerRumble(user_mask, left, right, duration_ms)` routes only
+to SDL Xbox One/Series devices that advertise trigger rumble, through the same
+device assignments and SDL gamepad handles as normal game input/rumble. It uses
+`SDL_RumbleGamepadTriggers`, leaving body motor state intact. Calls respect the
+vibration setting, UI input blockers and focus, and clamp effects to 150 ms.
+Two nonvirtual methods are added; class layouts and virtual tables are unchanged.
+The game discovers the export dynamically, so an older runtime still loads and
+the launcher explains that an update/rebuild is required. Patch number 0090 avoids the numbers reserved by the graphics, macOS and warm-up PRs. See [telemetry](telemetry.md#xbox-impulse-triggers).
+
+Windows validation: both modified SDK sources compiled; an isolated runtime DLL
+linked and exported the entry point. A probe with real SDL virtual controllers
+verified trigger amplitudes, routing to guest users, unsupported-device rejection,
+body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
+USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.

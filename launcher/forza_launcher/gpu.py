@@ -226,8 +226,7 @@ PRESETS = {
                "Vulkan stutters on NVIDIA while shaders compile; keep background compilation on.", 49),
          Known("store_shaders", lambda v: not v,
                "Without the shader cache every start stutters again (worse on NVIDIA, Vulkan).", 49)],
-        [("In free roam a traffic car in the distance can blow out into a cyan-white glow.", 48),
-         ("Vulkan can still stutter with a warm shader cache; play a session so the cache fills.", 49)]),
+        [("Vulkan can still stutter with a warm shader cache; play a session so the cache fills.", 49)]),
     AMD: Preset(
         "AMD",
         {**_FSR, "frame_rate": 60, "gpu_backend": "vulkan"},

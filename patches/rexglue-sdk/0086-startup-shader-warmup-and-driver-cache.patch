@@ -1,0 +1,414 @@
+diff --git a/include/rex/graphics/vulkan/pipeline_cache.h b/include/rex/graphics/vulkan/pipeline_cache.h
+--- a/include/rex/graphics/vulkan/pipeline_cache.h
++++ b/include/rex/graphics/vulkan/pipeline_cache.h
+@@ -22,6 +22,8 @@
+ #include <mutex>
+ #include <queue>
+ #include <set>
++#include <shared_mutex>
++#include <rex/graphics/vulkan/driver_cache_file.h>
+ #include <thread>
+ #include <unordered_map>
+ #include <utility>
+@@ -369,6 +371,18 @@
+   // available.
+   bool EnsurePipelineCreated(const PipelineCreationArguments& creation_arguments,
+                              VkShaderModule fragment_shader_override = VK_NULL_HANDLE);
++  void InitializeDriverPipelineCache(const std::filesystem::path& cache_root, uint32_t title_id);
++  void SaveDriverPipelineCache();
++  void DestroyDriverPipelineCache();
++  std::shared_mutex driver_pipeline_mutex_;
++  VkPipelineCache driver_pipeline_cache_ = VK_NULL_HANDLE;
++  PFN_vkCreatePipelineCache create_driver_cache_ = nullptr;
++  PFN_vkGetPipelineCacheData get_driver_cache_data_ = nullptr;
++  PFN_vkDestroyPipelineCache destroy_driver_cache_ = nullptr;
++  driver_cache_file::Identity driver_cache_identity_;
++  std::filesystem::path driver_cache_path_;
++  std::atomic<uint64_t> driver_cache_generation_{0};
++  uint64_t driver_cache_saved_generation_ = 0;
+   void CreationThread(size_t thread_index);
+   void CreateQueuedPipelinesOnProcessorThread();
+   void ProcessDeferredPipelineDestructions(bool force_all);
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -16,6 +16,8 @@
+ #include <cstring>
+ #include <memory>
+ #include <set>
++#include <chrono>
++#include <rex/graphics/shader_warmup.h>
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -58,6 +60,10 @@
+ REXCVAR_DEFINE_BOOL(vulkan_tessellation_wireframe, false, "GPU/Vulkan",
+                     "Render tessellation as wireframe")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
++REXCVAR_DEFINE_BOOL(vulkan_store_pipeline_cache, true, "GPU/Vulkan",
++                    "Keep device-local driver pipelines for startup shader warm-up")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
+ namespace rex::graphics::vulkan {
+ 
+@@ -407,9 +413,96 @@
+   return true;
+ }
+ 
++
++void VulkanPipelineCache::DestroyDriverPipelineCache() {
++  std::unique_lock lock(driver_pipeline_mutex_);
++  if (driver_pipeline_cache_ != VK_NULL_HANDLE && destroy_driver_cache_) {
++    destroy_driver_cache_(command_processor_.GetVulkanDevice()->device(), driver_pipeline_cache_, nullptr);
++  }
++  driver_pipeline_cache_ = VK_NULL_HANDLE;
++  driver_cache_path_.clear();
++  driver_cache_generation_ = 0;
++  driver_cache_saved_generation_ = 0;
++}
++
++void VulkanPipelineCache::InitializeDriverPipelineCache(const std::filesystem::path& root,
++                                                        uint32_t title_id) {
++  DestroyDriverPipelineCache();
++  if (!REXCVAR_GET(vulkan_store_pipeline_cache)) return;
++  std::unique_lock lock(driver_pipeline_mutex_);
++  const auto* gpu = command_processor_.GetVulkanDevice();
++  const auto& functions = gpu->vulkan_instance()->functions();
++  create_driver_cache_ = reinterpret_cast<PFN_vkCreatePipelineCache>(
++      functions.vkGetDeviceProcAddr(gpu->device(), "vkCreatePipelineCache"));
++  get_driver_cache_data_ = reinterpret_cast<PFN_vkGetPipelineCacheData>(
++      functions.vkGetDeviceProcAddr(gpu->device(), "vkGetPipelineCacheData"));
++  destroy_driver_cache_ = reinterpret_cast<PFN_vkDestroyPipelineCache>(
++      functions.vkGetDeviceProcAddr(gpu->device(), "vkDestroyPipelineCache"));
++  if (!create_driver_cache_ || !get_driver_cache_data_ || !destroy_driver_cache_) return;
++  VkPhysicalDeviceProperties properties;
++  functions.vkGetPhysicalDeviceProperties(gpu->physical_device(), &properties);
++  driver_cache_identity_.vendor = properties.vendorID;
++  driver_cache_identity_.device = properties.deviceID;
++  driver_cache_identity_.driver = properties.driverVersion;
++  driver_cache_identity_.abi = (uint64_t(PipelineDescription::kVersion) << 32) |
++      uint64_t(SpirvShaderTranslator::Modification::kVersion);
++  std::copy_n(properties.pipelineCacheUUID, VK_UUID_SIZE, driver_cache_identity_.uuid.begin());
++  driver_cache_path_ = root / "shaders" / "local" / fmt::format(
++      "{:08X}-{:08X}-{:08X}-{:08X}-{:016X}.vkpc", title_id, properties.vendorID,
++      properties.deviceID, properties.driverVersion, driver_cache_identity_.abi);
++  const auto bytes = driver_cache_file::Read(driver_cache_path_, driver_cache_identity_);
++  VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
++  info.initialDataSize = bytes.size();
++  info.pInitialData = bytes.empty() ? nullptr : bytes.data();
++  auto result = create_driver_cache_(gpu->device(), &info, nullptr, &driver_pipeline_cache_);
++  if (result != VK_SUCCESS && !bytes.empty()) {
++    info.initialDataSize = 0; info.pInitialData = nullptr;
++    result = create_driver_cache_(gpu->device(), &info, nullptr, &driver_pipeline_cache_);
++  }
++  if (result != VK_SUCCESS) {
++    driver_pipeline_cache_ = VK_NULL_HANDLE;
++    REXGPU_WARN("Vulkan driver pipeline cache unavailable ({}); compiling normally", int32_t(result));
++  } else {
++    REXGPU_INFO("Vulkan driver pipeline cache: {} bytes supplied for startup warm-up", info.initialDataSize);
++  }
++}
++
++void VulkanPipelineCache::SaveDriverPipelineCache() {
++  std::vector<uint8_t> bytes;
++  std::filesystem::path path;
++  driver_cache_file::Identity identity;
++  uint64_t generation;
++  {
++    // GetData's size and data queries must see the same cache contents. Readers
++    // permit concurrent driver-synchronized pipeline creation; this writer
++    // excludes it only while taking a snapshot, never while writing to disk.
++    std::unique_lock lock(driver_pipeline_mutex_);
++    generation = driver_cache_generation_.load();
++    if (!driver_pipeline_cache_ || !get_driver_cache_data_ || !generation ||
++        generation == driver_cache_saved_generation_ || driver_cache_path_.empty()) return;
++    const VkDevice device = command_processor_.GetVulkanDevice()->device();
++    size_t size = 0;
++    if (get_driver_cache_data_(device, driver_pipeline_cache_, &size, nullptr) != VK_SUCCESS ||
++        size < 32 || size > driver_cache_file::kMaxPayload) return;
++    bytes.resize(size);
++    if (get_driver_cache_data_(device, driver_pipeline_cache_, &size, bytes.data()) != VK_SUCCESS) return;
++    bytes.resize(size);
++    path = driver_cache_path_; identity = driver_cache_identity_;
++  }
++  if (driver_cache_file::Write(path, bytes, identity)) {
++    std::unique_lock lock(driver_pipeline_mutex_);
++    if (path == driver_cache_path_) driver_cache_saved_generation_ = generation;
++    REXGPU_INFO("Vulkan driver pipeline cache: saved {} bytes", bytes.size());
++  } else {
++    REXGPU_WARN("Could not save Vulkan driver pipeline cache; existing cache retained");
++  }
++}
++
+ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                                   uint32_t title_id, bool blocking) {
++  ShaderWarmupLog warmup("Vulkan");
+   ShutdownShaderStorage();
++  InitializeDriverPipelineCache(cache_root, title_id);
+   {
+     std::lock_guard<std::mutex> lock(creation_request_lock_);
+     startup_loading_ = false;
+@@ -667,9 +760,11 @@
+     creation_thread_count = std::min(creation_thread_count, pipeline_creations.size());
+ 
+     std::atomic<size_t> next_creation_index(0);
++    warmup.Progress(0, pipeline_creations.size());
++    std::atomic<size_t> completed_pipeline_count(0);
+     std::atomic<size_t> created_pipeline_count(0);
+     auto creation_worker = [this, &pipeline_creations, &next_creation_index,
+-                            &created_pipeline_count]() {
++                            &created_pipeline_count, &completed_pipeline_count, &warmup]() {
+       while (true) {
+         size_t creation_index = next_creation_index.fetch_add(1);
+         if (creation_index >= pipeline_creations.size()) {
+@@ -677,6 +772,10 @@
+         }
+         if (EnsurePipelineCreated(pipeline_creations[creation_index])) {
+           created_pipeline_count.fetch_add(1);
++        }
++        const auto done = completed_pipeline_count.fetch_add(1) + 1;
++        if (done % 16 == 0 || done == pipeline_creations.size()) {
++          warmup.Progress(done, pipeline_creations.size());
+         }
+       }
+     };
+@@ -721,6 +820,8 @@
+            pipeline_storage_file_);
+   }
+ 
++  SaveDriverPipelineCache();
++
+   shader_storage_cache_root_ = cache_root;
+   shader_storage_title_id_ = title_id;
+ 
+@@ -743,6 +844,7 @@
+     rex::thread::Wait(storage_write_thread_.get(), false);
+     storage_write_thread_.reset();
+   }
++  SaveDriverPipelineCache();
+   storage_write_shader_queue_.clear();
+   storage_write_pipeline_queue_.clear();
+ 
+@@ -836,6 +938,7 @@
+   creation_completion_event_.reset();
+ 
+   ShutdownShaderStorage();
++  DestroyDriverPipelineCache();
+ 
+   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+@@ -3514,8 +3617,13 @@
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+   VkPipeline pipeline;
+-  VkResult create_result = dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+-                                                         &pipeline_create_info, nullptr, &pipeline);
++  VkResult create_result;
++  {
++    std::shared_lock lock(driver_pipeline_mutex_);
++    create_result = dfn.vkCreateGraphicsPipelines(device, driver_pipeline_cache_, 1,
++                                                &pipeline_create_info, nullptr, &pipeline);
++    if (create_result == VK_SUCCESS && driver_pipeline_cache_) ++driver_cache_generation_;
++  }
+   if (create_result != VK_SUCCESS) {
+     uint64_t ps_hash = creation_arguments.pixel_shader
+                            ? creation_arguments.pixel_shader->shader().ucode_data_hash()
+@@ -3666,8 +3774,13 @@
+ 
+   bool flush_shaders = false;
+   bool flush_pipelines = false;
++  auto last_driver_save = std::chrono::steady_clock::now();
+ 
+   while (true) {
++    if (std::chrono::steady_clock::now() - last_driver_save >= std::chrono::seconds(10)) {
++      SaveDriverPipelineCache();
++      last_driver_save = std::chrono::steady_clock::now();
++    }
+     if (flush_shaders) {
+       flush_shaders = false;
+       assert_not_null(shader_storage_file_);
+@@ -3711,7 +3824,7 @@
+         if (flush_shaders || flush_pipelines) {
+           continue;
+         }
+-        storage_write_request_cond_.wait(lock);
++        storage_write_request_cond_.wait_for(lock, std::chrono::seconds(10));
+         continue;
+       }
+     }
+diff --git a/src/graphics/d3d12/pipeline_cache.cpp b/src/graphics/d3d12/pipeline_cache.cpp
+--- a/src/graphics/d3d12/pipeline_cache.cpp
++++ b/src/graphics/d3d12/pipeline_cache.cpp
+@@ -12,6 +12,7 @@
+ #include "thirdparty/dxbc/DXBCChecksum.h"
+ 
+ #include <algorithm>
++#include <rex/graphics/shader_warmup.h>
+ #include <atomic>
+ #include <cinttypes>
+ #include <cmath>
+@@ -220,6 +221,7 @@
+ 
+ void PipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                             uint32_t title_id, bool blocking) {
++  ShaderWarmupLog warmup("D3D12");
+   ShutdownShaderStorage();
+ 
+   auto shader_storage_root = cache_root / "shaders";
+diff --git a/include/rex/graphics/vulkan/driver_cache_file.h b/include/rex/graphics/vulkan/driver_cache_file.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/vulkan/driver_cache_file.h
+@@ -0,0 +1,120 @@
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstddef>
++#include <filesystem>
++#include <fstream>
++#include <string>
++#include <vector>
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#else
++#include <unistd.h>
++#endif
++
++namespace rex::graphics::vulkan::driver_cache_file {
++// Files contain opaque, locally generated driver data. Never distribute them.
++constexpr size_t kMaxPayload = 64 * 1024 * 1024;
++constexpr size_t kHeaderSize = 64;
++struct Identity {
++  uint32_t vendor = 0, device = 0, driver = 0;
++  uint64_t abi = 0;
++  std::array<uint8_t, 16> uuid{};
++};
++inline uint32_t U32(const uint8_t* p) {
++  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
++}
++inline uint64_t U64(const uint8_t* p) { return U32(p) | uint64_t(U32(p + 4)) << 32; }
++inline void Put32(uint8_t* p, uint32_t v) {
++  for (size_t i = 0; i < 4; ++i) p[i] = uint8_t(v >> (i * 8));
++}
++inline void Put64(uint8_t* p, uint64_t v) { Put32(p, uint32_t(v)); Put32(p + 4, uint32_t(v >> 32)); }
++inline uint64_t Checksum(const uint8_t* data, size_t size) {
++  uint64_t hash = UINT64_C(14695981039346656037);
++  for (size_t i = 0; i < size; ++i) hash = (hash ^ data[i]) * UINT64_C(1099511628211);
++  return hash;
++}
++inline bool ValidPayload(const std::vector<uint8_t>& p, const Identity& id) {
++  // Vulkan's VERSION_ONE header uses little-endian fields independent of the host.
++  return p.size() >= 32 && p.size() <= kMaxPayload && U32(p.data()) >= 32 &&
++      U32(p.data()) <= p.size() && U32(p.data() + 4) == 1 &&
++      U32(p.data() + 8) == id.vendor && U32(p.data() + 12) == id.device &&
++      std::equal(id.uuid.begin(), id.uuid.end(), p.begin() + 16);
++}
++inline std::vector<uint8_t> Encode(const std::vector<uint8_t>& payload, const Identity& id) {
++  if (!ValidPayload(payload, id)) return {};
++  std::vector<uint8_t> result(kHeaderSize + payload.size());
++  const uint8_t magic[8] = {'F','H','1','V','K','P','C',0};
++  std::copy_n(magic, 8, result.begin());
++  Put32(result.data() + 8, 1);
++  Put32(result.data() + 12, id.vendor); Put32(result.data() + 16, id.device);
++  Put32(result.data() + 20, id.driver); Put64(result.data() + 24, id.abi);
++  std::copy(id.uuid.begin(), id.uuid.end(), result.begin() + 32);
++  Put64(result.data() + 48, payload.size());
++  Put64(result.data() + 56, Checksum(payload.data(), payload.size()));
++  std::copy(payload.begin(), payload.end(), result.begin() + kHeaderSize);
++  return result;
++}
++inline std::vector<uint8_t> Decode(const std::vector<uint8_t>& file, const Identity& id) {
++  if (file.size() < kHeaderSize + 32 || file.size() > kHeaderSize + kMaxPayload) return {};
++  const uint8_t magic[8] = {'F','H','1','V','K','P','C',0};
++  if (!std::equal(magic, magic + 8, file.begin()) || U32(file.data() + 8) != 1 ||
++      U32(file.data() + 12) != id.vendor || U32(file.data() + 16) != id.device ||
++      U32(file.data() + 20) != id.driver || U64(file.data() + 24) != id.abi ||
++      !std::equal(id.uuid.begin(), id.uuid.end(), file.begin() + 32) ||
++      U64(file.data() + 48) != file.size() - kHeaderSize ||
++      U64(file.data() + 56) != Checksum(file.data() + kHeaderSize, file.size() - kHeaderSize)) return {};
++  std::vector<uint8_t> result(file.begin() + kHeaderSize, file.end());
++  return ValidPayload(result, id) ? result : std::vector<uint8_t>{};
++}
++inline std::vector<uint8_t> Read(const std::filesystem::path& path, const Identity& id) {
++  std::error_code ec;
++  const auto size = std::filesystem::file_size(path, ec);
++  if (ec || size < kHeaderSize + 32 || size > kHeaderSize + kMaxPayload) return {};
++  std::vector<uint8_t> bytes(size);
++  std::ifstream file(path, std::ios::binary);
++  if (!file.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(size))) return {};
++  return Decode(bytes, id);
++}
++inline bool Write(const std::filesystem::path& path, const std::vector<uint8_t>& payload,
++                  const Identity& id) {
++  auto bytes = Encode(payload, id);
++  if (bytes.empty()) return false;
++  std::error_code ec;
++  std::filesystem::create_directories(path.parent_path(), ec);
++  if (ec) return false;
++  static std::atomic<uint64_t> serial{0};
++#ifdef _WIN32
++  const uint64_t pid = GetCurrentProcessId();
++#else
++  const uint64_t pid = uint64_t(getpid());
++#endif
++  auto temporary = path;
++  temporary += ".tmp-" + std::to_string(pid) + "-" + std::to_string(
++      std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(serial++);
++  bool written = false;
++  {
++    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
++    if (file.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()))) {
++      file.flush();
++      if (file) { file.close(); written = !file.fail(); }
++    }
++  }
++  if (written) {
++#ifdef _WIN32
++    written = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
++#else
++    std::filesystem::rename(temporary, path, ec); written = !ec;
++#endif
++  }
++  if (!written) std::filesystem::remove(temporary, ec);
++  return written;
++}
++}  // namespace rex::graphics::vulkan::driver_cache_file
+diff --git a/include/rex/graphics/shader_warmup.h b/include/rex/graphics/shader_warmup.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/shader_warmup.h
+@@ -0,0 +1,26 @@
++#pragma once
++#include <chrono>
++#include <string_view>
++#include <rex/logging.h>
++
++namespace rex::graphics {
++// Startup runs before the guest resumes. Keep progress in the existing log so
++// frontends can display it without an additional ABI or a public network API.
++class ShaderWarmupLog {
++ public:
++  explicit ShaderWarmupLog(std::string_view backend) : backend_(backend) {
++    REXGPU_INFO("SHADER_WARMUP: {} begin", backend_);
++  }
++  ~ShaderWarmupLog() {
++    REXGPU_INFO("SHADER_WARMUP: {} complete in {} ms", backend_,
++        std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now() - start_).count());
++  }
++  void Progress(size_t done, size_t total) const {
++    REXGPU_INFO("SHADER_WARMUP: {} progress {}/{}", backend_, done, total);
++  }
++ private:
++  std::string_view backend_;
++  std::chrono::steady_clock::time_point start_ = std::chrono::steady_clock::now();
++};
++}  // namespace rex::graphics
