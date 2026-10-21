@@ -1,0 +1,827 @@
+diff --git a/include/rex/input/wheel/wheel_ff.h b/include/rex/input/wheel/wheel_ff.h
+new file mode 100644
+index 0000000..6ef480d
+--- /dev/null
++++ b/include/rex/input/wheel/wheel_ff.h
+@@ -0,0 +1,200 @@
++/**
++ * @file        rex/input/wheel/wheel_ff.h
++ * @brief       The Xbox 360 wheel's force feedback as games drive it through the kernel's
++ *              XInputdFF* calls: effect blocks, their state and what they ask of the wheel,
++ *              without SDL (the wheel driver plays them on SDL haptics).
++ *
++ * Forza Horizon looks XInputdFFGetDeviceInfo, SetEffect, UpdateEffect, EffectOperation,
++ * DeviceControl, SetDeviceGain, CancelIo and SetRumble (xboxkrnl ordinals 0x282-0x289) up at
++ * run time once it sees a wheel with force feedback, through its XInputFF library
++ * (sub_831CD7F8 and the wrappers after it). The handle comes from XamUserGetDeviceContext.
++ * The game (sub_82CBB2D8, sub_82CB76B8, sub_82CBB790) then:
++ *  - needs GetDeviceInfo's second word (effects the device plays at once) to be at least 5;
++ *  - stops everything with DeviceControl(3), defines effect blocks 1-5 with one SetEffect and
++ *    starts them with EffectOperation({block, 2}..., count, 1): inertia, friction, damper and
++ *    spring, scaled by Game:\Media\ControllerFFB.ini and the wheel options' force feedback
++ *    scale (inertia and friction are 0 there), and a constant force;
++ *  - each frame updates the constant force's magnitude (UpdateEffect flags 0x400: the
++ *    type-specific parameters) with the steering force of the car, and the spring's gain
++ *    (flags 0x100) with the speed and the rear wheels' slip;
++ *  - sends its rumble with SetRumble, a 360 controller's two motor speeds.
++ * An effect is 29 big-endian words: block (1-based), type, a word FH1 sets to 4, gain (0-255),
++ * seven words FH1 sets to fixed values (0xFF0, 0, 0, 0xFF, 0xFF, 0, 0), then the type's
++ * parameters from word 11. The types are numbered in the HID PID order: 1 constant, 8 spring,
++ * 9 damper, 10 inertia, 11 friction.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++
++namespace rex::input::wheel {
++
++constexpr uint32_t kFfConstant = 1;
++constexpr uint32_t kFfSpring = 8;
++constexpr uint32_t kFfDamper = 9;
++constexpr uint32_t kFfInertia = 10;
++constexpr uint32_t kFfFriction = 11;
++
++constexpr size_t kFfEffectWords = 29;  // 0x74 bytes
++constexpr uint32_t kFfMaxBlocks = 16;  // what GetDeviceInfo reports; FH1 uses 1-5
++
++// EffectOperation: FH1 starts its effects with 2. 3 stops (as in HID PID); 1 is taken as a start.
++constexpr uint32_t kFfOpStop = 3;
++// DeviceControl, in the HID PID order. FH1 sends 3 before it defines its effects.
++constexpr uint32_t kFfEnableActuators = 1, kFfDisableActuators = 2, kFfStopAll = 3, kFfReset = 4,
++                   kFfPause = 5, kFfContinue = 6;
++
++struct FfEffect {
++  uint32_t block = 0;  // 1-based effect block
++  uint32_t type = 0;
++  uint32_t gain = 0;   // 0-255
++  // Constant: word 11 is the magnitude, -127 to 127. Conditions (spring, damper, inertia,
++  // friction): centre offset and the coefficients on the positive and negative side (-127 to
++  // 127), the saturations on each side and the dead band (0-255).
++  int32_t magnitude = 0;
++  int32_t center = 0;
++  int32_t pos_coeff = 0, neg_coeff = 0;
++  int32_t pos_sat = 0, neg_sat = 0;
++  int32_t deadband = 0;
++};
++
++inline uint32_t FfWord(const uint8_t* be, size_t i) {
++  const uint8_t* p = be + 4 * i;
++  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
++}
++
++// One effect as the game laid it out in guest memory.
++inline FfEffect DecodeFfEffect(const uint8_t* be) {
++  FfEffect e;
++  e.block = FfWord(be, 0);
++  e.type = FfWord(be, 1);
++  e.gain = FfWord(be, 3);
++  e.magnitude = e.center = static_cast<int32_t>(FfWord(be, 11));
++  e.pos_coeff = static_cast<int32_t>(FfWord(be, 12));
++  e.neg_coeff = static_cast<int32_t>(FfWord(be, 13));
++  e.pos_sat = static_cast<int32_t>(FfWord(be, 14));
++  e.neg_sat = static_cast<int32_t>(FfWord(be, 15));
++  e.deadband = static_cast<int32_t>(FfWord(be, 16));
++  return e;
++}
++
++inline bool FfIsCondition(uint32_t type) {
++  return type == kFfSpring || type == kFfDamper || type == kFfInertia || type == kFfFriction;
++}
++
++// What the game has asked of the device: its effect blocks and whether each plays.
++class FfState {
++ public:
++  // SetEffect / UpdateEffect: (re)defines the effect's block. False for a block out of range.
++  bool Define(const FfEffect& e) {
++    if (e.block < 1 || e.block > kFfMaxBlocks) {
++      return false;
++    }
++    fx_[e.block - 1] = e;
++    defined_[e.block - 1] = true;
++    return true;
++  }
++  // EffectOperation for one block. False for a block that was never defined.
++  bool Operate(uint32_t block, uint32_t op) {
++    if (block < 1 || block > kFfMaxBlocks || !defined_[block - 1]) {
++      return false;
++    }
++    playing_[block - 1] = op != kFfOpStop;
++    return true;
++  }
++  void Control(uint32_t command) {
++    switch (command) {
++      case kFfEnableActuators: actuators_ = true; break;
++      case kFfDisableActuators: actuators_ = false; break;
++      case kFfStopAll: std::fill(playing_, playing_ + kFfMaxBlocks, false); break;
++      case kFfReset:
++        std::fill(playing_, playing_ + kFfMaxBlocks, false);
++        std::fill(defined_, defined_ + kFfMaxBlocks, false);
++        paused_ = false;
++        actuators_ = true;
++        break;
++      case kFfPause: paused_ = true; break;
++      case kFfContinue: paused_ = false; break;
++      default: break;
++    }
++  }
++  void SetDeviceGain(uint32_t gain) { device_gain_ = std::min<uint32_t>(gain, 255); }
++
++  bool defined(uint32_t block) const { return block >= 1 && block <= kFfMaxBlocks && defined_[block - 1]; }
++  const FfEffect& effect(uint32_t block) const { return fx_[block - 1]; }
++  // The block's effect should be felt now.
++  bool Active(uint32_t block) const {
++    return defined(block) && playing_[block - 1] && actuators_ && !paused_;
++  }
++  uint32_t device_gain() const { return device_gain_; }
++
++ private:
++  FfEffect fx_[kFfMaxBlocks]{};
++  bool defined_[kFfMaxBlocks]{};
++  bool playing_[kFfMaxBlocks]{};
++  bool actuators_ = true;
++  bool paused_ = false;
++  uint32_t device_gain_ = 255;
++};
++
++// How strongly an effect plays, 0 to 1: its gain, the device gain and the player's strength.
++inline float FfScale(const FfEffect& e, uint32_t device_gain, float strength) {
++  const float g = std::min<uint32_t>(e.gain, 255) / 255.0f * std::min<uint32_t>(device_gain, 255) / 255.0f;
++  return std::clamp(g * strength, 0.0f, 1.0f);
++}
++
++// A constant force on the steering axis, -1 to 1, in the game's direction (FH1: positive
++// turns the wheel to the right; wheel_input_driver.cpp maps it onto SDL's steering axis).
++inline float FfConstantLevel(const FfEffect& e, float scale) {
++  return std::clamp(e.magnitude / 127.0f, -1.0f, 1.0f) * scale;
++}
++
++// A condition on the steering axis: coefficients -1 to 1 (positive pulls back to the centre),
++// saturations, dead band and centre as fractions of the full range.
++struct FfCondition {
++  float right_coeff = 0, left_coeff = 0;
++  float right_sat = 0, left_sat = 0;
++  float deadband = 0;
++  float center = 0;
++};
++
++inline FfCondition FfConditionOf(const FfEffect& e, float scale) {
++  FfCondition c;
++  c.right_coeff = std::clamp(e.pos_coeff / 127.0f, -1.0f, 1.0f) * scale;
++  c.left_coeff = std::clamp(e.neg_coeff / 127.0f, -1.0f, 1.0f) * scale;
++  c.right_sat = std::clamp(e.pos_sat / 255.0f, 0.0f, 1.0f) * scale;
++  c.left_sat = std::clamp(e.neg_sat / 255.0f, 0.0f, 1.0f) * scale;
++  c.deadband = std::clamp(e.deadband / 255.0f, 0.0f, 1.0f);
++  c.center = std::clamp(e.center / 127.0f, -1.0f, 1.0f);
++  return c;
++}
++
++// True when the condition can push at all (FH1's inertia and friction are all zero).
++inline bool FfConditionFelt(const FfCondition& c) {
++  return (c.right_coeff != 0 && c.right_sat > 0) || (c.left_coeff != 0 && c.left_sat > 0);
++}
++
++// A spring as a self-centring strength, 0 to 1, for wheels that can centre themselves but have no
++// spring effect (the Linux driver of the G25, G27 and G29): the weaker side's pull.
++inline float FfSpringAutocenter(const FfCondition& c) {
++  const float right = std::min(std::max(c.right_coeff, 0.0f), c.right_sat);
++  const float left = std::min(std::max(c.left_coeff, 0.0f), c.left_sat);
++  return std::clamp(std::min(right, left), 0.0f, 1.0f);
++}
++
++// The kernel's XInputdFF* calls (xboxkrnl_hid.cpp), played on every wheel the wheel driver
++// has open (wheel_input_driver.cpp). Each is false when there is no wheel.
++bool GameFfDeviceInfo();
++bool GameFfSetEffect(const FfEffect& effect);
++bool GameFfUpdateEffect(const FfEffect& effect, uint32_t flags);
++bool GameFfOperate(uint32_t block, uint32_t op);
++bool GameFfControl(uint32_t command);
++bool GameFfSetGain(uint32_t gain);
++bool GameFfSetRumble(uint16_t left_motor, uint16_t right_motor);
++
++}  // namespace rex::input::wheel
+diff --git a/include/rex/input/wheel/wheel_input_driver.h b/include/rex/input/wheel/wheel_input_driver.h
+index 51dd35c..804ba27 100644
+--- a/include/rex/input/wheel/wheel_input_driver.h
++++ b/include/rex/input/wheel/wheel_input_driver.h
+@@ -1,9 +1,10 @@
+ /**
+  * @file        rex/input/wheel/wheel_input_driver.h
+  * @brief       Racing wheel input driver - presents any SDL joystick that is a wheel as an
+- *              Xbox 360 Wireless Racing Wheel (XINPUT_DEVSUBTYPE_WHEEL), with approximate
+- *              force feedback from the vibration motors, the clutch pedal and an H-pattern
+- *              shifter (wheel_shifter.h).
++ *              Xbox 360 Wireless Racing Wheel (XINPUT_DEVSUBTYPE_WHEEL), with the clutch
++ *              pedal, an H-pattern shifter (wheel_shifter.h) and force feedback: the game's
++ *              own wheel effects (wheel_ff.h), or an approximation from the vibration motors
++ *              for a game that drives the wheel like a gamepad.
+  *
+  * @license     BSD 3-Clause License
+  *              See LICENSE file in the project root for full license text.
+@@ -12,12 +13,14 @@
+ 
+ #include <chrono>
+ #include <cstdint>
++#include <functional>
+ #include <memory>
+ #include <mutex>
+ #include <string>
+ #include <vector>
+ 
+ #include <rex/input/input_driver.h>
++#include <rex/input/wheel/wheel_ff.h>
+ 
+ #include <SDL3/SDL.h>
+ 
+@@ -43,6 +46,13 @@ class WheelInputDriver final : public InputDriver {
+   X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                               X_INPUT_KEYSTROKE* out_keystroke) override;
+ 
++  /// The game's own force feedback (the kernel's XInputdFF* calls, wheel_ff.h): `change` updates
++  /// the effect state; when it returns true, `block` (0: every block) is played again on each
++  /// wheel. False when no wheel is open.
++  bool GameForceFeedback(const std::function<bool(FfState&)>& change, uint32_t block);
++  /// The game's rumble on a wheel whose force feedback the game drives (XInputdFFSetRumble).
++  bool GameRumble(uint16_t left_motor, uint16_t right_motor);
++
+  private:
+   struct Wheel;
+   void RescanLocked();
+@@ -54,11 +64,16 @@ class WheelInputDriver final : public InputDriver {
+   void ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out);
+   void SetupForceFeedbackLocked(Wheel& w);
+   void ApplyForceLocked(Wheel& w, float motor);
++  void ApplyRumbleLocked(Wheel& w, float motor);
++  void ApplyGameBlockLocked(Wheel& w, uint32_t block);
+ 
+   std::mutex mutex_;
+   std::vector<std::unique_ptr<Wheel>> wheels_;
+   bool sdl_ready_ = false;
+   bool logged_none_ = false;
++  FfState game_ff_;
++  bool game_ff_active_ = false;  // the game has defined effects: its forces, not the approximation
++  bool game_ff_logged_[kFfMaxBlocks] = {};
+   uint64_t next_id_ = 1;
+   std::chrono::steady_clock::time_point last_scan_{};
+   std::chrono::steady_clock::time_point last_pump_{};
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 1fd18ca..f9a70f7 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -6,16 +6,21 @@
+  * wheel). The game gets it as the Xbox 360 Wireless Racing Wheel: SubType 2 with the force
+  * feedback and wireless flags, steering on the left stick X, the pedals on the triggers, the
+  * clutch on the right stick Y and an H-pattern shifter's gear on the right stick X, which is how
+- * the game reads the 360 wheel's clutch and shifter (wheel_shifter.h).
++ * the game reads the 360 wheel's clutch and shifter (wheel_shifter.h). A game that knows the wheel
++ * sends its force feedback through the kernel's XInputdFF* calls (wheel_ff.h), played here on SDL
++ * haptics; one that takes it for a gamepad only sets the vibration motors, which give an
++ * approximate spring and a vibration.
+  *
+  * @license     BSD 3-Clause License
+  *              See LICENSE file in the project root for full license text.
+  */
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cctype>
+ #include <cmath>
+ #include <cstring>
++#include <iterator>
+ #include <map>
+ #include <string_view>
+ 
+@@ -91,16 +96,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
+                       "0.1 to 1")
+     .range(0.1, 1.0);
+ REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
+-                    "Force feedback on the wheel (approximate: a centring spring and a vibration "
+-                    "from the game's rumble motors)");
++                    "Force feedback on the wheel: the game's own wheel forces (steering force, "
++                    "centring spring, damper) and its rumble as a vibration");
+ REXCVAR_DEFINE_INT32(wheel_ffb_strength, 60, "Input", "Force feedback strength, 0 to 100 percent")
+     .range(0, 100);
++REXCVAR_DEFINE_BOOL(wheel_ffb_reverse, false, "Input",
++                    "Reverse the game's steering force: for a wheel that pulls away from the centre "
++                    "in corners instead of towards it");
+ 
+ namespace rex::input::wheel {
+ 
+ namespace {
+ 
+ constexpr uint8_t kSubTypeWheel = 2;  // XINPUT_DEVSUBTYPE_WHEEL
++// The driver the kernel's XInputdFF* calls go to (GameFf* below).
++std::atomic<WheelInputDriver*> g_ff_driver{nullptr};
++// FH1's constant force pushes the wheel right when positive (in a right-hand corner it is negative:
++// the tyres pull the wheel back to the centre). An SDL level on the steering axis comes from the
++// east (SDL_haptic.h: where the force comes from; Linux direction 0x4000, which pulls left), so it
++// pulls left when positive. wheel_ffb_reverse flips it for a driver that disagrees.
++constexpr float kConstantToSdl = -1.0f;
+ constexpr auto kScanEvery = std::chrono::milliseconds(500);
+ constexpr auto kPumpEvery = std::chrono::milliseconds(2);
+ 
+@@ -231,6 +246,13 @@ struct WheelInputDriver::Wheel {
+   int spring_fx = -1;
+   int sine_fx = -1;
+   bool sine_running = false;
++  // The game's effect blocks (wheel_ff.h) as SDL effects, and the self-centring used for its
++  // spring on a wheel without a spring effect.
++  int game_fx[kFfMaxBlocks];
++  SDL_HapticEffect game_fx_sent[kFfMaxBlocks];  // what each SDL effect was last given
++  bool game_fx_running[kFfMaxBlocks] = {};
++  int autocenter = -1;
++  int sine_magnitude = -1;
+   std::string name;
+   std::string guid;
+   int num_axes = 0, num_buttons = 0, num_hats = 0;
+@@ -248,6 +270,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
+     : InputDriver(window, window_z_order) {}
+ 
+ WheelInputDriver::~WheelInputDriver() {
++  WheelInputDriver* self = this;
++  g_ff_driver.compare_exchange_strong(self, nullptr);
+   std::lock_guard lock(mutex_);
+   for (auto& w : wheels_) {
+     CloseLocked(*w);
+@@ -265,6 +289,7 @@ X_STATUS WheelInputDriver::Setup() {
+     }
+   }
+   sdl_ready_ = true;
++  g_ff_driver = this;
+   REXLOG_INFO("Wheel: driver ready (wheel_mode={})", REXCVAR_GET(wheel_mode));
+   return X_STATUS_SUCCESS;
+ }
+@@ -326,6 +351,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+     return;
+   }
+   auto w = std::make_unique<Wheel>();
++  std::fill(std::begin(w->game_fx), std::end(w->game_fx), -1);
++  std::memset(w->game_fx_sent, 0, sizeof(w->game_fx_sent));
+   w->jid = jid;
+   w->joy = joy;
+   w->id = static_cast<DeviceId>(next_id_++ | (uint64_t(0x57) << 56));
+@@ -412,8 +439,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+   }
+   if (f & SDL_HAPTIC_AUTOCENTER) {
+     SDL_SetHapticAutocenter(w.haptic, 0);  // the spring below centres instead
++    w.autocenter = 0;
+   }
+-  if (f & SDL_HAPTIC_SPRING) {
++  if ((f & SDL_HAPTIC_SPRING) && !game_ff_active_) {
+     SDL_HapticEffect e{};
+     e.type = SDL_HAPTIC_SPRING;
+     e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
+@@ -445,15 +473,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+       REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
+     }
+   }
++  if (game_ff_active_) {  // a wheel plugged in while the game drives the force feedback
++    for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++      ApplyGameBlockLocked(w, b);
++    }
++  }
++}
++
++static float Strength() {
++  return std::clamp(REXCVAR_GET(wheel_ffb_strength), 0, 100) / 100.0f;
+ }
+ 
+ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+   if (!w.haptic) {
+     return;
+   }
+-  const float strength = std::clamp(REXCVAR_GET(wheel_ffb_strength), 0, 100) / 100.0f;
++  const float strength = Strength();
+   motor = std::clamp(motor, 0.0f, 1.0f);
+-  if (w.spring_fx >= 0) {
++  if (w.spring_fx >= 0 && !game_ff_active_) {
+     // Light centring always, firmer while the game drives the motors hard.
+     const float c = strength * (0.2f + 0.6f * motor);
+     SDL_HapticEffect e{};
+@@ -464,15 +501,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+     e.condition.right_coeff[0] = e.condition.left_coeff[0] = static_cast<Sint16>(c * 32767.0f);
+     SDL_UpdateHapticEffect(w.haptic, w.spring_fx, &e);
+   }
++  ApplyRumbleLocked(w, motor);
++}
++
++void WheelInputDriver::ApplyRumbleLocked(Wheel& w, float motor) {
++  if (!w.haptic) {
++    return;
++  }
++  motor = std::clamp(motor, 0.0f, 1.0f);
+   if (w.sine_fx >= 0) {
+-    const float amp = strength * motor * 0.6f;
++    const float amp = Strength() * motor * 0.6f;
+     SDL_HapticEffect e{};
+     e.type = SDL_HAPTIC_SINE;
+     e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
+     e.periodic.length = SDL_HAPTIC_INFINITY;
+     e.periodic.period = 40;
+     e.periodic.magnitude = static_cast<Sint16>(amp * 32767.0f);
+-    SDL_UpdateHapticEffect(w.haptic, w.sine_fx, &e);
++    if (e.periodic.magnitude != w.sine_magnitude) {  // the game repeats its rumble every frame
++      SDL_UpdateHapticEffect(w.haptic, w.sine_fx, &e);
++      w.sine_magnitude = e.periodic.magnitude;
++    }
+     if (amp > 0.0f && !w.sine_running) {
+       w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
+     } else if (amp <= 0.0f && w.sine_running) {
+@@ -482,6 +530,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+   }
+ }
+ 
++// One of the game's effect blocks on one wheel: created, updated, started or stopped to match
++// game_ff_. A spring on a wheel without a spring effect becomes its self-centring.
++void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
++  if (!w.haptic || block < 1 || block > kFfMaxBlocks) {
++    return;
++  }
++  const size_t i = block - 1;
++  const Uint32 f = SDL_GetHapticFeatures(w.haptic);
++  SDL_HapticEffect fx;
++  std::memset(&fx, 0, sizeof(fx));  // compared whole with the last one sent
++  bool play = false;
++  if (game_ff_.defined(block)) {
++    const FfEffect& e = game_ff_.effect(block);
++    const float scale = FfScale(e, game_ff_.device_gain(), Strength());
++    Uint16 condition = 0;
++    switch (e.type) {
++      case kFfSpring: condition = SDL_HAPTIC_SPRING; break;
++      case kFfDamper: condition = SDL_HAPTIC_DAMPER; break;
++      case kFfInertia: condition = SDL_HAPTIC_INERTIA; break;
++      case kFfFriction: condition = SDL_HAPTIC_FRICTION; break;
++      default: break;
++    }
++    if (e.type == kFfConstant && (f & SDL_HAPTIC_CONSTANT)) {
++      fx.type = SDL_HAPTIC_CONSTANT;
++      fx.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
++      fx.constant.length = SDL_HAPTIC_INFINITY;
++      const float sign = REXCVAR_GET(wheel_ffb_reverse) ? -kConstantToSdl : kConstantToSdl;
++      fx.constant.level =
++          static_cast<Sint16>(std::lround(sign * FfConstantLevel(e, scale) * 32767.0f));
++      play = game_ff_.Active(block);
++    } else if (condition && (f & condition)) {
++      const FfCondition c = FfConditionOf(e, scale);
++      fx.type = condition;
++      fx.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
++      fx.condition.length = SDL_HAPTIC_INFINITY;
++      fx.condition.right_sat[0] = static_cast<Uint16>(std::lround(c.right_sat * 65535.0f));
++      fx.condition.left_sat[0] = static_cast<Uint16>(std::lround(c.left_sat * 65535.0f));
++      fx.condition.right_coeff[0] = static_cast<Sint16>(std::lround(c.right_coeff * 32767.0f));
++      fx.condition.left_coeff[0] = static_cast<Sint16>(std::lround(c.left_coeff * 32767.0f));
++      fx.condition.deadband[0] = static_cast<Uint16>(std::lround(c.deadband * 65535.0f));
++      fx.condition.center[0] = static_cast<Sint16>(std::lround(c.center * 32767.0f));
++      play = game_ff_.Active(block) && FfConditionFelt(c);
++    } else if (e.type == kFfSpring && (f & SDL_HAPTIC_AUTOCENTER)) {
++      const int level = game_ff_.Active(block)
++                            ? static_cast<int>(std::lround(FfSpringAutocenter(FfConditionOf(e, scale)) * 100.0f))
++                            : 0;
++      if (level != w.autocenter && SDL_SetHapticAutocenter(w.haptic, level)) {
++        w.autocenter = level;
++      }
++    }
++  }
++  int& id = w.game_fx[i];
++  if (!play) {
++    if (id >= 0 && w.game_fx_running[i]) {
++      SDL_StopHapticEffect(w.haptic, id);
++      w.game_fx_running[i] = false;
++    }
++    return;
++  }
++  if (id >= 0 && w.game_fx_sent[i].type != fx.type) {
++    SDL_DestroyHapticEffect(w.haptic, id);
++    id = -1;
++    w.game_fx_running[i] = false;
++  }
++  if (id < 0) {
++    id = SDL_CreateHapticEffect(w.haptic, &fx);
++    if (id < 0) {
++      REXLOG_WARN("Wheel: the game's effect block {} (type {}) was rejected: {}", block, fx.type,
++                  SDL_GetError());
++      return;
++    }
++    w.game_fx_sent[i] = fx;
++  } else if (std::memcmp(&fx, &w.game_fx_sent[i], sizeof(fx)) != 0) {
++    // FH1 updates its constant force every frame, mostly with the same value.
++    if (SDL_UpdateHapticEffect(w.haptic, id, &fx)) {
++      w.game_fx_sent[i] = fx;
++    } else {
++      REXLOG_DEBUG("Wheel: effect block {} update failed: {}", block, SDL_GetError());
++    }
++  }
++  if (!w.game_fx_running[i]) {
++    w.game_fx_running[i] = SDL_RunHapticEffect(w.haptic, id, SDL_HAPTIC_INFINITY);
++  }
++}
++
++bool WheelInputDriver::GameForceFeedback(const std::function<bool(FfState&)>& change,
++                                         uint32_t block) {
++  std::lock_guard lock(mutex_);
++  if (wheels_.empty()) {
++    return false;
++  }
++  if (!change(game_ff_)) {
++    return true;
++  }
++  for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++    if (!game_ff_.defined(b) || game_ff_logged_[b - 1]) {
++      continue;
++    }
++    game_ff_logged_[b - 1] = true;
++    const FfEffect& e = game_ff_.effect(b);
++    REXLOG_INFO("Wheel: the game's effect block {}: type {} gain {}, word 11 {}, coefficients "
++                "{}/{}, saturations {}/{}, dead band {}",
++                b, e.type, e.gain, e.magnitude, e.pos_coeff, e.neg_coeff, e.pos_sat, e.neg_sat,
++                e.deadband);
++  }
++  if (!game_ff_active_) {
++    game_ff_active_ = true;
++    REXLOG_INFO("Wheel: the game drives the force feedback itself (XInputdFF); the approximate "
++                "spring is off");
++  }
++  for (auto& w : wheels_) {
++    if (w->haptic && w->spring_fx >= 0) {  // the game's own spring replaces it
++      SDL_DestroyHapticEffect(w->haptic, w->spring_fx);
++      w->spring_fx = -1;
++    }
++    for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++      if (block == 0 || b == block) {
++        ApplyGameBlockLocked(*w, b);
++      }
++    }
++  }
++  return true;
++}
++
++bool WheelInputDriver::GameRumble(uint16_t left_motor, uint16_t right_motor) {
++  std::lock_guard lock(mutex_);
++  if (wheels_.empty()) {
++    return false;
++  }
++  const float motor = std::max(left_motor, right_motor) / 65535.0f;
++  for (auto& w : wheels_) {
++    ApplyRumbleLocked(*w, motor);
++  }
++  return true;
++}
++
++bool GameFfDeviceInfo() {
++  WheelInputDriver* d = g_ff_driver;
++  return d && d->GameForceFeedback([](FfState&) { return false; }, 0);
++}
++
++bool GameFfSetEffect(const FfEffect& effect) {
++  WheelInputDriver* d = g_ff_driver;
++  bool ok = true;
++  const bool wheel =
++      d && d->GameForceFeedback([&](FfState& s) { return ok = s.Define(effect); }, effect.block);
++  return wheel && ok;
++}
++
++bool GameFfUpdateEffect(const FfEffect& effect, uint32_t flags) {
++  // FH1 always sends the whole effect, with flags 0x400 (its parameters) or 0x100 (its gain).
++  (void)flags;
++  return GameFfSetEffect(effect);
++}
++
++bool GameFfOperate(uint32_t block, uint32_t op) {
++  WheelInputDriver* d = g_ff_driver;
++  bool ok = true;
++  const bool wheel =
++      d && d->GameForceFeedback([&](FfState& s) { return ok = s.Operate(block, op); }, block);
++  return wheel && ok;
++}
++
++bool GameFfControl(uint32_t command) {
++  WheelInputDriver* d = g_ff_driver;
++  return d && d->GameForceFeedback(
++                  [&](FfState& s) {
++                    s.Control(command);
++                    return true;
++                  },
++                  0);
++}
++
++bool GameFfSetGain(uint32_t gain) {
++  WheelInputDriver* d = g_ff_driver;
++  return d && d->GameForceFeedback(
++                  [&](FfState& s) {
++                    s.SetDeviceGain(gain);
++                    return true;
++                  },
++                  0);
++}
++
++bool GameFfSetRumble(uint16_t left_motor, uint16_t right_motor) {
++  WheelInputDriver* d = g_ff_driver;
++  return d && d->GameRumble(left_motor, right_motor);
++}
++
+ WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
+   for (auto& w : wheels_) {
+     if (w->id == id) {
+diff --git a/src/kernel/xam/xam_input.cpp b/src/kernel/xam/xam_input.cpp
+index 80c3634..e9f0a6f 100644
+--- a/src/kernel/xam/xam_input.cpp
++++ b/src/kernel/xam/xam_input.cpp
+@@ -9,6 +9,8 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <rex/cvar.h>
++#include <rex/input/flags.h>
+ #include <rex/input/input.h>
+ #include <rex/input/input_system.h>
+ #include <rex/kernel/xam/private.h>
+@@ -183,6 +185,17 @@ u32 XamInputGetKeystrokeEx_entry(mapped_u32 user_index_ptr, u32 flags,
+   return result;
+ }
+ 
++// The profile's vibration setting: 0 is off. The XInputFF library of Forza Horizon asks before
++// each XInputdFFSetRumble on a wheel and sends no rumble for 0; the stub returned with whatever
++// the stack held.
++u32 XamInputGetUserVibrationLevel_entry(u32 user_index, mapped_u32 level_ptr) {
++  if (!level_ptr) {
++    return X_ERROR_BAD_ARGUMENTS;
++  }
++  *level_ptr = REXCVAR_GET(vibration) ? 1 : 0;
++  return X_ERROR_SUCCESS;
++}
++
+ i32 XamUserGetDeviceContext_entry(u32 user_index, u32 unk, mapped_u32 out_ptr) {
+   // Games check the result - usually with some masking.
+   // If this function fails they assume zero, so let's fail AND
+@@ -209,6 +222,8 @@ REX_EXPORT(__imp__XamInputSetState, rex::kernel::xam::XamInputSetState_entry)
+ REX_EXPORT(__imp__XamInputGetKeystroke, rex::kernel::xam::XamInputGetKeystroke_entry)
+ REX_EXPORT(__imp__XamInputGetKeystrokeEx, rex::kernel::xam::XamInputGetKeystrokeEx_entry)
+ REX_EXPORT(__imp__XamUserGetDeviceContext, rex::kernel::xam::XamUserGetDeviceContext_entry)
++REX_EXPORT(__imp__XamInputGetUserVibrationLevel,
++           rex::kernel::xam::XamInputGetUserVibrationLevel_entry)
+ 
+ REX_EXPORT_STUB(__imp__XamInputControl);
+ REX_EXPORT_STUB(__imp__XamInputEnableAutobind);
+@@ -217,7 +232,6 @@ REX_EXPORT_STUB(__imp__XamInputGetFailedConnectionOrBind);
+ REX_EXPORT_STUB(__imp__XamInputGetKeyLocks);
+ REX_EXPORT_STUB(__imp__XamInputGetKeystrokeHud);
+ REX_EXPORT_STUB(__imp__XamInputGetKeystrokeHudEx);
+-REX_EXPORT_STUB(__imp__XamInputGetUserVibrationLevel);
+ REX_EXPORT_STUB(__imp__XamInputNonControllerGetRaw);
+ REX_EXPORT_STUB(__imp__XamInputNonControllerGetRawEx);
+ REX_EXPORT_STUB(__imp__XamInputNonControllerSetRaw);
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_hid.cpp b/src/kernel/xboxkrnl/xboxkrnl_hid.cpp
+index b511f62..cb574ff 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_hid.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_hid.cpp
+@@ -12,6 +12,8 @@
+ // Disable warnings about unused parameters for kernel functions
+ #pragma GCC diagnostic ignored "-Wunused-parameter"
+ 
++#include <rex/input/input.h>
++#include <rex/input/wheel/wheel_ff.h>
+ #include <rex/kernel/xboxkrnl/private.h>
+ #include <rex/logging.h>
+ #include <rex/hook.h>
+@@ -57,12 +59,122 @@ u32 HidReadMouseChanges_entry(u32 unk1, u32 unk2) {
+   return X_STATUS_UNSUCCESSFUL;
+ }
+ 
++// Force feedback of the Xbox 360 wheel (ordinals 0x282-0x289), played by the wheel driver
++// (rex/input/wheel/wheel_ff.h has what Forza Horizon sends). The device handle is the one
++// XamUserGetDeviceContext gave; every wheel plays the effects. With an XOVERLAPPED the call
++// completes at once and returns STATUS_PENDING, which the title's XInputFF library turns
++// into ERROR_IO_PENDING and then reads the result from the overlapped.
++namespace {
++
++constexpr X_STATUS kStatusDeviceNotConnected = static_cast<X_STATUS>(0xC000009DL);
++
++u32 FfDone(bool ok, u32 overlapped) {
++  if (overlapped) {
++    REX_KERNEL_STATE()->CompleteOverlappedImmediate(
++        overlapped, ok ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED);
++    if (ok) {
++      return X_STATUS_PENDING;
++    }
++  }
++  return ok ? X_STATUS_SUCCESS : kStatusDeviceNotConnected;
++}
++
++const uint8_t* FfGuest(u32 address) {
++  return static_cast<const uint8_t*>(REX_KERNEL_MEMORY()->TranslateVirtual(address));
++}
++
++}  // namespace
++
++// info: the second word is how many effects the device plays at once (FH1 needs 5).
++u32 XInputdFFGetDeviceInfo_entry(u32 handle, mapped_u32 info) {
++  if (!info) {
++    return X_STATUS_INVALID_PARAMETER;
++  }
++  if (!rex::input::wheel::GameFfDeviceInfo()) {
++    return kStatusDeviceNotConnected;
++  }
++  info[0] = 0;
++  info[1] = rex::input::wheel::kFfMaxBlocks;
++  return X_STATUS_SUCCESS;
++}
++
++// effects: `count` effects of 0x74 bytes, each naming its block.
++u32 XInputdFFSetEffect_entry(u32 handle, u32 effects, u32 count, u32 overlapped) {
++  if (!effects || !count || count > rex::input::wheel::kFfMaxBlocks) {
++    return X_STATUS_INVALID_PARAMETER;
++  }
++  bool ok = true;
++  for (u32 i = 0; i < count; i++) {
++    const auto e = rex::input::wheel::DecodeFfEffect(
++        FfGuest(effects + i * 4 * static_cast<u32>(rex::input::wheel::kFfEffectWords)));
++    ok = rex::input::wheel::GameFfSetEffect(e) && ok;
++  }
++  return FfDone(ok, overlapped);
++}
++
++// flags: what changed (FH1: 0x400 the type's parameters, 0x100 the gain).
++u32 XInputdFFUpdateEffect_entry(u32 handle, u32 effect, u32 flags, u32 overlapped) {
++  if (!effect) {
++    return X_STATUS_INVALID_PARAMETER;
++  }
++  const auto e = rex::input::wheel::DecodeFfEffect(FfGuest(effect));
++  return FfDone(rex::input::wheel::GameFfUpdateEffect(e, flags), overlapped);
++}
++
++// operations: `count` pairs of (block, operation); FH1 starts with 2 and a loop count of 1.
++u32 XInputdFFEffectOperation_entry(u32 handle, u32 operations, u32 count, u32 loop_count,
++                                   u32 overlapped) {
++  if (!operations || !count || count > rex::input::wheel::kFfMaxBlocks) {
++    return X_STATUS_INVALID_PARAMETER;
++  }
++  const uint8_t* ops = FfGuest(operations);
++  bool ok = true;
++  for (u32 i = 0; i < count; i++) {
++    ok = rex::input::wheel::GameFfOperate(rex::input::wheel::FfWord(ops, 2 * i),
++                                          rex::input::wheel::FfWord(ops, 2 * i + 1)) &&
++         ok;
++  }
++  return FfDone(ok, overlapped);
++}
++
++// command: HID PID device control (FH1 sends 3, stop all effects).
++u32 XInputdFFDeviceControl_entry(u32 handle, u32 command, u32 overlapped) {
++  return FfDone(rex::input::wheel::GameFfControl(command), overlapped);
++}
++
++// FH1 resolves it but never calls it; gain 0-255 assumed.
++u32 XInputdFFSetDeviceGain_entry(u32 handle, u32 gain, u32 overlapped) {
++  return FfDone(rex::input::wheel::GameFfSetGain(gain), overlapped);
++}
++
++u32 XInputdFFCancelIo_entry(u32 handle, u32 unk1, u32 unk2) {
++  return X_STATUS_SUCCESS;  // every call completes at once
++}
++
++u32 XInputdFFSetRumble_entry(u32 handle, ppc_ptr_t<rex::input::X_INPUT_VIBRATION> vibration,
++                             u32 overlapped) {
++  if (!vibration) {
++    return X_STATUS_INVALID_PARAMETER;
++  }
++  return FfDone(rex::input::wheel::GameFfSetRumble(vibration->left_motor_speed,
++                                                   vibration->right_motor_speed),
++                overlapped);
++}
++
+ }  // namespace rex::kernel::xboxkrnl
+ 
+ REX_EXPORT(__imp__HidReadKeys, rex::kernel::xboxkrnl::HidReadKeys_entry)
+ REX_EXPORT(__imp__HidGetCapabilities, rex::kernel::xboxkrnl::HidGetCapabilities_entry)
+ REX_EXPORT(__imp__HidGetLastInputTime, rex::kernel::xboxkrnl::HidGetLastInputTime_entry)
+ REX_EXPORT(__imp__HidReadMouseChanges, rex::kernel::xboxkrnl::HidReadMouseChanges_entry)
++REX_EXPORT(__imp__XInputdFFGetDeviceInfo, rex::kernel::xboxkrnl::XInputdFFGetDeviceInfo_entry)
++REX_EXPORT(__imp__XInputdFFSetEffect, rex::kernel::xboxkrnl::XInputdFFSetEffect_entry)
++REX_EXPORT(__imp__XInputdFFUpdateEffect, rex::kernel::xboxkrnl::XInputdFFUpdateEffect_entry)
++REX_EXPORT(__imp__XInputdFFEffectOperation, rex::kernel::xboxkrnl::XInputdFFEffectOperation_entry)
++REX_EXPORT(__imp__XInputdFFDeviceControl, rex::kernel::xboxkrnl::XInputdFFDeviceControl_entry)
++REX_EXPORT(__imp__XInputdFFSetDeviceGain, rex::kernel::xboxkrnl::XInputdFFSetDeviceGain_entry)
++REX_EXPORT(__imp__XInputdFFCancelIo, rex::kernel::xboxkrnl::XInputdFFCancelIo_entry)
++REX_EXPORT(__imp__XInputdFFSetRumble, rex::kernel::xboxkrnl::XInputdFFSetRumble_entry)
+ 
+ // XInputd stubs
+ REX_EXPORT_STUB(__imp__XInputdGetCapabilities);
+@@ -79,14 +191,6 @@ REX_EXPORT_STUB(__imp__XInputdPassThroughRFCommand);
+ REX_EXPORT_STUB(__imp__XInputdPowerDownDevice);
+ REX_EXPORT_STUB(__imp__XInputdReadTextKeystroke);
+ REX_EXPORT_STUB(__imp__XInputdSendStayAliveRequest);
+-REX_EXPORT_STUB(__imp__XInputdFFGetDeviceInfo);
+-REX_EXPORT_STUB(__imp__XInputdFFSetEffect);
+-REX_EXPORT_STUB(__imp__XInputdFFUpdateEffect);
+-REX_EXPORT_STUB(__imp__XInputdFFEffectOperation);
+-REX_EXPORT_STUB(__imp__XInputdFFDeviceControl);
+-REX_EXPORT_STUB(__imp__XInputdFFSetDeviceGain);
+-REX_EXPORT_STUB(__imp__XInputdFFCancelIo);
+-REX_EXPORT_STUB(__imp__XInputdFFSetRumble);
+ REX_EXPORT_STUB(__imp__XInputdGetLastTextInputTime);
+ REX_EXPORT_STUB(__imp__XInputdSetTextMessengerIndicator);
+ REX_EXPORT_STUB(__imp__XInputdSetTextDeviceKeyLocks);
