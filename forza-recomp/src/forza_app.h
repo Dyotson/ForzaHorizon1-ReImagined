@@ -58,6 +58,10 @@ class ForzaApp : public rex::ReXApp {
   // Runs after forza.toml and the command line are applied, before the window opens.
   void OnPostInitLogging() override { ApplyForzaCvarDefaults(); }
 
+  void OnConfigureFonts(ImFontAtlas* atlas) override {
+    forza::ConfigurePerformanceFont(atlas);
+  }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
@@ -76,8 +80,7 @@ class ForzaApp : public rex::ReXApp {
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
-  // Also the text box of the Horizon World's head-to-head challenges and of the invite
-  // prompts (platform/hud_overlay.h).
+  // Friends/chat/invite overlays remain separate from native HUD notifications.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
@@ -94,13 +97,15 @@ class ForzaApp : public rex::ReXApp {
     forza::ultrawide::Resize(width, height);
   }
 
-  // The SDK's achievement toasts, registered with the ImGui drawer only while one shows, so
-  // the window is not repainted nonstop (src/platform/achievement_toast.h; from
-  // RecompiledHaloReach).
+  // Notifications go directly from the SDK event API to the native HUD.
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog()
-      override {
-    return forza::MakeOnDemandToast(rex::ReXApp::CreateAchievementNotificationDialog(),
-                                    imgui_drawer(), app_context());
+      override { return {}; }
+
+  void OnShutdown() override {
+    if (achievement_listener_) {
+      forza::RemoveAchievementHud(achievements(), achievement_listener_);
+      achievement_listener_ = 0;
+    }
   }
 
   // The SDK hard-exits right after a close request is accepted (SIGINT included), so the
@@ -121,6 +126,8 @@ class ForzaApp : public rex::ReXApp {
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
     forza::discord::Initialize();
+
+    if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),
         [this, last = std::array<double, 6>{-1,-1,-1,-1,-1,-1}]
@@ -186,5 +193,6 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

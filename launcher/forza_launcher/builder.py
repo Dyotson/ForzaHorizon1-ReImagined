@@ -879,6 +879,12 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     rt.mkdir(parents=True, exist_ok=True)
     if (bdir / "licenses").is_dir():
         shutil.copytree(bdir / "licenses", rt / "licenses", dirs_exist_ok=True)
+
+    telemetry = bdir / "forza-telemetry.json"
+    if telemetry.is_file():
+        shutil.copy2(telemetry, rt / telemetry.name)
+    else:
+        (rt / telemetry.name).unlink(missing_ok=True)
     notice = bdir / "LICENSE-Pinyon-Shift"
     if notice.is_file():
         shutil.copy2(notice, rt / notice.name)

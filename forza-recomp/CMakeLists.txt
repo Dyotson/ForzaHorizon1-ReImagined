@@ -129,8 +129,10 @@ set(FORZA_SOURCES
     src/hooks/resource_data_release.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/challenge_hud.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
+    src/hooks/telemetry.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp
     src/kernel/file_size_refresh.cpp
@@ -157,6 +159,7 @@ set(FORZA_SOURCES
     src/platform/motion_blur_fix.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
+    src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
 )
 
@@ -186,6 +189,9 @@ endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 include(cmake/discord.cmake)
+
+add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,

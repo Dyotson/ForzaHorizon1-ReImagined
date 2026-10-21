@@ -17,6 +17,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   title screen (with Steam Input or Sunshine virtual pads around, your pad is often not
   the first one, and the game used to ask that pad to sign in).
   `FORZA_PAD_PER_USER=1` gives each pad its own player again.
+- **Achievements:** unlock notifications use the native HUD with the game's trophy icon,
+  achievement name and Gamerscore. Multiple unlocks queue in order; ordinary alerts and
+  challenge prompts take priority, then the interrupted unlock resumes. The F7 achievement
+  browser remains available in the overlay.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a

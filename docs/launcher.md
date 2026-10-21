@@ -10,6 +10,11 @@ Discord status sharing is available under **Settings > Online > Discord** (off b
 default). See [Discord Rich Presence](discord.md) for the one-time public application
 ID setup, supported activities, privacy and local IPC tests.
 
+**HDR output (#33):** Settings > Display > HDR provides the Vulkan scRGB toggle,
+paper white, display peak, highlight strength, source gamma, comparison and
+calibration controls. It defaults off and falls back to SDR on unsupported
+surfaces. See [HDR setup, Windows online steps and validation](hdr.md).
+
 No prebuilt game is ever shipped (the generated C++ is translated game code). The release
 holds only the **launcher**, the project's own sources, the Forza Live server and the patched
 ReXGlue SDK pieces (SDK code, BSD-3-Clause). The launcher builds the game on the player's
@@ -141,6 +146,86 @@ executable. The shared `forza-recomp/resources/forza.ico` includes nine sizes fr
 resource into both base-game and TU4 builds. Existing game executables receive
 the icon on their next rebuild. See `forza-recomp/resources/README.md` to regenerate
 the icon from the project artwork.
+## Gamepad navigation
+
+The SDL controller backend leaves process signal handling to the host. On Linux,
+SIGTERM terminates the launcher normally instead of becoming a discarded SDL quit
+event. A subprocess regression test checks this; the CI window smoke test also has
+a forced-kill deadline and a five-minute step limit.
+
+The launcher accepts SDL-mapped controllers on Windows and Linux, including the Steam
+Deck's gamepad mode. Connect a controller, release its buttons/stick, and use:
+
+| Control (Xbox / PlayStation) | Action |
+| --- | --- |
+| D-pad or left stick up/down | Previous/next control; scrolls it into view |
+| Left/right | Change a list, dropdown, number or slider; otherwise move focus |
+| A / cross | Activate the focused button/toggle, or open a dropdown |
+| B / circle | Close a dropdown/dialog; otherwise return to Play |
+| LB/RB / L1/R1 | Previous/next launcher page (wraps) |
+
+Play starts focused. An orange outline marks the focused control, skipping page containers
+and descriptive labels. The focused action button carries an A badge; sidebar page tabs
+stay text-only. **Settings > Controls** shows launcher button hints and connected,
+paused, unavailable or disconnected status. When the separate controller-guide
+feature is installed, the same card appears on its **Controls** page alongside
+the diagrams and haptics. Settings resets preserve the status card.
+Shoulders follow the sidebar's visible page order. Left/right switches the Settings
+and Setup category tabs; search results support up/down, A to select and B to dismiss.
+Dropdowns use up/down and A to select, B to close.
+File pickers use Qt dialogs so controller focus works there too. Text entry still needs a
+keyboard or the system's on-screen keyboard. Steam Input users should select a gamepad
+layout; a mouse/keyboard layout continues to work through normal Qt input.
+
+Input is ignored while the launcher is inactive or the game is running. Reconnects and
+returning to the launcher require neutral input before another action. Directions repeat
+after 400 ms, then every 120 ms; action buttons never repeat. The left stick has a roughly
+49% dead zone. One controller is used at a time; unplugging it allows another to take over.
+Unsupported/unmapped devices do not prevent mouse/keyboard use. Initialization or read
+errors appear in Controls and in the launcher log.
+
+PySDL2 and `pysdl2-dll` supply the controller mappings/native runtime, with no SDL video or
+audio initialization. Both standalone bundles and the Flatpak include these dependencies.
+The Flatpak already grants controller device access. `launcher/test_gamepad.py` covers
+state/repeat logic, real SDL virtual-device mapping and hotplug, Qt focus and settings,
+modal dialogs, game launch signals and input suspension. Run it on either OS with
+`python -m unittest discover -s launcher -p 'test_gamepad.py' -v`; Qt tests use the offscreen
+platform. Release CI also runs `launcher/packaging/gamepad_smoke.py` through each frozen
+launcher to verify its bundled SDL library. These automated virtual-device checks do not
+replace a physical-controller/Steam Deck acceptance check.
+
+## Controller guide
+
+**Controls** in the sidebar opens a controller reference with Xbox, DualSense,
+and DualShock 4 artwork. Select a button, or Tab to it and press Space, to see its
+driving action and the matching Xbox prompt. The **All driving controls** section
+provides the same reference as text. The guide describes the default layout;
+the in-game control layout and transmission settings can change some actions.
+
+The controller selector changes the guide, not the game's bindings or prompts.
+**Control settings** opens Settings > Controls for the existing keyboard, mouse,
+player, and racing-wheel options.
+
+Artwork comes from [e7d/gamepad-viewer](https://github.com/e7d/gamepad-viewer),
+with its MIT license and source revision included in
+`launcher/forza_launcher/ui/controller_art/`. The images and button sprites are
+bundled locally, so the guide works offline.
+
+The **DualSense adaptive triggers** card saves throttle resistance, brake
+resistance and overall intensity. Effects default off and can be changed during
+play. It requires a rebuilt game with the FH1 telemetry bridge and a DualSense
+or DualSense Edge. This first version uses default-layout LT/RT inputs; RPM,
+tire slip, ABS and surface effects are not mapped yet. Status shows whether the
+controller and driving telemetry are ready. See [telemetry.md](telemetry.md) for
+the protocol, hardware limitations and validation.
+
+**Xbox trigger vibration** adds separate LT brake and RT throttle vibration for
+Xbox One/Series controllers. Enable it and adjust overall intensity or either
+trigger independently. Normal body rumble continues through the game. Status
+reports whether the current controller/driver exposes impulse triggers, or
+whether the launcher and game need an update/rebuild. Xbox 360 controllers keep
+their normal body rumble. The default game control layout is required for the
+LT/RT effect mapping.
 
 ## Launcher updates
 
@@ -195,6 +280,7 @@ An archive helper that cannot observe the old launcher exiting within 60 seconds
 without replacing it.
 
 Settings, saves, DLC and the player's game files remain in their existing user folders.
+
 The existing build ID logic marks the game stale when the launcher/project version changes;
 use **Setup > Build** to rebuild from your files. Source checkouts expose manual release
 checks and can open a downloaded package, but never replace the checkout or run Git commands.
@@ -218,6 +304,70 @@ settings/save data, and restoration of the previous working GUI after a delibera
 replacement. The current Flatpak manual-download flow is also exercised with local HTTP
 fixtures and rendered Qt UI; no native Flatpak sandbox rerun has been performed since
 removing host execution.
+
+### Save manager
+
+**Saves** manages the profile chosen in **Settings > Profile**: the local profile or the
+launcher's copy of a Xenia profile. It never restores into the original Xenia content
+folder. The displayed path is the managed save folder; an advanced `--user_data_root`
+override is honoured too. Backups preserve the game's files without changing their
+format. The entire `B13EBABEBABEBABE/4D5309C9/00000001` directory is included,
+including photos stored there; DLC, caches and game files are excluded.
+
+* **Create backup** accepts an optional name. Backups live under
+  `<launcher data folder>/save-backups/<profile>/`, with a file list and SHA-256 hashes.
+* **Back up before Play** is enabled by default. Play waits for the backup to finish;
+  failures block launch with a visible error. An unchanged save reuses the latest valid
+  backup. Keep between 1 and 50 automatic backups (default 10). Named backups and backups
+  made before restores or edits are never automatically removed. Open the backup folder to
+  manage those manually.
+* **Restore selected** asks for confirmation, validates the full backup, stages it beside
+  the current save, then backs up the current save before replacing it. A journal allows
+  the launcher to recover an interrupted directory replacement on the next backup,
+  restore or Play. Cancelling before replacement leaves the current save in place.
+
+Scans, hashing and copies run in a cancellable background worker. The page blocks writes
+while this launcher has a game running; an OS lock also excludes another launcher using
+the same data folder. The lock stays held across game relaunches and until shutdown has
+finished stopping the game. Games started directly or by older launchers do not take
+this lock: close them before managing saves. Backup storage should also be copied to
+another drive if protection against drive failure is needed.
+
+Validation uses disposable fixtures only: hash corruption, missing/extra files, path
+traversal, retention, cancellation, disk space failures, replacement rollback, journal
+recovery, Xenia source isolation, Qt actions, worker shutdown and session locking.
+`cd launcher && python -m unittest test_saves test_saves_ui -v` runs these checks;
+link rejection is skipped on Windows when symlink creation is unavailable.
+
+**Edit profile…** opens an offline editor for credits (0–999,999,999) and career XP
+(0–2,147,483,647), plus a **Wristband** selector: Yellow, Green, Blue, Pink, Orange,
+Purple and Gold. The selector uses the career database's IDs 0–6 and edits only
+`Main/WristbandLevel`; it leaves XP separate and does not complete races, award cars,
+finish the opening tutorial or change online rank. Level is shown for context. Changing
+XP only changes the stored total. An unfamiliar saved wristband value is shown as an
+unchanged current value and preserved unless a supported tier is selected.
+The editor authenticates and decrypts `ForzaProfile/ForzaProfile` using the selected
+profile's XUID and key tables read from the player's own `default.xex` in the game-files
+folder. It supports the known disc and TU4 layouts; no game key bytes are bundled or
+written to the launcher config. First open may take a few seconds to decode the XEX.
+
+**Back up and apply** verifies the loaded file has not changed, edits only the allowed
+four-byte fields, re-encrypts and verifies the output, and creates a full **Before edit**
+backup before atomically replacing the profile file. It preserves the opaque class-state
+tail, AES padding, unused file capacity and companion files. Unknown layouts, incorrect
+XUIDs, failed MACs, out-of-range values, active game locks and stale editor sessions are
+rejected without replacing the save. The work uses the same cancellable worker and
+shutdown handling as backups. Run `python -m unittest test_save_editor test_saves_ui -v`
+for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
+or game-generated saves.
+
+Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
+The editor's profile-table addresses and XUID derivation were checked against the local
+executables and a disposable game-generated profile. A no-edit round trip reproduced the
+entire file byte for byte; changing credits preserved every other body byte and companion
+file. A separate copy loaded in the native TU4 game, which then saved normally with
+1,000,000 credits and 12,345 XP intact and exited cleanly. The original fixture and real
+user save were not modified.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 

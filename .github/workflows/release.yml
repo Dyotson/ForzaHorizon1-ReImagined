@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -75,7 +75,29 @@ jobs:
           clang++ -std=c++23 -fsyntax-only -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             -I"$HOME/rexglue-sdk-src-forza/sdk/thirdparty/fmt/include" \
             tools/test_sdk_clock_conversions.cpp
+          clang++ -std=c++20 -pthread -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            tools/test_driver_pipeline_cache.cpp -o "$RUNNER_TEMP/driver-cache-test"
+          "$RUNNER_TEMP/driver-cache-test"
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
+      - name: Compile performance overlay against stock nightly headers
+        run: |
+          # Also runs on an SDK cache hit: game sources aren't part of that cache key.
+          if [ ! -x "$HOME/llvm/bin/clang++" ]; then
+            python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
+          fi
+          if [ ! -x "$HOME/cmake/bin/cmake" ]; then
+            python3 launcher/packaging/ci_fetch.py cmake-linux "$HOME/cmake" --strip 1
+          fi
+          if [ ! -d "$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64/include" ]; then
+            python3 launcher/packaging/ci_fetch.py sdk-linux "$HOME/rexglue-sdk-nightly/0.10.0.24"
+          fi
+          tools/build_rexglue_sdk.sh --source-only
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/overlay-sdk -B "$RUNNER_TEMP/overlay-sdk" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64" \
+            -DFORZA_PATCHED_SDK_SOURCE="$HOME/rexglue-sdk-src-forza/sdk"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/overlay-sdk" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/overlay-sdk" --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-overlay-linux
@@ -94,7 +116,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-windows-amd64.tar.gz
-          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -135,6 +157,9 @@ jobs:
             exit 1
           fi
           tail -n 3 "$RUNNER_TEMP/build.log"
+          clang++ -std=c++20 -I"$SRC/include" tools/test_driver_pipeline_cache.cpp \
+            -o "$RUNNER_TEMP/driver-cache-test.exe"
+          "$RUNNER_TEMP/driver-cache-test.exe"
           cmake --install "$SRC/out/build/win"
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
@@ -172,9 +197,13 @@ jobs:
           pyinstaller --noconfirm forza-launcher.spec
           dist/forza-launcher/forza-launcher --version
       - name: Smoke test the window
+        timeout-minutes: 5
         run: |
           sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3
-          QT_QPA_PLATFORM=offscreen timeout 10 launcher/dist/forza-launcher/forza-launcher || [ $? -eq 124 ]
+          QT_QPA_PLATFORM=offscreen python -m unittest discover -s launcher -p 'test_gamepad.py' -v
+          launcher/dist/forza-launcher/forza-launcher --run-script launcher/packaging/gamepad_smoke.py gamepad-smoke.txt
+          test -s gamepad-smoke.txt
+          QT_QPA_PLATFORM=offscreen timeout --kill-after=5s 10s launcher/dist/forza-launcher/forza-launcher || [ $? -eq 124 ]
       - name: Package
         run: |
           python launcher/packaging/make_package.py --platform linux \
@@ -207,9 +236,12 @@ jobs:
         shell: bash
         run: |
           pip install -r launcher/requirements.txt -r launcher/requirements-build.txt pillow
+          QT_QPA_PLATFORM=offscreen python -m unittest discover -s launcher -p 'test_gamepad.py' -v
           cd launcher
           pyinstaller --noconfirm forza-launcher.spec
           dist/forza-launcher/forza-launcher.exe --version
+          dist/forza-launcher/forza-launcher.exe --run-script packaging/gamepad_smoke.py gamepad-smoke.txt
+          test -s gamepad-smoke.txt
       - name: Smoke test the packaged window
         shell: bash
         run: python launcher/packaging/smoke_gui.py launcher/dist/forza-launcher/forza-launcher.exe
