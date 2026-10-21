@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
+from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -244,6 +244,7 @@ class SettingsPage(QWidget):
         self.search = SettingsSearch(self)
         self.search.chosen.connect(self._show_search_result)
         root.addWidget(self.search)
+        self._specs_banner(root)
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
@@ -512,10 +513,15 @@ class SettingsPage(QWidget):
         lay.addWidget(w)
         self.gpu_notes = label("", "help")
         lay.addWidget(self.gpu_notes)
+        self.specs_line = label("", "help")
+        lay.addWidget(self.specs_line)
         self.gpu_apply = QPushButton("Use the recommended settings for this card")
         self.gpu_apply.clicked.connect(lambda: self._gpu_chosen(self.gpu_combo.currentData(), True))
         lay.addWidget(self.gpu_apply, 0, Qt.AlignLeft)
         self.gpu_combo.activated.connect(lambda _i: self._gpu_chosen(self.gpu_combo.currentData(), False))
+        recheck = QPushButton("Check this PC again")
+        recheck.clicked.connect(self._recheck_specs)
+        lay.addWidget(recheck, 0, Qt.AlignLeft)
         self._gpu_texts()
         self.search.add("Your graphics card", "Display", "Graphics card", w, self.gpu_combo,
                         "GPU vendor NVIDIA AMD Intel recommended settings")
@@ -531,6 +537,9 @@ class SettingsPage(QWidget):
                  ["No recommendation for this card: the launcher's general defaults apply."])
         for text, issue in (p.notes if p else []):
             lines.append(f"{text}{gpu.issue_text(issue)}")
+        pc = self.cfg.pc_specs()
+        self.specs_line.setText(specs.describe(pc))
+        lines += [w.text for w in specs.warnings(pc, {}) if not w.key]    # about the PC, not a setting
         self.gpu_notes.setText("\n".join(lines))
         self.gpu_apply.setEnabled(p is not None)
 
@@ -561,10 +570,55 @@ class SettingsPage(QWidget):
             warning_settings["resolution_scale"] = 2
         for key, text, issue in gpu.warnings(vendor, warning_settings):
             found.setdefault(key, []).append(text + gpu.issue_text(issue))
+        vendor_keys = set(found)    # the vendor's own warning on a setting says it already
+        for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
+            if w.key and w.key not in vendor_keys:
+                found.setdefault(w.key, []).append(w.text)
         for key, row in self.rows.items():
             if key == "discord_presence":
                 continue  # its setup warning is managed by _apply_dependencies
             row.set_warning(" ".join(found.get(key, [])))
+        self._refresh_banner()
+
+    # --- settings heavy for this PC (#206) --------------------------------------------
+    def _specs_banner(self, root):
+        self.banner = QFrame()
+        self.banner.setObjectName("specsBanner")
+        self.banner.setStyleSheet(f"#specsBanner {{ border: 1px solid {theme.ORANGE}; border-radius: 8px; }}")
+        row = QHBoxLayout(self.banner)
+        row.setContentsMargins(16, 10, 16, 10)
+        row.setSpacing(12)
+        self.banner_text = label("Some settings are heavy for this PC.", "")
+        row.addWidget(self.banner_text, 1)
+        use = QPushButton("Use recommended")
+        use.clicked.connect(self._use_recommended)
+        keep = QPushButton("Keep mine")
+        keep.clicked.connect(self._keep_mine)
+        row.addWidget(use)
+        row.addWidget(keep)
+        self.banner.hide()
+        root.addWidget(self.banner)
+
+    def _refresh_banner(self):
+        self.banner.setVisible(self.cfg.specs_banner_due())
+
+    def _use_recommended(self):
+        changed = self.cfg.use_recommended()
+        self.touched()
+        self.rebuild()
+        self.window.status("Recommended settings applied: " + ", ".join(
+            schema.BY_KEY[k].label for k in changed) if changed else "Nothing to change", False)
+
+    def _keep_mine(self):
+        self.cfg.dismiss_specs_banner()
+        self.touched()
+        self._refresh_banner()
+
+    def _recheck_specs(self):
+        self.cfg.detect_specs(force=True)
+        self.touched()
+        self.rebuild()
+        self.window.status("Checked this PC again", False)
 
     def _pad_block(self, lay):
         lay = section_card(lay, "Players", 2)

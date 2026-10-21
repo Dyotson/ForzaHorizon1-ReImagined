@@ -113,10 +113,15 @@ endmacro()
 # Listing the sources as outputs orders any target that compiles them after
 # codegen, including one a project assembles itself rather than taking the
 # library rexglue_setup_target() builds. The stamp comes first: the DEPFILE
-# names it.
+# names it. The headers are outputs too: the precompiled header and the host
+# sources know them only from their depfiles, so ninja would judge those up to
+# date before codegen rewrites the headers, and every source compiled after it
+# would then reject the stale precompiled header.
 add_custom_command(
     OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
            ${REXGLUE_ENTRYPOINT_GENERATED_SOURCES}
+           "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/forza_pch.h"
+           "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/forza_init.h"
     COMMAND $<TARGET_FILE:rex::rexglue> codegen ${CMAKE_CURRENT_SOURCE_DIR}/forza_manifest.toml
     DEPFILE "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.d"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

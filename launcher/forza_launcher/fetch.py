@@ -216,6 +216,7 @@ def extract_tar(archive: Path, dest: Path, strip=0, only=None, progress=lambda d
     """Unpack a tar(.gz/.xz). only: a predicate on the stripped member name (skip what is not needed)."""
     dest.mkdir(parents=True, exist_ok=True)
     total = archive.stat().st_size
+    links = []
     with open(archive, "rb") as raw, tarfile.open(fileobj=raw, mode="r|*") as tar:
         for member in tar:
             if cancelled():
@@ -227,9 +228,64 @@ def extract_tar(archive: Path, dest: Path, strip=0, only=None, progress=lambda d
             if only and not only(name):
                 continue
             member.name = name
+            if member.issym() or member.islnk():
+                # Links are made at the end (_make_link). tarfile's own fallback for a link it
+                # cannot create (a data folder on exFAT/FAT or some NTFS and network mounts,
+                # Windows without the symlink privilege) loads the rest of the archive to find
+                # the target; in this stream every file after that then fails with "seeking
+                # backwards is not allowed" (#200).
+                links.append((name, member.linkname, member.islnk()))
+                continue
             tar.extract(member, dest, filter="tar")
             progress(raw.tell(), total)
+    pending = []
+    for name, linkname, hard in links:
+        if hard:  # a hard link names its target from the archive root
+            target = Path(linkname).parts[strip:]
+            if not target:
+                continue
+            linkname = str(Path(*target))
+        pending.append((name, linkname, hard))
+    # A link can point to another link listed after it (bin/clang-cl -> clang -> clang-23): when
+    # they become copies, repeat until a round makes no more.
+    while pending:
+        left = [link for link in pending if not _make_link(dest, *link)]
+        if len(left) == len(pending):
+            break
+        pending = left
     progress(total, total)
+
+
+def _make_link(dest: Path, name: str, linkname: str, hard: bool) -> bool:
+    """A link of an unpacked archive: a symlink (or hard link) where the file system has
+    them, else a copy of its target. False when it has to be a copy and the target is not
+    there (yet); a target that was not unpacked (skipped) is left out."""
+    root = dest.resolve()  # /home can itself be a symlink (/var/home on Fedora Atomic, Bazzite)
+    path = _safe(root, str(Path(name).parent)) / Path(name).name
+    try:
+        source = _safe(root, os.path.relpath((root / linkname) if hard else (path.parent / linkname), root))
+    except (RuntimeError, ValueError):
+        return True  # points outside the unpacked folder
+    if path.is_dir() and not path.is_symlink():
+        return True  # the archive put real files there
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.path.lexists(path):
+        path.unlink()
+    try:
+        if hard:
+            os.link(source, path)
+        else:
+            os.symlink(linkname, path)
+        return True
+    except OSError:
+        pass
+    if source.is_file():
+        shutil.copy2(source, path)
+    elif source.is_dir():
+        shutil.copytree(source, path, symlinks=False)
+    else:
+        return False
+    return True
 
 
 def unpack(name: str, archive: Path, dest: Path, strip=0, only=None, progress=lambda d, t: None,

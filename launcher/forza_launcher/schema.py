@@ -239,6 +239,9 @@ add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float",
     "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
+add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
+    "The game uses its full-range (900\u00b0) wheel steering. Off uses the Xbox 360 wheel's "
+    "270\u00b0 mode, which filters the steering like a gamepad.", "Racing wheel", restart=True)
 add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
     "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
     choices=[("auto", "Separate (detected)"), ("separate", "Separate"), ("combined", "Combined")])
@@ -301,7 +304,11 @@ add("live_accept_invites", "Show game invites", "Online", "bool", True,
     "Another player's invite asks you: hold Back + A (or Enter) to join. Off ignores them.",
     "Forza Live")
 add("live_friends_key", "Friends screen key", "Online", "str", "F8",
-    "Opens the friends screen (a controller: hold the left stick press).", "Forza Live")
+    "Opens the friends screen (a controller: hold the left stick press, unless the "
+    "controller shortcut below is off).", "Forza Live")
+add("live_friends_pad_shortcut", "Controller friends shortcut", "Online", "bool", True,
+    "Holding the left stick press opens the friends screen. Turn off if you hold the left stick "
+    "while driving; the friends and chat keys still work.", "Forza Live")
 add("live_chat_key", "Chat key", "Online", "str", "F9",
     "Opens the chat (a controller: the friends screen's Chat tab).", "Forza Live")
 add("world_drop_in", "Horizon World drop-in", "Online", "bool", True,

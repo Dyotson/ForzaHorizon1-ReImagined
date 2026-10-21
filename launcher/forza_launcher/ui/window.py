@@ -7,7 +7,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, game, paths, dlss
+from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
@@ -27,6 +27,11 @@ class MainWindow(QMainWindow):
                 cfg.save()
             except OSError:
                 pass
+        if cfg.detect_specs():   # once, and again when the graphics card changed (#206)
+            try:
+                cfg.save()
+            except OSError:
+                pass
         self.session = None
         self.session_plan = None
         self._last_start_error = None
@@ -37,6 +42,10 @@ class MainWindow(QMainWindow):
         self._dlss_prepared = None
         self._dlss_result = (False, "")
         self._close_after_dlss = False
+        self._crash_probe = None
+        self._crash_report = None
+        self._report_context = None
+        self._crash_dialog = None
         self._close_after_game = False
         self.setWindowTitle(APP_NAME)
         icon = paths.asset("forza.ico" if sys.platform == "win32" else "logo.png")
@@ -304,9 +313,10 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Reset settings", "Reset every setting on the Settings page to its default?") \
                 != QMessageBox.Yes:
             return
-        from .. import config, gpu, schema
+        from .. import config, gpu, schema, specs
         self.cfg.d["settings"] = {**schema.defaults(), **config.FIRST_RUN}
         gpu.apply_preset(self.cfg.settings, self.cfg.gpu_vendor())
+        self.cfg.settings.update(specs.recommended(self.cfg.pc_specs(), self.cfg.settings, self.cfg.gpu_vendor()))
         self.cfg.d["online"] = {"mode": "public", "custom_server": ""}
         self.cfg.d["profile"] = {"mode": "own", "xenia_content": "", "xenia_xuid": ""}
         for k in ("extra_args", "extra_env", "extras_toml"):
@@ -319,7 +329,8 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
-        if self.running() or self._dlss_task is not None or self.saves.busy() or self._busy:
+        if (self.running() or self._dlss_task is not None or self._crash_probe is not None
+                or self.saves.busy() or self._busy):
             return
         install, looked = game.find_game(self.cfg)
         if install is None:
@@ -350,6 +361,7 @@ class MainWindow(QMainWindow):
 
     def _start_plan(self, plan):
         try:
+            context = crash_report.launch_context(self.cfg, plan)
             session = game.Session(plan)
             session.start()
         except (RuntimeError, OSError) as e:
@@ -358,6 +370,9 @@ class MainWindow(QMainWindow):
         self._last_start_error = None
         self.session = session
         self.session_plan = plan
+        self._report_context = context
+        self._crash_report = None
+        self.play.crash_report.hide()
         self._dlss_session_status = None
         self._shader_warmup_status = None
         self.play.set_shader_warmup(None)
@@ -451,8 +466,8 @@ class MainWindow(QMainWindow):
             self.session.stop()
 
     def update_haptics(self, settings):
-        if self.session and self.session.haptics:
-            self.session.haptics.update(settings)
+        if self.session:
+            self.session.update_haptics(settings)
 
     def _poll(self):
         if self.session is None:
@@ -489,10 +504,49 @@ class MainWindow(QMainWindow):
             self.play.show_message("The game closed.")
         else:
             self.play.show_message(game.crash_reason(plan, code), True, keep=True)
+            self._prepare_crash_report(plan, code)
         self.play.refresh()
 
         if self._close_after_game:
             self.close()
+
+    def _prepare_crash_report(self, plan, code):
+        from .workers import Probe
+        context = self._report_context or crash_report.launch_context(self.cfg, plan)
+        probe = Probe(lambda: crash_report.collect(plan, code, context), "read crash report", self)
+        self._crash_probe = probe
+        probe.result.connect(self._crash_report_ready)
+        probe.start()
+
+    def _crash_report_ready(self, report):
+        probe, self._crash_probe = self._crash_probe, None
+        if probe is not None:
+            probe.deleteLater()
+        self._crash_report = report
+        self.play.crash_report.setVisible(report is not None)
+        if report is None:
+            self.status(f"Could not prepare the crash report. Details: {paths.launcher_log()}", True)
+        self.play.refresh()
+
+    def review_crash_report(self):
+        if self._crash_report is None:
+            return
+        if self._crash_dialog is not None:
+            self._crash_dialog.raise_()
+            self._crash_dialog.activateWindow()
+            return
+        from .crash_report import CrashReportDialog
+        dialog = CrashReportDialog(self._crash_report, self)
+        self._crash_dialog = dialog
+        dialog.finished.connect(self._crash_report_closed)
+        dialog.open()
+
+    def _crash_report_closed(self, _result):
+        dialog, self._crash_dialog = self._crash_dialog, None
+        if dialog is not None:
+            self._crash_report = crash_report.CrashReport(dialog.title.text(), dialog.body.toPlainText(),
+                                                        dialog.report.log_path)
+            dialog.deleteLater()
 
 
 def run(argv):
