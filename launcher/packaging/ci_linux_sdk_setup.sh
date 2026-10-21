@@ -24,10 +24,27 @@ apt_get update
 apt_get install -y software-properties-common ca-certificates
 $SUDO add-apt-repository --no-update -y ppa:ubuntu-toolchain-r/test
 apt_get update
+# ppa.launchpadcontent.net can answer 503 for hours while the older ppa.launchpad.net name still
+# serves the same PPA (APT checks its signature either way). APT only warns when an index fails,
+# and a missing package name is read as a pattern, so look for g++-14 itself.
+if ! apt-cache show g++-14 2>/dev/null | grep -x "Package: g++-14" >/dev/null; then
+    echo "The toolchain PPA did not load; trying ppa.launchpad.net" >&2
+    $SUDO sed -i 's#https://ppa.launchpadcontent.net/#http://ppa.launchpad.net/#' \
+        /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-*.list
+    apt_get update
+fi
+# Without the PPA, "install g++-14" matches clang-14 and the like instead of failing.
+check_headers() {
+    if [ ! -d "${CI_CXX_HEADERS:-/usr/include/c++/14}" ]; then
+        echo "g++-14 did not install the C++23 headers; is the toolchain PPA reachable?" >&2
+        exit 1
+    fi
+}
 # A cached SDK overlay still needs C++23 headers for the stock-header HUD check.
 # Avoid installing the SDK's complete build dependencies for that compile alone.
 if [ "${1:-}" = --compiler-only ]; then
     apt_get install -y g++-14
+    check_headers
     exit 0
 fi
 # The -dev packages of PulseAudio and ALSA (and D-Bus, fribidi, libthai) matter at run time too: SDL3 inside
@@ -38,6 +55,7 @@ apt_get install -y g++-14 make ninja-build python3 git patchelf pkg-config \
     libxrandr-dev libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev \
     libxkbcommon-dev libdrm-dev libgl1-mesa-dev libvulkan-dev \
     libpulse-dev libasound2-dev libdbus-1-dev libfribidi-dev libthai-dev
+check_headers
 python3 "$HERE/ci_fetch.py" cmake-linux "$HOME/cmake" --strip 1
 python3 "$HERE/ci_fetch.py" llvm-linux "$HOME/llvm" --strip 1
 python3 "$HERE/ci_fetch.py" sdk-linux "$HOME/rexglue-sdk-nightly/0.10.0.24"
