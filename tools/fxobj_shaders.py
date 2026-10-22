@@ -133,9 +133,12 @@ def read_zip_member(zf, path, info):
 
 
 def iter_sources(sources):
-    """Yield (origin, bytes) for every shader-carrying file under the given sources."""
+    """Yield (origin, bytes) for every shader-carrying file under the given sources. A source
+    may also be an (origin, bytes) pair: an executable image read from an XEX in memory."""
     for src in sources:
-        if os.path.isdir(src):
+        if isinstance(src, tuple):
+            yield src
+        elif os.path.isdir(src):
             for root, dirs, files in os.walk(src):
                 dirs.sort()
                 for name in sorted(files):
