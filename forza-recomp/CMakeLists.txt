@@ -130,13 +130,18 @@ set(FORZA_SOURCES
     src/hooks/movie_texture.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
     src/hooks/gpu_wait.cpp
+    src/hooks/render_idle.cpp
+    src/hooks/gamma_transition.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
+    src/hooks/resource_cache_eviction.cpp
+    src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
     src/hooks/challenge_hud.cpp
@@ -172,6 +177,7 @@ set(FORZA_SOURCES
     src/platform/socket.cpp
     src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
+    src/platform/wheel_bridge.cpp
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.

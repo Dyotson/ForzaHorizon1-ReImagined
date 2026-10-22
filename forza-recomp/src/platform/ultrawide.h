@@ -6,6 +6,11 @@ using Presentation = std::function<void(bool, double, double, double, double, do
 void Prepare(uint32_t width, uint32_t height);
 void Initialize(uint32_t width, uint32_t height, Presentation presentation);
 void Resize(uint32_t width, uint32_t height);
+struct Extent { uint32_t width, height; };
+// Current physical output and initial resolve-safe drawing size. Both are zero
+// when native drawing is inactive. Drawing size changes require a restart.
+Extent OutputSize();
+Extent DrawingSize();
 void Frame();
 double Projection(bool gameplay, bool map, uint32_t width, uint32_t height, double aspect);
 }

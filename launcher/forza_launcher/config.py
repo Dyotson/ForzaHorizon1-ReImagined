@@ -7,7 +7,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, gpu, paths, schema, specs
+from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, paths, schema, specs
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 ONLINE_MODES = ["public", "local", "custom", "offline"]
@@ -147,11 +147,15 @@ class Config:
         found = detected or specs.detect()
         cache.update(checked=True, fingerprint=specs.fingerprint(), values=asdict(found))
         if first and not self.loaded:
-            self.settings.update(specs.recommended(found, self.settings, self.gpu_vendor()))
+            self.settings.update(specs.recommended(found, display.effective(self.settings, found), self.gpu_vendor()))
         return True
 
+    def effective_settings(self, log=None) -> dict:
+        """The settings as the game will get them: "Match display" (frame_rate 0) as a number (#215)."""
+        return display.effective(self.settings, self.pc_specs() if self.d["specs"].get("values") else None, log=log)
+
     def specs_warnings(self) -> list:
-        return specs.warnings(self.pc_specs(), self.settings)
+        return specs.warnings(self.pc_specs(), self.effective_settings())
 
     def specs_banner_due(self) -> bool:
         """Some settings are heavy for this PC and the player has not answered for this hardware."""
@@ -255,10 +259,11 @@ def flatten(table: dict, prefix="") -> dict:
 def render_toml(cfg: Config) -> str:
     lines = ["# Written by the Forza Horizon 1: ReImagined launcher. Change settings there;",
              "# keys added under 'Other settings' (Advanced) are kept."]
+    settings = cfg.effective_settings()
     for s in schema.S:
         if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution", "forza_antialiasing"):
             continue
-        v = schema.coerce(s, cfg.settings.get(s.key, s.default))
+        v = schema.coerce(s, settings.get(s.key, s.default))
         if v != s.default:
             lines.append(f"{s.key} = {toml_value(v)}")
     # public and custom servers are named here too; local (an environment variable at start)

@@ -12,7 +12,8 @@ diagram selector changes the reference only. Zero resistance disables that
 trigger; overall intensity scales both. Xbox and DualShock 4 have no adaptive
 triggers. Body rumble, lightbar and player LEDs are not claimed by this writer.
 
-Effects default off. Background workers handle HID and UDP I/O. Effects release
+Effects default off. Background workers handle HID and UDP I/O. Effects switch on above a raw trigger value of 12 and off below 4, and follow the
+trigger in steps of 8, so a trigger held half way does not flicker. Effects release
 after 350 ms without valid active telemetry, when disabled, on game stop/exit
 and before launcher shutdown. Each game process gets a fresh nonce, so old
 packets cannot reactivate effects. USB/Bluetooth coexistence with SDL, Steam
@@ -65,7 +66,9 @@ that a rebuild is needed.
 
 Validity bits: position/forward 1, fresh raw input 2, derived velocity 4,
 derived acceleration 8. Active requires a local car, a physics substep and
-player-one input read within 250 ms. Sequence comparison accepts u32 wrap and
+player-one input read within 250 ms, and a non-zero rumble
+request from the game within 3 s: the car stays in the vehicle list in menus, but the
+game only rumbles while it runs (#224). Sequence comparison accepts u32 wrap and
 rejects duplicates/reordered packets. The receiver checks length, version,
 token, fields and finite floats. Its watchdog uses receive time, without
 comparing clock epochs across processes. This is local IPC, not an authenticated
