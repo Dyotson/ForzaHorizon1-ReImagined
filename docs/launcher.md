@@ -60,7 +60,17 @@ machine from their own copy:
    [CPU target](perf.md#cpu-target-x86-64-v3-220-2026-10-21)). The build is repeated only when the launcher or
    project version changes, the title update is added, removed or replaced, or the CPU target changes (a hash of
    `forza-recomp/` sources, the launcher version, the SDK pin, the TU4 package and the CPU target). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
-4. **Play**, **Settings**, log folder, versions.
+4. **Prebuild shaders** (optional, Vulkan, #226): rebuilds the shaders of the shipped pipeline list
+   (`forza_launcher/data/pipelines-4D5309C9.json`: hashes and decoded render state, no game data) from
+   the player's `media/shaders`, track `bin.zip`s, the update's `media.zip` and the executable image,
+   writes them with the list to `<cache root>/shaders/prebuild/`, and starts the game with
+   `--shader_prebuild_only`: it builds every listed and stored pipeline into the driver's cache, with
+   the usual `SHADER_WARMUP` progress, and exits before the game starts. Cancel stops it. The card says
+   "Recommended" again after a graphics driver change (the driver cache files of the last prebuild are
+   gone), a launcher, list or GPU plugin update, or a graphics setting that selects other pipeline
+   stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
+   start also warms the listed pipelines. [Shader prebuild](shader_prebuild.md).
+5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
 `Documents\forza` for an install that already lives there; changeable under Setup > "Where the game is built", see "Round 5"): `game/` (extracted files), `toolchain/`, `downloads/`,

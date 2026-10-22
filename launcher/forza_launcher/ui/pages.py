@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins
+from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
+               shader_prebuild)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -508,6 +509,30 @@ class SetupPage(QWidget):
         self.build_details.content.addWidget(self.logview)
         self.c3.lay.addWidget(self.build_details)
         lay.addWidget(self.c3.frame)
+
+        # 5. prebuild shaders (#226) -------------------------------------------------------
+        self.c4 = StepCard(5, "Prebuild shaders",
+                           "Optional. Builds the graphics pipelines the game uses before you play, so that new "
+                           "places, cars and cameras do not stutter the first time you see them. The shaders "
+                           "come from your own game files. Takes a few minutes; the game window opens and stays "
+                           "black meanwhile. Offered again after a graphics driver, launcher or graphics "
+                           "setting change.")
+        brow = QHBoxLayout()
+        self.go4 = QPushButton("Prebuild shaders")
+        self.go4.clicked.connect(self._prebuild)
+        brow.addWidget(self.go4)
+        self.cancel4 = QPushButton("Cancel")
+        self.cancel4.hide()
+        self.cancel4.clicked.connect(self._cancel)
+        brow.addWidget(self.cancel4)
+        brow.addStretch(1)
+        self.c4.lay.addLayout(brow)
+        self.bar4 = QProgressBar()
+        self.bar4.hide()
+        self.c4.lay.addWidget(self.bar4)
+        self.msg4 = label("", "muted")
+        self.c4.lay.addWidget(self.msg4)
+        lay.addWidget(self.c4.frame)
         lay.addStretch(1)
 
         self.timer = QTimer(self)
@@ -603,7 +628,25 @@ class SetupPage(QWidget):
         self.go1.setEnabled(not busy and bool(self.pkg.text().strip()))
         self.go2.setEnabled(not busy and bool(self.dlc.text().strip()))
         self.go3.setEnabled(not busy and have)
+        self._refresh_prebuild(busy)
         self._pkg_kind()
+
+    def _refresh_prebuild(self, busy):
+        g, _looked = game.find_game(self.cfg)
+        state, text = "unavailable", "Build the game first."
+        if g is not None:
+            try:
+                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False))
+            except Exception as e:  # a settings combination the plan refuses: say so, do not break the page
+                state, text = "unavailable", str(e)
+        badge = {"none": ("Optional", None), "stale": ("Recommended", None), "done": ("Done", True),
+                 "unavailable": ("Unavailable", None)}[state]
+        self.c4.set_badge(*badge)
+        self.go4.setText("Prebuild again" if state in ("done", "stale") else "Prebuild shaders")
+        self.go4.setEnabled(not busy and state != "unavailable")
+        if not self.fail.get("msg4") and not (busy and getattr(self, "_msg", None) is self.msg4):
+            self.msg4.setText(text)
+            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state == 'stale' else theme.MUTED};")
 
     @staticmethod
     def _dlc_text(found, skipped):
@@ -950,6 +993,14 @@ class SetupPage(QWidget):
         self.timer.start()
         self._start(t, self.bar3, self.cancel3, self.status3, status_to=self.status3)
 
+    def _prebuild(self):
+        if getattr(self.window, "running", lambda: False)():
+            QMessageBox.information(self, "Prebuild shaders", "Close the game first: the prebuild starts it.")
+            return
+        self.bar4.setRange(0, 1000)
+        t = workers.prebuild_task(self.cfg)
+        self._start(t, self.bar4, self.cancel4, self.msg4)
+
     def _clean(self):
         if QMessageBox.question(self, "Free disk space",
                                 "Delete the build files? The game keeps working. If the project updates, "
@@ -972,7 +1023,7 @@ class SetupPage(QWidget):
     def _start(self, task, bar, cancel_btn, msg, status_to=None):
         if self.busy():
             return
-        self.tabs.setCurrentIndex(2 if bar is self.bar3 else 1 if bar is self.bar2 else 0)
+        self.tabs.setCurrentIndex(2 if bar in (self.bar3, self.bar4) else 1 if bar is self.bar2 else 0)
         self.task = task
         self.fail.clear()
         self._bar, self._cancel_btn, self._msg = bar, cancel_btn, msg
@@ -986,7 +1037,7 @@ class SetupPage(QWidget):
                                                                    msg.setText(d[-90:])))
         task.status.connect(lambda s: self._set_status(s))
         task.done.connect(self._finished)
-        for b in (self.go1, self.go2, self.go3):
+        for b in (self.go1, self.go2, self.go3, self.go4):
             b.setEnabled(False)
         task.start()
         self.window.set_busy(True)
@@ -1009,7 +1060,8 @@ class SetupPage(QWidget):
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
             self._cancel_btn.hide()
-        key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3"}.get(id(self._msg), "msg")
+        key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3",
+               id(self.msg4): "msg4"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
         blocked = bool(getattr(self.task, "blocked", False))
         if blocked:
@@ -1021,7 +1073,7 @@ class SetupPage(QWidget):
         if not ok and self._bar is self.bar3 and not blocked:
             message += "  Press Resume build to continue."
         if failed:
-            self.tabs.setCurrentIndex(2 if self._bar is self.bar3 else 1 if self._bar is self.bar2 else 0)
+            self.tabs.setCurrentIndex(2 if self._bar in (self.bar3, self.bar4) else 1 if self._bar is self.bar2 else 0)
             self._show_fail(key, self._msg, message)
             if self._bar is self.bar3:
                 self.build_details.set_expanded(True)
