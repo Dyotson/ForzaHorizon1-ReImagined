@@ -3,10 +3,10 @@
 
 #if defined(FORZA_GUEST_FMA) && FORZA_GUEST_FMA
 namespace {
-// Linux ELF constructors with a lower priority run before the generated code's
-// ordinary static initializers, which may themselves contain AVX instructions.
+// Run before shared-library initializers as well as generated static
+// initializers: SDK constructors may call inline code exported by the guest.
 // The host and its SDK dependencies retain their portable compiler settings.
-__attribute__((constructor(101))) void CheckGuestCpu() {
+void CheckGuestCpu(int, char**, char**) {
   // Clang/GCC's feature detection includes the OS's AVX register-state support.
   // This translation unit deliberately does not inherit the guest's -mfma flag.
   __builtin_cpu_init();
@@ -16,8 +16,10 @@ __attribute__((constructor(101))) void CheckGuestCpu() {
       !__builtin_cpu_supports("sse4.2") || !__builtin_cpu_supports("popcnt")) {
     std::fputs("This experimental Forza build requires CPU/OS AVX/FMA, SSE4.2 and POPCNT support.\n"
                "Rebuild with -DFORZA_GUEST_FMA=OFF for the portable version.\n", stderr);
-    std::exit(EXIT_FAILURE);
+    std::_Exit(EXIT_FAILURE);
   }
 }
+__attribute__((section(".preinit_array"), used)) void (*const kCheckGuestCpu)(int, char**,
+                                                                          char**) = CheckGuestCpu;
 }  // namespace
 #endif

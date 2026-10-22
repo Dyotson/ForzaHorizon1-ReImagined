@@ -24,10 +24,12 @@ bool OriginalTiming() {
   }();
   return original;
 }
-float LoadFloat(uint8_t* base, uint32_t address) {
+uint32_t LoadU32(uint8_t* base, uint32_t address) {
   const auto* p = forza::GuestPtr(base, address);
-  const uint32_t bits = uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
-                        uint32_t(p[2]) << 8 | p[3];
+  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
+}
+float LoadFloat(uint8_t* base, uint32_t address) {
+  const uint32_t bits = LoadU32(base, address);
   float value;
   std::memcpy(&value, &bits, sizeof(value));
   return value;
@@ -75,18 +77,22 @@ extern "C" REX_FUNC(__imp__sub_82647B78);
 extern "C" REX_FUNC(sub_82647B78) {
   // Only the automatic-orbit call from CUI4CarTargetCamera::Update. Other
   // callers use this transform routine for manual input and camera transitions.
+  // The same call also ends a move to a preset (state 1, or 0 on its last frame):
+  // correcting those turned the paint shop's decal camera away from the side
+  // being decorated, further with every switch (#243).
   if (!OriginalTiming() && uint32_t(ctx.lr) == FORZA_ADDR(0x82653588)) {
     const uint32_t camera = ctx.r3.u32;
-    PPCContext timer = ctx;
-    const auto* p = forza::GuestPtr(base, camera + 0x70);
-    timer.r3.u64 = uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
-                   uint32_t(p[2]) << 8 | p[3];
-    sub_8246EBB8(timer, base);
-    const double dt = timer.f1.f64;
-    // Replace the fixed step before building the view, using the camera's own
-    // timer (reset by the base camera update), not the selected FPS cap.
-    StoreFloat(base, camera + 0x80, forza::garage_camera::CorrectOrbit(
-        LoadFloat(base, camera + 0x80), dt));
+    const uint32_t state = LoadU32(base, camera + 0x150);
+    if (state == forza::garage_camera::kOrbitState) {
+      PPCContext timer = ctx;
+      timer.r3.u64 = LoadU32(base, camera + 0x70);
+      sub_8246EBB8(timer, base);
+      const double dt = timer.f1.f64;
+      // Replace the fixed step before building the view, using the camera's own
+      // timer (reset by the base camera update), not the selected FPS cap.
+      StoreFloat(base, camera + 0x80, forza::garage_camera::OrbitAngle(
+          state, LoadFloat(base, camera + 0x80), dt));
+    }
   }
   __imp__sub_82647B78(ctx, base);
 }

@@ -61,6 +61,14 @@ body:
       placeholder: "Windows 11, Windows 10, SteamOS, Bazzite, Ubuntu 24.04, ..."
     validations:
       required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU and RAM
+      description: "The game leans hard on the CPU, so this matters most for performance problems. Windows: Task Manager > Performance. Linux: `lscpu` and `free -h`."
+      placeholder: "Ryzen 7 5800X, 32 GB / Core i5-1135G7, 16 GB / Steam Deck"
+    validations:
+      required: true
   - type: dropdown
     id: gpuvendor
     attributes:

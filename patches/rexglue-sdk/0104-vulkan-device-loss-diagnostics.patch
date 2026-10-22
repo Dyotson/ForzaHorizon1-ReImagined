@@ -1,0 +1,177 @@
+diff --git a/src/graphics/graphics_system.cpp b/src/graphics/graphics_system.cpp
+index b9594a8..c98c6eb 100644
+--- a/src/graphics/graphics_system.cpp
++++ b/src/graphics/graphics_system.cpp
+@@ -225,6 +225,10 @@ void GraphicsSystem::OnHostGpuLossFromAnyThread([[maybe_unused]] bool is_respons
+   if (host_gpu_loss_reported_.test_and_set(std::memory_order_relaxed)) {
+     return;
+   }
++  // FatalError writes only to stderr, which a windowed game has nowhere to show.
++  REXGPU_CRITICAL(
++      "Graphics device lost: the GPU driver reset or removed the device, which can't be "
++      "recovered from; stopping");
+   rex::FatalError("Graphics device lost (probably due to an internal error)");
+ }
+ 
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 473a172..3810677 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -14,6 +14,7 @@
+ #include <chrono>
+ #include <cmath>
+ #include <cstdint>
++#include <cstdlib>
+ #include <cstring>
+ #include <iterator>
+ #include <fstream>
+@@ -622,6 +623,20 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
+   return true;
+ }
+ 
++// A host wait for the GPU longer than this is logged: the queue made no progress for that
++// long (presentation holding it, for instance).
++constexpr int64_t kSlowSubmissionWaitMs = 2000;
++
++// Test hook: FORZA_TEST_GPU_LOSS_AT_FRAME=<n> makes the submission fence check report
++// VK_ERROR_DEVICE_LOST from frame n on, to exercise the device-loss reporting path.
++uint64_t TestGpuLossFrame() {
++  static const uint64_t frame = [] {
++    const char* value = std::getenv("FORZA_TEST_GPU_LOSS_AT_FRAME");
++    return value && *value ? uint64_t(std::strtoull(value, nullptr, 10)) : uint64_t(0);
++  }();
++  return frame;
++}
++
+ }  // namespace
+ 
+ bool CompileFh1Compute(std::string_view source, std::vector<uint32_t>& spirv, std::string& error) {
+@@ -6388,6 +6403,12 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+ 
+   size_t fences_total = submissions_in_flight_fences_.size();
+   size_t fences_awaited = 0;
++  const auto wait_start = std::chrono::steady_clock::now();
++  auto waited_ms = [&wait_start] {
++    return int64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
++                       std::chrono::steady_clock::now() - wait_start)
++                       .count());
++  };
+   if (submission_thread_) {
+     // Only the fences of submissions the thread has submitted can be waited for.
+     if (await_submission > submission_completed_) {
+@@ -6419,8 +6440,13 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+                             submissions_in_flight_fences_.data(), VK_TRUE, UINT64_MAX);
+     if (wait_result == VK_SUCCESS) {
+       fences_awaited += await_submission - submission_completed_;
++      if (int64_t ms = waited_ms(); ms >= kSlowSubmissionWaitMs) {
++        REXGPU_WARN("Vulkan: waited {} ms for submission {} to finish on the GPU", ms,
++                    await_submission);
++      }
+     } else {
+-      REXGPU_ERROR("Failed to await submission completion Vulkan fences");
++      REXGPU_ERROR("Failed to await submission completion Vulkan fences (VkResult {}, after {} ms)",
++                   int(wait_result), waited_ms());
+       if (wait_result == VK_ERROR_DEVICE_LOST) {
+         device_lost_ = true;
+       }
+@@ -6432,8 +6458,18 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+   while (fences_awaited < fences_total) {
+     VkResult fence_status =
+         dfn.vkWaitForFences(device, 1, &submissions_in_flight_fences_[fences_awaited], VK_TRUE, 0);
++    if (TestGpuLossFrame() && frame_current_ >= TestGpuLossFrame()) {
++      fence_status = VK_ERROR_DEVICE_LOST;
++    }
+     if (fence_status != VK_SUCCESS) {
+       if (fence_status == VK_ERROR_DEVICE_LOST) {
++        // The driver lost the device (a GPU reset, or the driver gave up on it); without this
++        // line the abort that follows leaves nothing in the log.
++        REXGPU_ERROR(
++            "Vulkan device lost: the driver returned VK_ERROR_DEVICE_LOST checking submission {} "
++            "(frame {}, {} submission(s) in flight)",
++            submission_completed_ + fences_awaited + 1, frame_current_,
++            fences_total - fences_awaited);
+         device_lost_ = true;
+       }
+       break;
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+index a86fdcd..73fb4dd 100644
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <cmath>
+@@ -180,6 +181,18 @@ struct HdrOutputConstants {
+ };
+ static_assert(sizeof(HdrOutputConstants) == 48);
+ 
++// vkAcquireNextImageKHR waits without a timeout, and vkQueuePresentKHR runs while holding the
++// queue the command processor submits to: either blocking this long stalls the game, so log it.
++void LogBlockingPresentationCall(const char* call, std::chrono::steady_clock::time_point start,
++                                 VkResult result) {
++  const int64_t ms = int64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
++                                 std::chrono::steady_clock::now() - start)
++                                 .count());
++  if (ms >= 1000) {
++    REXLOG_WARN("VulkanPresenter: {} blocked for {} ms (VkResult {})", call, ms, int(result));
++  }
++}
++
+ }  // namespace
+ 
+ // Generated with `xb buildshaders`.
+@@ -1778,9 +1791,11 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+ 
+   VkSemaphore acquire_semaphore = paint_submission.acquire_semaphore();
+   uint32_t swapchain_image_index;
++  const auto acquire_start = std::chrono::steady_clock::now();
+   VkResult acquire_result =
+       dfn.vkAcquireNextImageKHR(device, paint_context_.swapchain, UINT64_MAX, acquire_semaphore,
+                                 VK_NULL_HANDLE, &swapchain_image_index);
++  LogBlockingPresentationCall("vkAcquireNextImageKHR", acquire_start, acquire_result);
+   switch (acquire_result) {
+     case VK_SUCCESS:
+     case VK_SUBOPTIMAL_KHR:
+@@ -2654,7 +2669,9 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+   {
+     const VulkanDevice::Queue::Acquisition queue_acquisition =
+         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
++    const auto present_start = std::chrono::steady_clock::now();
+     present_result = dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);
++    LogBlockingPresentationCall("vkQueuePresentKHR", present_start, present_result);
+   }
+   switch (present_result) {
+     case VK_SUCCESS:
+diff --git a/src/ui/window.cpp b/src/ui/window.cpp
+index 0bbf69a..ab64e76 100644
+--- a/src/ui/window.cpp
++++ b/src/ui/window.cpp
+@@ -625,6 +625,8 @@ void Window::OnFocusUpdate(bool new_has_focus, WindowDestructionReceiver& destru
+     return;
+   }
+   has_focus_ = new_has_focus;
++  // Logged to line graphics stalls and errors up with switching away from the game.
++  REXLOG_INFO("Window {} focus", has_focus_ ? "gained" : "lost");
+   UISetupEvent e(this);
+   if (has_focus_) {
+     SendEventToListeners([&e](auto listener) { listener->OnGotFocus(e); }, destruction_receiver);
+@@ -660,6 +662,7 @@ void Window::OnMinimized(WindowDestructionReceiver& destruction_receiver) {
+   if (!CanSendEventsToListeners()) {
+     return;
+   }
++  REXLOG_INFO("Window minimized");
+   UIEvent e(this);
+   SendEventToListeners([&e](auto listener) { listener->OnMinimized(e); }, destruction_receiver);
+ }
+@@ -668,6 +671,7 @@ void Window::OnRestored(WindowDestructionReceiver& destruction_receiver) {
+   if (!CanSendEventsToListeners()) {
+     return;
+   }
++  REXLOG_INFO("Window restored");
+   UIEvent e(this);
+   SendEventToListeners([&e](auto listener) { listener->OnRestored(e); }, destruction_receiver);
+ }

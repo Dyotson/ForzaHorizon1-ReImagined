@@ -1,4 +1,4 @@
-# BC-250: ReImagined and Pinyon performance investigation
+# BC-250: guarded Linux guest FMA investigation
 
 ## Scope and evidence
 
@@ -8,61 +8,17 @@ launcher selects on supported CPUs. This draft retains the narrower Linux-only
 it is not the launcher's CPU-target implementation. BC-250 runtime validation is
 still pending for both paths.
 
-Report: CachyOS, Mesa 26.2.4, standalone ReImagined 0.1.17 at 35–42 fps;
-Pinyon 0.5.1 and 0.6.0 reportedly hold 60 fps at 1440p. The reporter subsequently confirmed the same result on 0.1.23, with 40 GPU CUs
-unlocked and six CPU cores. Aggregate CPU/GPU utilization was below 100%;
-that does not exclude a serial CPU bottleneck or synchronization wait. We have no BC-250 trace or local BC-250.
-This is a source comparison and an experimental build option, not a verified
-fix for that machine.
+The reported BC-250 configuration uses CachyOS, Mesa 26.2.4, 40 unlocked GPU
+CUs and six CPU cores. Reports for ReImagined 0.1.17 and 0.1.23 describe roughly
+30–40 fps even at internal scales 1 and 2. We have no BC-250 trace or local
+BC-250 hardware. Aggregate CPU/GPU utilization below 100% does not exclude a
+serial CPU bottleneck or synchronization wait. The unusually large reported
+log warrants checking logging overhead before attributing the issue to guest math.
 
-Compared ReImagined 0.1.17 (`1a14021`), 0.1.23 (`766f276`), and main
-`323a3b9`, against Pinyon 0.6.0 (`9331e453e9850d0fcc1c1606dee95db834a9d317`)
-and its pinned ShiftGlue SDK (`79d3e6fae4b79e00def48a595c80f0eaa47fd2b6`).
-Pinyon 0.5.1's Linux setup and CMake files were also checked: they already
-select `-mfma -ffp-contract=off` on supported hosts. The FMA difference
-therefore predates 0.6.0 and is relevant to both reported Pinyon versions;
-the rest of 0.5.1 has not been audited separately.
-
-An unchanged frame rate when changing the launcher's resolution **does not by
-itself establish a CPU bottleneck**. ReImagined's ordinary resolution setting
-selects the guest video/window mode; `resolution_scale` controls scene raster
-size (temporal upscaling and ultrawide add their own sizing). Check the actual
-internal dimensions, output dimensions, upscaler and MSAA in both programs.
-The Linux GPU detector recognizes AMD by PCI vendor, not a model whitelist;
-we found no BC-250-specific performance cap.
-
-Follow-up [issue #174](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/174)
-reports no improvement at render scales 1 and 2 as well as guest resolutions
-720p through 4K, and a roughly 1 GB game log. That strengthens the case for
-profiling CPU work, waits and logging overhead; it does not identify the cause.
-Current main (`5d246b0`) adds a warning that trace/debug logging lowers frame
-rate. Confirm the reporter's log level and repeat at the normal level before
-attributing the difference to code generation or hardware recognition. No
-normal-level BC-250 comparison or FMA runtime result is available yet.
-
-## Material differences
-
-| Area | Pinyon 0.6.0 | ReImagined / implication |
-| --- | --- | --- |
-| Generated CPU math | Linux setup selects an FMA or x86-64-v3 build when supported, keeping `-ffp-contract=off`. | SDK baseline uses SSE4.1; explicit `std::fma` becomes a math-library call. Our existing [CPU profile](perf.md#cpu-time-per-frame-45-2026-10-16) identifies this in audio. A small, isolated experiment is justified. |
-| Generated register state and calls | Its SDK keeps more guest register state in locals, folds constants, specializes calls, and maps guest job fibers to host fibers. | Potentially important CPU savings, but these change the guest ABI/resumption protocol. Port with reference-vs-optimized execution checks for both disc and TU4; copying flags alone is unsafe. Pinyon's research also records a correct nonvolatile-register-local experiment that was slower. |
-| Renderer | A Forza-specific renderer reduces generic Xenos packet, EDRAM and resolve work. | ReImagined uses the general Xenos plugin with its fixes. [PR #157](https://github.com/Dyotson/ForzaHorizon1-ReImagined/pull/157) already develops guarded native passes; it is not yet a complete replacement. Coordinate there rather than creating a competing renderer. |
-| Code layout | Linux x86-64-v3 builds use the small code model. | SDK uses `-mcmodel=large`. Smaller address sequences are worth investigating, but executable/module layout and relocations must be checked before changing this. |
-| Thread placement | SDK's `linux_thread_cores=auto` detects a Steam Deck and applies a measured layout; it leaves other machines alone. | This Deck optimization does **not automatically apply on a BC-250**. Collect thread load/topology first; copying the Deck's CPU numbers can make another APU worse. |
-| Audio | Stereo mixing and native DSP work reduce guest audio work. | FMA is a first step. Profile FMOD mixer/DSP separately before porting hooks; outputting stereo alone does not prove the guest surround mixer stopped doing work. |
-| Pipeline compilation | Parallel compilation and asynchronous cache writes reduce cold-cache stalls. | [PR #163](https://github.com/Dyotson/ForzaHorizon1-ReImagined/pull/163) already covers startup warm-up/cache work. Hitches and sustained warm-cache 35–42 fps need separate measurements. |
-
-Primary references:
-
-- [Pinyon 0.6.0 release](https://github.com/arcanite24/pinyon-shift/releases/tag/v0.6.0)
-- [CPU baseline selection](https://github.com/arcanite24/pinyon-shift/blob/v0.6.0/tools/pinyon_setup.py)
-  and [compiler configuration](https://github.com/arcanite24/pinyon-shift/blob/v0.6.0/cmake/PinyonShiftRexGlue.cmake)
-- [0.5.1 CPU baseline selection](https://github.com/arcanite24/pinyon-shift/blob/v0.5.1/tools/pinyon_setup.py)
-- [Pinyon generated-code research](https://github.com/arcanite24/pinyon-shift/blob/v0.6.0/docs/NEXT_LEVEL_RESEARCH.md)
-- [Pinned SDK thread placement](https://github.com/arcanite24/shiftglue-sdk/blob/79d3e6fae4b79e00def48a595c80f0eaa47fd2b6/src/core/threading_posix.cpp)
-
-Pinyon's published instruction counts and Deck CPU reductions are evidence for
-prioritizing investigations, not measured ReImagined or BC-250 speedups.
+The ordinary resolution setting selects the guest video/window mode;
+`resolution_scale` controls scene raster size. Record actual raster/output
+dimensions, frame cap, GPU busy time and per-thread CPU cost before selecting
+the next optimization. This option is an experiment, not a verified BC-250 fix.
 
 ## Experiment: hardware FMA in generated code
 
@@ -74,10 +30,10 @@ limited to Linux x86-64 with Clang/GCC and defaults **off**.
 - Explicit `std::fma`/`std::fmaf` can lower to hardware instructions.
 - Separate multiply/add expressions must stay separate; no fast-math or
   global CPU-native tuning is added.
-- An early ELF constructor in the baseline host checks both AVX and FMA
+- An ELF preinitializer in the baseline host checks both AVX and FMA
   through compiler CPU detection, including OS AVX state support, and the
   SSE4.2/POPCNT features also permitted by Clang's `-mfma` flag. It runs
-  before normal generated static initializers, prints a rebuild instruction
+  before SDK shared-library and generated static initializers, prints a rebuild instruction
   and exits on an incompatible machine.
 - This is a build-time choice, not a `forza.toml` graphics setting. Do not
   distribute an FMA build as the portable release or enable it by default
@@ -149,6 +105,35 @@ audio thread's improvement nor game fps. BC-250 runtime validation is pending.
 Game boot, driving, graphics and audio have not been validated for this build.
 An attempted `--help` smoke check aborts in SDK CLI/path setup in both an
 existing baseline binary and this executable; it is not counted as a boot pass.
+
+### Main integration validation, 2026-10-22
+
+Merged main `3390ef0`, retaining its Discord host source and CPU-target module.
+The guest-FMA guard now uses `.preinit_array` too: an ordinary constructor can
+run after SDK shared-library initializers that call guest-exported inline code.
+Unsupported hosts use `_Exit` so rejection cannot enter teardown callbacks.
+
+The arithmetic fixture now includes both production CMake modules and guards.
+Clang 22.1.8 and GCC 16.2.1 on Fedora WSL pass all four combinations of
+`FORZA_CPU_TARGET=baseline|x86-64-v3` and `FORZA_GUEST_FMA=OFF|ON` (eight
+builds, 4,334,912 comparisons each). Configure each combination in a separate
+build directory using the arithmetic-check command above, adding
+`-DFORZA_CPU_TARGET=<target>` and selecting `clang++` or `g++`.
+Compile-command checks confirm guest-only optimization flags and baseline host
+and reference flags. Disassembly contains no AVX/FMA instructions in the guard;
+enabled executables contain the preinitialization section.
+
+GDB fault injection after `__builtin_cpu_init` individually clears the detected
+AVX, FMA, SSE4.2 or POPCNT feature. Each run prints the rebuild instruction and
+exits with status 1 before either guest math or an `LD_PRELOAD` test library's
+constructor executes. The supported-host control reaches that constructor and
+passes arithmetic. This simulates missing features; it is not a test of an
+actual unsupported CPU/OS. The production V3 feature checker also passes its
+synthetic missing-CPUID/XCR0 tests.
+
+No full game build, game/GPU benchmark, BC-250 execution, driving or audio
+validation was performed in this integration pass. Earlier game-build and
+synthetic timing evidence above is historical and is not an FPS prediction.
 
 ## Next experiments, in order
 

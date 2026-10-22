@@ -13,8 +13,8 @@ function(forza_configure_guest_fma host)
         message(FATAL_ERROR "FORZA_GUEST_FMA requires the SDK's separate generated-code target")
     endif()
     # Includes each target's PCH. Do not put these flags on the host or SDK:
-    # the host's early ELF constructor runs the CPU/OS guard before generated
-    # static initializers or guest functions can execute.
+    # the host's ELF preinitializer runs the CPU/OS guard before SDK shared
+    # library initializers or generated guest functions can execute.
     foreach(guest ${host}_recomp ${host}_XMediaFacade_default ${host}_SpeechFacade_default)
         if(TARGET ${guest})
             target_compile_options(${guest} PRIVATE -mfma -ffp-contract=off)

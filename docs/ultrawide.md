@@ -6,7 +6,7 @@ viewport query supplies both projection and culling, so the newly visible sides
 do not rely on stretching the original camera or cropping its vertical view.
 The feature is off by default and does not load external libraries or manifests.
 
-Gameplay draws at the initial physical window resolution. At 3440x1440, the
+Gameplay draws at the initial physical window width. At 3440x1440, the
 main-view viewport and output image are 3440x1440; presentation is 1:1. Viewport
 coordinates, screen-resolve sampling and generated pixel positions account for
 the active dimensions. The tiled EDRAM/resolve storage retains an integer stride
@@ -18,18 +18,36 @@ resolve is uploaded through a 2D array and filtered into 512x512 cube faces,
 including the loaded mip levels. A rectangular image is never exposed as a cube
 view. Layout barriers and cache memory accounting cover both images.
 
-Native ultrawide currently supports physical heights divisible by 720, including
-720, 1440 and 2160. **2560x1080 and other fractional vertical scales are not
-supported.** At those sizes the host leaves native flags unset, disables camera
-widening and logs the reason, retaining ordinary 16:9 rendering instead of the
-broken banded output. This restriction is checked before changing the renderer
-scales; HUD safe-area customization remains available separately. A fractional
-vertical resolve fix is still needed before 1080-line ultrawide can be enabled.
+**2560x1080 and other fractional window heights are supported through vertical
+supersampling.** The drawing height rounds up to the next multiple of 720, then
+the presenter filters the complete image to the physical window. At 2560x1080,
+drawing and storage are 2560x1440; the output window is 2560x1080. This draws 33%
+more pixels than native 1080p (not a measured frame-time increase). At 3440x1440,
+drawing remains 3440x1440 with a padded 3840-pixel storage stride.
+
+Camera framing and HUD proportions use the physical window aspect, including
+when drawing has a different aspect. Shrinking the raster viewport vertically
+without remapping EDRAM tile origins and resolve rows produced bands. This path
+keeps those rows at their original integer scale; it does not implement native
+fractional-height resolves. Supported physical bounds are 1–8960 pixels wide
+and 1–5040 pixels high, subject to the host's window limits.
 
 Native ultrawide currently requires Vulkan host render targets. The launcher
 selects Vulkan and disables manual render scaling while it is enabled. Windows
 DPI scaling is included: 2752x1152 logical pixels at 125% gives 3440x1440 physical
 pixels. Resizing updates framing; restart to change the drawing resolution.
+The resolution preset sets a guest/window default, not the borderless monitor's
+physical size. Enable Ultrawide gameplay and restart at the desired window size.
+Use Game MSAA without DLSS/FSR 3 or separate scene AA for this rendering path.
+
+The in-game graphics page shows the physical window size and automatic
+drawing size in ultrawide. Output, reconstruction, AA, scene scale and quality
+presets are read-only in that mode; frame pacing, filtering and HUD controls
+remain available. Saving those controls does not overwrite launcher rendering
+settings. Ordinary default/720p and custom launcher resolutions also display
+their actual current mode rather than falling through to the first 1080p choice.
+On Windows, live rendering changes at those modes require choosing a supported
+1080p/1440p/4K output, or using the launcher and restarting.
 
 ## HUD controls
 
@@ -57,6 +75,25 @@ dumps used the padded storage aspect and could make text and gauges look
 squashed. Native-mode output dumps now have the active 3440x1440 dimensions.
 
 ## Validation and current limits
+
+1080-line support and menu validation (2026-10-21): a full TU4 Windows host build
+from main `425dfa2` plus these host/launcher changes ran on an RTX 5060 Ti,
+driver 617.14, with the existing public SDK stack. Offline runs used copied
+saves. Logs confirmed physical 2560x1080 output with 2560x1440 drawing, and
+3440x1440 output/drawing. A private negative-control host, differing in using
+1080 drawing rows, reproduced two broad horizontal bands; the integer-height
+backing removed them. Camera framing and proportional HUD were checked in the
+scaled gameplay captures. A 125% DPI run also exercised 3200x1350 output with
+3200x1440 drawing.
+
+The real native graphics page showed the ultrawide window/drawing sizes and
+the ordinary 1280x720 current mode. Saving in ultrawide omitted rendering
+settings, including after changing the performance overlay to FPS; saving at
+ordinary 720p preserved that output. Both standalone C++
+tests (`ultrawide_math_test.cpp`, `graphics_resolution_test.cpp`), 34 targeted
+launcher/UI tests, and a disc/base-game graphics-menu compilation passed. AMD
+hardware, Linux runtime, combined DLSS/FSR 3 and fractional ultrawide, and native
+1080-line raster efficiency were not validated by this test.
 
 The native-resolution path was built from this PR's public SDK patch series,
 without DLSS, and tested on Windows/Vulkan with an RTX 5060 Ti. An isolated
