@@ -6,6 +6,12 @@ both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
+The **Designs & vinyls** page browses local `LivCatalog` / `LivGroups` save packages
+and extracted folders. It shows saved previews and creator details, exports archival
+copies, and imports selected FH1 package designs into an existing local profile after
+backing up its catalog. Apply the imported design to a matching car in-game. See
+[UGC preservation](ugc-preservation.md) for the workflow and recovery findings.
+
 Discord status sharing is available under **Settings > Online > Discord** (off by
 default). See [Discord Rich Presence](discord.md) for the one-time public application
 ID setup, supported activities, privacy and local IPC tests.
