@@ -296,6 +296,15 @@ class RemapTests(unittest.TestCase):
         self.assertEqual(b.source_text(b.Source("rt", threshold=0.3)), "RT past 30%")
         self.assertEqual(b.source_text(b.NONE), "Not bound")
 
+    def test_reset_last_binding_shadows_same_model_profile(self):
+        text = f"{XBOX}:rt=a;{XBOX_BT}:rt=b;{DS}:a=b"
+        text = b.set_controller_binding(text, XBOX_BT, CA["rt"], "default")
+        self.assertEqual(b.controller_rules(text, XBOX_BT), {})
+        self.assertEqual(b.controller_rules(text, XBOX), {"rt": b.Source("a")})
+        self.assertEqual(b.controller_rules(text, DS), {"a": b.Source("b")})
+        self.assertIn(f"{XBOX_BT}:", text)
+        self.assertEqual(b.format_remap(b.parse_remap(text)), text)
+
     def test_detect_on_the_mapped_pad(self):
         base = b.Snapshot(pad_buttons=frozenset({"a"}), pad_axes=(0, 0, 0, 0, 0, 0))
 
@@ -580,6 +589,31 @@ class ControllerEditorTests(unittest.TestCase):
 
     def view_names(self):
         return list(self.ed.view.names.values())
+
+    def test_reset_all_shadows_fallbacks_without_changing_other_profiles(self):
+        from dataclasses import replace
+        self.ed.device = replace(self.ed.device, guid=XBOX_BT)
+        for profiles in (f"{XBOX}:rt=a;{XBOX_BT}:rt=b", f"{XBOX}:rt=a",
+                         f"*:rt=a;{XBOX_BT}:rt=b", "*:rt=a"):
+            with self.subTest(profiles=profiles):
+                text = f"{profiles};{DS}:a=b"
+                self.cfg.settings["controller_remap"] = text
+                others = {k: rules for k, rules in b.parse_remap(text).items() if k != XBOX_BT}
+                self.ed.reset_everything()
+                result = self.cfg.settings["controller_remap"]
+                self.assertEqual(b.controller_rules(result, XBOX_BT), {})
+                for key, rules in others.items():
+                    self.assertEqual(b.parse_remap(result)[key], rules)
+                self.assertEqual(b.controller_rules(result, DS), {"a": b.Source("b")})
+                self.assertEqual(self.row("rt").value.text(), "RT (default)")
+
+    def test_reset_last_row_shadows_same_model_profile(self):
+        from dataclasses import replace
+        self.ed.device = replace(self.ed.device, guid=XBOX_BT)
+        self.cfg.settings["controller_remap"] = f"{XBOX}:rt=a;{XBOX_BT}:rt=b"
+        self.ed.reset(self.row("rt"))
+        self.assertEqual(self.ed.rules(), {})
+        self.assertEqual(self.row("rt").value.text(), "RT (default)")
 
 
 if __name__ == "__main__":
