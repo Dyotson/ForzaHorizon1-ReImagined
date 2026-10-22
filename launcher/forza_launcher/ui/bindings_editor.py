@@ -654,12 +654,9 @@ class BindingsEditor(QWidget):
         if self.kind() == "controller":
             text = self.settings().get("controller_remap", "")
             profiles = bindings.parse_remap(text)
-            key = bindings.profile_key(profiles, self.device.guid)
-            if key and key != "*":
-                del profiles[key]
-            elif key == "*":
-                profiles[self.device.guid.lower()] = {}  # an empty profile of its own shadows '*'
-
+            # Removing a profile would reactivate its model or '*' fallback. An empty own
+            # profile restores defaults while keeping the other saved profiles intact.
+            profiles[self.device.guid.lower()] = {}
             self.apply({"controller_remap": bindings.format_remap(profiles)})
         else:
             self.apply({"wheel_axes": "", "wheel_buttons": "", "wheel_shifter_buttons": ""})

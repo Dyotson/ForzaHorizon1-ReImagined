@@ -348,9 +348,11 @@ def parse_remap(text):
 
 
 def format_remap(profiles):
-    """'*' comes last. A profile without rules is left out unless it keeps a controller off '*'."""
+    """'*' comes last. Keep empty profiles that block a same-model or '*' fallback."""
     keys = sorted(k for k in profiles if k != "*") + (["*"] if "*" in profiles else [])
-    keep = [k for k in keys if profiles[k] or (k != "*" and profiles.get("*"))]
+    mapped_models = {guid_model(k) for k in keys if k != "*" and profiles[k]} - {None}
+    keep = [k for k in keys if profiles[k] or
+            (k != "*" and (profiles.get("*") or guid_model(k) in mapped_models))]
     return ";".join(f"{k}:{format_rules(profiles[k])}" for k in keep)
 
 

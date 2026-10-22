@@ -426,6 +426,11 @@ add("vulkan_store_pipeline_cache", "Keep compiled Vulkan pipelines", "Advanced",
     "cache and Vulkan. New scenes may still compile shaders; driver changes rebuild the cache.", "GPU", restart=True)
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,
     "", "GPU")
+add("gpu_wait_blocking", "Sleep while waiting for the GPU (testing)", "Advanced", "bool", False,
+    "The render thread sleeps until the GPU is done instead of keeping a CPU core busy, which "
+    "leaves more CPU and power to the game on laptops. On by default on Linux; not tested on "
+    "Windows yet: turn it on to try it, and report any freeze (GitHub issue #45).", "GPU",
+    platform="windows", restart=True)
 add("present_safe_area_x", "Safe area width %", "Advanced", "int", 90, "", "GPU",
     lo=0, hi=100)
 add("present_safe_area_y", "Safe area height %", "Advanced", "int", 90, "", "GPU",

@@ -1,0 +1,106 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -35,6 +35,35 @@
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/user_module.h>
+ 
++#if REX_PLATFORM_LINUX
++#include <linux/futex.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++#include <climits>
++#elif REX_PLATFORM_WIN32
++// synchapi.h, declared here to keep windows.h's macros out of this file.
++extern "C" __declspec(dllimport) void __stdcall WakeByAddressAll(void* address);
++#pragma comment(lib, "synchronization.lib")
++#endif
++
++namespace {
++
++// Wakes the threads blocked on a guest word the command processor just wrote. The CPU's waits
++// for the GPU poll such words (fences, the scratch register and read pointer write-backs); a
++// game can block on the word until it changes instead (Forza's src/hooks/gpu_wait.cpp). The
++// address is the word's host address in the physical view (TranslatePhysical), as here.
++inline void WakeWordWaiters(void* host_address) {
++#if REX_PLATFORM_LINUX
++  syscall(SYS_futex, host_address, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, nullptr, 0);
++#elif REX_PLATFORM_WIN32
++  WakeByAddressAll(host_address);
++#else
++  (void)host_address;
++#endif
++}
++
++}  // namespace
++
+ REXCVAR_DEFINE_BOOL(vsync, true, "GPU", "Enable vertical sync");
+ 
+ // Off as in Xenia, where it is a fix for Team Ninja games (missing character models). On, every
+@@ -280,8 +309,9 @@
+     // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
+     //     that many indices.
+     if (read_ptr_writeback_ptr_) {
+-      memory::store_and_swap<uint32_t>(memory_->TranslatePhysical(read_ptr_writeback_ptr_),
+-                                       read_ptr_index_);
++      auto* writeback = memory_->TranslatePhysical(read_ptr_writeback_ptr_);
++      memory::store_and_swap<uint32_t>(writeback, read_ptr_index_);
++      WakeWordWaiters(writeback);
+     }
+ 
+     // FIXME: We're supposed to process the WAIT_UNTIL register at this point,
+@@ -423,7 +453,9 @@
+       // Enabled - write to address.
+       uint32_t scratch_addr = regs.values[XE_GPU_REG_SCRATCH_ADDR];
+       uint32_t mem_addr = scratch_addr + (scratch_reg * 4);
+-      memory::store_and_swap<uint32_t>(memory_->TranslatePhysical(mem_addr), value);
++      auto* host = memory_->TranslatePhysical(mem_addr);
++      memory::store_and_swap<uint32_t>(host, value);
++      WakeWordWaiters(host);
+     }
+   } else {
+     switch (index) {
+@@ -1160,7 +1192,9 @@
+   auto endianness = static_cast<xenos::Endian>(mem_addr & 0x3);
+   mem_addr &= ~0x3;
+   reg_val = GpuSwap(reg_val, endianness);
+-  memory::store(memory_->TranslatePhysical(mem_addr), reg_val);
++  auto* host = memory_->TranslatePhysical(mem_addr);
++  memory::store(host, reg_val);
++  WakeWordWaiters(host);
+ 
+   return true;
+ }
+@@ -1174,7 +1208,9 @@
+     auto endianness = static_cast<xenos::Endian>(write_addr & 0x3);
+     auto addr = write_addr & ~0x3;
+     write_data = GpuSwap(write_data, endianness);
+-    memory::store(memory_->TranslatePhysical(addr), write_data);
++    auto* host = memory_->TranslatePhysical(addr);
++    memory::store(host, write_data);
++    WakeWordWaiters(host);
+     write_addr += 4;
+   }
+ 
+@@ -1235,7 +1271,9 @@
+       auto endianness = static_cast<xenos::Endian>(write_reg_addr & 0x3);
+       write_reg_addr &= ~0x3;
+       write_data = GpuSwap(write_data, endianness);
+-      memory::store(memory_->TranslatePhysical(write_reg_addr), write_data);
++      auto* host = memory_->TranslatePhysical(write_reg_addr);
++      memory::store(host, write_data);
++      WakeWordWaiters(host);
+     } else {
+       // Register.
+       WriteRegister(write_reg_addr, write_data);
+@@ -1280,7 +1318,9 @@
+   auto endianness = static_cast<xenos::Endian>(address & 0x3);
+   address &= ~0x3;
+   data_value = GpuSwap(data_value, endianness);
+-  memory::store(memory_->TranslatePhysical(address), data_value);
++  auto* host = memory_->TranslatePhysical(address);
++  memory::store(host, data_value);
++  WakeWordWaiters(host);
+   return true;
+ }
+ 
