@@ -518,13 +518,16 @@ class Friends:
             if len(q) >= 2 or len(found) < MAX_RESULTS:
                 for k, p in self.store.players.items():
                     x = int(k, 16)
-                    if p["name"] and q in p["name"].lower() and x != peer.xuid:
-                        found.setdefault(x, (p["name"], 0))
+                    # Stored names can predate the ASCII rule: match and send the cleaned one.
+                    name = self.store.name(x) if p["name"] else ""
+                    if name and q in name.lower() and x != peer.xuid:
+                        found.setdefault(x, (name, 0))
         rows = sorted(found.items(), key=lambda kv: (kv[1][0].lower() != q, -kv[1][1],
                                                      kv[1][0].lower()))[:MAX_RESULTS]
         body = struct.pack(">BHB", R_RESULTS, request, len(rows))
         for x, (name, online) in rows:
-            body += struct.pack(">QBB", x, online, self.store.relation(peer.xuid, x)) + text8(name)
+            body += struct.pack(">QBB", x, online, self.store.relation(peer.xuid, x)) + text8(
+                limits.clean_gamertag(name, x))
         self.server.send(peer.addr, KIND, body)
 
     def status(self):
