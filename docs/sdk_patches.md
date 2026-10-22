@@ -31,6 +31,7 @@ project's alone):
 | 0101 | Racing wheels: the game's force feedback (#219) | The kernel's `XInputdFF*` exports (0x282-0x289, stubs before) play on the wheel driver's SDL haptics: `SetEffect`/`UpdateEffect` define effect blocks (constant force, spring, damper, inertia, friction), `EffectOperation` starts and stops them, `DeviceControl` stops, resets, pauses them or turns the actuators off, `SetRumble` drives the vibration, `GetDeviceInfo` reports 16 effects; scaled by `wheel_ffb_strength`, off with `wheel_ffb`, the steering force reversed with `wheel_ffb_reverse`. A spring on a wheel without a spring effect (Linux G25/G27/G29 driver) becomes its self-centring, taken from all the effect blocks so it drops to 0 when the spring stops, is reset or becomes another type. `XamInputGetUserVibrationLevel` answers 1 (0 with `vibration` off). `wheel_steer_offset` applies only with `wheel_900_steering` off. The G29/G923 map puts the paddles on the bumpers (`rb=4,lb=5`, circle B, square X). Effect decoding and state: `include/rex/input/wheel/wheel_ff.h`, buttons: `wheel_buttons.h` (no SDL; `forza-recomp/tests/wheel_ff_test.cpp`, `wheel_buttons_test.cpp`); `wheel_ff_probe.cpp` drives the driver with SDL on a uinput wheel (Linux) | Once the game recognises a wheel (the capabilities fix in `input_autopress.cpp`) it looks these exports up at run time (`XexGetProcedureAddress`, so they are not in the import table; `sub_831CD7F8` and its wrappers) and sends all its wheel forces through them (`sub_82CBB2D8`, `sub_82CB76B8`, `sub_82CBB790`, tuned by `media/ControllerFFB.ini`): stubs made the wheel go silent. The game's wheel layouts shift with the bumpers, and full-range steering has no inner deadzone for the offset to cancel: it only made the car twitch around the centre. [Playing](playing.md#racing-wheels-issue-4) |
 | 0103 | Audio output (runtime) | The SDL audio system creates a `FallbackAudioDriver` (private, `src/audio/sdl/`; `sdl_audio_driver.h` is unchanged). It asks for the default output with 48 kHz float 5.1 (as before), then the device's own format (`SDL_GetAudioDeviceFormat`: its own rate, so WASAPI initializes the shared stream with the mix format as it is instead of with automatic conversion), then 48 kHz float stereo and 16-bit stereo; each refusal is logged with SDL's reason, and the device's format once. The game's frames always enter the stream as 48 kHz float, 5.1 or stereo (`SDL_SetAudioStreamFormat`, in place of the close and reopen for a stereo device). After 0.5 s it asks once more. When nothing opens it logs `No audio output could be opened (<reason>); the game runs without sound.` and a silent output takes the device's place: a thread pulls the driver's unbound stream 1024 sample frames every 21.3 ms of the steady clock, so the same callback takes the game's frames and releases the client semaphore at 48 kHz, and every 5 s it asks for the device again (the device then takes over the frame queue). Without any SDL audio driver it runs silent without asking again. `REX_AUDIO_FAIL_OPEN=N` (or `all`) refuses the first N attempts, for tests | A device Windows refused to open (#244: `WASAPI can't initialize audio client`) failed `XAudioRegisterRenderDriverClient`, and the game stopped in `KeBugCheckEx` (exit 0x80000003): a device another program holds in exclusive mode, or a format WASAPI refuses with automatic conversion. Linux, forced refusals: boots to the menu, free roam and a race at 60 fps as with the device, 187.5 audio frames a second, the silent thread 0.03 % of a core; with the device unchanged. `forza-recomp/tests/overlay-sdk/audio_output_fallback_test.cpp` |
 | 0104 | Vulkan device loss and presentation stalls: diagnostics (#221) | A `VK_ERROR_DEVICE_LOST` from the command processor's submission fence check is logged with the submission and frame, and the device-loss handler logs `Graphics device lost` at critical level before it stops the game (both went only to the abort, whose message reached stderr alone). `vkAcquireNextImageKHR` and `vkQueuePresentKHR` calls that block for 1 s or more, command-processor waits of 2 s or more for the GPU, and window focus, minimise and restore changes are logged. `FORZA_TEST_GPU_LOSS_AT_FRAME=<n>` reports a device loss from frame n on, to test that path | #221 aborted with nothing about it in forza.log. The stack shows the NVIDIA driver reporting the device lost to the fence check at the start of a frame, under a second after a 5.6 to 6.5 s stall with the game in the background (twice); a lost Vulkan device can't be used again, and the SDK can't create a new one. The next report shows whether presentation or the GPU stalled, and when focus changed |
+| 0105 | XMA decoder: unreadable input and locked contexts (#228) | `XmaContext::Work` checks again under the context's lock that the context is still allocated and enabled, and `Release` drops a kick not yet worked. An input buffer marked valid with no address, no packets or packets past the end of guest physical memory, or a read offset past its last packet, is dropped as consumed. A frame size shorter than the 15-bit frame header, or longer than the two packets the decoder copies, skips to the first frame of the next packet. Each of these is logged once. A decode pass that reads no input and writes no output ends the loop. `BitStream::Copy` copies fewer bits than are left in the first byte without wrapping around, and never copies past the end of the stream. `tools/test_xma_invalid_input.cpp` (Linux SDK CI job) | The game crashed during the opening drive with "read fault at host 0x0" in `memcpy` under `BitStream::Copy` and `XmaContext::Decode`. FFmpeg had just rejected a frame ("would have to skip"), so the read offset was off the frames. The next frame size read can only have been under 8 bits: `Copy`'s unsigned bit count wrapped around, and `memcpy` got 2^61 bytes. The other cases made `Work` loop forever on the game thread that kicked the context, or read past guest memory. The check under the lock closes a race: a `Work` that saw the context enabled, then waited for its lock while the game locked it (`Disable`, then `Block` until the lock is free), decoded it while the game rewrote it, and wrote stale read offsets over the game's. [Details](#xma-decoder-crash-228) |
 
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
@@ -323,3 +324,65 @@ individual-pixel mapping in 0046/0085, retaining whole-word loads where safe and
 the `fh1_fast_resolve_copy` diagnostic switch. Both paths pass the standalone
 Vulkan reference matrix, including transfers to/from 3x. See
 [cross-scale minimap corruption](rendering.md#cross-scale-minimap-corruption-at-3x).
+
+### XMA decoder crash (#228)
+
+The reporter's game stopped during the opening drive with "Unhandled read fault at host 0x0"
+in libc's `memcpy`, called from `BitStream::Copy` in `XmaContext::Decode` (Arch Linux; it
+did not happen again on a second try). It was not a null input buffer. `Copy` reads from the
+decoder's own two-packet copy of the input, and `TranslatePhysical` cannot return null: all
+512 MB of guest physical memory is mapped. The reporter's libc (Arch's glibc 2.44 package of
+27 September, whose signal return is at +0x3E6F0 as in their stack) faults at +0x17658C, on
+`vmovdqu -0x20(%rsi,%rdx,1)` in `__memmove_avx_unaligned_erms`. That instruction loads the
+last 32 bytes of the source, after the loads from its start have succeeded. With a length
+near 2^64 the address is not canonical, and Linux reports that kind of fault (a general
+protection fault) at address 0.
+
+`Copy` makes such a length when it is asked for fewer bits than are left in the first byte:
+`bits_left -= 8 - rel_offset_bits` wraps around, and `bits_left / 8` is 0x1FFFFFFFFFFFFFFF.
+`Decode` passed the frame size from the bitstream through unchecked, so a frame size of 1 to
+7 bits at an odd bit offset crashes. Real frames are far longer. In the reporter's log,
+FFmpeg rejects a frame ("would have to skip") in the same millisecond, on the same thread, so
+the read offset was no longer at a frame start.
+
+What moved the read offset off the frames is not certain. The likeliest cause found is a race
+in `Work`, which checked `is_enabled()` before taking the context's lock and not after. The
+game locks a context before it rewrites it: the lock register calls `Disable`, then `Block`
+waits until no `Work` holds the lock. A `Work` that was already waiting for the lock got past
+`Block`, then decoded the context while the game rewrote it, and wrote its stale read offset
+and current buffer over the game's. The race is frequent in this game, where three threads
+lock contexts and at least two of them kick contexts too. A diagnostic build counted this
+check catching more than 512 `Work` calls in the first four minutes of the opening drive. Of
+the first 20, 12 were on the decoder's worker thread and 8 in a kick's own `Work` on a game
+thread: in between, another thread had locked the context or the worker had done the kick's
+work. Unpatched, each of them decoded the context anyway.
+
+`tools/test_xma_invalid_input.cpp` runs `XmaContext::Work` on guest memory of its own. With a
+thread polling `Work` as `XmaDecoder`'s worker does, the unpatched runtime wrote a context the
+test had locked 7, 44 and 504 times in three runs of 20,000 lock cycles. Patched, it never
+did. The test also feeds `Work` input it cannot read: a buffer marked valid with address 0,
+with no packets, or with packets past the end of guest physical memory; a read offset past
+the buffer's end; frame sizes of 1, 3, 6 and 14 bits; and a frame longer than two packets.
+Unpatched, the 1-bit frame faults in `memcpy` with a length of 0x1FFFFFFFFFFFFFFF, the
+reporter's crash. No packets, or a read offset past the end, make `Work` loop forever on the
+kicking thread, logging "Invalid packet index" millions of times. Packets past physical
+memory fault in `memcpy` too. Patched, each one is dropped or skipped with one warning, and
+nothing is decoded from it.
+
+Game runs on Linux (AMD, RADV), Title Update 4, offline, with scratch profiles and
+`SDL_AUDIO_DRIVER=dummy`. The private runtime was the SDK build of main's patch set without
+0101 (wheel force feedback), plus 0105 and #252's 0103. The SDK's SDL has no dummy driver,
+and without 0103 the game stops at start when no audio output opens.
+- The opening drive on a fresh profile: title screen, video calibration, main menu, the
+  festival video, the Viper cinematic, then 2 minutes at full throttle. There was no fault,
+  no decoder warning and no FFmpeg error. The warnings matched an unpatched run of the same
+  script, apart from an ambient sound bank of the place where the car ended up. The game
+  thread that kicks and locks the XMA contexts used 5.0% of a core during the video and the
+  cinematic, patched and unpatched; 14.2% and 13.0% during the drive, which took different
+  routes.
+- Free roam on the user's copied save, 3 minutes of driving: no fault and no decoder
+  warning.
+
+The unpatched run did not crash either, and the crash was not reproduced in the game: it
+needs a stale decode to leave the read offset on a frame size under 8 bits. Reporter retesting
+remains necessary.
