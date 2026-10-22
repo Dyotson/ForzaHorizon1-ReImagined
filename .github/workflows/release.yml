@@ -57,6 +57,11 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -I forza-recomp/src/kernel forza-recomp/tests/gamertag_text_test.cpp -o "$RUNNER_TEMP/gamertag-test"
           "$RUNNER_TEMP/gamertag-test"
+      - if: runner.os == 'Linux'
+        name: Speed trap leaderboard placing
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/ambient_leaderboard_test.cpp -o "$RUNNER_TEMP/ambient-leaderboard-test"
+          "$RUNNER_TEMP/ambient-leaderboard-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.

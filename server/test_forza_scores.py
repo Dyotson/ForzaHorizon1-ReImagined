@@ -204,6 +204,30 @@ class BoardsTest(unittest.TestCase):
         finally:
             scores.MAX_BOARDS = old
 
+    def test_speed_trap_position_within_rows(self):
+        # #288: ranked 713th with the top 200 sent, the game read row 711 of its 200 and
+        # crashed. At a trap (view 5) the position stays within the rows sent (+1); the rank,
+        # the map's leaderboard (view 2) and the other types keep the real place.
+        for i in range(250):
+            self.submit(0x0009000000100000 + i, scores.SPEED_TRAP, 230, 90.0 - 0.1 * i)
+        self.submit(A_XUID, scores.SPEED_TRAP, 230, 10.0)                  # 252nd
+        self.submit(B_XUID, scores.SPEED_TRAP, 230, 80.05)                 # 101st
+        for i in range(250):
+            self.submit(0x0009000000100000 + i, scores.EVENT_TIME, 199, 100.0 + i, ex=True)
+        self.submit(A_XUID, scores.EVENT_TIME, 199, 500.0, ex=True)
+        got, r = self.rows(A_XUID, scores.SPEED_TRAP, 230)
+        self.assertEqual(len(got), 200)
+        self.assertEqual((r["userRow"]["position"], r["userRow"]["rank"]), (201, 252))
+        self.assertEqual((r["available"], r["totalRowCount"]), (252, 252))
+        _, r = self.rows(B_XUID, scores.SPEED_TRAP, 230)
+        self.assertEqual((r["userRow"]["position"], r["userRow"]["rank"]), (101, 101))
+        _, r = self.rows(C_XUID, scores.SPEED_TRAP, 230)                  # no score: no row
+        self.assertEqual(r["userRow"]["position"], 0)
+        _, r = self.rows(A_XUID, scores.SPEED_TRAP, 230, view=2)
+        self.assertEqual((r["userRow"]["position"], r["userRow"]["rank"]), (252, 252))
+        _, r = self.rows(A_XUID, scores.EVENT_TIME, 199)
+        self.assertEqual(r["userRow"]["position"], 251)
+
     def test_club_board(self):
         import forza_clubs
         self.submit(A_XUID, scores.SPEED_TRAP, 230, 45.0)
