@@ -86,5 +86,16 @@ class StaleLogTests(unittest.TestCase):
         self.assertEqual(self.run_game("flag", True), shader_prebuild.UNKNOWN_FLAG)
 
 
+class PrebuildLogLevelTests(unittest.TestCase):
+    def test_prebuild_always_logs_at_info(self):
+        # #295: with Log level "warning" the done line was never written, so a finished
+        # prebuild was reported as "The game stopped before the prebuild finished".
+        from types import SimpleNamespace
+        plan = SimpleNamespace(argv=["forza", "--log_level=warning", "--user_data_root=/x"])
+        cmd = shader_prebuild.prebuild_command(plan)
+        self.assertNotIn("--log_level=warning", cmd)
+        self.assertEqual(cmd[-2:], ["--log_level=info", "--shader_prebuild_only=true"])
+        self.assertIn("--user_data_root=/x", cmd)
+
 if __name__ == "__main__":
     unittest.main()

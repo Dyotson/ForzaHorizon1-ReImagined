@@ -231,7 +231,12 @@ def write_files(cfg, game, plan, status_cb=None, cancelled=None) -> dict:
 
 
 def prebuild_command(plan) -> list:
-    return list(plan.argv) + ["--shader_prebuild_only=true"]
+    """The game in prebuild-only mode. The run is judged by its SHADER_WARMUP progress lines and
+    the SHADER_PREBUILD done line, which the game logs at info level: a player's lower log level
+    (Advanced > Log level, forza.toml) would hide them and turn a finished prebuild into a
+    failure (#295), so this run always logs at info."""
+    args = [a for a in plan.argv if not (a == "--log_level" or a.startswith("--log_level="))]
+    return args + ["--log_level=info", "--shader_prebuild_only=true"]
 
 
 def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
