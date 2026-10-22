@@ -271,7 +271,8 @@ Fix (`src/hooks/frame_time.cpp`, "render sync"): the VdSwap hook counts the rend
 and keeps a moving average of their interval (about 16 swaps). While that interval is more than
 1.15 target frames and swaps keep coming (one in the last 100 ms), each main frame waits after its
 timestamp until the render thread has swapped since the previous main frame (a condition variable,
-at most 50 ms), so the game runs at the rate it draws. The timestamp is taken before the wait, so
+at most 50 ms), so the game runs at the rate it draws. The wait also ends when the render thread
+finds no main frame to draw (#187, below). The timestamp is taken before the wait, so
 dt still sums to real time; a late frame gets its real length as before. When the render thread
 keeps up, nothing waits (at 60: 0 waits, dt 16.667 ms on 100% of frames, as before). At 30 (the
 default) the hook does nothing. `FORZA_RENDER_SYNC=0` turns it off; the FRAMETIME line counts the
@@ -314,6 +315,48 @@ Left (not changed here):
   latest ready"); false keeps plain FIFO. The chosen mode is logged once ("VulkanPresenter:
   presentation mode ..." and the game's "present mode" line). Not measured on hardware yet: this
   RADV does not offer it (plain FIFO as before); an AMD Windows player is asked to test.
+
+### Stuck at about 18 fps until a restart (#187)
+
+Report (Windows, RTX 4060 laptop, 2560x1440 with a render scale above 1): free roam at 60.3 fps,
+then a garage (outpost) in South Beaumont; from then on 16.6-23.5 fps in the garage and a steady
+18.2 fps (every `FORZA_FPSLOG` line for minutes) back in free roam, after a fast travel to another
+garage and back too. Only a restart helped.
+
+Cause: render sync waited for swaps that could not come. The render thread's loop (`sub_8259F3E8`,
+called over and over by the thread at `sub_825A6208`) takes the oldest main frame it has not taken
+and draws it, or skips it without drawing (no swap), or finds none and sleeps 0 ms; the render
+object's +0x948 counts the frames it took. It skips a frame when two are queued, and, in its usual
+mode (+0xCB0 = 2) with `mainthread30fps` off, every second one. A main frame that waited for a swap
+after such a skip, or while the render thread had nothing to draw, ran into the 50 ms limit: the
+render thread was waiting for that main frame. The swaps then came every 50 ms plus a frame's work,
+so their average stayed far above the target and every later main frame waited too, in every
+scene. Nothing reset it.
+
+Reproduced on Linux by that route (TU4 build, 240, render scale 1, free roam at the spawn): with
+`FORZA_VBLANK_DIVIDER=1` (the hook turns `mainthread30fps` off) the main loop ran 34-36 frames a
+second, the render thread swapped 17-18 (every second main frame's wait timed out) and `FORZA_FPSLOG`
+showed a steady 17.2-17.3 fps; every wait forced to its 50 ms limit gave a steady 18.9 fps. With
+`FORZA_RENDER_SYNC=0` the same setup ran 120 fps (the game draws every second of 240 main frames).
+The garage alone did not reproduce it here (Horizon Outpost Montano Plains: fast travel, Change Car,
+Paint Shop, Garage and Custom Upgrade, leaving; 240 at render scale 1, 2 and 3, offline and online
+with a local server; 60 at scale 2): free roam after leaving ran as before (240, scale 1: 118 ->
+121-124 fps; scale 3: 36 -> 36; scale 2 online: 78.6 -> 81-84), and the few waits that timed out
+at the garage's entry (5 in a second at 60) stopped. What starts it on the reporter's machine (the
+garage scene, the Windows thread timing) is not known; #239 adds the timeout count to
+`FORZA_FRAMETIME_LOG` to check that it is this wait.
+
+Fix: a pass of the render loop that begins while a main frame waits and takes no frame ends the
+wait (hook of `sub_8259F3E8`, TU4 `sub_826164D0`). A pass that draws ends it with its swap as
+before; a skipped frame's pass takes a frame, and the next pass, finding none, ends the wait.
+
+| Run (TU4 build) | Before | After |
+| --- | --- | --- |
+| 240, scale 1, `FORZA_VBLANK_DIVIDER=1`, free roam | 17.2-17.3 fps, 34-36 main frames/s, half the waits time out | 119.3-120.0 fps, 240 main frames/s, 0 timed out |
+| 240, scale 2, outpost round trip (free roam before -> after) | 78.6 -> 81-84 fps (online, local server) | 79-83 -> 80-84 fps (offline), main loop = swaps |
+| 60, scale 2, outpost round trip | 60.0 -> 60.0 fps (5 timeouts at the entry) | 60.0 -> 60.0 fps (8 waits, 115 ms, at the entry) |
+| 30, scale 1, outpost round trip | | 30.0 -> 30.0 fps (render sync off at 30) |
+| 240, scale 2, race scenario: title / main menu / race intro / race | 142.7 / 154.3 / 89.0 / 76.2 fps | 142.9 / 154.2 / 88.9 / 75.7 fps; main loop 74-84 frames/s, 0 timed out |
 
 ## Garage and showroom camera timing (2026-10-17)
 
