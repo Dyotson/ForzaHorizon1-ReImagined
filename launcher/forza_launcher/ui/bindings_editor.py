@@ -497,9 +497,11 @@ class BindingsEditor(QWidget):
 
     def show_device(self):
         while self.table.count():
-            item = self.table.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = self.table.takeAt(0).widget()
+            if widget is not None:
+                widget.hide()  # gone now, not when the event loop gets to deleting it
+                widget.setParent(None)
+                widget.deleteLater()
         self.rows = []
         kind = self.kind()
         self.calibrate.setVisible(kind == "wheel")
