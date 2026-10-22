@@ -413,3 +413,19 @@ Runs with the patch on the same save (scratch profiles):
   editor; loading the WRX STI from Car Select reached 15.0 of 15.4 GB and trimmed 100 -> 12
   render targets (12.7 GB -> 1.4 GB), 5.1 GB after. A decal saved on the WRX then wrote a
   correct picture over the broken one from the player's save.
+
+0116 lets a controller be remapped (#279): `controller_remap` holds a profile per controller model
+(`GUID:target=source,...`), written by the launcher's Controls page, Bindings. Rules and matching are in
+`src/input/sdl/gamepad_remap.h` (no SDL; tested by `tools/test_gamepad_remap.cpp`: empty rules give the old
+mapping over 20,000 random pad states, each supported pair, the thresholds, rejected pairs and the profile
+matching). The launcher's parser (`launcher/forza_launcher/bindings.py`) accepts and drops the same rules:
+20,000 random rule strings gave the same result in both. The profile is found when the pad connects (the log
+says `SDL Controller remap (profile ...): ...`); from then on the pad's raw SDL state is kept and its XInput
+state rebuilt from it on every axis or button event, so the keystroke path (menus) sees the remapped buttons
+too. Pads without a profile take the old code path.
+
+Game run (Linux, TU4, offline, scratch save, headless gamescope, the private runtime with 0116): a virtual
+Xbox 360 pad (uinput, 045e:028e) bound in the launcher with A on Accelerate and Handbrake cleared
+(`<guid>:a=none,rt=a`). The game's SDL 3 reported the same GUID as the launcher's SDL 2 and used the profile.
+In free roam the pad's own RT held for 6 s left the car standing; A held for 8 s drove it off (75 on the
+speedometer). Not tested with a real pad yet.

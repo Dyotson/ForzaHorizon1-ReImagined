@@ -242,6 +242,40 @@ SDK patch 0040 (`docs/sdk_patches.md`) adds the stick ramp, the mouse speed mode
 modifier keys as bindings; without it `mnk_stick_ramp` does not exist and the mouse is
 about five times weaker.
 
+## Remapping a controller (#279)
+
+Any control of a controller can be put on another input: open **Controls** in the launcher, pick the
+controller under **Bindings**, press **Bind** on a row (Accelerate, Brake / reverse, Steer, Handbrake, the
+bumpers, the sticks, the d-pad, ...) and press the button, pull the trigger or move the stick you want for it.
+The live view above the rows shows what the controller sends. **Clear** unbinds a row, **Reset to default**
+gives it its own input back, and **Reset all to default** drops the controller's bindings. A line in orange
+lists inputs that two rows share: binding Accelerate to A leaves A on the handbrake too until that row is
+cleared or bound elsewhere. While a Bind waits for an input (10 seconds, Esc cancels), the launcher's own
+controller navigation ignores that controller.
+
+- A **button on a trigger** presses it fully (throttle on A); a **trigger or a stick direction on a trigger**
+  stays analog (throttle on the right stick pushed up); a **trigger or a stick direction on a button** presses
+  it past half way; a **stick on a stick** moves with it, inverted when you moved it the other way than asked
+  (Steer on the right stick, or the sticks swapped).
+- Bindings belong to the controller model (SDL's GUID: USB vendor and product), so a DualSense and an Xbox
+  pad each keep their own, over USB or Bluetooth. PlayStation pads show their own button names.
+- They apply the next time the game starts, through SDK patch 0116 (SDL input backend, the default; not
+  with the XInput backend). The game's log names the profile it used: `SDL Controller remap (profile ...)`.
+- Wheels have their own rows (below). Keyboard keys are set in Settings, Controls.
+
+The launcher stores them as `controller_remap` (Settings, Controls, Controller bindings), which can also be
+written by hand: profiles separated by `;`, each the controller's GUID (or `*` for every controller without
+its own) and `target=source` pairs, for example `*:rt=a,a=none` (throttle on A, nothing on the handbrake) or
+`*:lx=rx,ly=ry,rx=lx,ry=ly` (sticks swapped). Targets: `a b x y lb rb back start guide ls rs up down left
+right lt rt lx ly rx ry`. Sources: a button (those names plus `misc1`, `paddle1` to `paddle4`, `touchpad`) or
+`none`; `lt`, `rt`; a stick axis (`-lx` inverted) or one direction of it (`lx+` right, `lx-` left, `ly+` up,
+`ly-` down), with `@0.3` for how far it must move to press a button. Without a rule a control keeps its own
+input, and the Elite paddles press Y, B, X and A as before.
+
+Tested with a virtual Xbox 360 pad (Linux uinput) bound in the launcher: A on the throttle and the handbrake
+cleared; in the game the car accelerated while A was held, and the pad's own RT no longer did. Not tested
+with a real DualSense or Xbox pad yet: please report what works.
+
 ## Racing wheels (issue #4)
 
 Any wheel SDL sees as a joystick (Logitech, Thrustmaster, Fanatec, Moza, ...) is presented to the game as the
@@ -270,7 +304,37 @@ or `wheel_invert_brake`; `wheel_axes` and `wheel_buttons` still override the pro
 as described below. A pedal is also ignored until it has been seen at rest once, so a pedal that reads 0 for a
 moment when the game opens it (or is held down at start) no longer presses itself.
 
-Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
+**Setting a wheel up (#279).** Open **Controls** in the launcher and pick the wheel under **Bindings**. The live
+view shows its axes as bars and its buttons lighting up while pressed, by the numbers the game uses. Each game
+action has a row with its current input (and whether that is the default): **Bind** asks you to turn the wheel,
+press the pedal or press the button for it and takes the first input that moves (for an axis also its direction
+and where it rested: binding the steering to the right sets *Invert steering* if the axis went the other way,
+and a pedal's invert switch follows from where it rests), **Clear** unbinds it, **Reset to default** gives back
+the profile's or the detected input. Inputs that two rows share are listed in orange (a paddle on a shifter
+gear, for example: the shifter wins). Rows: steering, throttle, brake and clutch pedal; shift up and down (RB
+and LB, the paddles), clutch button (A), handbrake (B), Activate (X), Rewind (Y), camera (Back), pause
+(Start), the stick presses and the d-pad (the hat by default); gears 1 to 7, reverse and the sequential up and
+down of a shifter.
+
+**Calibrate wheel** goes through the rest: centre the wheel with the pedals released, turn it to full left and
+full right lock (the steering axis, its direction and how much of the axis it covers), turn it a quarter turn
+(the top of the rim pointing right: the axis spans the whole rotation, so 90 degrees reading 20 percent is a
+900 degree wheel; this sets *Wheel rotation* and lowers *Steering lock* to it if it was higher), then press each
+pedal fully (its axis, whether it is inverted, and a warning when it reaches only part of its axis, which no
+setting here can make up for: set the pedal's range in the wheel's own software). Throttle and brake on the two
+sides of one axis are taken as combined pedals. Any step but the first can be skipped. The last step has the
+**steering deadzone** as a slider, with a bar showing the steering the game would get as you turn the wheel.
+Apply writes the settings below; they take effect the next time the game starts.
+
+Tested with a virtual wheel of an unknown model (Linux uinput: 4 axes, 24 buttons, a hat): throttle, a paddle and
+a shifter gear bound by pressing them, then calibrated (steering axis 0, 900 degrees from the quarter turn,
+throttle, brake and clutch on axes 1 to 3). In the game (*Manual* shifting) the bound throttle pedal drove the
+car and the bound paddle shifted up from 1st to 3rd. Not tested with a real wheel yet: please report the model
+and whether the launcher's axis and button numbers match the game's (the log's `Wheel:` lines). The launcher
+reads devices with SDL 2 and the game with SDL 3; on Linux both gave the same numbers and GUIDs.
+
+The settings these write (Settings, Controls, Racing wheel; the keys are the `forza.toml` names) can still be
+edited by hand:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -281,7 +345,7 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
-| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
+| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
@@ -322,7 +386,8 @@ button.
   The Logitech Driving Force Shifter on a G29, G920 or G923 is built in, by the wheel's USB product id: gears 1
   to 6 are buttons 12 to 17 on all of them, reverse (pushed down) is 18 on a G29 or a G923 for PlayStation
   (046d:c24f, c266) and 11 on a G920 or a G923 for Xbox (c262, c26e): those wheels number reverse before the gears
-  (Logitech's and PCGamingWiki's button tables, and a G923 for Xbox owner, #256). Other shifters need
+  (Logitech's and PCGamingWiki's button tables, and a G923 for Xbox owner, #256). Other shifters: bind the
+  gears on the Controls page (Bindings, the Shifter rows: put the lever in each gear when asked), which writes
   `wheel_shifter_buttons`, e.g.
   `1=8,2=9,3=10,4=11,5=12,6=13,r=14`; up to 7 gears and reverse (the log prints the map: `Wheel: H-pattern
   shifter, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB shifters) is
@@ -353,7 +418,7 @@ gamepad whose right stick drifts can disturb the gear: unplug it while driving w
 Axis detection (wheels without a profile) reads where each axis rests when the wheel is plugged in: the one near
 the middle is the steering, those resting at an end are the pedals (throttle, brake, clutch in axis order).
 **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
-fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
+fixed with the invert switch or **Calibrate wheel**, a wrong axis with **Bind** (or `wheel_axes`). The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
 8 Back, 9 Start, 10 and 11 stick presses; the G29 and G923 for PlayStation map is
 `a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10` (cross, circle, square, triangle, right paddle, left
