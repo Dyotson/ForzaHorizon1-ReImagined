@@ -117,10 +117,18 @@
 #define __imp__sub_829F04A8 __imp__sub_82AAD418
 #define sub_82A6D7D8 sub_82B2A848
 #define __imp__sub_82A6D7D8 __imp__sub_82B2A848
+#define sub_82A6F2D8 sub_82B2C348
+#define __imp__sub_82A6F2D8 __imp__sub_82B2C348
 #define sub_82C76508 sub_82D37380
 #define __imp__sub_82C76508 __imp__sub_82D37380
 #define sub_82C8FE60 sub_82D50EA0
 #define __imp__sub_82C8FE60 __imp__sub_82D50EA0
+#define sub_82CBB348 sub_82D7CE38
+#define __imp__sub_82CBB348 __imp__sub_82D7CE38
+#define sub_82CC1DA0 sub_82D83820
+#define __imp__sub_82CC1DA0 __imp__sub_82D83820
+#define sub_82CC1ED8 sub_82D83958
+#define __imp__sub_82CC1ED8 __imp__sub_82D83958
 #define sub_82CDC5A0 sub_82D9E548
 #define __imp__sub_82CDC5A0 __imp__sub_82D9E548
 #define sub_82CF7278 sub_82DB8C18  // check
@@ -131,6 +139,8 @@
 #define __imp__sub_82DD9D58 __imp__sub_82E9C3B8
 #define sub_82DF7BB0 sub_82EB9DF0  // check
 #define __imp__sub_82DF7BB0 __imp__sub_82EB9DF0
+#define sub_82E5B7C8 sub_82F1D3F0
+#define __imp__sub_82E5B7C8 __imp__sub_82F1D3F0
 
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
@@ -156,6 +166,7 @@ constexpr uint32_t Tu4Address(uint32_t a) {
     case 0x8288DCD8: return 0x8293EEB0;  // code
     case 0x82893B20: return 0x82944EF8;  // code
     case 0x829A48F4: return 0x82A58E34;  // code
+    case 0x832AAC24: return 0x8339664C;  // data
     case 0x832DF00C: return 0x833CAACC;  // data
     case 0x832DF024: return 0x833CAAE4;  // data
     case 0x832E29A0: return 0x833D02E0;  // data
