@@ -26,8 +26,11 @@ def translate(document, current):
         if not isinstance(value, str):
             raise ValueError(f"invalid {key}")
         if key == "output":
-            if value not in {"1080p", "1440p", "4k"}:
+            if value not in {"720p", "1080p", "1440p", "4k"}:
                 raise ValueError("unsupported output resolution")
+            if value == "720p":
+                changes["resolution"] = value
+                continue  # Reconstruction output selectors start at 1080p.
             changes.update(resolution=value, fsr3_output_resolution=value)
             if "fh1_output_resolution" in schema.BY_KEY:
                 changes["fh1_output_resolution"] = value

@@ -74,8 +74,9 @@ add("video_driver", "Video driver", "Display", "choice", "",
 add("forza_ultrawide", "Ultrawide gameplay", "Display", "bool", False,
     "Follow the window's aspect ratio with a wider horizontal view. Menus and map stay 16:9. "
     "Renders at the physical window resolution with proportional HUD. Render scale is automatic. "
-    "Requires Vulkan, the patched SDK and a physical window height divisible by 720 (720/1440/2160). "
-    "1080-line windows use ordinary 16:9 rendering. Restart after resizing to change render resolution.",
+    "Requires Vulkan and the patched SDK. Fractional heights, including 1080, render at the next "
+    "720-line multiple and downsample to the window; this costs more GPU work than native 1080p. "
+    "Restart after resizing to change render resolution.",
     "Ultrawide and HUD", restart=True)
 add("forza_hud_edges", "Expand HUD to ultrawide edges", "Display", "bool", False,
     "Anchor side HUD elements toward the full window edges while keeping gauges and text proportional. "
@@ -99,7 +100,8 @@ add("forza_hud_offset_y", "HUD vertical position %", "Display", "float", 0.0,
 add("resolution", "Resolution preset", "Display", "combo", "",
     "Guest video mode and window size in one: 720p, 1080p, 1440p, 4k or WxH. Empty keeps the "
     "defaults (1280x720 guest). The game still draws at 1280x720; Render scale sets the "
-    "drawing resolution.", "Picture",
+    "drawing resolution. With Ultrawide gameplay, the physical window size controls drawing; "
+    "changing this preset does not change a borderless monitor's resolution.", "Picture",
     choices=[("", "Default"), ("720p", "720p"), ("1080p", "1080p"), ("1440p", "1440p"),
              ("4k", "4K")])
 add("resolution_scale", "Render scale", "Display", "int", 1,
