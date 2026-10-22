@@ -1,4 +1,5 @@
-"""The racing wheel's force feedback strengths (#256) match the SDK's cvars and sit with the others."""
+"""The racing wheel's force feedback strengths (#256) and rumble style (#273) match the SDK's cvars and
+sit with the others."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import re
@@ -11,18 +12,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from forza_launcher import schema
 from forza_launcher.config import Config, import_toml, render_toml
 
-PATCH = Path(__file__).resolve().parent.parent / "patches" / "rexglue-sdk" / "0101-wheel-game-force-feedback.patch"
+PATCHES = Path(__file__).resolve().parent.parent / "patches" / "rexglue-sdk"
+PATCH = PATCHES / "0101-wheel-game-force-feedback.patch"
+RUMBLE_PATCH = PATCHES / "0129-wheel-fine-rumble.patch"  # softer rumble defaults, the style
 KEYS = ("wheel_ffb_spring_strength", "wheel_rumble_engine_strength", "wheel_rumble_road_strength")
 
 
+def added(patch):
+    return "\n".join(line[1:] for line in patch.read_text().splitlines() if line.startswith("+"))
+
+
 def sdk_int_cvars():
-    """name -> (default, low, high) of the integer cvars patch 0101 adds."""
-    text = "\n".join(line[1:] for line in PATCH.read_text().splitlines() if line.startswith("+"))
+    """name -> (default, low, high) of the integer cvars patch 0101 adds, with the defaults patch
+    0129 changes."""
     found = {}
-    for m in re.finditer(r"REXCVAR_DEFINE_INT32\((\w+), (\d+),(.*?);", text, re.S):
+    for m in re.finditer(r"REXCVAR_DEFINE_INT32\((\w+), (\d+),(.*?);", added(PATCH), re.S):
         name, value, rest = m.groups()
         bounds = re.search(r"\.range\((\d+), (\d+)\)", rest)
         found[name] = (int(value), int(bounds.group(1)), int(bounds.group(2)))
+    for m in re.finditer(r"REXCVAR_DEFINE_INT32\((\w+), (\d+),", added(RUMBLE_PATCH)):
+        name, value = m.groups()
+        found[name] = (int(value),) + found[name][1:]
     return found
 
 
@@ -39,9 +49,19 @@ class WheelForceFeedbackSettings(unittest.TestCase):
                 self.assertIn(key, cvars)
                 setting = schema.BY_KEY[key]
                 default, lo, hi = cvars[key]
-                # 100 percent of the overall strength: the force feedback as before.
                 self.assertEqual((setting.default, setting.lo, setting.hi), (default, lo, hi))
-                self.assertEqual(default, 100)
+        # The centring as before; the engine and road rumble softer (#273).
+        self.assertEqual([cvars[k][0] for k in KEYS], [100, 50, 80])
+
+    def test_rumble_style_matches_the_sdk(self):
+        m = re.search(r'REXCVAR_DEFINE_STRING\(wheel_rumble_style, "(\w+)",.*?\.allowed\(\{([^}]*)\}\)',
+                      added(RUMBLE_PATCH), re.S)
+        setting = schema.BY_KEY["wheel_rumble_style"]
+        self.assertEqual(setting.default, m.group(1))
+        self.assertEqual(setting.default, "fine")
+        self.assertEqual(sorted(v for v, _ in setting.choices), sorted(re.findall(r'"(\w+)"', m.group(2))))
+        self.assertTrue(setting.restart)
+        self.assertEqual(setting.section, "Racing wheel")
 
     def test_strengths_follow_the_overall_strength(self):
         keys = [s.key for s in schema.for_group("Controls")]

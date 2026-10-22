@@ -303,13 +303,20 @@ add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100
     "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
     "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 50,
     "The vibration from the game's engine motor (its right motor), 0 to 100 percent of the force "
-    "feedback strength. Lower it if the engine near the redline drowns out the road.",
+    "feedback strength. The game runs it at half or more whenever the car accelerates, so it "
+    "starts at 50; lower it if the engine drowns out the road.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 80,
     "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
     "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_style", "Rumble style", "Controls", "choice", "fine",
+    "How the game's rumble plays on the wheel's motor. Fine: the engine and the road each as a "
+    "light, quick vibration (about 70 and 40 Hz). Classic: one strong, slower vibration, as the "
+    "Xbox 360 wheel's rim motors felt; it shakes a force feedback wheel hard. A wheel without "
+    "room for the fine effects plays classic.", "Racing wheel",
+    choices=[("fine", "Fine"), ("classic", "Classic")], restart=True)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
 add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
     "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",

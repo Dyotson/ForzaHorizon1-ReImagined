@@ -385,7 +385,8 @@ edited by hand:
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
-| `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 100, 100 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble) |
+| `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
+| `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
@@ -477,15 +478,35 @@ them running: a **constant force** that it updates every frame with the car's st
 the wheel back towards the centre; scraping a wall or crashing makes it kick), a **centring spring** that is off
 at a standstill, grows with speed and fades while the rear wheels slide, a light **damper**, and an inertia and a
 friction effect set to zero. Its tuning is `media/ControllerFFB.ini`; the game's Advanced wheel options scale it
-(Force feedback scale) and the rumble (Vibration scale). The rumble (engine, road surface, impacts) comes as a 25 Hz
-vibration. `wheel_ffb_strength` scales everything (default 60 percent), `wheel_ffb = false` switches it off.
-Three more strengths (#256), in percent of it and 100 by default (as before), each set one part:
-`wheel_ffb_spring_strength` the centring spring and the damper (the spring grows with speed, so at speed small
-turns can feel heavy; lowering it softens the centring without weakening the steering force and the road feel),
-`wheel_rumble_engine_strength` the game's right motor, which carries the engine and climbs towards the limiter, and
-`wheel_rumble_road_strength` its left motor (road surface, kerbs, impacts). Both motors play as one vibration, the
-stronger of the two after their strengths, so in a car that revs quickly a lower engine strength lets the road
-through. The
+(Force feedback scale) and the rumble (Vibration scale). `wheel_ffb_strength` scales everything (default 60
+percent), `wheel_ffb = false` switches it off. Three more strengths (#256), in percent of it, each set one part:
+`wheel_ffb_spring_strength` the centring spring and the damper (100 by default; the spring grows with speed, so at
+speed small turns can feel heavy; lowering it softens the centring without weakening the steering force and the
+road feel), `wheel_rumble_engine_strength` the game's right motor, which carries the engine and climbs towards the
+limiter (50 by default), and `wheel_rumble_road_strength` its left motor (road surface, kerbs, impacts, tyre
+slip; 80 by default).
+
+**Rumble style (#273).** The game's two rumble motors were made for the Xbox 360 wheel's small motors in the
+rim, which have to shake hard to be felt; played through a force feedback base's main motor at those levels they
+rattle the whole wheel (a Fanatec CSR Elite owner in #4: engine and tyre-slip rumble together). `wheel_rumble_style`
+(launcher: Rumble style) picks how they play, SDK patch 0129:
+- **Fine** (the default): each motor its own light, quick vibration on the steering axis, the road motor a 40 Hz
+  sine and the engine motor a ~71 Hz one (period 14 ms), each at most a quarter of the force feedback strength
+  (FH6 plays these effects as micro-vibrations on the main motor too). Both play at once, so the road comes
+  through while the engine hums.
+- **Classic**: as before, one 25 Hz sine at the stronger motor's level, up to 60 percent of the force feedback
+  strength, for a wheel that should shake like the 360 wheel's rim motors.
+Fine needs the wheel's periodic (sine) effect and room for two effects; a wheel that rejects them plays classic
+(the log says `Wheel: fine vibration rejected ...: classic vibration instead`); one without a sine effect plays no
+rumble in either style (the log says so). The defaults are softer since #273: measured in free roam with a
+virtual wheel, the engine motor runs at half or more whenever the car accelerates (about 0.45 on average flat out
+off-road, peaks at full) and the road motor sits at 0.1 to 0.2 on tarmac and climbs to full off-road and in
+slides, so the engine starts at 50 percent and the road at 80. With the defaults (strength 60) fine gives the
+road at most 0.12 and the engine 0.075 of the motor's force, where classic at the old 100 percent gave 0.36. The
+style is read when the game opens the wheel: restart after changing it. Please tell us which values feel right
+on your wheel (#4).
+
+The
 wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
 the G25, G27 and G29 has only constant force and autocentre) the game's spring sets the autocentre strength
 instead. On Linux the wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most
