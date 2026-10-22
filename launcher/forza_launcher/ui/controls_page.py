@@ -5,8 +5,10 @@ from PySide6.QtWidgets import (QButtonGroup, QComboBox, QHBoxLayout, QLabel, QPu
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget, QCheckBox)
 from ..haptics.settings import normalize
 from ..haptics.service import supported, supports_xbox
+from .. import schema
 
 from . import theme
+from .bindings_editor import BindingsEditor
 from .controller_artwork import compose
 from .pages import scroll_page
 from .widgets import Disclosure, SpinBox, card, label
@@ -174,10 +176,44 @@ class ControlsPage(QWidget):
         settings = QPushButton('Control settings')
         settings.clicked.connect(self.settings_requested)
         layout.addWidget(settings, 0, Qt.AlignLeft)
+        self._local_settings = schema.defaults()
+        frame, content = card(margins=(24, 20, 24, 20), spacing=12)
+        self.bindings = BindingsEditor(self.current_settings, self.apply_settings)
+        self.bindings.settings_requested.connect(self.settings_requested)
+        content.addWidget(self.bindings)
+        layout.addWidget(frame)
         if cfg is not None:
             self.add_haptics(layout)
         layout.addStretch(1)
         self.family_changed()
+
+    def current_settings(self):
+        return self.cfg.settings if self.cfg is not None else self._local_settings
+
+    def apply_settings(self, changes):
+        """Store bindings: through the Settings page when there is one (it updates its controls,
+        saves and writes forza.toml), else straight into the config."""
+        settings_page = getattr(self.window, 'settings', None)
+        if settings_page is not None and hasattr(settings_page, 'apply_external'):
+            settings_page.apply_external(changes)
+            return
+        target = self.current_settings()
+        for key, value in changes.items():
+            target[key] = schema.coerce(schema.BY_KEY[key], value)
+        if self.cfg is not None:
+            self.cfg.save()
+
+    def captures(self, instance):
+        """Launcher navigation ignores a device while it is being bound or calibrated."""
+        return self.bindings.captures(instance)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.bindings.start()
+
+    def hideEvent(self, event):
+        self.bindings.stop()
+        super().hideEvent(event)
 
     def add_haptics(self, layout):
         frame, content = card(margins=(24, 20, 24, 20), spacing=16)

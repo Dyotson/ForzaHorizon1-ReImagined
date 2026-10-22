@@ -1,0 +1,486 @@
+diff --git a/src/input/sdl/gamepad_remap.h b/src/input/sdl/gamepad_remap.h
+new file mode 100644
+index 0000000..9537e22
+--- /dev/null
++++ b/src/input/sdl/gamepad_remap.h
+@@ -0,0 +1,351 @@
++/**
++ * @file        src/input/sdl/gamepad_remap.h
++ * @brief       Controller remapping (controller_remap): which input of an SDL gamepad drives
++ *              which control of the XInput state. Free of SDL so it can be tested on its own
++ *              (tools/test_gamepad_remap.cpp).
++ *
++ * The setting holds profiles separated by ';', each "GUID:target=source,...". GUID is SDL's
++ * joystick GUID; a pad uses the profile with its own GUID, else one of the same model (vendor
++ * and product, so a pad keeps its profile over USB and Bluetooth), else '*'. A target is an
++ * XInput control: a b x y lb rb back start guide ls rs up down left right, lt rt, lx ly rx ry.
++ * Targets the profile leaves out keep their own input. A source is
++ *   - a pad button (the targets' buttons, misc1, paddle1-4, touchpad) or none;
++ *   - a trigger (lt, rt), a stick axis (lx ly rx ry; '-lx' inverted) or one direction of a stick
++ *     axis (lx+ right, lx- left, ly+ up, ly- down), with '@0.3' for how far it must move to press
++ *     a button (default half way).
++ * Supported: button to button, button to trigger (a full press), trigger or stick direction to
++ * trigger, axis to button past the threshold, and stick axis to stick axis (swapping sticks,
++ * inverting an axis). Other pairs are ignored. The launcher (launcher/forza_launcher/bindings.py)
++ * writes the setting with the same rules.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++
++#pragma once
++
++#include <algorithm>
++#include <array>
++#include <cctype>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++
++namespace rex::input::sdl::remap {
++
++// SDL_GamepadButton order (the same in SDL2 and SDL3).
++constexpr std::array<std::string_view, 21> kButtonNames = {
++    "a",  "b",    "x",    "y",     "back",  "guide",   "start",   "ls",      "rs",      "lb",      "rb",
++    "up", "down", "left", "right", "misc1", "paddle1", "paddle2", "paddle3", "paddle4", "touchpad"};
++// SDL_GamepadAxis order.
++constexpr std::array<std::string_view, 6> kAxisNames = {"lx", "ly", "rx", "ry", "lt", "rt"};
++constexpr int kLeftTrigger = 4, kRightTrigger = 5;
++
++// The XInput controls, and for each button the SDL buttons that press it by default (as the SDL
++// driver always did: the Elite paddles press Y, B, X and A; misc1 and the touchpad the guide).
++struct Target {
++  std::string_view name;
++  uint16_t bit;               // XInput button bit, 0 for an axis
++  int axis;                   // SDL axis for a trigger or stick target, -1 for a button
++  uint32_t default_buttons;   // SDL buttons that press it without a remap
++};
++constexpr uint32_t Bit(int i) { return 1u << i; }
++constexpr std::array<Target, 21> kTargets = {{
++    {"a", 0x1000, -1, Bit(0) | Bit(19)},  {"b", 0x2000, -1, Bit(1) | Bit(17)},
++    {"x", 0x4000, -1, Bit(2) | Bit(18)},  {"y", 0x8000, -1, Bit(3) | Bit(16)},
++    {"lb", 0x0100, -1, Bit(9)},         {"rb", 0x0200, -1, Bit(10)},
++    {"back", 0x0020, -1, Bit(4)},       {"start", 0x0010, -1, Bit(6)},
++    {"guide", 0x0400, -1, Bit(5) | Bit(15) | Bit(20)},
++    {"ls", 0x0040, -1, Bit(7)},         {"rs", 0x0080, -1, Bit(8)},
++    {"up", 0x0001, -1, Bit(11)},        {"down", 0x0002, -1, Bit(12)},
++    {"left", 0x0004, -1, Bit(13)},      {"right", 0x0008, -1, Bit(14)},
++    {"lt", 0, kLeftTrigger, 0},       {"rt", 0, kRightTrigger, 0},
++    {"lx", 0, 0, 0},                  {"ly", 0, 1, 0},
++    {"rx", 0, 2, 0},                  {"ry", 0, 3, 0},
++}};
++constexpr uint16_t kGuideBit = 0x0400;
++
++struct Source {
++  enum Kind : uint8_t { kDefault, kNone, kButton, kAxis } kind = kDefault;
++  uint8_t index = 0;   // button or axis
++  int8_t half = 0;     // stick axis: +1 or -1 for one direction, 0 for the whole axis
++  bool invert = false; // whole stick axis read the other way
++  float threshold = 0.5f;
++};
++
++using Rules = std::array<Source, kTargets.size()>;
++
++// An SDL gamepad's state as SDL reports it: sticks -32768..32767 with Y down positive, triggers
++// 0..32767; button i is bit i (SDL_GamepadButton).
++struct PadInput {
++  std::array<int16_t, 6> axis{};
++  uint32_t buttons = 0;
++};
++
++// The XInput gamepad fields the remap fills.
++struct PadOutput {
++  uint16_t buttons = 0;
++  uint8_t left_trigger = 0, right_trigger = 0;
++  int16_t thumb_lx = 0, thumb_ly = 0, thumb_rx = 0, thumb_ry = 0;
++};
++
++inline std::string Lower(std::string_view s) {
++  std::string out;
++  for (char c : s) {
++    if (!std::isspace(static_cast<unsigned char>(c))) {
++      out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
++    }
++  }
++  return out;
++}
++
++template <size_t N>
++inline int IndexOf(const std::array<std::string_view, N>& names, std::string_view name) {
++  for (size_t i = 0; i < N; i++) {
++    if (names[i] == name) {
++      return static_cast<int>(i);
++    }
++  }
++  return -1;
++}
++
++inline int TargetIndex(std::string_view name) {
++  for (size_t i = 0; i < kTargets.size(); i++) {
++    if (kTargets[i].name == name) {
++      return static_cast<int>(i);
++    }
++  }
++  return -1;
++}
++
++// "-lx", "ly+", "rt@0.3", "a", "none" (lower case, no spaces); nullopt when malformed.
++inline std::optional<Source> ParseSource(std::string_view token) {
++  Source s;
++  float threshold = 0.5f;
++  const size_t at = token.find('@');
++  if (at != std::string_view::npos) {
++    const std::string number(token.substr(at + 1));
++    if (number.empty() || number.find_first_not_of("0123456789.") != std::string::npos) {
++      return std::nullopt;
++    }
++    threshold = std::clamp(static_cast<float>(std::atof(number.c_str())), 0.05f, 0.95f);
++    token = token.substr(0, at);
++  }
++  bool invert = false;
++  if (!token.empty() && token.front() == '-') {
++    invert = true;
++    token.remove_prefix(1);
++  }
++  int half = 0;
++  if (!token.empty() && (token.back() == '+' || token.back() == '-')) {
++    half = token.back() == '+' ? 1 : -1;
++    token.remove_suffix(1);
++  }
++  if (token == "none") {
++    if (invert || half || at != std::string_view::npos) return std::nullopt;
++    s.kind = Source::kNone;
++    return s;
++  }
++  if (int b = IndexOf(kButtonNames, token); b >= 0) {
++    if (invert || half || at != std::string_view::npos) return std::nullopt;
++    s.kind = Source::kButton;
++    s.index = static_cast<uint8_t>(b);
++    return s;
++  }
++  const int a = IndexOf(kAxisNames, token);
++  if (a < 0 || (invert && half) || (a >= kLeftTrigger && (invert || half))) {
++    return std::nullopt;
++  }
++  s.kind = Source::kAxis;
++  s.index = static_cast<uint8_t>(a);
++  s.half = static_cast<int8_t>(half);
++  s.invert = invert;
++  s.threshold = threshold;
++  return s;
++}
++
++// Whether a source can drive a target (the pairs listed at the top).
++inline bool Accepts(const Target& t, const Source& s) {
++  if (s.kind == Source::kNone) return true;
++  const bool stick_axis = s.kind == Source::kAxis && s.index < kLeftTrigger;
++  if (t.axis >= 0 && t.axis < kLeftTrigger) {  // stick axis target
++    return stick_axis && s.half == 0;
++  }
++  if (t.axis >= kLeftTrigger) {  // trigger target
++    return s.kind == Source::kButton || (s.kind == Source::kAxis && !s.invert);
++  }
++  return s.kind == Source::kButton || (s.kind == Source::kAxis && !s.invert);
++}
++
++// "rt=a,a=none": unknown targets, malformed sources and unsupported pairs are skipped (the
++// target keeps its own input). `ignored` counts them.
++inline Rules ParseRules(std::string_view text, int* ignored = nullptr) {
++  Rules rules{};
++  int bad = 0;
++  size_t pos = 0;
++  while (pos <= text.size()) {
++    size_t end = text.find(',', pos);
++    if (end == std::string_view::npos) end = text.size();
++    const std::string item = Lower(text.substr(pos, end - pos));
++    pos = end + 1;
++    if (item.empty()) continue;
++    const size_t eq = item.find('=');
++    const int t = eq == std::string::npos ? -1 : TargetIndex(std::string_view(item).substr(0, eq));
++    const auto s = eq == std::string::npos ? std::nullopt
++                                           : ParseSource(std::string_view(item).substr(eq + 1));
++    if (t < 0 || !s || !Accepts(kTargets[t], *s)) {
++      bad++;
++      continue;
++    }
++    rules[t] = *s;
++  }
++  if (ignored) *ignored = bad;
++  return rules;
++}
++
++inline bool HasRules(const Rules& rules) {
++  return std::any_of(rules.begin(), rules.end(),
++                     [](const Source& s) { return s.kind != Source::kDefault; });
++}
++
++// (vendor, product) of a GUID that carries them (bytes 4-5 and 8-9, little endian, with bytes
++// 6-7 and 10-11 zero); nullopt for GUIDs built from the name.
++inline std::optional<std::pair<uint16_t, uint16_t>> GuidModel(std::string_view guid) {
++  if (guid.size() != 32) return std::nullopt;
++  uint8_t b[16];
++  for (int i = 0; i < 16; i++) {
++    int v = 0;
++    for (int k = 0; k < 2; k++) {
++      const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(guid[i * 2 + k])));
++      const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
++      if (d < 0) return std::nullopt;
++      v = v * 16 + d;
++    }
++    b[i] = static_cast<uint8_t>(v);
++  }
++  if (b[6] || b[7] || b[10] || b[11]) return std::nullopt;
++  const uint16_t vid = static_cast<uint16_t>(b[4] | (b[5] << 8));
++  const uint16_t pid = static_cast<uint16_t>(b[8] | (b[9] << 8));
++  if (!vid) return std::nullopt;
++  return std::make_pair(vid, pid);
++}
++
++// The rules text of the profile a pad with this GUID uses, and the profile's key.
++struct Profile {
++  std::string key;
++  std::string rules;
++};
++inline std::optional<Profile> FindProfile(std::string_view setting, std::string_view guid) {
++  const std::string want = Lower(guid);
++  const auto model = GuidModel(want);
++  std::optional<Profile> same_model, any;
++  size_t pos = 0;
++  while (pos <= setting.size()) {
++    size_t end = setting.find(';', pos);
++    if (end == std::string_view::npos) end = setting.size();
++    const std::string_view part = setting.substr(pos, end - pos);
++    pos = end + 1;
++    const size_t colon = part.find(':');
++    if (colon == std::string_view::npos) continue;
++    Profile p{Lower(part.substr(0, colon)), std::string(part.substr(colon + 1))};
++    if (p.key == want) return p;
++    if (p.key == "*") {
++      if (!any) any = p;
++    } else if (model && !same_model && GuidModel(p.key) == model) {
++      same_model = p;
++    }
++  }
++  return same_model ? same_model : any;
++}
++
++// A stick axis in XInput's convention (up positive). ~v mirrors a value without overflowing
++// -32768, as the driver always turned SDL's Y axes around.
++inline int16_t StickAxis(const PadInput& in, int axis) {
++  const int16_t v = in.axis[axis];
++  return (axis == 1 || axis == 3) ? static_cast<int16_t>(~v) : v;
++}
++
++// How far an axis source is pushed in its direction, 0 to 32767. A whole stick axis given to a
++// button or trigger reads its positive direction.
++inline int Magnitude(const PadInput& in, const Source& s) {
++  if (s.index >= kLeftTrigger) {
++    return std::clamp<int>(in.axis[s.index], 0, 32767);
++  }
++  const int v = StickAxis(in, s.index);
++  return s.half < 0 ? (v < 0 ? -(v + 1) : 0) : (v > 0 ? v : 0);
++}
++
++inline bool Pressed(const PadInput& in, const Source& s) {
++  if (s.kind == Source::kButton) return (in.buttons >> s.index) & 1u;
++  if (s.kind == Source::kAxis) return Magnitude(in, s) >= std::lround(s.threshold * 32767.0f);
++  return false;
++}
++
++// The XInput state for a pad's input under the rules. Rules with nothing set give what the
++// driver always produced. guide: the guide_button pass-through.
++inline PadOutput Apply(const Rules& rules, const PadInput& in, bool guide) {
++  PadOutput out;
++  for (size_t i = 0; i < kTargets.size(); i++) {
++    const Target& t = kTargets[i];
++    const Source& s = rules[i];
++    if (t.axis < 0) {  // button
++      const bool down = s.kind == Source::kDefault ? (in.buttons & t.default_buttons) != 0
++                                                   : Pressed(in, s);
++      if (down) out.buttons |= t.bit;
++    } else if (t.axis >= kLeftTrigger) {  // trigger
++      uint8_t v = 0;
++      if (s.kind == Source::kDefault) {
++        v = static_cast<uint8_t>(in.axis[t.axis] >> 7);
++      } else if (s.kind == Source::kButton) {
++        v = Pressed(in, s) ? 255 : 0;
++      } else if (s.kind == Source::kAxis) {
++        v = static_cast<uint8_t>(Magnitude(in, s) >> 7);
++      }
++      (t.axis == kLeftTrigger ? out.left_trigger : out.right_trigger) = v;
++    } else {  // stick axis
++      int16_t v = 0;
++      if (s.kind == Source::kDefault) {
++        v = StickAxis(in, t.axis);
++      } else if (s.kind == Source::kAxis) {
++        v = StickAxis(in, s.index);
++        if (s.invert) v = static_cast<int16_t>(~v);
++      }
++      int16_t* dst[] = {&out.thumb_lx, &out.thumb_ly, &out.thumb_rx, &out.thumb_ry};
++      *dst[t.axis] = v;
++    }
++  }
++  if (!guide) out.buttons &= static_cast<uint16_t>(~kGuideBit);
++  return out;
++}
++
++// The rules as text again, normalised ("rt=a,a=none"), for the log.
++inline std::string Describe(const Rules& rules) {
++  std::string out;
++  for (size_t i = 0; i < kTargets.size(); i++) {
++    const Source& s = rules[i];
++    if (s.kind == Source::kDefault) continue;
++    if (!out.empty()) out += ',';
++    out += std::string(kTargets[i].name) + '=';
++    if (s.kind == Source::kNone) {
++      out += "none";
++    } else if (s.kind == Source::kButton) {
++      out += std::string(kButtonNames[s.index]);
++    } else {
++      out += (s.invert ? "-" : "") + std::string(kAxisNames[s.index]) +
++             (s.half > 0 ? "+" : s.half < 0 ? "-" : "");
++      if (kTargets[i].axis < 0) {
++        char buf[16];
++        std::snprintf(buf, sizeof(buf), "@%.2f", s.threshold);
++        out += buf;
++      }
++    }
++  }
++  return out;
++}
++
++}  // namespace rex::input::sdl::remap
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 6318403..c6e943f 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -14,6 +14,7 @@
+ #include <cctype>
+ #include <filesystem>
+ #include <string_view>
++#include <unordered_map>
+ 
+ #include <rex/assert.h>
+ #include <rex/chrono/clock.h>
+@@ -24,8 +25,14 @@
+ #include <rex/logging.h>
+ #include <rex/ui/virtual_key.h>
+ 
++#include "gamepad_remap.h"
++
+ REXCVAR_DEFINE_STRING(hid_mappings_file, "gamecontrollerdb.txt", "Input",
+                       "Path to SDL gamecontroller mappings file");
++REXCVAR_DEFINE_STRING(controller_remap, "", "Input",
++                      "Controller remapping, profiles separated by ';': GUID:target=source,... "
++                      "('*' for every controller without its own), e.g. *:rt=a,a=none "
++                      "(src/input/sdl/gamepad_remap.h)");
+ 
+ namespace rex::input::sdl {
+ 
+@@ -34,6 +41,26 @@ namespace {
+ // SDL clamps to SDL_MAX_RUMBLE_DURATION_MS, which is not a public constant.
+ constexpr uint32_t kRumbleDurationMs = 0xFFFF;
+ 
++// Pads that have a controller_remap profile (#279), by SDL joystick id: their rules and their
++// raw SDL state, from which the XInput state is rebuilt on every event. Guarded by
++// controllers_mutex_ (only the *Locked handlers touch it); there is one SDL driver.
++struct Remapped {
++  remap::Rules rules;
++  remap::PadInput input;
++};
++std::unordered_map<SDL_JoystickID, Remapped> g_remapped;
++
++void StoreRemapped(const Remapped& r, X_INPUT_GAMEPAD& pad) {
++  const remap::PadOutput out = remap::Apply(r.rules, r.input, REXCVAR_GET(guide_button));
++  pad.buttons = out.buttons;
++  pad.left_trigger = out.left_trigger;
++  pad.right_trigger = out.right_trigger;
++  pad.thumb_lx = out.thumb_lx;
++  pad.thumb_ly = out.thumb_ly;
++  pad.thumb_rx = out.thumb_rx;
++  pad.thumb_ry = out.thumb_ry;
++}
++
+ const char* JoystickTypeName(SDL_JoystickType t) {
+   switch (t) {
+     case SDL_JOYSTICK_TYPE_UNKNOWN:
+@@ -638,6 +665,33 @@ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
+   state.id = AllocateDeviceId();
+   state.state_changed = true;  // XInput starts with packet_number = 1
+   UpdateXCapabilities(state);
++
++  // Remapping: the profile for this pad's GUID (or its model, or '*'), if it binds anything.
++  const SDL_JoystickID jid = SDL_GetJoystickID(SDL_GetGamepadJoystick(controller));
++  g_remapped.erase(jid);
++  if (const auto profile = remap::FindProfile(REXCVAR_GET(controller_remap), guid_text)) {
++    int ignored = 0;
++    Remapped r;
++    r.rules = remap::ParseRules(profile->rules, &ignored);
++    if (ignored) {
++      REXLOG_WARN("SDL Controller remap: {} rule(s) of profile {} ignored (unknown or unsupported)",
++                  ignored, profile->key);
++    }
++    if (remap::HasRules(r.rules)) {
++      // Inputs already held send no event until they change: start from the current state.
++      for (int b = 0; b < static_cast<int>(remap::kButtonNames.size()); b++) {
++        if (SDL_GetGamepadButton(controller, static_cast<SDL_GamepadButton>(b))) {
++          r.input.buttons |= 1u << b;
++        }
++      }
++      for (int a = 0; a < static_cast<int>(remap::kAxisNames.size()); a++) {
++        r.input.axis[a] = SDL_GetGamepadAxis(controller, static_cast<SDL_GamepadAxis>(a));
++      }
++      StoreRemapped(r, state.state.gamepad);
++      g_remapped[jid] = r;
++      REXLOG_INFO("SDL Controller remap (profile {}): {}", profile->key, remap::Describe(r.rules));
++    }
++  }
+   controllers_.push_back(state);
+ 
+   const int ordinal = static_cast<int>(controllers_.size()) - 1;
+@@ -666,6 +720,7 @@ void SDLInputDriver::OnControllerDeviceRemovedLocked(const SDL_Event& event) {
+               removed_guid);
+   SDL_CloseGamepad(removed);
+   controllers_.erase(controllers_.begin() + static_cast<ptrdiff_t>(*idx));
++  g_remapped.erase(event.gdevice.which);
+ 
+   // LEDs only. Guest user assignment does not shift, because InputSystem holds
+   // each device's ordinal.
+@@ -682,6 +737,14 @@ void SDLInputDriver::OnControllerDeviceAxisMotionLocked(const SDL_Event& event)
+     return;
+   }
+   auto& pad = controllers_.at(*idx).state.gamepad;
++  if (auto it = g_remapped.find(event.gaxis.which); it != g_remapped.end()) {
++    if (event.gaxis.axis < it->second.input.axis.size()) {
++      it->second.input.axis[event.gaxis.axis] = event.gaxis.value;
++      StoreRemapped(it->second, pad);
++      controllers_.at(*idx).state_changed = true;
++    }
++    return;
++  }
+   switch (event.gaxis.axis) {
+     case SDL_GAMEPAD_AXIS_LEFTX:
+       pad.thumb_lx = event.gaxis.value;
+@@ -751,6 +814,17 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+   }
+   auto& controller = controllers_.at(*idx);
+ 
++  if (auto it = g_remapped.find(event.gbutton.which); it != g_remapped.end()) {
++    if (event.gbutton.button < remap::kButtonNames.size()) {
++      const uint32_t bit = 1u << event.gbutton.button;
++      it->second.input.buttons =
++          event.gbutton.down ? (it->second.input.buttons | bit) : (it->second.input.buttons & ~bit);
++      StoreRemapped(it->second, controller.state.gamepad);
++      controller.state_changed = true;
++    }
++    return;
++  }
++
+   uint16_t xbuttons = controller.state.gamepad.buttons;
+   // Lookup the XInput button code.
+   if (event.gbutton.button >= xbutton_lookup.size()) {
