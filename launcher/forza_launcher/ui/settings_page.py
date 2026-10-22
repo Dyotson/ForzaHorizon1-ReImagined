@@ -333,6 +333,30 @@ class SettingsPage(QWidget):
         self._apply_dependencies()
         self.touched()
 
+    def apply_external(self, changes):
+        """Values set elsewhere (the Controls page's bindings): store them, show them in their
+        controls and save."""
+        for key, value in changes.items():
+            s = schema.BY_KEY[key]
+            value = schema.coerce(s, value)
+            self.cfg.settings[key] = value
+            row = self.rows.get(key)
+            if row is None:
+                continue
+            control = row.control
+            control.blockSignals(True)
+            if isinstance(control, QLineEdit):
+                control.setText(str(value))
+            elif hasattr(control, "setChecked"):
+                control.setChecked(bool(value))
+            elif hasattr(control, "findData") and s.kind == "choice":
+                control.setCurrentIndex(max(0, control.findData(value)))
+            elif hasattr(control, "setValue"):
+                control.setValue(value)
+            control.blockSignals(False)
+        self._apply_dependencies()
+        self.touched()
+
     def touched(self):
         self._save_timer.start()
         self.refresh_preview()
