@@ -119,6 +119,13 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   Xenia `content` folder with the DLC already extracted works too, or its `00000002` folder,
   and so does the launcher's DLC step;
   the Rally Expansion's and the 1000 Club's modes need the TU4 build, their cars work on both).
+- **Driving locked after a save loads, only START works:** that is the 1000 CLUB tutorial
+  (TU4, signed in to Forza Live; #237). Once a career is past the point where the 1000 CLUB
+  opens, the game plays its intro and then gives the car no throttle, steering, camera or
+  map until the tutorial is done, at every load until then. The hints at the top left and
+  bottom say what to do: START, **1000 CLUB**, select the challenge card, pick a car and
+  **Begin challenges in this car**, then D-pad up for **Current car challenges** and B.
+  The launcher's **Edit profile…** can also mark it finished.
 - **Saves** live in `~/.local/share/forza/B13EBABEBABEBABE/4D5309C9/`.
 - **Your Xenia save:** `tools/play.sh --xenia` copies your Xenia Canary profile's Forza
   Horizon save (`~/xenia_canary_windows/content/<XUID>/4D5309C9`, or

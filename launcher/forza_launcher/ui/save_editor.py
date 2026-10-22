@@ -65,6 +65,16 @@ class ProfileEditor(QDialog):
         self.unicorn_button.clicked.connect(self.add_unicorns)
         unicorns.content.addWidget(self.unicorn_button)
         layout.addWidget(unicorns)
+        self.tutorial = Disclosure('1000 CLUB tutorial')
+        self.tutorial.content.addWidget(label(
+            'This save has not finished the 1000 CLUB tutorial. Signed in to Forza Live, the game '
+            'starts it when the save loads, and the car takes no input but START until it is done: '
+            'press START, choose 1000 CLUB and follow the steps. Or mark it finished here.', 'muted'))
+        self.tutorial_button = QPushButton('Mark the tutorial finished')
+        self.tutorial_button.clicked.connect(self.finish_tutorial)
+        self.tutorial.content.addWidget(self.tutorial_button)
+        self.tutorial.setVisible(False)
+        layout.addWidget(self.tutorial)
         self.message = label('Reading and checking the encrypted profile…', 'muted')
         layout.addWidget(self.message)
         self.progress = QProgressBar()
@@ -91,6 +101,7 @@ class ProfileEditor(QDialog):
             control.setEnabled(not busy and self.document is not None)
         self.apply_button.setEnabled(not busy and self.document is not None)
         self.unicorn_button.setEnabled(not busy and self.document is not None)
+        self.tutorial_button.setEnabled(not busy and self._tutorial_pending())
         self.reload_button.setEnabled(not busy)
         self.close_button.setText('Cancel' if busy else 'Close')
 
@@ -119,6 +130,10 @@ class ProfileEditor(QDialog):
                 self._failed('This profile contains a value outside the supported editing range.')
                 return
             control.setValue(value)
+        pending = self._tutorial_pending()
+        self.tutorial.setVisible(pending)
+        if pending:
+            self.tutorial.toggle.setChecked(True)
         level = document.values.get('Main/Level')
         self.summary.setText(f'Level: {level.value}' if level else 'Career profile')
         self.message.setText(message)
@@ -166,6 +181,28 @@ class ProfileEditor(QDialog):
 
         self.page._run('Adding unicorn cars…', lambda t: garage.add_missing(self.cfg, self.profile,
                        t.cancelled, self.page._copy_progress(t)), complete, failed=self._failed)
+
+    def _tutorial_pending(self):
+        tutorial = self.document and self.document.values.get(save_editor.CAR_CHALLENGE_TUTORIAL)
+        return bool(tutorial) and not tutorial.value
+
+    def finish_tutorial(self):
+        if not self._tutorial_pending() or self.page.busy():
+            return
+        if self._changes():
+            self.message.setText('Apply your profile changes or reload first.')
+            return
+        document = self.document
+        self._set_busy(True)
+        self.message.setText('Backing up the current save and finishing the 1000 CLUB tutorial…')
+
+        def complete(result):
+            self._loaded(result.document, '1000 CLUB tutorial marked finished. A “Before profile edit” '
+                                          'backup was kept.')
+
+        self.page._run('Editing profile…', lambda t: save_editor.apply(
+            document, {save_editor.CAR_CHALLENGE_TUTORIAL: True}, t.cancelled, self.page._copy_progress(t)),
+            complete, failed=self._failed)
 
     def apply(self):
         if self.document is None or self.page.busy():
