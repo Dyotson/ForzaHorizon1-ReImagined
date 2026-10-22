@@ -48,10 +48,10 @@ index 0000000..02ab93b
 +}  // namespace rex::input::wheel
 diff --git a/include/rex/input/wheel/wheel_ff.h b/include/rex/input/wheel/wheel_ff.h
 new file mode 100644
-index 0000000..6ef480d
+index 0000000..d79c9c2
 --- /dev/null
 +++ b/include/rex/input/wheel/wheel_ff.h
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,215 @@
 +/**
 + * @file        rex/input/wheel/wheel_ff.h
 + * @brief       The Xbox 360 wheel's force feedback as games drive it through the kernel's
@@ -241,6 +241,21 @@ index 0000000..6ef480d
 +  return std::clamp(std::min(right, left), 0.0f, 1.0f);
 +}
 +
++// The self-centring for the game's springs on a wheel without a spring effect, 0 to 1: the
++// strongest spring block that is defined and playing; 0 once none is (stopped, paused, reset, or
++// the block redefined as another type).
++inline float FfAutocenter(const FfState& s, float strength) {
++  float level = 0.0f;
++  for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++    if (!s.Active(b) || s.effect(b).type != kFfSpring) {
++      continue;
++    }
++    const FfEffect& e = s.effect(b);
++    level = std::max(level, FfSpringAutocenter(FfConditionOf(e, FfScale(e, s.device_gain(), strength))));
++  }
++  return level;
++}
++
 +// The kernel's XInputdFF* calls (xboxkrnl_hid.cpp), played on every wheel the wheel driver
 +// has open (wheel_input_driver.cpp). Each is false when there is no wheel.
 +bool GameFfDeviceInfo();
@@ -253,7 +268,7 @@ index 0000000..6ef480d
 +
 +}  // namespace rex::input::wheel
 diff --git a/include/rex/input/wheel/wheel_input_driver.h b/include/rex/input/wheel/wheel_input_driver.h
-index 51dd35c..804ba27 100644
+index 51dd35c..f0ced5a 100644
 --- a/include/rex/input/wheel/wheel_input_driver.h
 +++ b/include/rex/input/wheel/wheel_input_driver.h
 @@ -1,9 +1,10 @@
@@ -299,12 +314,13 @@ index 51dd35c..804ba27 100644
   private:
    struct Wheel;
    void RescanLocked();
-@@ -54,11 +64,16 @@ class WheelInputDriver final : public InputDriver {
+@@ -54,11 +64,17 @@ class WheelInputDriver final : public InputDriver {
    void ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out);
    void SetupForceFeedbackLocked(Wheel& w);
    void ApplyForceLocked(Wheel& w, float motor);
 +  void ApplyRumbleLocked(Wheel& w, float motor);
 +  void ApplyGameBlockLocked(Wheel& w, uint32_t block);
++  void ApplyAutocenterLocked(Wheel& w);
  
    std::mutex mutex_;
    std::vector<std::unique_ptr<Wheel>> wheels_;
@@ -317,7 +333,7 @@ index 51dd35c..804ba27 100644
    std::chrono::steady_clock::time_point last_scan_{};
    std::chrono::steady_clock::time_point last_pump_{};
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 1fd18ca..b917c3b 100644
+index 1fd18ca..6545375 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -6,21 +6,27 @@
@@ -518,16 +534,31 @@ index 1fd18ca..b917c3b 100644
      if (amp > 0.0f && !w.sine_running) {
        w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
      } else if (amp <= 0.0f && w.sine_running) {
-@@ -482,6 +527,194 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -482,6 +527,202 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
    }
  }
  
++// The game's springs as the self-centring of a wheel without a spring effect (FfAutocenter). Taken
++// from all the blocks each time, so it drops to 0 when the spring stops, is reset or is redefined
++// as another type, not only when its own block is played again.
++void WheelInputDriver::ApplyAutocenterLocked(Wheel& w) {
++  const Uint32 f = SDL_GetHapticFeatures(w.haptic);
++  if ((f & SDL_HAPTIC_SPRING) || !(f & SDL_HAPTIC_AUTOCENTER)) {
++    return;
++  }
++  const int level = static_cast<int>(std::lround(FfAutocenter(game_ff_, Strength()) * 100.0f));
++  if (level != w.autocenter && SDL_SetHapticAutocenter(w.haptic, level)) {
++    w.autocenter = level;
++  }
++}
++
 +// One of the game's effect blocks on one wheel: created, updated, started or stopped to match
 +// game_ff_. A spring on a wheel without a spring effect becomes its self-centring.
 +void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
 +  if (!w.haptic || block < 1 || block > kFfMaxBlocks) {
 +    return;
 +  }
++  ApplyAutocenterLocked(w);
 +  const size_t i = block - 1;
 +  const Uint32 f = SDL_GetHapticFeatures(w.haptic);
 +  SDL_HapticEffect fx;
@@ -564,13 +595,6 @@ index 1fd18ca..b917c3b 100644
 +      fx.condition.deadband[0] = static_cast<Uint16>(std::lround(c.deadband * 65535.0f));
 +      fx.condition.center[0] = static_cast<Sint16>(std::lround(c.center * 32767.0f));
 +      play = game_ff_.Active(block) && FfConditionFelt(c);
-+    } else if (e.type == kFfSpring && (f & SDL_HAPTIC_AUTOCENTER)) {
-+      const int level = game_ff_.Active(block)
-+                            ? static_cast<int>(std::lround(FfSpringAutocenter(FfConditionOf(e, scale)) * 100.0f))
-+                            : 0;
-+      if (level != w.autocenter && SDL_SetHapticAutocenter(w.haptic, level)) {
-+        w.autocenter = level;
-+      }
 +    }
 +  }
 +  int& id = w.game_fx[i];
@@ -713,7 +737,7 @@ index 1fd18ca..b917c3b 100644
  WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
    for (auto& w : wheels_) {
      if (w->id == id) {
-@@ -589,27 +822,20 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+@@ -589,27 +830,20 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
    const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
    const float as = std::fabs(s);
    s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
