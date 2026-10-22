@@ -108,7 +108,10 @@ existing baseline binary and this executable; it is not counted as a boot pass.
 
 ### Main integration validation, 2026-10-22
 
-Merged main through `58bfc10`, retaining its Discord host source and CPU-target module.
+Merged main through `211e862`, retaining its Discord host source and CPU-target module.
+The follow-up merge after #286 preserves main's corrected swap-wait notes;
+the FMA/CPU-target code is unchanged from `6836e19`. All eight arithmetic
+combinations, the V3 feature test and four missing-feature startup checks passed again.
 The guest-FMA guard now uses `.preinit_array` too: an ordinary constructor can
 run after SDK shared-library initializers that call guest-exported inline code.
 Unsupported hosts use `_Exit` so rejection cannot enter teardown callbacks.

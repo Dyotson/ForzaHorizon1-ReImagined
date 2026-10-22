@@ -298,6 +298,9 @@ held counts only after it is released), gives up after 10 seconds, and Esc cance
   (`steering_value`); details in [playing.md](playing.md#racing-wheels-issue-4).
 - **Controllers** write `controller_remap` (SDK patch 0116), a profile per controller model by SDL GUID;
   format and supported pairs in [playing.md](playing.md#remapping-a-controller-279).
+  Resetting all bindings, or the last custom binding, keeps an empty profile for the selected GUID when
+  needed to block another saved profile for the same model or `*`. It restores the default inputs without
+  deleting the other saved profiles. The SDK already treats an exact empty profile as the default mapping.
 
 The editor reads SDL joysticks itself (`gamepad.Joysticks`, the same SDL as the navigation). While a Bind or a
 calibration runs, gamepad navigation ignores that device and afterwards waits for it to be neutral, so the

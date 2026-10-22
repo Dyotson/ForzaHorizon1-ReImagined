@@ -171,6 +171,19 @@ void TestProfiles() {
   CHECK(remap::FindProfile(setting, "03000000ffff00000100000000000000")->key == "*");
   CHECK(!remap::FindProfile(ds + ":a=b", xbox));
   CHECK(!remap::FindProfile("", xbox));
+  // Reset keeps an explicit empty profile to block both model and wildcard fallbacks.
+  for (const auto& fallback : {xbox + ":rt=a", std::string("*:rt=a")}) {
+    for (const auto& text : {fallback + ";" + xbox_bt + ":", xbox_bt + ":;" + fallback}) {
+      const auto profile = remap::FindProfile(text, xbox_bt);
+      CHECK(profile && profile->key == xbox_bt && profile->rules.empty());
+      const auto rules = remap::ParseRules(profile->rules);
+      CHECK(!remap::HasRules(rules));
+      remap::PadInput in = Pad(Bit(kA));
+      CHECK(remap::Apply(rules, in, false).right_trigger == 0);
+      in.axis[kRt] = 32767;
+      CHECK(remap::Apply(rules, in, false).right_trigger == 255);
+    }
+  }
   CHECK(remap::GuidModel(ds) == std::make_pair(uint16_t(0x054C), uint16_t(0x0CE6)));
   // A GUID made from the name (no vendor and product) matches only itself.
   const std::string named = "05000000476f6f676c65205374616469";
