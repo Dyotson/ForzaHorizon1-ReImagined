@@ -224,6 +224,41 @@ class SaveUITests(unittest.TestCase):
                 self.assertFalse(self.page.busy())
                 self.assertIn('Added 1 unicorn car', dialog.message.text())
 
+    def test_editor_finishes_an_unfinished_1000_club_tutorial_after_a_backup(self):
+        from forza_launcher import save_editor
+        from test_save_editor import KEYS, body, car_challenges, profile_bytes
+        path = self.profile.folder/'ForzaProfile/ForzaProfile'
+        path.parent.mkdir()
+        original = profile_bytes(body(car_challenges()))
+        path.write_bytes(original)
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.refresh()
+            self.wait_done()
+            self.page.edit_button.click()
+            self.wait_done()
+            dialog = self.page.editor
+            self.assertFalse(dialog.tutorial.isHidden())
+            self.assertTrue(dialog.tutorial_button.isEnabled())
+            dialog.tutorial_button.click()
+            self.wait_done()
+            self.assertIn('tutorial marked finished', dialog.message.text())
+            self.assertTrue(dialog.document.values[save_editor.CAR_CHALLENGE_TUTORIAL].value)
+            self.assertTrue(dialog.tutorial.isHidden())
+            self.assertFalse(dialog.tutorial_button.isEnabled())
+            self.assertEqual(dialog.document.values['Main/Credits'].value, 500)
+            backup = saves.snapshots(self.profile)[0][0]
+            self.assertEqual(backup.kind, 'before-edit')
+            self.assertEqual((backup.path/'save/ForzaProfile/ForzaProfile').read_bytes(), original)
+            dialog.close()
+            self.wait_done()
+        path.write_bytes(profile_bytes())
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.edit_button.click()
+            self.wait_done()
+            self.assertTrue(self.page.editor.tutorial.isHidden())
+            self.page.editor.close()
+            self.wait_done()
+
     def test_editor_failure_is_visible_and_leaves_no_enabled_apply_action(self):
         self.page.refresh()
         self.wait_done()

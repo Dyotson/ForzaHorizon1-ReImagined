@@ -403,6 +403,14 @@ and adds only missing models from the seven-car unicorn list. Existing cars,
 upgrades, tuning and the selected car are preserved. This is an offline edit;
 no server or Message Center collection is needed. See [garage format and validation](unicorn_cars.md).
 
+When the save has not finished the **1000 CLUB tutorial**, the editor shows that section
+with **Mark the tutorial finished**. Signed in to Forza Live, a career past the point where
+the 1000 CLUB opens starts that tutorial at every load and the car takes no input but START
+until it is done (#237). Its progress is four step flags at the end of the profile's
+`CCarChallengeState` entry (after the per-car challenge list); the action sets them, after
+the usual full backup, and changes nothing else. A save without that entry, or one whose
+entry does not parse exactly, shows nothing.
+
 Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
 The editor's profile-table addresses and XUID derivation were checked against the local
 executables and a disposable game-generated profile. A no-edit round trip reproduced the
