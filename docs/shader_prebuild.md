@@ -175,7 +175,13 @@ a few hundred KB.
 `pipeline_list.py write-storage list.json --sources ... --out <cache>/shaders/shareable`
 rebuilds every listed shader from the given game files and verifies its hash. It writes a
 local `.xsh` and an `.xpso` in the SDK's own format and layout, which today's warm-up
-loads as is. **Experiment:** see the results below.
+loads as is. From the 1047-pipeline list it wrote 1021 shaders, each byte-identical to the
+one stored in play, and 1008 pipelines, all valid records whose shaders are present.
+
+Phase 1 did not boot the game on these files. That is the first step of phase 2: point
+`--user_data_root` at a fresh directory holding them, look for `Created N graphics
+pipelines from Vulkan storage (M requested)` with N = M, and time the warm-up with an
+empty driver cache.
 
 For the shipped feature, the SDK should read the list itself rather than the launcher
 writing its private formats. The estimate:
@@ -221,7 +227,8 @@ Findings:
   rejected records stay in place, and the last N valid records are cut off, N being the
   number of rejected ones. Those are the pipelines met last session. They compile again in
   the same places, are appended, and are cut again at the next start. This happens every
-  session until the cache is deleted: exactly the #167 report. It needs a store with
+  session until the cache is deleted. That is the #167 symptom, but whether that
+  player's store held rejected records is unknown. It needs a store with
   records this device rejects: a GPU switch (patch 0054's discrete preference, an eGPU, a
   copied cache), a driver exposing fewer features, or any imported list. The 347 local
   stores have none, so it was not triggered here.
@@ -233,8 +240,8 @@ Findings:
   or two cross 64 MiB. From then on nothing new is saved. Every start recompiles what is
   missing (slow starts), and deleting the cache resets it. At about 46 KB per pipeline on
   that driver, a full prebuild (1500+ pipelines) is over the limit by itself. Why the
-  warm-up misses AMD's cache for the same pipelines is open: it reuses the data on RADV
-  and NVIDIA.
+  warm-up misses AMD's cache for the same pipelines is open: on NVIDIA the second start
+  reused it (801 ms, then 296 ms, [warm-up](shader_warmup.md)).
 
 Proposed fix:
 1. Rewrite the `.xpso` compacted when anything was rejected, instead of truncating.
