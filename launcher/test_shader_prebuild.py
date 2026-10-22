@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "tools"))
-from forza_launcher import shader_prebuild  # noqa: E402
+from forza_launcher import paths, shader_prebuild  # noqa: E402
 import fxobj_shaders  # noqa: E402
 import pipeline_list  # noqa: E402
 from xxh3 import xxh3_64  # noqa: E402
@@ -43,11 +43,15 @@ class FakePlan(SimpleNamespace):
     pass
 
 
+# The GPU plugin the prebuild stamp tracks, named as on this OS.
+PLUGIN = "rexgpu-xenos.dll" if paths.IS_WINDOWS else "librexgpu-xenos.so"
+
+
 def plan_in(tmp, *extra):
     cwd = Path(tmp) / "game"
     cwd.mkdir(exist_ok=True)
-    if not (cwd / "librexgpu-xenos.so").exists():
-        (cwd / "librexgpu-xenos.so").write_bytes(b"plugin")
+    if not (cwd / PLUGIN).exists():
+        (cwd / PLUGIN).write_bytes(b"plugin")
     return FakePlan(argv=[str(cwd / "forza"), f"--user_data_root={tmp}/ud",
                           f"--log_file={tmp}/forza.log", *extra],
                     cwd=cwd, env={}, unset=[], log_before_start=None)
@@ -194,8 +198,9 @@ class OfferAgainTests(unittest.TestCase):
     def test_cache_root(self):
         plan = plan_in(self.tmp)
         self.assertEqual(shader_prebuild.cache_root(plan), Path(self.tmp) / "ud" / "cache")
-        plan = plan_in(self.tmp, "--cache_root=/x/cache")
-        self.assertEqual(shader_prebuild.cache_root(plan), Path("/x/cache"))
+        other = Path(self.tmp) / "x" / "cache"
+        plan = plan_in(self.tmp, f"--cache_root={other}")
+        self.assertEqual(shader_prebuild.cache_root(plan), other)
 
     def test_states(self):
         plan = plan_in(self.tmp)
@@ -213,7 +218,7 @@ class OfferAgainTests(unittest.TestCase):
         self.assertIn("driver", shader_prebuild.status(plan)[1])
         # A launcher or game update.
         self.stamp(plan)
-        (plan.cwd / "librexgpu-xenos.so").write_bytes(b"new plugin")
+        (plan.cwd / PLUGIN).write_bytes(b"new plugin")
         self.assertIn("updated", shader_prebuild.status(plan)[1])
         with mock.patch.object(shader_prebuild, "__version__", "9.9.9"):
             self.stamp(plan)
