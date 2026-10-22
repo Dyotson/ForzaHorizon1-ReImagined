@@ -246,6 +246,8 @@ class RemapTests(unittest.TestCase):
         rules = b.parse_rules("lx=a,rt=-lt,lt=lt+,zz=a,b=@,y=lx-@x,x=b,rb=-lx")
         self.assertEqual(b.format_rules(rules), "x=b")
         self.assertEqual(b.parse_source("rt@9").threshold, 0.95)
+        for bad in ("none+", "-a", "a@0.3", "lt-", "-rt", "-lx+", "lx@", "lx@x"):
+            self.assertIsNone(b.parse_source(bad), bad)
         self.assertEqual(b.parse_remap("nonsense:a=b;12:a=b"), {})
 
     def test_profiles_by_guid_model_and_star(self):

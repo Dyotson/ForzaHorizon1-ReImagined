@@ -287,10 +287,10 @@ def parse_source(token):
     if not m:
         return None
     invert, name, half, threshold = m.groups()
-    if name == "none":
-        return NONE
-    if name in PAD_BUTTONS or name in EXTRA_BUTTONS:
-        return None if invert or half or threshold else Source(name)
+    if name == "none" or name in PAD_BUTTONS or name in EXTRA_BUTTONS:
+        if invert or half or threshold:
+            return None
+        return NONE if name == "none" else Source(name)
     if name not in STICK_AXES and name not in TRIGGERS:
         return None
     if name in TRIGGERS and (invert or half):
