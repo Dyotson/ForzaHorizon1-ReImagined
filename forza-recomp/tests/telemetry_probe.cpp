@@ -32,6 +32,7 @@ int main(int argc, char**) {
     position(step < 3 ? step*.1f : 10000.f); // Teleport resets derivatives.
     if (step == 4) word(vehicle+0x2DD0, 2); // Remote car must not be sampled.
     if (step == 5) word(FORZA_ADDR(0x832DF024), 0x70000000); // Unmapped pointer.
+    forza::telemetry::Rumble(0, 1000);  // driving: the game's rumble is running
     forza::telemetry::Input(step != 3, 255, 128, 0x1000, -32768);
     forza::telemetry::Physics(base);
   }
@@ -41,6 +42,7 @@ int main(int argc, char**) {
     for (int step = 0; step < 20; ++step) {
       Sleep(step == 10 ? 220 : 25); // Queued commands must expire across a pause.
       position(0);
+      forza::telemetry::Rumble(0, 1000);
       forza::telemetry::Input(true, 255, 128, 0, 0);
       forza::telemetry::Physics(base);
     }

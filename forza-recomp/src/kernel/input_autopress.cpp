@@ -433,6 +433,12 @@ extern "C" REX_FUNC(__imp__XamInputGetCapabilitiesEx) {
 extern "C" REX_FUNC(__imp__XamInputSetState) {
   static GuestFunc sdk = Sdk("__imp__XamInputSetState");
   uint32_t user;
+  // Player one's rumble is how the trigger effects tell driving from a menu (#224).
+  if (ctx.r5.u32 && RoutedUser(ctx.r3.u32, 0, user) && user == 0) {
+    uint16_t motors[2];  // X_INPUT_VIBRATION, big endian: left, right
+    std::memcpy(motors, GuestPtr(base, ctx.r5.u32), sizeof(motors));
+    forza::telemetry::Rumble(__builtin_bswap16(motors[0]), __builtin_bswap16(motors[1]));
+  }
   if (PadPerUser() || !RoutedUser(ctx.r3.u32, 0, user) || !sdk) {
     if (sdk) sdk(ctx, base);
     return;
