@@ -1,6 +1,7 @@
 // Checks SDK patch 0114 (rex::thread waits on Linux): a thread blocked on several handles, or in
 // an alertable wait, wakes for its own handles and for user callbacks queued to it, not for every
-// signal in the process, and alertable waits no longer poll every millisecond.
+// signal in the process, and alertable waits no longer poll every millisecond; a thread that
+// exits inside such a wait does not hang a WaitAll that joins it.
 // Build (CI, Linux SDK job): clang++ -std=c++23 -pthread -I<overlay>/include
 //   tools/test_wait_wakeups.cpp -L<overlay>/lib -lrexruntime -Wl,-rpath,<overlay>/lib
 #include <rex/thread.h>
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -190,6 +192,57 @@ int main() {
   {
     auto ev = Event::CreateManualResetEvent(true);
     CHECK(rex::thread::Wait(ev.get(), true, 0ms) == WaitResult::kSuccess);
+  }
+  // A thread that exits from a user callback queued to its alertable multi-handle wait on E
+  // unwinds that wait (its registration with E) after its own handle is signalled. Meanwhile a
+  // WaitAll on {the thread, E} holds both handles' locks and joins the thread. The unwinding
+  // must not need E's lock: with the first 0114 it did, and both threads hung (#286 review).
+  {
+    static std::atomic<bool> unwinding{false}, release_unwind{false};
+    struct ExitGate {  // keeps the exiting thread inside its unwind until the join has begun
+      ~ExitGate() {
+        unwinding = true;
+        while (!release_unwind) std::this_thread::sleep_for(1ms);
+      }
+    };
+    std::atomic<bool> done{false};
+    WaitResult result = WaitResult::kFailed;
+    std::thread scenario([&] {
+      auto shared = Event::CreateManualResetEvent(false);
+      auto other = Event::CreateManualResetEvent(false);
+      std::atomic<bool> waiting{false};
+      auto worker = rex::thread::Thread::Create({}, [&] {
+        waiting = true;
+        std::vector<WaitHandle*> hs{shared.get(), other.get()};
+        rex::thread::WaitAny(hs, true, 5000ms);
+      });
+      while (!waiting) std::this_thread::sleep_for(1ms);
+      std::this_thread::sleep_for(30ms);
+      worker->QueueUserCallback([] {
+        ExitGate gate;
+        rex::thread::Thread::Exit(0);
+      });
+      while (!unwinding) std::this_thread::sleep_for(1ms);
+      shared->Set();
+      std::thread release([] {
+        std::this_thread::sleep_for(50ms);
+        release_unwind = true;
+      });
+      std::vector<WaitHandle*> both{worker.get(), shared.get()};
+      result = rex::thread::WaitAll(both, false, 1000ms);
+      release.join();
+      done = true;
+    });
+    const auto deadline = Clock::now() + 5s;
+    while (!done && Clock::now() < deadline) std::this_thread::sleep_for(5ms);
+    if (!done) {
+      std::printf("FAIL: WaitAll on an exiting thread and an event it waited on hung (deadlock)\n");
+      std::fflush(stdout);
+      std::_Exit(1);  // the hung threads cannot be joined
+    }
+    scenario.join();
+    std::printf("thread exit during a WaitAll that joins it: WaitAll returned %d\n", int(result));
+    CHECK(result == WaitResult::kSuccess);
   }
   std::printf(failures ? "FAILED: %d\n" : "all passed\n", failures);
   return failures ? 1 : 0;
