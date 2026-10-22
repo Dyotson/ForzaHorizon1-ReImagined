@@ -242,7 +242,7 @@ def prebuild_command(plan) -> list:
 def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
     """Start the game in prebuild-only mode and wait for it. progress(done, total, part) follows the
     SHADER_WARMUP lines; part counts the pipeline caches (two with split scene/HUD rendering)."""
-    from .game import clean_shm, log_path_of, log_signature
+    from .game import clean_shm, log_is_current, log_path_of, log_signature
     from .shader_warmup import Monitor
     log_file = log_path_of(plan)
     plan.log_before_start = log_signature(plan)
@@ -286,7 +286,11 @@ def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
     seconds = time.monotonic() - start
     console = _console_text(out)
     # Only a log written during this run counts: an older forza.log says nothing about this one.
-    tail = _log_tail(log_file) if _written_since(log_file, started_at) else []
+    # The log must have changed during this process (log_is_current compares the signature taken
+    # before the start) and been written since it started: a run that ended moments ago leaves a
+    # recent log, which must not count as this one's (#298 review).
+    fresh = log_is_current(plan) and _written_since(log_file, started_at)
+    tail = _log_tail(log_file) if fresh else []
     if proc.returncode != 0 or not any(DONE_LINE in line for line in tail):
         if not tail:
             low = console.lower()

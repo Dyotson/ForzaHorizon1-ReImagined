@@ -47,6 +47,8 @@ FAKE = textwrap.dedent('''
     MODE = %r
     if MODE == "flag":
         print("Unknown flag: --shader_prebuild_only"); sys.exit(2)
+    if MODE == "ok":
+        sys.exit(0)
     if MODE == "log":
         log = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--log_file=")][0]
         open(log, "a").write("[i] Initializing shader storage\\n[error] fresh problem\\n")
@@ -81,6 +83,22 @@ class StaleLogTests(unittest.TestCase):
         msg = self.run_game("log", True)
         self.assertIn("fresh problem", msg)
         self.assertNotIn("yesterday", msg)
+
+    def test_recent_unchanged_log_is_not_this_run(self):
+        # #298 review: a previous run that ended moments ago left a recent log with the done line.
+        # A process that exits 0 without touching it must not count as a finished prebuild.
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        script = Path(tmp) / "fake.py"
+        script.write_text(FAKE % "ok")
+        log = Path(tmp) / "forza.log"
+        log.write_text("[i] " + shader_prebuild.DONE_LINE + ", exiting\n")
+        plan = SimpleNamespace(argv=[sys.executable, str(script), f"--log_file={log}"], cwd=Path(tmp),
+                               env={}, unset=[], log_before_start=None)
+        with mock.patch("forza_launcher.game.clean_shm"):
+            with self.assertRaises(shader_prebuild.PrebuildError) as cm:
+                shader_prebuild.run_game(plan, poll=0.02)
+        self.assertEqual(str(cm.exception), shader_prebuild.STOPPED_NO_LOG)
 
     def test_unknown_flag_is_reported(self):
         self.assertEqual(self.run_game("flag", True), shader_prebuild.UNKNOWN_FLAG)
