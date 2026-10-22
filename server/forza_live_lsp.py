@@ -235,6 +235,7 @@ def user_logon2(xuid, body):
     params, _ = x.decode(x.UserLogon2_Params, body)
     login = params["loginData"]
     xuid = login["qwXuid"] or xuid
+    login["wzGamerTag"] = limits.clean_gamertag(login["wzGamerTag"], xuid)
     record = load_player(xuid)
     record.update(gamertag=login["wzGamerTag"], lastLogon=int(time.time()),
                   careerLevel=login["currentCareerLevel"], logons=record.get("logons", 0) + 1)
@@ -475,7 +476,7 @@ def dlc_string_table_info(xuid, body):
 
 
 def gamertag_of(xuid):
-    return load_player(xuid).get("gamertag") or "%016X" % xuid
+    return limits.clean_gamertag(load_player(xuid).get("gamertag"), xuid)
 
 
 SERVICES = {

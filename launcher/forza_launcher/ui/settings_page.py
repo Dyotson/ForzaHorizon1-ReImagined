@@ -6,9 +6,9 @@ from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
-                               QVBoxLayout, QWidget)
+                               QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -164,6 +164,28 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         return w
     w = QLineEdit(str(value))  # str, keys
     w.setMinimumWidth(240)
+    if s.key == "gamertag":
+        # Limits while typing too: 15 characters, and anything but ASCII letters, digits and
+        # spaces is dropped (accents transliterated) as it is typed or pasted.
+        w.setMaxLength(gamertag.MAX_LENGTH)
+
+        def gamertag_typed(text, w=w):
+            kept = gamertag.filter_typing(text)
+            if kept != text:
+                pos = w.cursorPosition() - (len(text) - len(kept))
+                w.setText(kept)
+                w.setCursorPosition(max(0, min(pos, len(kept))))
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), gamertag.RULE, w, w.rect(), 4000)
+        w.textEdited.connect(gamertag_typed)
+
+        def gamertag_done(w=w):
+            cleaned, message = gamertag.check_name(w.text())
+            if message:
+                w.setText(cleaned)
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), message, w, w.rect(), 8000)
+            on_change(cleaned)
+        w.editingFinished.connect(gamertag_done)
+        return w
     w.editingFinished.connect(lambda w=w: on_change(w.text().strip()))
     return w
 

@@ -52,6 +52,11 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -pthread forza-recomp/tests/resource_cache_lock_test.cpp -o "$RUNNER_TEMP/resource-cache-test"
           "$RUNNER_TEMP/resource-cache-test"
+      - if: runner.os == 'Linux'
+        name: Gamertag text cleaning
+        run: |
+          g++ -std=c++20 -O2 -I forza-recomp/src/kernel forza-recomp/tests/gamertag_text_test.cpp -o "$RUNNER_TEMP/gamertag-test"
+          "$RUNNER_TEMP/gamertag-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.

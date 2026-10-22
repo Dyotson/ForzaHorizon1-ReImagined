@@ -9,6 +9,7 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
+from . import gamertag
 from .paths import IS_WINDOWS
 
 GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
@@ -385,7 +386,7 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
-    "Up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
+    "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
     "Identity")
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
@@ -466,6 +467,8 @@ def defaults():
 def coerce(setting, value):
     """Make a value (from JSON, TOML or a widget) fit the setting's type, or the default."""
     try:
+        if setting.key == "gamertag":
+            return gamertag.clean_name(value)
         if setting.kind == "bool":
             return bool(value)
         if setting.kind in ("int", "fps"):
