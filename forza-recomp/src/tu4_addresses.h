@@ -113,6 +113,8 @@
 #define __imp__sub_829F03B0 __imp__sub_82AAD320
 #define sub_829F04A8 sub_82AAD418
 #define __imp__sub_829F04A8 __imp__sub_82AAD418
+#define sub_82A6D7D8 sub_82B2A848
+#define __imp__sub_82A6D7D8 __imp__sub_82B2A848
 #define sub_82C76508 sub_82D37380
 #define __imp__sub_82C76508 __imp__sub_82D37380
 #define sub_82C8FE60 sub_82D50EA0
@@ -123,6 +125,8 @@
 #define __imp__sub_82CF7278 __imp__sub_82DB8C18
 #define sub_82D3DB00 sub_82DFFC48
 #define __imp__sub_82D3DB00 __imp__sub_82DFFC48
+#define sub_82DD9D58 sub_82E9C3B8
+#define __imp__sub_82DD9D58 __imp__sub_82E9C3B8
 #define sub_82DF7BB0 sub_82EB9DF0  // check
 #define __imp__sub_82DF7BB0 __imp__sub_82EB9DF0
 
@@ -130,6 +134,8 @@ namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
   switch (a) {
     case 0x823EDB08: return 0x8241DBC8;  // code  // check
+    case 0x8259FB5C: return 0x82616C44;  // code
+    case 0x8259FBEC: return 0x82616CD4;  // code
     case 0x82624B04: return 0x826CC2B4;  // code  // check
     case 0x82633824: return 0x826DBBFC;  // code
     case 0x8263AE18: return 0x826E30A8;  // code
@@ -155,6 +161,7 @@ constexpr uint32_t Tu4Address(uint32_t a) {
     case 0x832FF054: return 0x833EDC08;  // data
     case 0x832FF090: return 0x833EDC44;  // data
     case 0x83305CC4: return 0x833F4A80;  // data
+    case 0x834B36A8: return 0x835A90B8;  // data
     default: return 0;  // not in the table: rerun tools/tu_address_map.py --cpp
   }
 }
