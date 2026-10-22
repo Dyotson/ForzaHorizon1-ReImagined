@@ -1,7 +1,7 @@
 """Import graphics choices saved by the game's native pause menu."""
 import json
 
-from . import schema
+from . import display, schema
 
 FILENAME = "graphics-settings.json"
 KEYS = {"output", "upscaler", "resolution_scale", "frame_rate", "vsync",
@@ -13,7 +13,7 @@ FSR3 = {"fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_native"}
 from .antialiasing import configure_runtime
 
 
-def translate(document, current):
+def translate(document, current, pc=None):
     """Validate the complete request before changing any launcher setting."""
     if (not isinstance(document, dict) or
             type(document.get("version")) is not int or document["version"] != 1):
@@ -68,6 +68,9 @@ def translate(document, current):
                      (key == "anisotropic_override" and -1 <= number <= 5))
             if not valid:
                 raise ValueError(f"unsupported {key}")
+            if key == "frame_rate" and current.get("frame_rate") == 0 and number == display.effective(
+                    current, pc)["frame_rate"]:
+                continue    # the menu saves the rate it was started with: Match display stays
             changes[key] = number
     if "anti_aliasing" in values:
         mode = values.get("upscaler")
@@ -93,7 +96,8 @@ def import_pending(cfg, log=print):
     try:
         if pending.stat().st_size > 16384:
             raise ValueError("graphics settings file is too large")
-        changes = translate(json.loads(pending.read_text(encoding="utf-8")), cfg.settings)
+        changes = translate(json.loads(pending.read_text(encoding="utf-8")), cfg.settings,
+                            cfg.pc_specs() if cfg.d["specs"].get("values") else None)
     except FileNotFoundError:
         return False
     except (OSError, ValueError, TypeError) as error:

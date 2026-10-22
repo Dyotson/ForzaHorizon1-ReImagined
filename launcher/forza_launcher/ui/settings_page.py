@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -78,7 +78,7 @@ class HudSlider(QWidget):
         self.slider.setValue(int(value))
 
 
-def make_control(s: schema.Setting, value, on_change, note=None):
+def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
     """A widget for the setting, calling on_change(value) when the player changes it. note(value)
     may return a reason that is appended to a choice's label (a GPU's known problem, #52)."""
     if s.kind == "float" and s.key.startswith("forza_hud_"):
@@ -138,6 +138,7 @@ def make_control(s: schema.Setting, value, on_change, note=None):
     if s.kind == "fps":
         w = Combo()
         w.setEditable(True)
+        w.addItem(display.label(monitor), 0)
         for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
         w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
@@ -150,6 +151,9 @@ def make_control(s: schema.Setting, value, on_change, note=None):
         w.setMinimumWidth(130)
 
         def changed(_=None, w=w):
+            if w.currentIndex() == 0 and w.currentText() == w.itemText(0):
+                on_change(0)    # Match display
+                return
             digits = "".join(c for c in w.currentText() if c.isdigit())
             if digits:
                 rate = schema.coerce(s, int(digits))
@@ -193,7 +197,8 @@ class SettingRow(QWidget):
         vendor = cfg.gpu_vendor()
         self.control = make_control(s, cfg.settings.get(s.key, s.default),
                                     lambda v, s=s: changed(s.key, v),
-                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v))
+                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v),
+                                    monitor=cfg.settings.get("monitor", 0))
         tip = f"{s.key}" + (f" (default {s.default!r})" if s.default != "" else "")
         self.control.setToolTip(tip)
         self.control.setAccessibleName(s.label)
@@ -318,6 +323,13 @@ class SettingsPage(QWidget):
                 row.control.blockSignals(True)
                 row.control.setCurrentIndex(row.control.findData("none"))
                 row.control.blockSignals(False)
+        if key == "monitor" and "frame_rate" in self.rows:    # Match display names the new monitor's rate
+            control = self.rows["frame_rate"].control
+            selected = control.currentIndex() == 0
+            control.setItemText(0, display.label(value))
+            if selected:
+                control.setCurrentIndex(0)
+                control.setEditText(control.itemText(0))
         self._apply_dependencies()
         self.touched()
 
@@ -565,7 +577,7 @@ class SettingsPage(QWidget):
     def _refresh_gpu_warnings(self):
         vendor = self.cfg.gpu_vendor()
         found = {}
-        warning_settings = dict(self.cfg.settings)
+        warning_settings = self.cfg.effective_settings()
         if (dlss.enabled(self.cfg) and warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
                 warning_settings.get("fh1_output_resolution") == "4k"):
             # The 3x allocation belongs to the native UI; these modes render
