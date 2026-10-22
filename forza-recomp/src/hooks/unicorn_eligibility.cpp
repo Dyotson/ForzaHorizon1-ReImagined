@@ -25,6 +25,7 @@ extern "C" REX_FUNC(__imp__sub_82675B00);
 extern "C" REX_FUNC(__imp__sub_8279D608);
 extern "C" REX_FUNC(__imp__sub_827B2048);
 extern "C" REX_FUNC(__imp__sub_827C73F0);
+extern "C" REX_FUNC(__imp__sub_82758318);
 extern "C" REX_FUNC(sub_827931E8);
 
 namespace {
@@ -100,17 +101,18 @@ forza::unicorn::TestMode Mode() {
 }  // namespace
 
 // The in-world garage accepts a database row directly, bypassing the lobby's
-// per-player eligibility check. Check CarId before the native callback updates
+// per-player eligibility check. Check the model before the native callback updates
 // the player's choices or closes the picker. Leave the old car and save intact.
-extern "C" REX_FUNC(sub_827C73F0) {
-  const uint32_t screen = ctx.r3.u32;
-  const uint32_t row = ctx.r4.u32;
+namespace {
+bool DenyWorkshopChoice(PPCContext ctx, uint8_t* base, uint32_t screen,
+                        uint32_t row, uint32_t model_field) {
   const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
   if (screen && row && forza::NetworkOn() && game &&
-      Read32(base, game + 0x28) && Read32(base, game + 0x30) == 1) {
+      forza::unicorn::MultiplayerMode(Read32(base, game + 0x28)) &&
+      Read32(base, game + 0x30) == 1) {
     PPCContext lookup = ctx;
     lookup.r3.u64 = row;
-    lookup.r4.u64 = 0x82007E8C;  // Native database field name: CarId.
+    lookup.r4.u64 = model_field;
     rex::runtime::ResolveIndirectFunction(Read32(base, Read32(base, row) + 0x14))(lookup, base);
     const uint32_t model = lookup.r3.u32;
     const auto permission = forza::LiveEventPermission(model);
@@ -132,10 +134,25 @@ extern "C" REX_FUNC(sub_827C73F0) {
       lookup.r5.u64 = screen;
       sub_827931E8(lookup, base);
       workshop_dialog = previous;
-      return;
+      return true;
     }
   }
-  __imp__sub_827C73F0(ctx, base);
+  return false;
+}
+}  // namespace
+
+extern "C" REX_FUNC(sub_827C73F0) {
+  if (!DenyWorkshopChoice(ctx, base, ctx.r3.u32, ctx.r4.u32, 0x82007E8C)) {  // CarId
+    __imp__sub_827C73F0(ctx, base);
+  }
+}
+
+// The in-world Club Garage uses the shared row selector rather than the owned
+// garage callback above. Reject before it starts the native car-load operation.
+extern "C" REX_FUNC(sub_82758318) {
+  if (!DenyWorkshopChoice(ctx, base, ctx.r3.u32, ctx.r4.u32, 0x82031504)) {  // ModelId
+    __imp__sub_82758318(ctx, base);
+  }
 }
 
 extern "C" REX_FUNC(sub_829457A0) {
@@ -147,7 +164,7 @@ extern "C" REX_FUNC(sub_829457A0) {
   const uint32_t game = Read32(base, FORZA_ADDR(0x83305CC4));
   if (!game) return;
   const uint32_t online_mode = Read32(base, game + 0x28);
-  if (!online_mode) return;
+  if (!forza::unicorn::MultiplayerMode(online_mode)) return;
 
   // Restrict only the actual local player, not AI or another console's records.
   // Preserve all outputs from the native eligibility check around the getter call.

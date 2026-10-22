@@ -172,7 +172,8 @@ corresponding function/layout has not been validated.
 * `FORZA_UNICORN_ELIGIBILITY_TEST=grant`: simulate local permission, preserving native
   class/event restrictions. It cannot override a server's denial and is not an organizer-issued grant.
 * Missing or unrecognized values disable the experiment. Remote players and AI are
-  left to native behavior, as is single player (online mode zero / networking off).
+  left to native behavior, as is single player (outside native multiplayer modes
+  5–10 / networking off).
 
 A denial now changes the game's own dialog to explain the event unlock and direct
 the player to Select Car. It retains the native OK action. Decision logging is
@@ -518,9 +519,42 @@ closed normally and the authenticated audit preserved all seven unicorns exactly
 once in both garages, with source inventories unchanged. Screenshots, binary fixtures, DLC and raw
 traces remain under `build/`, outside Git.
 
-This resolves the earned-loan loading blocker. In-world Club Garage selection
-after entering free roam remains an explicit uncompleted acceptance check; the
-passing lobby-loan tests do not establish that callback's coverage.
+This resolves the earned-loan loading blocker. The subsequent in-world check is
+recorded below; lobby borrowing alone did not establish that callback's coverage.
+
+### In-world Club Garage switching (2026-10-21)
+
+Two ordinary cars entered public custom free roam (native mode 9), then drove or
+used native festival fast travel to the Car Club. Before this fix, EventUnearned
+could select EventEarned's Saleen there and immediately drive it without a reward.
+That reproduced a real bypass of the lobby and owned-workshop checks.
+
+The shared-car row-selection callback now checks server permission before starting
+the native load. Shared rows expose `ModelId`, while the owned-garage callback uses
+`CarId`. Both callbacks share the denial dialog and preserve the existing car.
+The guard uses TU4's native multiplayer predicate (modes 5 through 10). A nonzero
+mode alone is insufficient: single-player club test drives use mode 2.
+
+With the final production guard linked into both isolated clients:
+
+| In-world action | Result |
+| --- | --- |
+| Unearned chooses the other member's Saleen | Event Unlock Required; picker remains open; backing out preserves the Fiat |
+| Unearned chooses its own shared Saleen | Same denial; current Lancer remains intact |
+| Unearned selects the other member's ordinary Lancer after denial | Loads model 1009/shared car 7 at status 4 and drives in the same session |
+| Earned selects the other member's Saleen | Server permission Allowed; loads model 1197/shared car 5 at status 4; drives approximately 30 metres with the peer present |
+| Earned switches back to the ordinary Lancer | Loads normally without ending free roam |
+| Unearned test-drives the other member's Saleen in single player | Remains allowed on the final build |
+
+Native policy assertions cover all six multiplayer modes and exclude modes 0–4
+(including the observed test-drive mode 2), 11 and an invalid sentinel. TU4 and
+disc compilation, isolated TU4 linking and all 152 server tests pass. This closes
+the in-world Club Garage acceptance gap for the tested custom free-roam path;
+it does not establish every remaining lifecycle or hostile-client scenario.
+Both clients returned to the lobby and closed normally. The final stopped-save
+audit authenticated both garages, preserved all seven unicorns exactly once and
+verified that the source profile inventories were unchanged. No game assets,
+screenshots, raw traces or private input helpers were added to Git.
 
 ## Remaining native trace and acceptance criteria
 
