@@ -28,6 +28,7 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/telemetry.h"
+#include "../platform/wheel_bridge.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -333,6 +334,7 @@ bool RoutedUser(uint32_t user_index, uint32_t flags, uint32_t& user) {
 extern "C" REX_FUNC(__imp__XamInputGetState) {
   static GuestFunc sdk = Sdk("__imp__XamInputGetState");
   InitScripting();
+  forza::wheel::UpdateDriving();  // the wheel's forces fade while the player is not driving (#256)
   const uint32_t flags = ctx.r4.u32, buffer = ctx.r5.u32;
   uint32_t user;
   if (!RoutedUser(ctx.r3.u32, flags, user)) {

@@ -54,7 +54,7 @@ class WheelShifterSettings(unittest.TestCase):
 
     def test_shifter_section_follows_the_racing_wheel(self):
         keys = [s.key for s in schema.for_group("Controls")]
-        start = keys.index("wheel_ffb_strength") + 1
+        start = keys.index("wheel_rumble_road_strength") + 1
         self.assertEqual(tuple(keys[start:start + len(KEYS)]), KEYS)
         self.assertEqual({schema.BY_KEY[k].section for k in KEYS}, {"Shifter and clutch"})
         self.assertTrue(schema.BY_KEY["wheel_shifter"].restart)

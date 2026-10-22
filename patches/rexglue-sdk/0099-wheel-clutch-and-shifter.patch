@@ -32,10 +32,10 @@ index 33d35bd..51dd35c 100644
    std::chrono::steady_clock::time_point last_pump_{};
 diff --git a/include/rex/input/wheel/wheel_shifter.h b/include/rex/input/wheel/wheel_shifter.h
 new file mode 100644
-index 0000000..d6d150d
+index 0000000..347ea1b
 --- /dev/null
 +++ b/include/rex/input/wheel/wheel_shifter.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,125 @@
 +/**
 + * @file        rex/input/wheel/wheel_shifter.h
 + * @brief       Racing wheel shifter and clutch: the gear and button logic of the wheel driver,
@@ -52,6 +52,7 @@ index 0000000..d6d150d
 + */
 +#pragma once
 +
++#include <cstdint>
 +#include <map>
 +#include <string>
 +
@@ -67,15 +68,44 @@ index 0000000..d6d150d
 +  int up = -1, down = -1;  // a sequential shifter
 +};
 +
-+// The Logitech Driving Force Shifter on a G29, G920 or G923: gears 1-6 on buttons 12-17,
-+// reverse (pushed down) on 18.
-+inline ShifterMap LogitechShifter() {
++// The Logitech Driving Force Shifter: gears 1-6 on buttons 12-17 and reverse (pushed down) on
++// `reverse`, which depends on the wheel it is plugged into (DefaultShifter).
++inline ShifterMap LogitechShifter(int reverse = 18) {
 +  ShifterMap m;
 +  for (int g = 1; g <= 6; g++) {
 +    m.gear[g] = 11 + g;
 +  }
-+  m.gear[0] = 18;
++  m.gear[0] = reverse;
 +  return m;
++}
++
++// The built-in shifter map of a wheel, by USB vendor:product (SDL button numbers, the wheel's HID
++// button order on Windows and Linux alike). The Driving Force Shifter's gears 1-6 are buttons 12-17
++// on all of them; reverse differs:
++//  - G29 (046d:c24f) and G923 for PlayStation and PC (c266; c267 is its PS4 mode before the mode
++//    switch): 25 buttons, reverse after the gears on 18 (Logitech's shifter table; the
++//    PlayStation G923's own table on PCGamingWiki: reverse button 19, counted from 1);
++//  - G920 (c262) and G923 for Xbox and PC (c26e; c26d is its Xbox mode before the mode switch):
++//    face buttons, paddles, Menu, View, the stick presses and the Xbox button are 0-10, and
++//    reverse comes before the gears, on 11 (PCGamingWiki's G920 and Xbox G923 tables: reverse 12,
++//    gears 13-18, counted from 1; a G923 for Xbox owner found reverse on 11, #256).
++// Other wheels have no built-in shifter map (wheel_shifter_buttons sets it).
++inline ShifterMap DefaultShifter(uint16_t vid, uint16_t pid) {
++  if (vid != 0x046D) {
++    return ShifterMap{};
++  }
++  switch (pid) {
++    case 0xC24F:  // G29
++    case 0xC266:  // G923 for PlayStation and PC
++    case 0xC267:  // the same in PS4 mode
++      return LogitechShifter(18);
++    case 0xC262:  // G920
++    case 0xC26E:  // G923 for Xbox and PC
++    case 0xC26D:  // the same in Xbox mode
++      return LogitechShifter(11);
++    default:
++      return ShifterMap{};
++  }
 +}
 +
 +// Overrides "1=12,...,6=17,r=18" and "up=..,down=.." (keys lower case, as ParseKv gives them).
@@ -132,7 +162,7 @@ index 0000000..d6d150d
 +
 +}  // namespace rex::input::wheel
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 2286e25..1fd18ca 100644
+index 2286e25..441b0a7 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -4,7 +4,9 @@
@@ -154,7 +184,7 @@ index 2286e25..1fd18ca 100644
  #include <rex/logging.h>
  #include <rex/ui/virtual_key.h>
  
-@@ -66,6 +69,27 @@ REXCVAR_DEFINE_STRING(wheel_axes, "", "Input",
+@@ -66,6 +69,28 @@ REXCVAR_DEFINE_STRING(wheel_axes, "", "Input",
  REXCVAR_DEFINE_STRING(wheel_buttons, "", "Input",
                        "Button overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,"
                        "rs=10,up=12,down=13,left=14,right=15 (SDL button numbers; -1 unmaps)");
@@ -171,7 +201,8 @@ index 2286e25..1fd18ca 100644
 +REXCVAR_DEFINE_STRING(wheel_shifter_buttons, "", "Input",
 +                      "Shifter buttons, e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18 (gears 1 to 7 and "
 +                      "reverse) or up=..,down=.. (sequential); SDL button numbers. Empty: the Logitech "
-+                      "Driving Force Shifter on a G29, G920 or G923 (gears 1-6 on 12-17, reverse 18)");
++                      "Driving Force Shifter on a G29, G920 or G923 (gears 1-6 on 12-17; reverse 18 on "
++                      "a G29 or PlayStation G923, 11 on a G920 or Xbox G923)");
 +REXCVAR_DEFINE_BOOL(wheel_shifter_clutch, false, "Input",
 +                    "H-pattern: a gear engages only with the clutch pressed past "
 +                    "wheel_clutch_threshold; without it the car stays in neutral");
@@ -182,44 +213,32 @@ index 2286e25..1fd18ca 100644
  REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
                      "Force feedback on the wheel (approximate: a centring spring and a vibration "
                      "from the game's rumble motors)");
-@@ -137,15 +161,16 @@ struct Profile {
-   uint16_t vid, pid;
+@@ -138,6 +163,7 @@ struct Profile {
    const char* name;
    bool g29_buttons;  // the G29/G923 button numbers below; else the generic map
-+  bool df_shifter;   // a Driving Force Shifter port: its gears are buttons 12-18 (LogitechShifter)
  };
++// The Driving Force Shifter's buttons go by vendor:product too (DefaultShifter).
  constexpr Profile kProfiles[] = {
--    {0x046D, 0xC24F, "Logitech G29", true},
--    {0x046D, 0xC262, "Logitech G920", false},
--    {0x046D, 0xC266, "Logitech G923", true},
--    {0x046D, 0xC26E, "Logitech G923 (Xbox)", false},
--    {0x046D, 0xC29A, "Logitech Driving Force GT", false},
--    {0x046D, 0xC29B, "Logitech G27", false},
--    {0x046D, 0xC299, "Logitech G25", false},
-+    {0x046D, 0xC24F, "Logitech G29", true, true},
-+    {0x046D, 0xC262, "Logitech G920", false, true},
-+    {0x046D, 0xC266, "Logitech G923", true, true},
-+    {0x046D, 0xC26E, "Logitech G923 (Xbox)", false, true},
-+    {0x046D, 0xC29A, "Logitech Driving Force GT", false, false},
-+    {0x046D, 0xC29B, "Logitech G27", false, false},
-+    {0x046D, 0xC299, "Logitech G25", false, false},
- };
- #ifdef _WIN32
- constexpr int kProfSteer = 0, kProfThrottle = 1, kProfBrake = 2, kProfClutch = 3;
-@@ -166,6 +191,12 @@ const Profile* FindProfile(uint16_t vid, uint16_t pid) {
+     {0x046D, 0xC24F, "Logitech G29", true},
+     {0x046D, 0xC262, "Logitech G920", false},
+@@ -166,6 +192,12 @@ const Profile* FindProfile(uint16_t vid, uint16_t pid) {
    return nullptr;
  }
  
-+// The wheel's shifter buttons: a known wheel's shifter port, then wheel_shifter_buttons.
-+ShifterMap ShifterFor(const Profile* prof) {
-+  return ApplyShifterOverrides(prof && prof->df_shifter ? LogitechShifter() : ShifterMap{},
++// The wheel's shifter buttons: a known wheel's shifter port (by model), then wheel_shifter_buttons.
++ShifterMap ShifterFor(uint16_t vid, uint16_t pid) {
++  return ApplyShifterOverrides(DefaultShifter(vid, pid),
 +                               ParseKv(REXCVAR_GET(wheel_shifter_buttons)));
 +}
 +
  float Norm(int16_t v) {
    return v < 0 ? v / 32768.0f : v / 32767.0f;
  }
-@@ -206,6 +237,8 @@ struct WheelInputDriver::Wheel {
+@@ -203,9 +235,12 @@ struct WheelInputDriver::Wheel {
+   std::string name;
+   std::string guid;
+   int num_axes = 0, num_buttons = 0, num_hats = 0;
++  uint16_t vid = 0, pid = 0;
    const Profile* prof = nullptr;  // known wheel: fixed axes and pedal direction
    std::vector<int16_t> rest;  // where each axis sat when the wheel was opened
    std::vector<uint8_t> armed;  // pedal axes seen at their resting end since the wheel was opened
@@ -228,13 +247,24 @@ index 2286e25..1fd18ca 100644
    X_INPUT_STATE last_state{};
    uint32_t packet = 0;
    uint16_t keystroke_buttons = 0;
-@@ -331,6 +364,20 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+@@ -304,7 +339,9 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+   w->num_axes = SDL_GetNumJoystickAxes(joy);
+   w->num_buttons = SDL_GetNumJoystickButtons(joy);
+   w->num_hats = SDL_GetNumJoystickHats(joy);
+-  w->prof = FindProfile(SDL_GetJoystickVendor(joy), SDL_GetJoystickProduct(joy));
++  w->vid = SDL_GetJoystickVendor(joy);
++  w->pid = SDL_GetJoystickProduct(joy);
++  w->prof = FindProfile(w->vid, w->pid);
+   if (w->prof && w->num_axes <= std::max({kProfSteer, kProfThrottle, kProfBrake})) {
+     w->prof = nullptr;  // exposed with fewer axes than the profile expects: detect instead
+   }
+@@ -331,6 +368,20 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
    for (int a = 0; a < w->num_axes; a++) {
      REXLOG_INFO("Wheel:   axis {} rests at {}", a, w->rest[a]);
    }
 +  const std::string shifter = REXCVAR_GET(wheel_shifter);
 +  if (shifter != "off") {
-+    const ShifterMap m = ShifterFor(w->prof);
++    const ShifterMap m = ShifterFor(w->vid, w->pid);
 +    if (shifter == "h" && TopGear(m) == 0) {
 +      REXLOG_WARN("Wheel: wheel_shifter = h, but no gear buttons are known for this wheel: set "
 +                  "wheel_shifter_buttons (e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18)");
@@ -249,7 +279,7 @@ index 2286e25..1fd18ca 100644
    SetupForceFeedbackLocked(*w);
    wheels_.push_back(std::move(w));
  }
-@@ -444,8 +491,7 @@ WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
+@@ -444,8 +495,7 @@ WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
    return nullptr;
  }
  
@@ -259,7 +289,7 @@ index 2286e25..1fd18ca 100644
    const auto axes = ParseKv(REXCVAR_GET(wheel_axes));
    auto axis_override = [&](const char* key) {
      auto it = axes.find(key);
-@@ -528,6 +574,10 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, uint16_t* buttons_out, uint8
+@@ -528,6 +578,10 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, uint16_t* buttons_out, uint8
    }
    thr = std::pow(thr, static_cast<float>(REXCVAR_GET(wheel_throttle_curve)));
    brk = std::pow(brk, static_cast<float>(REXCVAR_GET(wheel_brake_curve)));
@@ -270,7 +300,7 @@ index 2286e25..1fd18ca 100644
  
    float s = 0.0f;
    if (steer >= 0 && steer < w.num_axes) {
-@@ -580,10 +630,33 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, uint16_t* buttons_out, uint8
+@@ -580,10 +634,33 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, uint16_t* buttons_out, uint8
      if (h & SDL_HAT_RIGHT) buttons |= 0x0008;
    }
  
@@ -284,7 +314,7 @@ index 2286e25..1fd18ca 100644
 +  const std::string shifter = REXCVAR_GET(wheel_shifter);
 +  int gear = kGearNeutral;
 +  if (shifter != "off") {
-+    const ShifterMap m = ShifterFor(w.prof);
++    const ShifterMap m = ShifterFor(w.vid, w.pid);
 +    auto held = [&](int n) { return n >= 0 && n < w.num_buttons && SDL_GetJoystickButton(w.joy, n); };
 +    if (shifter == "h") {
 +      w.gear = EngageGear(LeverGear(m, held), w.gear, REXCVAR_GET(wheel_shifter_clutch), clutch,
@@ -308,7 +338,7 @@ index 2286e25..1fd18ca 100644
  }
  
  void WheelInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
-@@ -612,14 +685,7 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+@@ -612,14 +689,7 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
    PumpLocked();
    X_INPUT_STATE s{};
    if (is_active()) {
@@ -324,7 +354,7 @@ index 2286e25..1fd18ca 100644
    }
    if (std::memcmp(&s.gamepad, &w->last_state.gamepad, sizeof(s.gamepad)) != 0) {
      w->packet++;
-@@ -630,17 +696,22 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+@@ -630,17 +700,22 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
    return X_ERROR_SUCCESS;
  }
  
@@ -352,18 +382,18 @@ index 2286e25..1fd18ca 100644
    }
    // What the Xbox 360 Wireless Racing Wheel reports. FH1 takes a pad for a wheel when
    // SubType is 2, read once when the pad slot is created (sub_82CBAFE0). The car's input
-@@ -654,6 +725,10 @@ X_RESULT WheelInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t, X_INPUT_
+@@ -654,6 +729,10 @@ X_RESULT WheelInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t, X_INPUT_
    caps->gamepad.left_trigger = 0xFF;
    caps->gamepad.right_trigger = 0xFF;
    caps->gamepad.thumb_lx = REXCVAR_GET(wheel_900_steering) ? int16_t(900) : static_cast<int16_t>(0x7FFF);
 +  // An H-pattern shifter: thumb_rx other than 0 and 1, its high byte the number of forward gears.
 +  // The game then reads the gear from the state's thumb_rx (wheel_shifter.h).
-+  const int top_gear = REXCVAR_GET(wheel_shifter) == "h" ? TopGear(ShifterFor(w->prof)) : 0;
++  const int top_gear = REXCVAR_GET(wheel_shifter) == "h" ? TopGear(ShifterFor(w->vid, w->pid)) : 0;
 +  caps->gamepad.thumb_rx = static_cast<int16_t>(top_gear << 8);
    caps->vibration.left_motor_speed = 0xFFFFu;
    caps->vibration.right_motor_speed = 0xFFFFu;
    return X_ERROR_SUCCESS;
-@@ -679,9 +754,9 @@ X_RESULT WheelInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t, X_INPUT_KEY
+@@ -679,9 +758,9 @@ X_RESULT WheelInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t, X_INPUT_KEY
    PumpLocked();
    uint16_t cur = 0;
    if (is_active()) {

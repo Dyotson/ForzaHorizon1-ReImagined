@@ -247,12 +247,13 @@ clutch deadzones, force feedback scale) apply, the car uses the game's full-rang
 sends its own force feedback (below). Until #219 a bug in our capabilities hook hid the wheel from the game,
 which took every wheel for a gamepad (found by a G923 owner in #4).
 
-Tested here with a virtual wheel (Linux uinput) and by a Logitech G29 owner on Windows (issue #4: steering,
-pedals, buttons and force feedback work). Other wheels are untested: please report the model and what works.
+Tested here with a virtual wheel (Linux uinput) and by a Logitech G29 owner and a G923 for Xbox owner on Windows
+(issue #4: steering, pedals, buttons and force feedback work; the G923 also the clutch and H-shifter). Other wheels
+are untested: please report the model and what works.
 
 **Known wheels** (Logitech G25, G27, G29, G920, G923, Driving Force GT, by USB vendor and product id) have a
 built-in profile: fixed axes, pedals that rest at the maximum and read the minimum when pressed, and for the
-G29 and G923 the button map below. The axes are never guessed from where they sit at start-up for these wheels.
+G29, G920 and both G923 versions their own button and shifter maps (below). The axes are never guessed from where they sit at start-up for these wheels.
 The profile numbers are SDL's: on Windows steering 0, throttle 1, brake 2, clutch 3; on Linux steering 0,
 clutch 1, throttle 2, brake 3. If a pedal then works backwards on your system, switch `wheel_invert_throttle`
 or `wheel_invert_brake`; `wheel_axes` and `wheel_buttons` still override the profile. Other wheels are detected
@@ -271,12 +272,14 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
-| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps) |
+| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
+| `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 100, 100 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
-| `wheel_shifter_buttons` | see below | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
+| `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
 
 **Steering around the centre.** A G29 owner reported that the first degrees of every turn did nothing: the game
@@ -306,11 +309,18 @@ button.
 - **H-pattern shifter:** set `wheel_shifter = h` (launcher: Controls, Shifter and clutch, Shifter: H-pattern)
   and *Manual* or *Manual with clutch* shifting in the game; with *Automatic* the game ignores the shifter.
   Even with *Manual with clutch* the game takes the lever's gear without the clutch (see realistic shifting).
-  The Logitech Driving Force Shifter on a G29, G920 or G923 is built in: gears 1 to 6 are buttons 12 to 17 and
-  reverse (pushed down) is 18. Other shifters need `wheel_shifter_buttons`, e.g.
+  The Logitech Driving Force Shifter on a G29, G920 or G923 is built in, by the wheel's USB product id: gears 1
+  to 6 are buttons 12 to 17 on all of them, reverse (pushed down) is 18 on a G29 or a G923 for PlayStation
+  (046d:c24f, c266) and 11 on a G920 or a G923 for Xbox (c262, c26e): those wheels number reverse before the gears
+  (Logitech's and PCGamingWiki's button tables, and a G923 for Xbox owner, #256). Other shifters need
+  `wheel_shifter_buttons`, e.g.
   `1=8,2=9,3=10,4=11,5=12,6=13,r=14`; up to 7 gears and reverse (the log prints the map: `Wheel: H-pattern
   shifter, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB shifters) is
   not read yet: only buttons of the wheel itself.
+- **The shifter's buttons press nothing else.** Every button the shifter uses (its gears and reverse with `h`, up
+  and down with `sequential`) is taken out of the wheel's pad buttons, whatever the defaults or `wheel_buttons`
+  say: on a G923 for Xbox reverse is button 11, which the generic map had as the left stick press, so engaging
+  reverse also opened the friends screen (#256).
 - **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
   least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
   neutral until you press it. Off by default (the lever's gear engages at once).
@@ -335,8 +345,12 @@ the middle is the steering, those resting at an end are the pedals (throttle, br
 **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
 fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
-8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10`
-(cross, circle, square, triangle, right paddle, left paddle, Share, Options, L3, R3; R2 and L2 are free). With the
+8 Back, 9 Start, 10 and 11 stick presses; the G29 and G923 for PlayStation map is
+`a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10` (cross, circle, square, triangle, right paddle, left
+paddle, Share, Options, L3, R3; R2 and L2 are free). The G920 and G923 for Xbox map is
+`a=0,b=1,x=2,y=3,rb=4,lb=5,start=6,back=7,rs=8,ls=9` (Menu, View, RSB, LSB; the Xbox button, 10, and the shifter's
+11 to 17 are free): their buttons follow PCGamingWiki's G920 and Xbox G923 tables, where the generic map had put
+the stick presses on the Xbox button and the shifter's reverse (#256, not yet confirmed on the wheel). With the
 game's Wheel layout 1 the paddles shift up and down, cross is the clutch, circle the handbrake, square Activate,
 triangle Rewind and Share the camera (the paddles were on B and X while the game took the wheel for a gamepad,
 whose layout shifts with those). Wheel buttons differ between models, so check the numbers (for example
@@ -350,13 +364,33 @@ the wheel back towards the centre; scraping a wall or crashing makes it kick), a
 at a standstill, grows with speed and fades while the rear wheels slide, a light **damper**, and an inertia and a
 friction effect set to zero. Its tuning is `media/ControllerFFB.ini`; the game's Advanced wheel options scale it
 (Force feedback scale) and the rumble (Vibration scale). The rumble (engine, road surface, impacts) comes as a 25 Hz
-vibration. `wheel_ffb_strength` scales everything (default 60 percent), `wheel_ffb = false` switches it off. The
+vibration. `wheel_ffb_strength` scales everything (default 60 percent), `wheel_ffb = false` switches it off.
+Three more strengths (#256), in percent of it and 100 by default (as before), each set one part:
+`wheel_ffb_spring_strength` the centring spring and the damper (the spring grows with speed, so at speed small
+turns can feel heavy; lowering it softens the centring without weakening the steering force and the road feel),
+`wheel_rumble_engine_strength` the game's right motor, which carries the engine and climbs towards the limiter, and
+`wheel_rumble_road_strength` its left motor (road surface, kerbs, impacts). Both motors play as one vibration, the
+stronger of the two after their strengths, so in a car that revs quickly a lower engine strength lets the road
+through. The
 wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
 the G25, G27 and G29 has only constant force and autocentre) the game's spring sets the autocentre strength
 instead. On Linux the wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most
 wheels).
 
-Tested with a virtual wheel (uinput) that logs what it receives, not yet on a real one. Wheel drivers disagree about
+**Not driving: the forces fade out (#256).** The game keeps its wheel effects going when the car is not under the
+player's control: in the pause menu it sets the centring spring to full and leaves it and the damper on, a
+rewind plays the steering force and rumble of the car going backwards, and replays keep the last spring. So the
+wheel pulled and buzzed there (a G923 owner, #4). The driver now fades all the game's forces and its rumble to
+nothing in 0.25 s while the player is not driving and back in over 0.5 s when they are. The game tells it
+(`ForzaWheelPlayerDriving`, an export of the runtime) from the car's physics: its substeps stop in the pause menu,
+rewinds, replays, menus and loading screens, and driving counts again once they have run for half a second (which
+leaves out most of the short bursts when a replay starts; the one when the rewind menu's *View replay* starts is
+1.3 s long). The game's rumble cannot tell with a wheel: it sends a wheel's rumble only through the force feedback
+calls. With a virtual G923: in the pause menu and while rewinding the spring, damper, constant force and rumble the
+wheel receives go to 0 within half a second, and come back half a second after *Resume* or *Resume from here*.
+`FORZA_WHEEL_DRIVING_GATE=0` switches the fade off.
+
+Tested with a virtual wheel (uinput) that logs what it receives, and by a G29 and a G923 owner. Wheel drivers disagree about
 which way a positive force turns the wheel: if yours pulls further into a corner instead of back to the centre,
 turn on `wheel_ffb_reverse` (launcher: Reverse force direction), and please report the model.
 

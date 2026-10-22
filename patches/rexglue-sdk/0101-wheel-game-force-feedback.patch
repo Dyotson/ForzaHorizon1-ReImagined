@@ -1,9 +1,9 @@
 diff --git a/include/rex/input/wheel/wheel_buttons.h b/include/rex/input/wheel/wheel_buttons.h
 new file mode 100644
-index 0000000..02ab93b
+index 0000000..4dce72c
 --- /dev/null
 +++ b/include/rex/input/wheel/wheel_buttons.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,87 @@
 +/**
 + * @file        rex/input/wheel/wheel_buttons.h
 + * @brief       Racing wheel buttons: which SDL button presses which pad button, kept free of SDL
@@ -18,28 +18,73 @@ index 0000000..02ab93b
 + */
 +#pragma once
 +
++#include <cstdint>
 +#include <map>
++#include <set>
 +#include <string>
 +
 +namespace rex::input::wheel {
++
++// Which order a wheel's buttons come in (SDL numbers follow the wheel's HID button order).
++enum class ButtonLayout {
++  kGeneric,      // face buttons, right and left paddle, Back, Start, the stick presses at 8-11
++  kPlayStation,  // G29, G923 for PlayStation: cross, square, circle, triangle, paddles, R2, L2, ...
++  kXbox,         // G920, G923 for Xbox: A, B, X, Y, paddles, Menu, View, RSB, LSB, Xbox, ...
++};
++
++// The layout of a known wheel by USB vendor:product (the generic one otherwise).
++inline ButtonLayout ButtonLayoutOf(uint16_t vid, uint16_t pid) {
++  if (vid == 0x046D) {
++    switch (pid) {
++      case 0xC24F:  // G29
++      case 0xC266:  // G923 for PlayStation and PC
++      case 0xC267:  // the same in PS4 mode
++        return ButtonLayout::kPlayStation;
++      case 0xC262:  // G920
++      case 0xC26E:  // G923 for Xbox and PC
++      case 0xC26D:  // the same in Xbox mode
++        return ButtonLayout::kXbox;
++      default:
++        break;
++    }
++  }
++  return ButtonLayout::kGeneric;
++}
 +
 +// Pad button name -> SDL button number (-1: none). The usual wheel order: face buttons, the right
 +// and left paddle, then Share/Back and Options/Start and the stick presses. On a G29 or G923
 +// (PlayStation version, 046d:c24f and c266) buttons 1 and 2 are square and circle, so B and X
 +// swap; 6 and 7 (R2, L2) are not used. The paddles sat on B and X while the game took every wheel
-+// for a gamepad, whose layout shifts with those (#219). `overrides` is wheel_buttons.
-+inline std::map<std::string, int> WheelButtons(bool g29, const std::map<std::string, int>& overrides) {
++// for a gamepad, whose layout shifts with those (#219). A G920 or G923 for Xbox (c262, c26e) has
++// Menu (Start) on 6, View (Back) on 7, RSB 8, LSB 9 and the Xbox button 10; 11-17 are the
++// Driving Force Shifter (PCGamingWiki's G920 and Xbox G923 tables, counted from 1 there), so the
++// generic stick presses on 10 and 11 were the Xbox button and the shifter's reverse (#256).
++// `overrides` is wheel_buttons. A button in `taken` (the shifter's, wheel_shifter.h) presses no pad
++// button, whatever the defaults or the overrides say.
++inline std::map<std::string, int> WheelButtons(ButtonLayout layout,
++                                               const std::map<std::string, int>& overrides,
++                                               const std::set<int>& taken = {}) {
 +  std::map<std::string, int> map = {{"a", 0},     {"b", 1},     {"x", 2},     {"y", 3},
 +                                    {"rb", 4},    {"lb", 5},    {"back", 8},  {"start", 9},
 +                                    {"rs", 10},   {"ls", 11},   {"up", -1},   {"down", -1},
 +                                    {"left", -1}, {"right", -1}};
-+  if (g29) {
++  if (layout == ButtonLayout::kPlayStation) {
 +    map["b"] = 2;
 +    map["x"] = 1;
++  } else if (layout == ButtonLayout::kXbox) {
++    map["start"] = 6;
++    map["back"] = 7;
++    map["rs"] = 8;
++    map["ls"] = 9;
 +  }
 +  for (const auto& [k, v] : overrides) {
 +    if (map.count(k)) {
 +      map[k] = v;
++    }
++  }
++  for (auto& [k, v] : map) {
++    if (taken.count(v)) {
++      v = -1;
 +    }
 +  }
 +  return map;
@@ -48,10 +93,10 @@ index 0000000..02ab93b
 +}  // namespace rex::input::wheel
 diff --git a/include/rex/input/wheel/wheel_ff.h b/include/rex/input/wheel/wheel_ff.h
 new file mode 100644
-index 0000000..d79c9c2
+index 0000000..f49cfee
 --- /dev/null
 +++ b/include/rex/input/wheel/wheel_ff.h
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,257 @@
 +/**
 + * @file        rex/input/wheel/wheel_ff.h
 + * @brief       The Xbox 360 wheel's force feedback as games drive it through the kernel's
@@ -196,6 +241,48 @@ index 0000000..d79c9c2
 +  uint32_t device_gain_ = 255;
 +};
 +
++// The player's strengths, 0 to 1 (100 percent is 1): wheel_ffb_strength scales everything, the
++// others one part on top of it (#256).
++struct FfStrengths {
++  float overall = 1.0f;  // wheel_ffb_strength
++  float spring = 1.0f;   // wheel_ffb_spring_strength: the centring spring and the damper
++  float engine = 1.0f;   // wheel_rumble_engine_strength: the rumble's right motor (FH1: the engine)
++  float road = 1.0f;     // wheel_rumble_road_strength: the left motor (road surface, kerbs, impacts)
++};
++
++// The strength an effect block plays at: the spring and the damper also take the spring strength,
++// so the centring can be softened without the steering force and the road feel.
++inline float FfTypeStrength(uint32_t type, const FfStrengths& s) {
++  return s.overall * ((type == kFfSpring || type == kFfDamper) ? s.spring : 1.0f);
++}
++
++// The game's rumble as one vibration, 0 to 1: the stronger of the two motors, each scaled by its
++// own strength (in a car that revs quickly the engine motor near the redline drowned out the road),
++// then by the overall strength.
++inline float FfRumbleLevel(uint16_t left_motor, uint16_t right_motor, const FfStrengths& s) {
++  const float road = left_motor / 65535.0f * s.road;
++  const float engine = right_motor / 65535.0f * s.engine;
++  return std::clamp(std::max(road, engine) * s.overall, 0.0f, 1.0f);
++}
++
++// The game's forces fade out while the player is not driving and come back when they are (#256).
++// FH1 keeps its spring and damper playing with their last values in the pause menu, rewinds and
++// replays, and plays the steering force and rumble of the car going backwards while it rewinds;
++// the wheel then pulled and buzzed. `level` multiplies every force and the rumble.
++constexpr float kFfFadeOutSeconds = 0.25f;
++constexpr float kFfFadeInSeconds = 0.5f;
++struct FfFade {
++  float level = 1.0f;
++  // Moves level towards 1 (driving) or 0 by `dt` seconds' worth; true when it changed.
++  bool Step(bool driving, float dt) {
++    const float before = level;
++    dt = std::max(dt, 0.0f);
++    level = driving ? std::min(1.0f, level + dt / kFfFadeInSeconds)
++                    : std::max(0.0f, level - dt / kFfFadeOutSeconds);
++    return level != before;
++  }
++};
++
 +// How strongly an effect plays, 0 to 1: its gain, the device gain and the player's strength.
 +inline float FfScale(const FfEffect& e, uint32_t device_gain, float strength) {
 +  const float g = std::min<uint32_t>(e.gain, 255) / 255.0f * std::min<uint32_t>(device_gain, 255) / 255.0f;
@@ -268,7 +355,7 @@ index 0000000..d79c9c2
 +
 +}  // namespace rex::input::wheel
 diff --git a/include/rex/input/wheel/wheel_input_driver.h b/include/rex/input/wheel/wheel_input_driver.h
-index 51dd35c..f0ced5a 100644
+index 51dd35c..b0daa74 100644
 --- a/include/rex/input/wheel/wheel_input_driver.h
 +++ b/include/rex/input/wheel/wheel_input_driver.h
 @@ -1,9 +1,10 @@
@@ -300,7 +387,7 @@ index 51dd35c..f0ced5a 100644
  
  #include <SDL3/SDL.h>
  
-@@ -43,6 +46,13 @@ class WheelInputDriver final : public InputDriver {
+@@ -43,6 +46,16 @@ class WheelInputDriver final : public InputDriver {
    X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
                                X_INPUT_KEYSTROKE* out_keystroke) override;
  
@@ -310,17 +397,25 @@ index 51dd35c..f0ced5a 100644
 +  bool GameForceFeedback(const std::function<bool(FfState&)>& change, uint32_t block);
 +  /// The game's rumble on a wheel whose force feedback the game drives (XInputdFFSetRumble).
 +  bool GameRumble(uint16_t left_motor, uint16_t right_motor);
++  /// Whether the player drives (from the game, ForzaWheelPlayerDriving): the game's forces fade out
++  /// while they do not (wheel_ff.h FfFade). Never called: never faded.
++  static void SetPlayerDriving(bool driving);
 +
   private:
    struct Wheel;
    void RescanLocked();
-@@ -54,11 +64,17 @@ class WheelInputDriver final : public InputDriver {
+@@ -53,12 +66,25 @@ class WheelInputDriver final : public InputDriver {
+   // Steering, pedals, clutch (thumb_ry), shifter gear (thumb_rx) and buttons.
    void ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out);
    void SetupForceFeedbackLocked(Wheel& w);
-   void ApplyForceLocked(Wheel& w, float motor);
-+  void ApplyRumbleLocked(Wheel& w, float motor);
+-  void ApplyForceLocked(Wheel& w, float motor);
++  void ApplyForceLocked(Wheel& w, uint16_t left_motor, uint16_t right_motor);
++  // `game`: the game's own rumble (XInputdFFSetRumble), which fades with its forces.
++  void ApplyRumbleLocked(Wheel& w, uint16_t left_motor, uint16_t right_motor, bool game);
 +  void ApplyGameBlockLocked(Wheel& w, uint32_t block);
 +  void ApplyAutocenterLocked(Wheel& w);
++  // Steps the fade of the game's forces (FfFade) and plays them again when it moved.
++  void UpdateFadeLocked();
  
    std::mutex mutex_;
    std::vector<std::unique_ptr<Wheel>> wheels_;
@@ -329,11 +424,55 @@ index 51dd35c..f0ced5a 100644
 +  FfState game_ff_;
 +  bool game_ff_active_ = false;  // the game has defined effects: its forces, not the approximation
 +  bool game_ff_logged_[kFfMaxBlocks] = {};
++  uint16_t game_rumble_[2] = {};  // the game's last XInputdFFSetRumble (left, right)
++  FfFade fade_;
++  float fade_played_ = 1.0f;  // the fade level the effects were last played at
++  std::chrono::steady_clock::time_point fade_time_{};
    uint64_t next_id_ = 1;
    std::chrono::steady_clock::time_point last_scan_{};
    std::chrono::steady_clock::time_point last_pump_{};
+diff --git a/include/rex/input/wheel/wheel_shifter.h b/include/rex/input/wheel/wheel_shifter.h
+index 347ea1b..4f8d5fe 100644
+--- a/include/rex/input/wheel/wheel_shifter.h
++++ b/include/rex/input/wheel/wheel_shifter.h
+@@ -16,6 +16,7 @@
+ 
+ #include <cstdint>
+ #include <map>
++#include <set>
+ #include <string>
+ 
+ namespace rex::input::wheel {
+@@ -86,6 +87,27 @@ inline ShifterMap ApplyShifterOverrides(ShifterMap m, const std::map<std::string
+   return m;
+ }
+ 
++// The SDL buttons the shifter reads in this mode ("h": its gears and reverse; "sequential": up and
++// down; "off": none). They press no pad button (wheel_buttons.h): a G923 for Xbox has reverse on
++// 11, the default left stick press, so engaging reverse opened the friends overlay (#256).
++inline std::set<int> ShifterButtons(const ShifterMap& m, const std::string& mode) {
++  std::set<int> used;
++  if (mode == "h") {
++    for (int g = 0; g <= kMaxGear; g++) {
++      if (m.gear[g] >= 0) {
++        used.insert(m.gear[g]);
++      }
++    }
++  } else if (mode == "sequential") {
++    for (int n : {m.up, m.down}) {
++      if (n >= 0) {
++        used.insert(n);
++      }
++    }
++  }
++  return used;
++}
++
+ // The highest forward gear the map has (what the shifter reports to the game), 0 if none.
+ inline int TopGear(const ShifterMap& m) {
+   for (int g = kMaxGear; g >= 1; g--) {
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 1fd18ca..6545375 100644
+index 441b0a7..255e623 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -6,21 +6,27 @@
@@ -377,7 +516,17 @@ index 1fd18ca..6545375 100644
      .range(0.0, 0.3);
  REXCVAR_DEFINE_BOOL(wheel_invert_steering, false, "Input", "Swap left and right steering");
  REXCVAR_DEFINE_BOOL(wheel_900_steering, true, "Input",
-@@ -91,16 +98,26 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
+@@ -83,7 +90,8 @@ REXCVAR_DEFINE_STRING(wheel_shifter_buttons, "", "Input",
+                       "Shifter buttons, e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18 (gears 1 to 7 and "
+                       "reverse) or up=..,down=.. (sequential); SDL button numbers. Empty: the Logitech "
+                       "Driving Force Shifter on a G29, G920 or G923 (gears 1-6 on 12-17; reverse 18 on "
+-                      "a G29 or PlayStation G923, 11 on a G920 or Xbox G923)");
++                      "a G29 or PlayStation G923, 11 on a G920 or Xbox G923). The shifter's buttons "
++                      "press no pad button");
+ REXCVAR_DEFINE_BOOL(wheel_shifter_clutch, false, "Input",
+                     "H-pattern: a gear engages only with the clutch pressed past "
+                     "wheel_clutch_threshold; without it the car stays in neutral");
+@@ -92,16 +100,39 @@ REXCVAR_DEFINE_DOUBLE(wheel_clutch_threshold, 0.5, "Input",
                        "0.1 to 1")
      .range(0.1, 1.0);
  REXCVAR_DEFINE_BOOL(wheel_ffb, true, "Input",
@@ -387,6 +536,17 @@ index 1fd18ca..6545375 100644
 +                    "centring spring, damper) and its rumble as a vibration");
  REXCVAR_DEFINE_INT32(wheel_ffb_strength, 60, "Input", "Force feedback strength, 0 to 100 percent")
      .range(0, 100);
++REXCVAR_DEFINE_INT32(wheel_ffb_spring_strength, 100, "Input",
++                     "Centring spring and damper strength, 0 to 100 percent of wheel_ffb_strength")
++    .range(0, 100);
++REXCVAR_DEFINE_INT32(wheel_rumble_engine_strength, 100, "Input",
++                     "Rumble from the game's right motor (mostly the engine), 0 to 100 percent of "
++                     "wheel_ffb_strength")
++    .range(0, 100);
++REXCVAR_DEFINE_INT32(wheel_rumble_road_strength, 100, "Input",
++                     "Rumble from the game's left motor (road surface, kerbs, impacts), 0 to 100 "
++                     "percent of wheel_ffb_strength")
++    .range(0, 100);
 +REXCVAR_DEFINE_BOOL(wheel_ffb_reverse, false, "Input",
 +                    "Reverse the game's steering force: for a wheel that pulls away from the centre "
 +                    "in corners instead of towards it");
@@ -398,6 +558,8 @@ index 1fd18ca..6545375 100644
  constexpr uint8_t kSubTypeWheel = 2;  // XINPUT_DEVSUBTYPE_WHEEL
 +// The driver the kernel's XInputdFF* calls go to (GameFf* below).
 +std::atomic<WheelInputDriver*> g_ff_driver{nullptr};
++// Whether the player drives, from the game (ForzaWheelPlayerDriving): -1 never said, 0, 1.
++std::atomic<int> g_player_driving{-1};
 +// FH1's constant force pushes the wheel right when positive (in a right-hand corner it is negative:
 +// the tyres pull the wheel back to the centre). An SDL level on the steering axis comes from the
 +// east (SDL_haptic.h: where the force comes from; Linux direction 0x4000, which pulls left), so it
@@ -406,16 +568,35 @@ index 1fd18ca..6545375 100644
  constexpr auto kScanEvery = std::chrono::milliseconds(500);
  constexpr auto kPumpEvery = std::chrono::milliseconds(2);
  
-@@ -160,7 +177,7 @@ std::map<std::string, int> ParseKv(const std::string& s) {
+@@ -158,31 +189,25 @@ std::map<std::string, int> ParseKv(const std::string& s) {
+ // read 0 (nothing reported yet) or a pedal can be held down, and a guess then turns a pedal around
+ // ("phantom throttle"). Axis numbers are SDL's: on Windows (Windows.Gaming.Input racing wheel) they are
+ // steering, throttle, brake, clutch; on Linux (evdev) steering, clutch, throttle, brake.
++// Their buttons and shifter go by vendor:product too (ButtonLayoutOf, DefaultShifter).
  struct Profile {
    uint16_t vid, pid;
    const char* name;
 -  bool g29_buttons;  // the G29/G923 button numbers below; else the generic map
-+  bool g29_buttons;  // the G29/G923 (PlayStation) button order (wheel_buttons.h)
-   bool df_shifter;   // a Driving Force Shifter port: its gears are buttons 12-18 (LogitechShifter)
  };
+-// The Driving Force Shifter's buttons go by vendor:product too (DefaultShifter).
  constexpr Profile kProfiles[] = {
-@@ -177,11 +194,6 @@ constexpr int kProfSteer = 0, kProfThrottle = 1, kProfBrake = 2, kProfClutch = 3
+-    {0x046D, 0xC24F, "Logitech G29", true},
+-    {0x046D, 0xC262, "Logitech G920", false},
+-    {0x046D, 0xC266, "Logitech G923", true},
+-    {0x046D, 0xC26E, "Logitech G923 (Xbox)", false},
+-    {0x046D, 0xC29A, "Logitech Driving Force GT", false},
+-    {0x046D, 0xC29B, "Logitech G27", false},
+-    {0x046D, 0xC299, "Logitech G25", false},
++    {0x046D, 0xC24F, "Logitech G29"},
++    {0x046D, 0xC262, "Logitech G920"},
++    {0x046D, 0xC266, "Logitech G923"},
++    {0x046D, 0xC26E, "Logitech G923 (Xbox)"},
++    {0x046D, 0xC29A, "Logitech Driving Force GT"},
++    {0x046D, 0xC29B, "Logitech G27"},
++    {0x046D, 0xC299, "Logitech G25"},
+ };
+ #ifdef _WIN32
+ constexpr int kProfSteer = 0, kProfThrottle = 1, kProfBrake = 2, kProfClutch = 3;
  #else
  constexpr int kProfSteer = 0, kProfClutch = 1, kProfThrottle = 2, kProfBrake = 3;
  #endif
@@ -427,7 +608,24 @@ index 1fd18ca..6545375 100644
  const Profile* FindProfile(uint16_t vid, uint16_t pid) {
    for (const auto& p : kProfiles) {
      if (p.vid == vid && p.pid == pid) {
-@@ -231,6 +243,13 @@ struct WheelInputDriver::Wheel {
+@@ -198,6 +223,16 @@ ShifterMap ShifterFor(uint16_t vid, uint16_t pid) {
+                                ParseKv(REXCVAR_GET(wheel_shifter_buttons)));
+ }
+ 
++FfStrengths Strengths() {
++  auto percent = [](int v) { return std::clamp(v, 0, 100) / 100.0f; };
++  FfStrengths s;
++  s.overall = percent(REXCVAR_GET(wheel_ffb_strength));
++  s.spring = percent(REXCVAR_GET(wheel_ffb_spring_strength));
++  s.engine = percent(REXCVAR_GET(wheel_rumble_engine_strength));
++  s.road = percent(REXCVAR_GET(wheel_rumble_road_strength));
++  return s;
++}
++
+ float Norm(int16_t v) {
+   return v < 0 ? v / 32768.0f : v / 32767.0f;
+ }
+@@ -232,6 +267,13 @@ struct WheelInputDriver::Wheel {
    int spring_fx = -1;
    int sine_fx = -1;
    bool sine_running = false;
@@ -441,7 +639,7 @@ index 1fd18ca..6545375 100644
    std::string name;
    std::string guid;
    int num_axes = 0, num_buttons = 0, num_hats = 0;
-@@ -248,6 +267,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
+@@ -250,6 +292,8 @@ WheelInputDriver::WheelInputDriver(rex::ui::Window* window, size_t window_z_orde
      : InputDriver(window, window_z_order) {}
  
  WheelInputDriver::~WheelInputDriver() {
@@ -450,7 +648,7 @@ index 1fd18ca..6545375 100644
    std::lock_guard lock(mutex_);
    for (auto& w : wheels_) {
      CloseLocked(*w);
-@@ -265,6 +286,7 @@ X_STATUS WheelInputDriver::Setup() {
+@@ -267,6 +311,7 @@ X_STATUS WheelInputDriver::Setup() {
      }
    }
    sdl_ready_ = true;
@@ -458,7 +656,7 @@ index 1fd18ca..6545375 100644
    REXLOG_INFO("Wheel: driver ready (wheel_mode={})", REXCVAR_GET(wheel_mode));
    return X_STATUS_SUCCESS;
  }
-@@ -326,6 +348,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+@@ -328,6 +373,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
      return;
    }
    auto w = std::make_unique<Wheel>();
@@ -467,7 +665,28 @@ index 1fd18ca..6545375 100644
    w->jid = jid;
    w->joy = joy;
    w->id = static_cast<DeviceId>(next_id_++ | (uint64_t(0x57) << 56));
-@@ -412,8 +436,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -358,7 +405,9 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+     REXLOG_INFO("Wheel: known wheel {}: fixed axes (steer {}, throttle {}, brake {}, clutch {}), "
+                 "pedals rest at the maximum{}",
+                 w->prof->name, kProfSteer, kProfThrottle, kProfBrake, kProfClutch,
+-                w->prof->g29_buttons ? ", G29 buttons" : "");
++                ButtonLayoutOf(w->vid, w->pid) == ButtonLayout::kPlayStation ? ", G29 buttons"
++                : ButtonLayoutOf(w->vid, w->pid) == ButtonLayout::kXbox  ? ", Xbox wheel buttons"
++                                                                         : "");
+   }
+   REXLOG_INFO(
+       "Wheel: \"{}\" GUID({}) VID(0x{:04X}) PID(0x{:04X}) type({}) axes({}) buttons({}) hats({}); "
+@@ -375,7 +424,8 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+       REXLOG_WARN("Wheel: wheel_shifter = h, but no gear buttons are known for this wheel: set "
+                   "wheel_shifter_buttons (e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18)");
+     } else if (shifter == "h") {
+-      REXLOG_INFO("Wheel: H-pattern shifter, buttons r={} 1={} 2={} 3={} 4={} 5={} 6={} 7={}",
++      REXLOG_INFO("Wheel: H-pattern shifter, buttons r={} 1={} 2={} 3={} 4={} 5={} 6={} 7={} (they "
++                  "press no pad button)",
+                   m.gear[0], m.gear[1], m.gear[2], m.gear[3], m.gear[4], m.gear[5], m.gear[6],
+                   m.gear[7]);
+     } else {
+@@ -416,8 +466,9 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
    }
    if (f & SDL_HAPTIC_AUTOCENTER) {
      SDL_SetHapticAutocenter(w.haptic, 0);  // the spring below centres instead
@@ -478,7 +697,7 @@ index 1fd18ca..6545375 100644
      SDL_HapticEffect e{};
      e.type = SDL_HAPTIC_SPRING;
      e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
-@@ -445,15 +470,24 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+@@ -449,17 +500,21 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
        REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
      }
    }
@@ -487,39 +706,40 @@ index 1fd18ca..6545375 100644
 +      ApplyGameBlockLocked(w, b);
 +    }
 +  }
-+}
-+
-+static float Strength() {
-+  return std::clamp(REXCVAR_GET(wheel_ffb_strength), 0, 100) / 100.0f;
  }
  
- void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+-void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
++void WheelInputDriver::ApplyForceLocked(Wheel& w, uint16_t left_motor, uint16_t right_motor) {
    if (!w.haptic) {
      return;
    }
 -  const float strength = std::clamp(REXCVAR_GET(wheel_ffb_strength), 0, 100) / 100.0f;
-+  const float strength = Strength();
-   motor = std::clamp(motor, 0.0f, 1.0f);
+-  motor = std::clamp(motor, 0.0f, 1.0f);
 -  if (w.spring_fx >= 0) {
++  const float motor = std::max(left_motor, right_motor) / 65535.0f;
 +  if (w.spring_fx >= 0 && !game_ff_active_) {
      // Light centring always, firmer while the game drives the motors hard.
-     const float c = strength * (0.2f + 0.6f * motor);
+-    const float c = strength * (0.2f + 0.6f * motor);
++    const float c = FfTypeStrength(kFfSpring, Strengths()) * (0.2f + 0.6f * motor);
      SDL_HapticEffect e{};
-@@ -464,15 +498,26 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+     e.type = SDL_HAPTIC_SPRING;
+     e.condition.direction.type = SDL_HAPTIC_STEERING_AXIS;
+@@ -468,15 +523,27 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
      e.condition.right_coeff[0] = e.condition.left_coeff[0] = static_cast<Sint16>(c * 32767.0f);
      SDL_UpdateHapticEffect(w.haptic, w.spring_fx, &e);
    }
-+  ApplyRumbleLocked(w, motor);
++  ApplyRumbleLocked(w, left_motor, right_motor, false);
 +}
 +
-+void WheelInputDriver::ApplyRumbleLocked(Wheel& w, float motor) {
++void WheelInputDriver::ApplyRumbleLocked(Wheel& w, uint16_t left_motor, uint16_t right_motor,
++                                         bool game) {
 +  if (!w.haptic) {
 +    return;
 +  }
-+  motor = std::clamp(motor, 0.0f, 1.0f);
    if (w.sine_fx >= 0) {
 -    const float amp = strength * motor * 0.6f;
-+    const float amp = Strength() * motor * 0.6f;
++    const float amp =
++        FfRumbleLevel(left_motor, right_motor, Strengths()) * 0.6f * (game ? fade_.level : 1.0f);
      SDL_HapticEffect e{};
      e.type = SDL_HAPTIC_SINE;
      e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
@@ -534,7 +754,7 @@ index 1fd18ca..6545375 100644
      if (amp > 0.0f && !w.sine_running) {
        w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
      } else if (amp <= 0.0f && w.sine_running) {
-@@ -482,6 +527,202 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
+@@ -486,6 +553,244 @@ void WheelInputDriver::ApplyForceLocked(Wheel& w, float motor) {
    }
  }
  
@@ -546,7 +766,8 @@ index 1fd18ca..6545375 100644
 +  if ((f & SDL_HAPTIC_SPRING) || !(f & SDL_HAPTIC_AUTOCENTER)) {
 +    return;
 +  }
-+  const int level = static_cast<int>(std::lround(FfAutocenter(game_ff_, Strength()) * 100.0f));
++  const float strength = FfTypeStrength(kFfSpring, Strengths()) * fade_.level;
++  const int level = static_cast<int>(std::lround(FfAutocenter(game_ff_, strength) * 100.0f));
 +  if (level != w.autocenter && SDL_SetHapticAutocenter(w.haptic, level)) {
 +    w.autocenter = level;
 +  }
@@ -566,7 +787,8 @@ index 1fd18ca..6545375 100644
 +  bool play = false;
 +  if (game_ff_.defined(block)) {
 +    const FfEffect& e = game_ff_.effect(block);
-+    const float scale = FfScale(e, game_ff_.device_gain(), Strength());
++    const float scale =
++        FfScale(e, game_ff_.device_gain(), FfTypeStrength(e.type, Strengths()) * fade_.level);
 +    Uint16 condition = 0;
 +    switch (e.type) {
 +      case kFfSpring: condition = SDL_HAPTIC_SPRING; break;
@@ -640,6 +862,7 @@ index 1fd18ca..6545375 100644
 +  if (!change(game_ff_)) {
 +    return true;
 +  }
++  UpdateFadeLocked();
 +  for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
 +    if (!game_ff_.defined(b) || game_ff_logged_[b - 1]) {
 +      continue;
@@ -675,11 +898,50 @@ index 1fd18ca..6545375 100644
 +  if (wheels_.empty()) {
 +    return false;
 +  }
-+  const float motor = std::max(left_motor, right_motor) / 65535.0f;
++  game_rumble_[0] = left_motor;
++  game_rumble_[1] = right_motor;
++  UpdateFadeLocked();
 +  for (auto& w : wheels_) {
-+    ApplyRumbleLocked(*w, motor);
++    ApplyRumbleLocked(*w, left_motor, right_motor, true);
 +  }
 +  return true;
++}
++
++void WheelInputDriver::SetPlayerDriving(bool driving) {
++  if (g_player_driving.exchange(driving ? 1 : 0) == -1) {
++    REXLOG_INFO("Wheel: the game says when the player drives; its forces fade out in the pause "
++                "menu, rewinds, replays and menus");
++  }
++}
++
++void WheelInputDriver::UpdateFadeLocked() {
++  const auto now = std::chrono::steady_clock::now();
++  const float dt = fade_time_.time_since_epoch().count() == 0
++                       ? 0.0f
++                       : std::chrono::duration<float>(now - fade_time_).count();
++  fade_time_ = now;
++  if (!fade_.Step(g_player_driving.load(std::memory_order_relaxed) != 0, dt)) {
++    return;
++  }
++  // Played again in steps of 1/32 (each step uploads every effect), and at the ends.
++  const float level = fade_.level;
++  if (std::fabs(level - fade_played_) < 1.0f / 32.0f && level != 0.0f && level != 1.0f) {
++    return;
++  }
++  if (level == 0.0f || (fade_played_ == 0.0f && level > 0.0f)) {
++    REXLOG_INFO("Wheel: {}", level == 0.0f ? "not driving: the game's forces are faded out"
++                                           : "driving: the game's forces fade back in");
++  }
++  fade_played_ = level;
++  if (!game_ff_active_) {
++    return;
++  }
++  for (auto& w : wheels_) {
++    for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++      ApplyGameBlockLocked(*w, b);
++    }
++    ApplyRumbleLocked(*w, game_rumble_[0], game_rumble_[1], true);
++  }
 +}
 +
 +bool GameFfDeviceInfo() {
@@ -737,7 +999,7 @@ index 1fd18ca..6545375 100644
  WheelInputDriver::Wheel* WheelInputDriver::FindLocked(DeviceId id) {
    for (auto& w : wheels_) {
      if (w->id == id) {
-@@ -589,27 +830,20 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+@@ -593,27 +898,23 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
    const float dz = static_cast<float>(REXCVAR_GET(wheel_deadzone));
    const float as = std::fabs(s);
    s = as <= dz ? 0.0f : std::copysign(std::min(1.0f, (as - dz) / (1.0f - dz)), s);
@@ -769,12 +1031,62 @@ index 1fd18ca..6545375 100644
 -  for (auto& [k, v] : ParseKv(REXCVAR_GET(wheel_buttons))) {
 -    map[k] = v;
 -  }
-+  // Buttons: SDL numbers to the pad (wheel_buttons.h).
++  // Buttons: SDL numbers to the pad (wheel_buttons.h); the shifter's own press none.
++  const std::string shifter = REXCVAR_GET(wheel_shifter);
++  const ShifterMap shifter_map = shifter != "off" ? ShifterFor(w.vid, w.pid) : ShifterMap{};
 +  std::map<std::string, int> map =
-+      WheelButtons(w.prof && w.prof->g29_buttons, ParseKv(REXCVAR_GET(wheel_buttons)));
++      WheelButtons(ButtonLayoutOf(w.vid, w.pid), ParseKv(REXCVAR_GET(wheel_buttons)),
++                   ShifterButtons(shifter_map, shifter));
    static const std::pair<const char*, uint16_t> kBits[] = {
        {"a", 0x1000},  {"b", 0x2000},   {"x", 0x4000},    {"y", 0x8000},
        {"lb", 0x0100}, {"rb", 0x0200},  {"back", 0x0020}, {"start", 0x0010},
+@@ -637,10 +938,9 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+   // Shifter. H-pattern: the lever's gear on the right stick X (-1 reverse, 0 neutral), which
+   // the game takes as the gear to be in. Sequential: up and down shift like the bumpers (the
+   // wheel layouts' ShiftUp and ShiftDown), next to the paddles.
+-  const std::string shifter = REXCVAR_GET(wheel_shifter);
+   int gear = kGearNeutral;
+   if (shifter != "off") {
+-    const ShifterMap m = ShifterFor(w.vid, w.pid);
++    const ShifterMap& m = shifter_map;
+     auto held = [&](int n) { return n >= 0 && n < w.num_buttons && SDL_GetJoystickButton(w.joy, n); };
+     if (shifter == "h") {
+       w.gear = EngageGear(LeverGear(m, held), w.gear, REXCVAR_GET(wheel_shifter_clutch), clutch,
+@@ -687,6 +987,7 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
+   PumpLocked();
++  UpdateFadeLocked();
+   X_INPUT_STATE s{};
+   if (is_active()) {
+     ComputeStateLocked(*w, &s.gamepad);
+@@ -744,8 +1045,7 @@ X_RESULT WheelInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vi
+   if (!w) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
+-  const float motor = std::max(vib->left_motor_speed, vib->right_motor_speed) / 65535.0f;
+-  ApplyForceLocked(*w, motor);
++  ApplyForceLocked(*w, vib->left_motor_speed, vib->right_motor_speed);
+   return X_ERROR_SUCCESS;
+ }
+ 
+@@ -790,3 +1090,16 @@ X_RESULT WheelInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t, X_INPUT_KEY
+ }
+ 
+ }  // namespace rex::input::wheel
++
++// Whether the player is driving (1) or not (0: the pause menu, rewinds, replays, menus), from the
++// game (#256; Forza Horizon: forza-recomp/src/platform/wheel_bridge.cpp). Looked up at run time,
++// so a game built against the stock SDK headers can call it and an older runtime still loads.
++// Until the first call the game's forces never fade.
++#if defined(_WIN32)
++#define REX_WHEEL_EXPORT __declspec(dllexport)
++#else
++#define REX_WHEEL_EXPORT __attribute__((visibility("default")))
++#endif
++extern "C" REX_WHEEL_EXPORT void ForzaWheelPlayerDriving(int driving) {
++  rex::input::wheel::WheelInputDriver::SetPlayerDriving(driving != 0);
++}
 diff --git a/src/kernel/xam/xam_input.cpp b/src/kernel/xam/xam_input.cpp
 index 80c3634..e9f0a6f 100644
 --- a/src/kernel/xam/xam_input.cpp
