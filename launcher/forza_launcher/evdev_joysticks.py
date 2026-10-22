@@ -8,7 +8,6 @@ their state with the numbers SDL3 gives them: axes in event code order without t
 from their range to -32768..32767 (SDL's AxisCorrect without dead zones), and buttons from
 BTN_JOYSTICK upwards first, then the codes below it (SDL's ConfigJoystick).
 """
-import fcntl
 import math
 import os
 import re
@@ -30,6 +29,7 @@ def _ioc(direction, nr, size):
 
 def _read(fd, nr, size):
     buf = bytearray(size)
+    import fcntl  # Linux only: the numbering helpers above stay importable on Windows and macOS
     fcntl.ioctl(fd, _ioc(2, nr, size), buf)
     return bytes(buf)
 
