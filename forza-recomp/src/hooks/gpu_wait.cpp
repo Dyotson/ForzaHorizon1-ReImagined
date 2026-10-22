@@ -28,13 +28,17 @@
 //   waitable timer (Windows 10 1803 and later; Sleep counts whole milliseconds, and on
 //   older versions each poll yields instead). Windows yielded on every poll before, which
 //   kept the waiting thread on a core for the whole wait (#268).
-// FORZA_GPU_WAIT=spin keeps the game's loop, FORZA_GPU_WAIT=sleep the 50 us sleeps in every
-// loop; FORZA_GPU_WAIT_LOG=1 logs the waits every 10 s (count, total and longest time,
+// The setting gpu_wait_blocking turns this on: on by default on Linux and macOS; off by
+// default on Windows, where it has not run yet (Advanced > GPU in the launcher). Off, every
+// loop waits as before it: 50 us sleeps per poll on Linux and macOS, a yield per poll on
+// Windows. FORZA_GPU_WAIT=block|sleep|spin overrides it: sleep is the old waits, spin the
+// game's loop. FORZA_GPU_WAIT_LOG=1 logs the waits every 10 s (count, total and longest time,
 // polls, blocks on the word and those that ran into the 1 ms limit).
 
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
+#include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
@@ -70,6 +74,17 @@
 #include <unistd.h>
 #endif
 
+// Not run on Windows yet: the old waits there unless the setting is on.
+#ifdef _WIN32
+#define FORZA_GPU_WAIT_BLOCKING_DEFAULT false
+#else
+#define FORZA_GPU_WAIT_BLOCKING_DEFAULT true
+#endif
+REXCVAR_DEFINE_BOOL(gpu_wait_blocking, FORZA_GPU_WAIT_BLOCKING_DEFAULT, "GPU",
+                    "The render thread blocks until the GPU writes, and sleeps on a timer, while it "
+                    "waits for the GPU, instead of polling (on by default except on Windows)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -84,6 +99,8 @@ constexpr long kBlockNs = 1'000'000;  // one block on the GPU's word, at most
 constexpr uint32_t kSwapWaitReturn = FORZA_ADDR(0x823E9288);
 constexpr uint32_t kGpuWord = 0x2B10;  // device: guest address of the word the GPU writes
 
+// kBlock: this file's waits; kSleep: the waits before it (50 us sleeps, Windows yields);
+// kSpin: the game's loop.
 enum class Mode { kBlock, kSleep, kSpin };
 
 Mode GetMode() {
@@ -91,7 +108,8 @@ Mode GetMode() {
     const char* v = std::getenv("FORZA_GPU_WAIT");
     if (v && std::strcmp(v, "spin") == 0) return Mode::kSpin;
     if (v && std::strcmp(v, "sleep") == 0) return Mode::kSleep;
-    return Mode::kBlock;
+    if (v && std::strcmp(v, "block") == 0) return Mode::kBlock;
+    return REXCVAR_GET(gpu_wait_blocking) ? Mode::kBlock : Mode::kSleep;
   }();
   return mode;
 }
@@ -241,7 +259,22 @@ void BetweenPolls(uint8_t* base, Clock::time_point now, bool known, uint32_t com
     rex::thread::MaybeYield();
     return;
   }
-  if (known && GetMode() == Mode::kBlock) {
+  if (GetMode() != Mode::kBlock) {  // the waits before gpu_wait_blocking
+#ifdef _WIN32
+    rex::thread::MaybeYield();
+#else
+#ifdef __linux__
+    if (!w.slack_set) {
+      prctl(PR_SET_TIMERSLACK, 5000UL);
+      w.slack_set = true;
+    }
+#endif
+    timespec ts{0, kSleepNs};
+    nanosleep(&ts, nullptr);
+#endif
+    return;
+  }
+  if (known) {
     if (uint32_t* word = GpuWord(base, w.device)) {
       if (BlockOnWord(w, word, ToStored(compared))) return;
     }

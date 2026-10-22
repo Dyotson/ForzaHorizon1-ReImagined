@@ -818,7 +818,10 @@ its registers, so a write between its check and the block is not missed. With `F
 limit while the command processor waits for a vblank. The other six D3D wait loops (their conditions can depend
 on other words) keep the 50 us sleeps; on Windows those now sleep on a high-resolution waitable timer instead of
 yielding on every poll, which kept the waiting thread on a core for the whole wait (#268: it is the race's render
-thread, most of each frame). `FORZA_GPU_WAIT=sleep` keeps the 50 us sleeps everywhere, `spin` the game's loop.
+thread, most of each frame). None of this has run on Windows yet, so there it is off unless the setting
+`gpu_wait_blocking` is on (Advanced > GPU, "Sleep while waiting for the GPU (testing)"); it is on by default on Linux
+and macOS (`launcher/test_gpu_wait_blocking.py` checks both defaults). Off, the waits are the ones before it.
+`FORZA_GPU_WAIT=block|sleep|spin` overrides the setting (sleep: the old waits; spin: the game's loop).
 
 **Measured** (four cores, 3 runs each, B and C alternating; A = neither fix: the main-branch game, runtime and
 plugin, plus one run of this branch's game with the private build of the base runtime and plugin and
