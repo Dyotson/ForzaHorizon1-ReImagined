@@ -380,6 +380,19 @@ TU4 at native 2560x1440 with the 120 FPS limit. The original camera clock advanc
 the elapsed-time input were also observed at the guest update hooks. These are
 camera-clock measurements, not estimates from the selected FPS cap.
 
+Fixed (#243, 2026-10-22): the paint shop's decal camera pointed away from the side
+being decorated, further after every switch (LB/RB). `CUI4CarTargetCamera::Update`
+calls the view routine from the same place (`0x82653584`, TU4 `0x826FD0D4`) in
+state 1 (moving to a preset such as `LiveryLayerSelect_Back`) and on that move's last
+frame (state 0), not only in state 2, and the camera's timer at `+0x70` is not reset
+while the decal camera is up. The hook replaced a step the guest had not added with
+elapsed time since that reset (29-95 s): 3 degrees per second, kept at the end of
+each move (Rear Bumper showed the right side, then the left). It happened at 30 fps
+too; the aspect ratio and render scale played no part. The hook now corrects state 2
+only (`+0x150`), and an elapsed time over 250 ms keeps the original step. Checked on
+the player's save at 720p (Linux, TU4): before, at 30 fps, Rear Bumper showed a side;
+after, at 60 fps, every side frames its panel across repeated switches.
+
 `FORZA_GARAGE_CAMERA=game` retains the original timing for comparison;
 `FORZA_GARAGE_CAMERA_TRACE=1` logs the caller, camera and dt every 300 updates.
 The standalone `tests/garage_camera_math_test.cpp` checks ten-second orbit
