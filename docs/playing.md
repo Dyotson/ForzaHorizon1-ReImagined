@@ -140,6 +140,12 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
 - **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
   what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
+- **No sound:** when the sound output cannot be opened (another program holds it in exclusive
+  mode, Windows refuses its format, no audio server on Linux), the game runs on without sound and
+  `forza.log` says `No audio output could be opened (<reason>)`. It asks for the output again every
+  5 s (unless SDL found no audio driver at all), so the sound comes back once the device is free.
+  Builds before SDK patch 0103 stopped there (#244). On Windows, try another default output, or
+  untick "Allow applications to take exclusive control" in the device's Properties > Advanced.
 
 ## Recommended picture settings
 

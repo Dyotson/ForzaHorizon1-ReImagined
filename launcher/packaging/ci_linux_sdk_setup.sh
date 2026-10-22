@@ -68,7 +68,7 @@ if [ "${1:-}" = --compiler-only ]; then
 fi
 # The -dev packages of PulseAudio and ALSA (and D-Bus, fribidi, libthai) matter at run time too: SDL3 inside
 # the runtime only gets those audio and input backends if its headers are present when it is built;
-# without them the game finds no audio device and stops (KeBugCheckEx).
+# without them the game finds no audio device and runs without sound (before SDK patch 0103 it stopped).
 install_packages g++-14 make ninja-build python3 git patchelf pkg-config \
     libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxfixes-dev libxcursor-dev libxi-dev \
     libxrandr-dev libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev \
