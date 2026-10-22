@@ -488,6 +488,3 @@ private:
 };
 } // namespace forza::fh1_menu_widgets
 #endif
-
-
-
