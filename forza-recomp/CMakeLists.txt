@@ -136,6 +136,7 @@ set(FORZA_SOURCES
     src/hooks/graphics_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
+    src/hooks/gamma_transition.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/thumbnail_sync.cpp

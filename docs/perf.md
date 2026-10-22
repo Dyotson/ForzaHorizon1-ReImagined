@@ -673,7 +673,69 @@ Left: the gamma ramp (still about 30 us a pass, 730 idle passes a second in free
 could be cached from its inputs, or the transition ended at progress 1 (the game's intent, but every pass
 re-applying the ramp is what it does now); Windows could wait on a high-resolution waitable timer instead of
 yielding; with #240 the wait should also end when the main loop waits for render sync (that wait now ends up to
-1 ms later).
+1 ms later). The first two are done in #259 (below).
+
+## Gamma transition end and the Windows idle wait (#259, 2026-10-22)
+
+**The gamma transition.** The game starts one with `sub_825FCCA0` (disc `sub_82586C28`): it sets one gamma
+channel's target and the start time (render object +0x16E0). In the free roam scenario there is one: when the DLC
+notice is dismissed, channel 1 goes from 0.5 to 0.7 in 2 s. Each render-thread pass then lerps the three channels
+by min(progress, 1), builds and sets the ramp (`sub_825FCC28` > vtable +200 `sub_82CE8948`), and clears the start
+time only when that clamped progress is above 1, so it never does. From then on every pass built the same ramp
+again: 730 times a second in free roam with #234's wait, and on Windows, where the thread still spun, in every
+pass.
+
+**Change** (`src/hooks/gamma_transition.cpp`): the transition's call of `sub_825FCC28` (told by its return
+address; the device setup and immediate gamma changes call it too) clears the start time after the ramp is
+built at progress 1, as the game does above 1. The next gamma change starts a new transition as before.
+`FORZA_GAMMA_TRANSITION=game` keeps the endless transition.
+
+**Same ramp.** The D3D setter (`sub_82AAEE68`) keeps the applied ramp (1536 bytes at device +15408) and sends
+it to the GPU only when it changes. A temporary diagnostic build (TU4: title, DLC notice, menu, free roam, race
+sign-up, intro and start) hashed it after every set:
+
+- Game's transition: 1,906 different ramps during the 2 s, then d7d40275a1988239, set again in every pass
+  (760 a second) until the end of the run.
+- Change: the same fade (1,909 different ramps), the transition ends 2.0 s after it starts at
+  d7d40275a1988239, and nothing sets the ramp after that.
+- Every 0.5 s with no transition running, the diagnostic built the ramp the endless transition would have set
+  (the three channels at progress 1 from their current values). All 200 builds, through menu, free roam and the
+  race, matched the applied ramp.
+- Nothing changed the other inputs (+0x16E8 to +0x1713, the device's format, the flag at 0x8353A1E0) without
+  starting a transition. In the code, the only writers of those fields are the constructor (`sub_8261E320`),
+  `sub_825FCCA0` (which always restarts the transition) and the transition itself.
+- Screenshots of every step look the same; still scenes have the same mean colour to 0.1 (sign-up
+  77.8/66.0/65.6 in both).
+
+**Windows idle wait** (`src/hooks/render_idle.cpp`). Windows now waits with the same policy as Linux: spin
+20 us, yield up to 200 us, then sleep in 50 us steps until a frame, a message or a job, or 1 ms. Each step
+waits on a high-resolution waitable timer (`CreateWaitableTimerExW` with
+`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`; `Sleep` and `SleepEx` count whole milliseconds). Windows before 10
+version 1803 has no such timer: the log says so once, and each step yields (`SwitchToThread`) instead. The timer
+wait is not alertable, so APCs queued to the thread run at the game's next alertable wait (its `SleepEx`),
+within about 1 ms. `FORZA_RENDER_IDLE=spin` still keeps the game's loop. It compiles with clang-cl (the TU4 and disc
+Windows cross builds); not run on Windows yet.
+
+**Measured** (Linux, TU4, `tools/perf_scenario.sh` as in #234, `frame_rate` 30, one build, A =
+`FORZA_GAMMA_TRANSITION=game`, B = the change, alternating, BENCH lock held, all runs CLEAN; CPU ms per guest
+frame in the scene, mean [min-max]):
+
+| Scene | Mode | fps | p99 ms | All threads | Render thread | Ramp functions on it |
+| --- | --- | --- | --- | --- | --- | --- |
+| free roam (3 runs each) | A | 30.0 | 35.1 [34.8-35.3] | 19.0 [18.6-19.6] | 2.74 [2.64-2.82] | 0.39 [0.33-0.43] |
+| free roam | B | 30.0 | 34.9 [34.4-35.4] | 18.2 [16.5-19.5] | 2.21 [2.17-2.25] | 0 |
+| main menu, DLC notice (3 runs each) | A | 30.0 | 33.8 | 6.45 [6.37-6.50] | 0.39 [0.38-0.41] | 0 |
+| main menu, DLC notice | B | 30.0 | 33.8 | 6.46 [6.42-6.52] | 0.40 [0.39-0.41] | 0 |
+
+- Free roam: the render thread uses 0.5 ms less per frame (19%). The ramp's own functions were 0.39 ms of it
+  (`pow` and its helpers, the ramp builders, the D3D setter); the rest went with the pass's other work around
+  them. All threads vary more between drives than that.
+- Idle passes go from about 730 to 4,700 a second, because a pass without the ramp takes about a microsecond, so
+  more fit in the first 200 us after each frame (the spin and yield phase, the same CPU time). The waits and
+  the time waited (54-56%) do not change.
+- The DLC notice has no gamma transition yet, so it does not change there.
+- Not measured: Windows. There the change matters more: with the game's loop the render thread built the ramp
+  in every pass between frames.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 

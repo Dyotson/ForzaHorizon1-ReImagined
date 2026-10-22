@@ -13,21 +13,21 @@
 //   menus (mode 0) the count runs ahead of the queue, so every pass between two frames is
 //   one of these, with no sleep at all.
 // So between two main frames the thread runs pass after pass: a whole core behind the main
-// menu, 19,000 idle passes a second in free roam. There a pass takes ~30 us, nearly all of
-// it the screen gamma transition it begins with (sub_82586CD8, TU4 sub_825FCD50). That ends
-// only when its progress, clamped to 1, is above 1, so once the game has started one, every
-// pass rebuilds the gamma ramp (sub_82C28070, TU4 sub_82CE8948: 256 calls of the CRT's pow)
-// and sets it. That was 20 ms of the render thread's CPU in each 33 ms frame.
+// menu, 19,000 idle passes a second in free roam. There a pass took ~30 us, nearly all of
+// it the screen gamma transition it begins with (sub_82586CD8, TU4 sub_825FCD50), which
+// never ended and rebuilt the gamma ramp in every pass (gamma_transition.cpp now ends it).
+// That was 20 ms of the render thread's CPU in each 33 ms frame.
 //
 // Now such a pass, at the idle pass's SleepEx and at the empty pass's end (its call of
 // sub_82DD9D58, TU4 sub_82E9C3B8, with no frame taken: r30 < 0), keeps the game's loop for
 // the first 20 us since the thread last took a frame, yields up to 200 us, then sleeps in
-// 50 us steps (Linux, timer slack 5 us) until the pass would find work: a frame to take
-// (the same tests as the pass), a message (+0x8, the size of the list the pass handles) or
-// a job in the job manager's list (sub_82E4B2C0's list 1), or 1 ms has passed. A pass that
-// finds jobs queued goes on at once, as before. Each call site is told by its return
-// address. Windows keeps the game's loop (its SleepEx(0) yields; its sleeps are whole
-// milliseconds).
+// 50 us steps until the pass would find work: a frame to take (the same tests as the pass),
+// a message (+0x8, the size of the list the pass handles) or a job in the job manager's
+// list (sub_82E4B2C0's list 1), or 1 ms has passed. A pass that finds jobs queued goes on
+// at once, as before. Each call site is told by its return address. The sleeps: Linux and
+// macOS nanosleep (Linux: timer slack 5 us); Windows a high-resolution waitable timer
+// (Windows 10 1803 and later; Sleep and SleepEx count whole milliseconds), and on older
+// versions, which have none, a yield (SwitchToThread) in its place.
 // FORZA_RENDER_IDLE=spin keeps the game's loop; FORZA_RENDER_IDLE_LOG=1 logs every 10 s.
 
 #include "../platform/guest_addr.h"
@@ -43,11 +43,22 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002  // Windows 10 1803
+#endif
+#else
+#include <time.h>
+#endif
 #ifdef __linux__
 #include <sys/prctl.h>
-#endif
-#ifndef _WIN32
-#include <time.h>
 #endif
 
 namespace {
@@ -126,10 +137,45 @@ struct Stats {
 struct IdleState {
   uint32_t taken = 0xFFFFFFFF;
   Clock::time_point start;
-  bool slack_set = false;
+  bool sleep_ready = false;
+#ifdef _WIN32
+  HANDLE timer = nullptr;
+  ~IdleState() {
+    if (timer) CloseHandle(timer);
+  }
+#endif
   Stats stats;
 };
 thread_local IdleState t_idle;
+
+// Sleeps about kSleepNs.
+void SleepStep(IdleState& s) {
+#ifdef _WIN32
+  if (!s.sleep_ready) {
+    s.sleep_ready = true;
+    s.timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                     SYNCHRONIZE | TIMER_MODIFY_STATE);
+    if (!s.timer)
+      REXLOG_INFO("RENDERIDLE: no high-resolution timer (error {}); yielding instead",
+                  GetLastError());
+  }
+  LARGE_INTEGER due;
+  due.QuadPart = -(kSleepNs / 100);  // relative, in 100 ns units
+  if (s.timer && SetWaitableTimer(s.timer, &due, 0, nullptr, nullptr, FALSE) &&
+      WaitForSingleObject(s.timer, INFINITE) == WAIT_OBJECT_0)
+    return;
+  rex::thread::MaybeYield();
+#else
+#ifdef __linux__
+  if (!s.sleep_ready) {
+    prctl(PR_SET_TIMERSLACK, 5000UL);
+    s.sleep_ready = true;
+  }
+#endif
+  timespec ts{0, kSleepNs};
+  nanosleep(&ts, nullptr);
+#endif
+}
 
 void LogStats(IdleState& s, uint8_t* base, uint32_t render, Pass pass, Clock::time_point now) {
   Stats& st = s.stats;
@@ -159,7 +205,6 @@ void WaitForWork(PPCContext& ctx, uint8_t* base, Pass pass) {
     s.taken = taken;
     s.start = now;
   }
-#ifndef _WIN32
   if (Spin()) return;
   const auto idle = now - s.start;
   if (idle < kSpin) return;
@@ -171,17 +216,10 @@ void WaitForWork(PPCContext& ctx, uint8_t* base, Pass pass) {
     s.stats.busy++;
     return;
   }
-#ifdef __linux__
-  if (!s.slack_set) {
-    prctl(PR_SET_TIMERSLACK, 5000UL);
-    s.slack_set = true;
-  }
-#endif
   const auto start = now, deadline = now + kMaxWait;
   bool woke = false;
   while (now < deadline) {
-    timespec ts{0, kSleepNs};
-    nanosleep(&ts, nullptr);
+    SleepStep(s);
     now = Clock::now();
     if (FrameReady(base, render, taken, pass) || WorkQueued(base, render)) {
       woke = true;
@@ -191,7 +229,6 @@ void WaitForWork(PPCContext& ctx, uint8_t* base, Pass pass) {
   s.stats.waits++;
   if (!woke) s.stats.timeouts++;
   s.stats.waited += now - start;
-#endif
 }
 
 }  // namespace
