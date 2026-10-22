@@ -140,6 +140,8 @@ set(FORZA_SOURCES
     src/hooks/gamma_transition.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
+    src/hooks/resource_cache_eviction.cpp
+    src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
     src/hooks/challenge_hud.cpp
