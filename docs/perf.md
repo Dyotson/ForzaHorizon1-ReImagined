@@ -495,10 +495,247 @@ time the game uses. On a Deck the busy wait took one of its 8 hardware threads (
 that core, and power from the shared CPU/GPU budget), so that is where the gain should show; a Deck log is
 still needed to tell.
 
-Ideas left (not cheap): build the generated code with `-mfma` behind a CPU check (every x86-64 CPU since
-2013 and the Deck have FMA3; 11,700 `std::fma` calls in the generated code); cache Vulkan descriptor sets in
+Ideas left (not cheap; the generated code built with FMA behind a CPU check is done, see
+[CPU target x86-64-v3](#cpu-target-x86-64-v3-220-2026-10-21)): cache Vulkan descriptor sets in
 `UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
 write-back instead of the 50 us sleeps.
+
+## CPU target x86-64-v3 (#220, 2026-10-21)
+
+The SDK compiles the generated code for SSE4.1 (`-msse4.1`, `rexglue_helpers.cmake`). `-DFORZA_CPU_TARGET=x86-64-v3`
+(`forza-recomp/cmake/CpuTarget.cmake`) compiles it, its precompiled header and the two facade DLLs with
+`-march=x86-64-v3 -ffp-contract=off` (clang-cl: `/clang:-march=x86-64-v3 /clang:-ffp-contract=off`): AVX2, FMA,
+BMI1/2, F16C, LZCNT and MOVBE, which every Intel CPU since Haswell (2013), AMD since Excavator / Zen and the Steam
+Deck have. The host code keeps the baseline. The launcher passes it when the build machine's CPU and OS have all
+of it (`specs.x86_64_v3`: `/proc/cpuinfo` flags on Linux, CPUID and XGETBV on Windows) and `baseline` otherwise;
+`FORZA_CPU_TARGET=baseline|x86-64-v3` in the launcher's environment overrides. Adapted from the guarded FMA
+experiment of #176 (`-mfma -ffp-contract=off` on Linux, early CPU check).
+
+What changes in the generated code (TU4, 246 objects): the 7,314 calls of libm's `fma` (`ppc_fma` without
+`__FMA__`: a runtime CPU test, then a call) become 11,064 inline `vfmadd`/`vfmsub` instructions; 728,000
+big-endian loads and stores use `movbe` instead of a load and `bswap` (`bswap` 798,000 to 105,000); BMI2 shifts
+(`shlx`, `shrx`, `rorx`) and AVX2 broadcasts and permutes appear; 6.9% fewer instructions overall.
+
+**Same results.** `-ffp-contract=off` keeps the compiler from fusing any multiply and add of its own: only
+`ppc_fma`, already fused by `std::fma`, uses FMA instructions, and both round once. #176's arithmetic check
+(`tests/guest_fma` there: 4,334,912 cases, float and double, four rounding modes, all FTZ/DAZ combinations)
+passes bit for bit with these flags, and a separate multiply and add still compiles to `vmulsd` + `vaddsd`. The
+race itself is not reproducible from run to run, whatever the build: the throttle starts on a host timer, so after
+the 26 s the cars of two runs of the same build stood 20-56 m apart (mean over the 8 cars), and runs of the two
+builds 16-59 m apart. That shows no difference, and could not show a small one.
+
+Measured: TU4, `tools/perf_scenario.sh race` and `freeroam` (copy of the Xenia save, warm shared
+`--cache_root`, `--present_effect=fsr`, `frame_rate = 30`, `PERF_CPUPROF=1`), A (baseline) and B (x86-64-v3)
+alternating, three runs each, BENCH lock held, every run CLEAN. CPU ms per frame = a thread's 1 ms CPU
+samples in the scene / its guest frames; threads by their guest entry function (`eu-stack` at the end of the scene):
+main loop `sub_825CEC88`, render `sub_8261E178`, audio `sub_83075D18` (four threads, the game's mixer and DSP, the
+most `ppc_fma` calls). Mean [min-max]:
+
+| Scene | Build | fps | p99 ms | All threads | Game code (`forza`) | libm | Main loop | Render | Audio | GPU commands |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| race | A | 30.0 | 35.0 | 22.2 [21.4-22.9] | 10.8 [10.0-11.4] | 0.39 | 2.21 [1.86-2.39] | 2.32 [1.89-2.59] | 5.03 [4.91-5.09] | 7.25 |
+| race | B | 30.0 | 34.9 | 21.0 [20.5-21.9] | 9.6 [9.3-10.4] | 0.06 | 1.96 [1.75-2.38] | 2.04 [1.77-2.48] | 4.19 [4.14-4.23] | 7.46 |
+| free roam | A | 30.0 | 35.1 | 35.7 [34.5-36.9] | 27.5 [27.1-28.2] | 1.17 | 2.54 [2.44-2.62] | 20.2 [20.0-20.3] | 4.04 [3.86-4.17] | 3.76 |
+| free roam | B | 30.0 | 35.1 | 33.0 [29.7-34.8] | 25.4 [21.9-27.2] | 0.03 | 2.19 [2.07-2.26] | 18.3 [15.3-19.9] | 3.34 [3.27-3.46] | 4.17 |
+
+- The audio threads use 17% less CPU in both scenes (the ranges do not overlap), the main loop 14% less in free
+  roam. In the race the main loop and render threads change by 0-6% between runs of the same mode: both builds
+  had runs at about 2.4 and at about 1.8 ms, the means differ by 11-12% only because two of the three B runs
+  fell in the lower mode.
+- The render thread spends about 20 ms of every free-roam frame whatever the scene (also with the car stuck
+  against a rail) and whatever the build (B: 19.8 and 19.9, once 15.3); its hottest function is `sub_82468E50`
+  (29%, float math, called from `sub_82CE8948`). In the main menu behind the "MISSING CONTENT" notice that
+  thread uses a whole core. Faster code does not shorten it, so it looks like work that fills a time budget,
+  not a fixed amount. Worth a look for slow CPUs: it was the render thread's idle loop, see
+  [Render thread idle loop](#render-thread-idle-loop-234-2026-10-21).
+- The GPU command processor (SDK plugin, not rebuilt) and the frame rate (capped at 30) do not change.
+
+**A slower CPU.** With [the approximation above](#steam-deck-approximation-45) (4 cores, each shared with 4 busy
+loops: every thread gets 20% of a core), race, two runs each, alternating: A 23.6 and 23.6 fps (p95 53.4 and 57.2
+ms, on target 35 and 37%), B 24.0 and 23.6 fps (54.2 and 57.4 ms, 41 and 36%): within the noise, like every
+setting #45 tried there (the frame waits for each thread to get the CPU back, not for its CPU time). B used 18.5
+and 19.2 ms of CPU per frame against 19.7 and 19.8, the audio threads 3.9 against 4.9-5.1. A Deck is a Zen 2 at
+2.4-3.5 GHz within a 15 W budget shared with the GPU, roughly 2 to 2.5 times this machine's time per instruction:
+the same 8-11% less work in the game's code (17% in the audio threads, 14% in the free-roam main loop) means more
+idle time on its 8 hardware threads and less power drawn from that budget, which helps where the CPU is busy
+(free roam at 60 fps) more than in this approximation. The x86-64-v3 code uses no PDEP/PEXT (slow microcode on Zen
+2). A Deck log is still needed to tell the fps.
+
+The build with the CMake option (generated code only, host at the baseline, guard included) ran the race normally:
+21.4 ms of CPU per frame, game code 10.2, audio 4.1, libm 0.06.
+
+**Guard.** A built game can be copied to an older PC, where the first AVX2 instruction would end it with SIGILL at
+a random point. `src/platform/cpu_target.cpp` (compiled with the baseline flags) checks CPUID (leaf 1, leaf 7,
+0x80000001) and XCR0 for every x86-64-v2 and v3 feature before any generated code runs: on Linux from
+`.preinit_array`, which runs even before the shared libraries' initializers (the SDK runtime's static constructors
+can call inline functions the executable exports, and those may come from a generated-code object); on Windows from
+a constructor of priority 101 (`.CRT$XCA00101`, before every C++ initializer; a DLL never calls into the
+executable). On a CPU without them it prints which features are missing and "Rebuild the game on this PC: in the
+launcher, Setup > Build" (a message box too on Windows when not started by the launcher) and exits with code 76,
+which the launcher explains instead of offering a crash report. The launcher also refuses Play itself for its own
+v3 build on such a CPU, and records the target in `build/state.json` (`cpu_target`) and in the build id, so a
+changed CPU (or a data folder moved to another PC) shows "Rebuild needed". Tests: `launcher/test_cpu_target.py`,
+`forza-recomp/tests/cpu_target_test.cpp` (feature bits; `-DFORZA_CPU_TARGET_V3=1` also runs the guard before
+`main`). With gdb clearing BMI1/2, AVX2 and MOVBE in the CPUID words, the TU4 game's guard printed them from
+`_dl_init` and exited with 76; under Wine (GE-Proton 9-27), the guard cross-compiled for Windows with AVX2 hidden
+did the same before the C++ initializers and `main`. The launcher's Windows CPUID machine code, run on Linux behind
+an argument shim, read the same words as the game.
+
+The TU4 game also builds for Windows with the option (cross clang-cl with xwin, `tools/cmake/windows-clang-cl.cmake`):
+the generated objects have the FMA and MOVBE instructions and no `fma` calls, the guard's object none of them.
+Not verified: the Windows game running (no Windows PC with a GPU here; measured on Linux only) and a Steam Deck.
+
+## Render thread idle loop (#234, 2026-10-21)
+
+In free roam the render thread used about 20 ms of CPU in every 33 ms frame (a race: about 2), and behind the
+main menu's "MISSING CONTENT" notice a whole core. Its hottest function, `sub_82468E50` (disc `sub_82438EA8`), is
+the CRT's `pow`. Both were the thread's loop waiting for the next main frame without ever blocking.
+
+**Call chains** (perf `--call-graph dwarf` on that thread, TU4 names):
+
+- free roam: `sub_8261E178` (the thread) > `sub_826164D0` (one pass of its loop) > `sub_825FCD50` (the screen
+  gamma transition) > `sub_825FCC28` > (vtable +200) `sub_82CE8948` (builds a 128-entry PWL gamma ramp, three
+  channels, and sets it with `sub_82AAEE68`; 256 entries and `sub_82AAED98` in its other mode) > `pow` 128 times,
+  and `sub_82CE8810` > `sub_82CE78E0` > `pow` 128 more. `pow` and its helpers (`sub_824989D0` ldexp,
+  `sub_8241F8C0` frexp, `sub_82B43BC0`) were 70% of the thread's samples, the ramp's D3D calls 10%.
+- main menu: the same pass, no `pow`: its loop of 32 virtual calls on render object +0x970 (`sub_82440A20`,
+  `sub_82472748`, 37%), the render-thread jobs (`sub_82F0BAB8`, 11%), the end-of-pass virtual call
+  (`sub_82D13A50` > `sub_824797A8`, 16%), `sub_824AA568`'s `NtSetEvent` (8%). No kernel wait anywhere: the
+  thread never blocked.
+
+**What the loop does.** `sub_8261E178` calls `sub_826164D0` until the game ends. Each pass begins with per-pass
+work (the gamma transition among it) and takes the next main frame, if there is one, to draw it (or skip it).
+A pass that has none returns, in one of two ways:
+
+- idle: the main frames' count (render object +0xA50) is not past the frame it took last (+0x94C), or, in mode 2
+  (+0xCB0: free roam and races), the queue has none ready. It gives the render-thread jobs their time budget
+  (`sub_82F0CD48`) and calls `SleepEx(0, TRUE)` (`sub_82B2A848`). On the console that yields to the other
+  threads of the core; here it returns at once (the SDK's `AlertableSleep(0)` neither sleeps nor yields on POSIX).
+- empty: the count says there is a frame but the queue has none to take yet (`sub_824A4070`: its list +0x20 and
+  current +0x38 are empty). In the menus (mode 0) the count runs ahead of the queue, so every pass between two
+  frames is one of these, and nothing sleeps at all.
+
+So between two main frames the thread runs pass after pass: a busy wait for the main loop, by design of the game,
+that costs a core here. The gamma transition (`sub_825FCD50`, disc `sub_82586CD8`) makes each pass dear: while
+its start time (+0x16E0) is above 0 it lerps the three gamma parameters over its duration (+0x16E8, 2 s) and
+rebuilds and sets the ramp. It is meant to stop once the progress passes 1, but the progress is clamped to 1
+first, so a transition never ends: after the game's first gamma change (behind the menus, before free roam) every
+pass rebuilds the ramp. In free roam that made about 19,000 idle passes a second (640 a frame) of about 30 us
+each, nearly all of it the ramp. Behind the DLC notice no transition has started yet, so the passes are cheaper
+and the thread is all loop (its `NtSetEvent`s kept other threads busy too). Faster code does not change it
+(#220): faster passes only make more of them.
+
+**Free roam against the race.** In a race the render thread spends its frame in D3D's wait for the GPU (the
+previous frames' swaps, `gpu_wait.cpp` above), so the next main frame is waiting when it returns: in the race scene
+of the four A runs below it never went idle (two of the B runs idled about 250 times a second). In free roam it
+finishes its frame early and spends about half of each frame waiting for the next main frame.
+
+**Change** (`src/hooks/render_idle.cpp`): such a pass, at the idle pass's `SleepEx` call and at the empty pass's
+end (its call of `sub_82E9C3B8` with no frame taken; each call site told by its return address, the other six
+`SleepEx` callers left alone), waits for the pass's own conditions first. As in `gpu_wait.cpp`, the first 20 us
+since the thread last took a frame keep the game's loop and the next 180 us yield; then it sleeps in 50 us steps
+(timer slack 5 us) until the pass would find work: a frame to take (the pass's own test), a message (+0x8) or a
+render-thread job queued, or 1 ms has passed, and the pass runs again. A pass that finds jobs queued goes on at
+once, as before. A new main frame is taken within about 50 us, so frame pacing does not change; the per-pass
+work, the gamma ramp included, still runs, only in fewer passes (free roam: 730 a second instead of 19,000). Windows
+keeps the game's loop (its `SleepEx(0)` yields; its sleeps are whole milliseconds). `FORZA_RENDER_IDLE=spin`
+keeps the game's loop; `FORZA_RENDER_IDLE_LOG=1` logs the idle and empty passes, waits and time waited every 10 s.
+
+Measured: TU4, `tools/perf_scenario.sh` (copy of the Xenia save, warm shared `--cache_root`,
+`--present_effect=fsr`, `frame_rate = 30`, `PERF_CPUPROF=1`), one build, A = `FORZA_RENDER_IDLE=spin` (the game's
+loop) and B = the wait, alternating, BENCH lock held. CPU ms per frame = a thread's 1 ms CPU samples in the scene /
+its guest frames (as in [CPU target x86-64-v3](#cpu-target-x86-64-v3-220-2026-10-21)). Mean [min-max]:
+
+| Scene | Mode | fps | p99 ms | All threads | Main loop | Render | Audio | GPU commands |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| free roam (3 runs each) | A | 30.0 | 35.1 [35.0-35.3] | 36.6 [36.2-36.9] | 2.50 [2.46-2.56] | 20.3 [20.2-20.4] | 4.33 [4.16-4.63] | 4.15 [4.14-4.15] |
+| free roam | B | 30.0 | 35.0 [34.8-35.2] | 18.3 [16.6-19.5] | 2.27 [2.20-2.35] | 2.77 [2.71-2.89] | 4.06 [3.82-4.18] | 4.22 [3.75-4.55] |
+| race (4 and 3 runs) | A | 30.0 | 34.9 [34.8-35.1] | 23.2 [22.8-23.9] | 2.27 [1.85-2.46] | 2.44 [2.30-2.60] | 5.36 [5.08-5.73] | 7.31 [7.10-7.50] |
+| race | B | 30.0 | 34.8 [34.7-34.9] | 21.9 [20.6-22.6] | 2.24 [1.94-2.40] | 2.42 [2.36-2.51] | 5.00 [4.78-5.12] | 7.01 [6.49-7.28] |
+| main menu, DLC notice (2 runs each) | A | 29.8 | 34.1 [34.0-34.2] | 55.6 [55.6-55.6] | 0.26 | 28.5 [28.4-28.5] | 0.33 | 0.81 |
+| main menu, DLC notice | B | 30.0 | 33.8 [33.8-33.9] | 6.5 [6.4-6.5] | 0.30 | 0.41 [0.41-0.42] | 0.26 | 0.71 |
+
+- Free roam: the render thread uses 86% less CPU (20.3 to 2.8 ms a frame), the whole game half (36.6 to 18.3).
+  Idle passes went from about 19,100 to 730 a second; the thread waits 54% of the time, and about 30 waits a
+  second (one a frame) end with a main frame, the rest after 1 ms.
+- Main menu: the render thread from a whole core to 0.4 ms a frame and the game from 55.6 to 6.5 ms (1.7 cores to
+  0.2): the spinning pass also kept other threads busy. 2,700 empty passes a second remain.
+- Races do not change (the render thread hardly idles in them). A fourth B race, left out above, ran while
+  another job loaded the machine (load average 7 at its end): 24.3 ms, p99 37.5.
+- Frame pacing: the same frame rate, p99 and share of frames on target in every scene; the race intro (a
+  cutscene) 30.0 fps, p99 35.0 ms with B; screenshots of the menu, free roam, the intro and the race looked as
+  before. Free roam at 60 fps (one run each): 60.0 and 60.0 fps, p99 18.5 and 18.1 ms, render thread 3.7 and
+  2.2 ms. At 240 (three runs each, bound by the GPU emulation, render sync waiting every frame): A 154-160 fps,
+  B 149-172 (means 157.6 and 158.1; the drive differs between runs, 127-198 fps in 10 s windows), render thread
+  3.0-3.2 against 2.1-2.2 ms.
+
+Left: the gamma ramp (still about 30 us a pass, 730 idle passes a second in free roam: about 0.7 ms a frame)
+could be cached from its inputs, or the transition ended at progress 1 (the game's intent, but every pass
+re-applying the ramp is what it does now); Windows could wait on a high-resolution waitable timer instead of
+yielding; with #240 the wait should also end when the main loop waits for render sync (that wait now ends up to
+1 ms later). The first two are done in #259 (below).
+
+## Gamma transition end and the Windows idle wait (#259, 2026-10-22)
+
+**The gamma transition.** The game starts one with `sub_825FCCA0` (disc `sub_82586C28`): it sets one gamma
+channel's target and the start time (render object +0x16E0). In the free roam scenario there is one: when the DLC
+notice is dismissed, channel 1 goes from 0.5 to 0.7 in 2 s. Each render-thread pass then lerps the three channels
+by min(progress, 1), builds and sets the ramp (`sub_825FCC28` > vtable +200 `sub_82CE8948`), and clears the start
+time only when that clamped progress is above 1, so it never does. From then on every pass built the same ramp
+again: 730 times a second in free roam with #234's wait, and on Windows, where the thread still spun, in every
+pass.
+
+**Change** (`src/hooks/gamma_transition.cpp`): the transition's call of `sub_825FCC28` (told by its return
+address; the device setup and immediate gamma changes call it too) clears the start time after the ramp is
+built at progress 1, as the game does above 1. The next gamma change starts a new transition as before.
+`FORZA_GAMMA_TRANSITION=game` keeps the endless transition.
+
+**Same ramp.** The D3D setter (`sub_82AAEE68`) keeps the applied ramp (1536 bytes at device +15408) and sends
+it to the GPU only when it changes. A temporary diagnostic build (TU4: title, DLC notice, menu, free roam, race
+sign-up, intro and start) hashed it after every set:
+
+- Game's transition: 1,906 different ramps during the 2 s, then d7d40275a1988239, set again in every pass
+  (760 a second) until the end of the run.
+- Change: the same fade (1,909 different ramps), the transition ends 2.0 s after it starts at
+  d7d40275a1988239, and nothing sets the ramp after that.
+- Every 0.5 s with no transition running, the diagnostic built the ramp the endless transition would have set
+  (the three channels at progress 1 from their current values). All 200 builds, through menu, free roam and the
+  race, matched the applied ramp.
+- Nothing changed the other inputs (+0x16E8 to +0x1713, the device's format, the flag at 0x8353A1E0) without
+  starting a transition. In the code, the only writers of those fields are the constructor (`sub_8261E320`),
+  `sub_825FCCA0` (which always restarts the transition) and the transition itself.
+- Screenshots of every step look the same; still scenes have the same mean colour to 0.1 (sign-up
+  77.8/66.0/65.6 in both).
+
+**Windows idle wait** (`src/hooks/render_idle.cpp`). Windows now waits with the same policy as Linux: spin
+20 us, yield up to 200 us, then sleep in 50 us steps until a frame, a message or a job, or 1 ms. Each step
+waits on a high-resolution waitable timer (`CreateWaitableTimerExW` with
+`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`; `Sleep` and `SleepEx` count whole milliseconds). Windows before 10
+version 1803 has no such timer: the log says so once, and each step yields (`SwitchToThread`) instead. The timer
+wait is not alertable, so APCs queued to the thread run at the game's next alertable wait (its `SleepEx`),
+within about 1 ms. `FORZA_RENDER_IDLE=spin` still keeps the game's loop. It compiles with clang-cl (the TU4 and disc
+Windows cross builds); not run on Windows yet.
+
+**Measured** (Linux, TU4, `tools/perf_scenario.sh` as in #234, `frame_rate` 30, one build, A =
+`FORZA_GAMMA_TRANSITION=game`, B = the change, alternating, BENCH lock held, all runs CLEAN; CPU ms per guest
+frame in the scene, mean [min-max]):
+
+| Scene | Mode | fps | p99 ms | All threads | Render thread | Ramp functions on it |
+| --- | --- | --- | --- | --- | --- | --- |
+| free roam (3 runs each) | A | 30.0 | 35.1 [34.8-35.3] | 19.0 [18.6-19.6] | 2.74 [2.64-2.82] | 0.39 [0.33-0.43] |
+| free roam | B | 30.0 | 34.9 [34.4-35.4] | 18.2 [16.5-19.5] | 2.21 [2.17-2.25] | 0 |
+| main menu, DLC notice (3 runs each) | A | 30.0 | 33.8 | 6.45 [6.37-6.50] | 0.39 [0.38-0.41] | 0 |
+| main menu, DLC notice | B | 30.0 | 33.8 | 6.46 [6.42-6.52] | 0.40 [0.39-0.41] | 0 |
+
+- Free roam: the render thread uses 0.5 ms less per frame (19%). The ramp's own functions were 0.39 ms of it
+  (`pow` and its helpers, the ramp builders, the D3D setter); the rest went with the pass's other work around
+  them. All threads vary more between drives than that.
+- Idle passes go from about 730 to 4,700 a second, because a pass without the ramp takes about a microsecond, so
+  more fit in the first 200 us after each frame (the spin and yield phase, the same CPU time). The waits and
+  the time waited (54-56%) do not change.
+- The DLC notice has no gamma transition yet, so it does not change there.
+- Not measured: Windows. There the change matters more: with the game's loop the render thread built the ramp
+  in every pass between frames.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 

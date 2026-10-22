@@ -134,6 +134,37 @@ The Windows test also signed into an isolated loopback Forza Live server and
 received HTTP 200 title-service/profile responses with HDR active. This does
 not establish a multi-machine Horizon World session or public-server routing.
 
+## Title/menu background regression (#214)
+
+The title and main-menu movie is composited after FH1 switches into its UI
+render-target format. Capturing at that switch saved the flat backdrop instead
+of the movie, so the difference mask classified virtually the whole screen as
+UI. The scRGB swapchain remained active; its highlight expansion was being
+suppressed by the mask.
+
+SDK patch 0098 skips the initial untextured backdrop as a capture boundary and
+captures after the known movie shader draws its 1280x720 RGBA texture. Logo,
+text and selection controls are drawn afterwards and remain protected. The
+ordinary 3D scene boundary and the one-snapshot-per-frame guard remain in use.
+The patch changes SDK implementation code only, with no public header or ABI
+change.
+
+Regression validation uses the opt-in `present_hdr_capture` readback described
+above and `tools/check_hdr_capture.py --expect-scene`. Check the initial title,
+the Single Player/Multiplayer menu, free roam, pause, and resume. Menu captures
+must demonstrate both scene expansion and protected UI, just as gameplay does;
+a successful snapshot-allocation log alone does not establish this.
+
+Local Windows/NVIDIA TU4 tests with copied saves reproduced the old menu mask
+covering over 99.99% of pixels and a 200-nit output ceiling. With paper white
+200, peak 400 and strength 1, the candidate title/menu captures reach 400 nits
+while protected UI remains at or below 200. Native 720p/1x and 1440p/2x captures
+pass the reference-curve, finite-output, highlight-limit and HUD-limit checks;
+gameplay continues to expand scene highlights. These are measured scRGB signal
+levels, not physical display measurements. Desktop HDR was off and unchanged;
+the Vulkan surface still offered scRGB. The game host used for these tests is
+the local TU4 validation host, not a fresh full game rebuild.
+
 ## Windows online setup
 
 Windows uses the same launcher and Forza Live protocol as Linux. On a real

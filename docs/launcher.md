@@ -6,6 +6,10 @@ both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
+Discord status sharing is available under **Settings > Online > Discord** (off by
+default). See [Discord Rich Presence](discord.md) for the one-time public application
+ID setup, supported activities, privacy and local IPC tests.
+
 **HDR output (#33):** Settings > Display > HDR provides the Vulkan scRGB toggle,
 paper white, display peak, highlight strength, source gamma, comparison and
 calibration controls. It defaults off and falls back to SDR on unsupported
@@ -55,10 +59,22 @@ machine from their own copy:
    setting) and `--base`.
 3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
-   result is staged into `<data>/runtime`. The build is repeated only when the launcher or
-   project version changes, or the title update is added, removed or replaced (a hash of
-   `forza-recomp/` sources, the launcher version, the SDK pin and the TU4 package). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
-4. **Play**, **Settings**, log folder, versions.
+   result is staged into `<data>/runtime`. The generated code is compiled for x86-64-v3 (AVX2, FMA,
+   BMI2, MOVBE) when this PC's CPU has all of it, else for any x86-64 CPU (`-DFORZA_CPU_TARGET`,
+   [CPU target](perf.md#cpu-target-x86-64-v3-220-2026-10-21)). The build is repeated only when the launcher or
+   project version changes, the title update is added, removed or replaced, or the CPU target changes (a hash of
+   `forza-recomp/` sources, the launcher version, the SDK pin, the TU4 package and the CPU target). "Free disk space" deletes the build tree (about 1 GB); the game keeps working.
+4. **Prebuild shaders** (optional, Vulkan, #226): rebuilds the shaders of the shipped pipeline list
+   (`forza_launcher/data/pipelines-4D5309C9.json`: hashes and decoded render state, no game data) from
+   the player's `media/shaders`, track `bin.zip`s, the update's `media.zip` and the executable image,
+   writes them with the list to `<cache root>/shaders/prebuild/`, and starts the game with
+   `--shader_prebuild_only`: it builds every listed and stored pipeline into the driver's cache, with
+   the usual `SHADER_WARMUP` progress, and exits before the game starts. Cancel stops it. The card says
+   "Recommended" again after a graphics driver change (the driver cache files of the last prebuild are
+   gone), a launcher, list or GPU plugin update, or a graphics setting that selects other pipeline
+   stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
+   start also warms the listed pipelines. [Shader prebuild](shader_prebuild.md).
+5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
 `Documents\forza` for an install that already lives there; changeable under Setup > "Where the game is built", see "Round 5"): `game/` (extracted files), `toolchain/`, `downloads/`,
@@ -120,9 +136,15 @@ for taking and saving the first picture.
 - The grid shows pictures without captions and fits the window width. Sort by newest
   or oldest; ordering uses the image file's modification time, which can change when
   saves are copied or restored.
-- Select **View photo**, double-click a tile, or press Enter for a larger preview.
-  Previous/Next and the arrow keys navigate the gallery. Dimensions and the file's
-  modification date are shown in the preview.
+- Click a tile, select **View photo**, or press Enter to enlarge the original image.
+  The grid keeps thumbnails up to 800 pixels wide (larger at display scaling above
+  200%) so tiles stay sharp as the window resizes; the viewer loads the source at full
+  resolution. Click the enlarged picture or select **100%** to inspect its detail,
+  with one image pixel per display pixel even on a scaled display. Scroll to explore,
+  then click again or select **Fit to window** to see the whole picture. Ctrl+1 selects
+  100%; Ctrl+0 fits to the window. Small source images are not enlarged artificially.
+  Previous/Next and the arrow keys navigate the gallery. Source dimensions and the
+  file's modification date are shown in the preview.
 - **Export photo** saves a separate PNG or JPEG. PNG avoids another lossy encoding;
   JPEG is saved at quality 95. A date-based filename is suggested automatically.
   Exports cannot overwrite files inside the save folder.
@@ -389,6 +411,20 @@ shutdown handling as backups. Run `python -m unittest test_save_editor test_save
 for the synthetic codec, fault-injection and Qt checks; test fixtures contain no game keys
 or game-generated saves.
 
+The editor's **Unicorn cars** section offers **Add missing unicorns**.
+It authenticates the selected save's garage database, keeps a full safety backup,
+and adds only missing models from the seven-car unicorn list. Existing cars,
+upgrades, tuning and the selected car are preserved. This is an offline edit;
+no server or Message Center collection is needed. See [garage format and validation](unicorn_cars.md).
+
+When the save has not finished the **1000 CLUB tutorial**, the editor shows that section
+with **Mark the tutorial finished**. Signed in to Forza Live, a career past the point where
+the 1000 CLUB opens starts that tutorial at every load and the car takes no input but START
+until it is done (#237). Its progress is four step flags at the end of the profile's
+`CCarChallengeState` entry (after the per-car challenge list); the action sets them, after
+the usual full backup, and changes nothing else. A save without that entry, or one whose
+entry does not parse exactly, shows nothing.
+
 Format reference: [Pinyon Shift's FH1 save research](https://arcanite24.github.io/pinyon-shift/game-saves/).
 The editor's profile-table addresses and XUID derivation were checked against the local
 executables and a disposable game-generated profile. A no-edit round trip reproduced the
@@ -482,12 +518,15 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
-racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback; [playing.md](playing.md#racing-wheels-issue-4)),
+racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, clutch and shifter; [playing.md](playing.md#racing-wheels-issue-4)),
 deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
 a free-form "other settings" box for any further `forza.toml` key, a live preview of the
 generated `forza.toml` and command line). Keys that hold their default are not written.
+Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
+keeps the instrument backlight of your own car on by day too; the headlights and other cars
+stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3
@@ -514,6 +553,17 @@ Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Market
 `forza-launcher --dry-run` prints what Play would run; it matches `tools/play.sh`
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` entry becomes `fsr`; `fsr3` is now the temporal upscaler).
+
+**Match display (#215).** The first entry of the Frame rate list, "Match display (N Hz)", follows the refresh rate
+of the monitor the game runs on (Settings > Display > Monitor; 0 and 1 are the primary display, 2 the second,
+and so on). It is stored as `frame_rate = 0` in `launcher.json` and resolved by the launcher
+(`forza_launcher/display.py`) whenever it writes `forza.toml`: Qt's `refreshRate()` of that screen, rounded and
+clamped to 30 or 60 to 240, and never above what the PC-specs warnings accept (30 on a low CPU, 60 on a mid CPU or a
+low/mid graphics card). If the rate cannot be read it uses 60 and says so in the launcher log. The game only ever
+sees a number. Qt lists the primary screen first and the rest in the system's order; SDL may order three or more
+monitors differently, in which case the label shows the rate of the monitor Qt calls that number. The in-game
+Graphics menu saves the frame rate it was started with every time; if that is the resolved rate, Match display
+stays, and any other rate chosen in the menu replaces it. Tests: `launcher/test_match_display.py`.
 
 ### GPU choice (#52)
 

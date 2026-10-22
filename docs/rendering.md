@@ -1,5 +1,52 @@
 # Rendering issues
 
+## Cross-scale minimap corruption at 3x
+
+The scene and native HUD have separate texture caches when their integer render
+scales differ. At 4K DLSS Quality, for example, the scene backing is 2x and the
+HUD is 3x. `Fh1SynchronizeResolve` mirrors render-to-texture results between them.
+The old transfer treated storage as repeated individual pixels, but the SDK
+actually repeats 16-byte quads in column-major order. This scrambled roads and
+icons in the minimap. Disabling `fh1_fast_resolve_copy` did not fix the underlying
+byte-path mapping.
+
+SDK patch 0100 resamples within those quads and preserves the resolve's endian
+order. Whole-word loads remain enabled for compatible pixel layouts; the byte
+fallback uses the same corrected address calculation. No game assets change.
+
+The standalone Vulkan check executes the actual shader against independently
+encoded dense image patterns, including 2x-to-3x and 3x-to-2x transfers, six endian
+modes, five pixel sizes, offset bindings and destination guards. Both fast-copy
+settings pass 1,470 cases each on Windows / RTX 5060 Ti. A pre-fix 2x-to-3x RGBA
+control fails as expected. Run `tools/test_vulkan_cross_scale_resolve.py --sdk
+/path/to/patched-sdk --fast-copy 1` (and `--fast-copy 0`); Python `vulkan` and
+`glslangValidator` are required. A baseline source can be checked with
+`--original-control --baseline-cpp /path/to/old/command_processor.cpp`.
+
+The full Windows TU4 host and SDK build with Vulkan and D3D12 enabled. Matched
+offline festival captures on RTX 5060 Ti / driver 617.14 reproduce the minimap
+corruption before the fix and show clean road/icon edges and restored markers
+afterward at 4K DLSS Quality (2x scene / 3x HUD). A live DLSS Quality to native
+3x to native 2x sequence completes with visible scene shadows retained. This is
+not a reproduction or a confirmed fix of the separately reported shadow failure.
+
+A private TU4 fixture stimulates `CHudDrivingFeatsControl` through its native
+feat method (`828A62A0`) on the UI update thread, with a synthetic label, score,
+and icon selection. It awards no gameplay points. Captures retain the native
+score, multiplier, label and icon through 1x, 2x and 3x, including live cache
+replacement. The same simulated feat is visible at 4K DLSS Quality both before
+and after the minimap correction, and at 4K FSR 3 Quality afterward. This does
+not reproduce the missing-icon report or cover the gameplay event-generation
+path. The fixture, binaries, copied profiles and captures remain outside Git;
+neither test hook is part of patch 0100.
+
+An additional 4K DLSS simulation selects native feat kinds 0, 1 and 2 explicitly.
+Kinds 0/1 produce text-only presentations; kind 2 produces the combo icon and
+backing. This agrees with `8289B968`, which updates `COMPONENT_COMBO_ICON` only
+when the child control's kind at +0xF8 is 2. Event/layout selection is therefore
+a separate lead for the missing-icon report; forcing every event to kind 2 is
+not included as a fix. An affected gameplay event has not been captured yet.
+
 ## Minimap icon resolution
 
 The minimap profile requests `MapIconSheetSmall.tga`: a 512x512 BC3 atlas
@@ -534,6 +581,32 @@ Validation (copy of a save, local server, RX 9060 XT / RADV, TU4): buying the F5
 the car.
 
 
+### Car picture of upgrade parts after the paint shop (#241)
+
+Report (Windows, RX 9070 XT, 4096x2160, render scale 3): after the decal editor, the WRX
+STI's picture in Car Select and on the car card showed upgrade part images. It stayed after a
+restart; saving a design rewrote it correctly. The player's save holds it
+(`Thumbnail_3.xdc`, written 01:43:29): `tools/xdc_decode.py` shows rows of part images, the
+guest memory the picture's resolve was meant to overwrite.
+
+Cause: device memory ran out. The player's log has no GPU error for 1 h 54 min, then failed
+render target images (`Failed to create a 2520x2352 4xMSAA ... render target image`), failed
+scaled-resolve memory (`Failed to allocate sparse memory for the scaled resolve buffer`,
+`Failed to obtain the resolve destination memory region`) and 800,000 failed draws until the
+game was closed. A resolve that cannot get its memory writes nothing, so the CPU compressed
+what was there before. The Vulkan render target cache keeps every render target image for the
+session, about 90 MB each at scale 3, and the paint shop adds dozens (one per car side and
+layer size): 6.0 GB in free roam, 11.4 GB in the decal editor and 13.2 GB after switching
+sides here (720p, scale 3). The original game has nothing like it: the console has no host
+render target images.
+
+Fix: SDK patch 0112 frees the cached render targets that hold no EDRAM data when device-local
+memory reaches 90 % of the driver's budget, or after an allocation failed
+(`vulkan_render_target_trim_percent`, [SDK patches](sdk_patches.md)). Cancelling a decal
+(answering No) does not write a picture; saving one does, and wrote correct pictures at scale 3
+before and after trimming. A picture already broken stays until the car's design is saved
+again.
+
 ## Festival video flashes purple (#91, open)
 
 Report: RX 9070 XT, Windows 11, Vulkan, v0.1.12, `frame_rate` 240, render scale 2, AF 16x,
@@ -678,3 +751,37 @@ and its first blit have an explicit transfer-write dependency.
 Presentation-complete semaphores belong to swapchain images rather than CPU
 frame slots. Reacquiring an image permits reuse of its semaphore. Swapchain
 retirement drains the presentation queue before destroying these resources.
+
+## Cockpit gauges lit by day (#183)
+
+In cockpit view the instrument backlight only shows when the car's headlights are on. The
+game sends a car's headlight amount (0 by day, 1 with the lights on) through
+`ICarPresentation::SetHeadLightAmount` (the deferred one on the game thread, TU4 `82E81A48`,
+disc `82DBFB78`; the render thread's stores it at render object + 0x342C) and `82448F90`
+(disc `82418FE0`) copies it into the pixel shader constant `dynamicLights2.x` (c108.x) once per
+car and view. Every car material that glows with the lights multiplies by it: the
+headlight, tail light and number plate lenses as well as the cockpit's gauge faces and
+needles (`CockpitGaugesEmissive * GaugeEmissiveScale * dynamicLights2.x` in the
+`cockpit_gauge` shaders of `media/shaders/Cars/shaders_v16.fxobj`). Raising the amount for the
+whole car lights the lamps too (checked: the tail lights glow).
+
+The car is drawn model by model: `8246CEC8(presentation, ?, pass, group, lod)` (disc
+`8243CDC0`) per model group, each drawn at once by `824469B0(constants, model)` (disc
+`82416A00`). Group 16 is the cockpit interior, 1-15 are the analog gauge needles (the table of
+`8248A5A0`); raising c108.x for group 16 alone lit the gauge faces and left the tail lights
+as they were, groups 1-3 lit the 300SL's needles. `src/hooks/cockpit_gauges.cpp`
+(`cockpit_gauges_lit`, launcher Display > Picture > **Cockpit gauges always lit**, off by
+default) raises c108.x to at least 1 around those draws of the local player's car only and
+writes the game's value back after each (constant shadow: pixel register r at
+`(r + 376) * 16`, dirty flag bit `63 - r / 4` of the word at +8, `src/platform/cockpit_gauges.h`).
+The local car is the vehicle of kind 0 in the vehicle list (`world_challenge.cpp`); its
+deferred presentation is at vehicle + 0x2D94, whose + 4 is the render thread's presentation.
+The game thread matches each car's `SetHeadLightAmount` against the list and publishes that
+pointer; the render thread only compares pointers, so CPU drivers and other players' cars
+online keep the game's lighting.
+
+Checked on TU4 offline, by day at the Montano Plains outpost (setting off and on, same spot
+and time): Mercedes 300SL Gullwing, Aston Martin DB5 and Plymouth Cuda 426 HEMI gauges lit with
+the setting on and dark without; the Cuda's tail lights and the rest of the picture unchanged;
+at dusk with the headlights on the gauges look as the game draws them. The Lamborghini
+Aventador's digital display (drawn from a UI texture) is lit either way.
