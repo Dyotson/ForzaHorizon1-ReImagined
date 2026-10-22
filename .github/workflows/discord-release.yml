@@ -28,19 +28,22 @@ jobs:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          # The Discord role to ping (the "Updates" role), its numeric ID as a repository
+          # variable. Unset: the post pings nobody.
+          ROLE: ${{ vars.DISCORD_UPDATES_ROLE_ID }}
         run: |
           if [ -z "$WEBHOOK" ]; then
             echo "DISCORD_WEBHOOK_URL is not set; nothing to post."
             exit 0
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,body,url,isPrerelease > release.json
-          jq -n --slurpfile r release.json --arg repo "$GITHUB_REPOSITORY" '
+          jq -n --slurpfile r release.json --arg repo "$GITHUB_REPOSITORY" --arg role "$ROLE" '
             $r[0] as $rel
             | ($rel.body | if length > 3500 then .[0:3500] + "\n\n[...]" else . end) as $notes
             | {
                 username: "Forza Horizon 1: ReImagined",
                 avatar_url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png",
-                content: "@everyone New release: **\($rel.name)**",
+                content: ((if ($role | test("^[0-9]+$")) then "<@&\($role)> " else "" end) + "New release: **\($rel.name)**"),
                 embeds: [{
                   title: $rel.name,
                   url: $rel.url,
@@ -49,7 +52,7 @@ jobs:
                   thumbnail: { url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png" },
                   footer: { text: (if $rel.isPrerelease then "Pre-release" else "Windows installer · Linux Flatpak and .tar.gz" end) }
                 }],
-                allowed_mentions: { parse: ["everyone"] }
+                allowed_mentions: { parse: [], roles: (if ($role | test("^[0-9]+$")) then [$role] else [] end) }
               }' > payload.json
           curl -fsS -H "Content-Type: application/json" --data @payload.json "$WEBHOOK"
           echo "Posted $TAG to Discord."
