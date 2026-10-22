@@ -365,4 +365,6 @@ jobs:
           notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/"
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
+          # The SDK overlays are artifacts only for the packaging jobs; every package carries its own.
+          rm -f assets/rexglue-overlay-*.tar.gz
           gh release upload "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --clobber
