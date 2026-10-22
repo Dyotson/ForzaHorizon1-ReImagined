@@ -99,7 +99,7 @@ class ConflictTests(unittest.TestCase):
 
 
 class ReviewTests(unittest.TestCase):
-    """#284 review: a cleared d-pad direction."""
+    """#284 review: a cleared d-pad direction, and combined pedals."""
     def test_dpad_rows_show_what_the_driver_reads(self):
         # The driver reads the hat only for directions wheel_buttons leaves out (patch 0127):
         # Clear writes up=-1, which now turns hat up off, and a button replaces it.
@@ -114,6 +114,20 @@ class ReviewTests(unittest.TestCase):
         s.update(b.set_wheel_binding(s, ACT["up"], "default"))
         self.assertEqual((s["wheel_buttons"], b.wheel_binding_text(ACT["up"], s, OTHER)),
                          ("", "Hat (d-pad)"))
+
+    def test_combined_pedals_have_one_row_for_both(self):
+        separate = settings(wheel_axes="steer=0,throttle=1,brake=1")
+        self.assertEqual(b.wheel_conflicts(separate, OTHER), [("Axis 1", ["Throttle", "Brake"])])
+        combined = settings(wheel_axes="steer=0,throttle=1,brake=1", wheel_pedals="combined")
+        # The driver ignores `brake` then: no conflict, no brake binding to bind or clear.
+        self.assertEqual(b.wheel_conflicts(combined, OTHER), [])
+        self.assertFalse(b.wheel_action_editable(ACT["brake"], combined))
+        self.assertTrue(b.wheel_action_editable(ACT["brake"], separate))
+        self.assertEqual(b.wheel_action_label(ACT["throttle"], combined),
+                         "Throttle and brake (combined pedals)")
+        self.assertEqual(b.wheel_binding_text(ACT["brake"], combined, OTHER),
+                         "The throttle axis's other side (combined pedals)")
+        self.assertEqual(b.wheel_binding_text(ACT["throttle"], combined, OTHER), "Axis 1")
 
 
 class DetectorTests(unittest.TestCase):
@@ -434,6 +448,35 @@ class EditorTests(unittest.TestCase):
         self.ed.clear(self.row("up"))
         self.assertEqual(self.cfg.settings["wheel_buttons"], "up=-1")
         self.assertEqual(self.row("up").value.text(), "Not bound")
+
+    def test_combined_pedals_bind_and_clear_both_on_the_throttle_row(self):
+        s = sdl2
+        self.ed.apply({"wheel_pedals": "combined", "wheel_axes": "steer=0,throttle=3"})
+        self.ed.refresh()
+        throttle, brake = self.row("throttle"), self.row("brake")
+        self.assertEqual(throttle.title.text(), "Throttle and brake (combined pedals)")
+        self.assertFalse(brake.bind.isEnabled() or brake.clear.isEnabled() or brake.reset.isEnabled())
+        before = dict(self.cfg.settings)
+        self.ed.clear(brake)       # not offered; a stray call changes nothing
+        self.ed.begin(brake)
+        self.assertIsNone(self.ed.binding)
+        self.assertEqual(dict(self.cfg.settings), before)
+        # A combined axis rests in the middle; throttle pushes it up here, so it needs the invert.
+        s.SDL_JoystickSetVirtualAxis(self.joy, 3, 0)
+        self.step()
+        self.ed.begin(throttle)
+        s.SDL_JoystickSetVirtualAxis(self.joy, 3, 32767)
+        self.step()
+        self.assertEqual(self.cfg.settings["wheel_axes"], "steer=0,throttle=3")
+        self.assertTrue(self.cfg.settings["wheel_invert_throttle"])
+        self.assertIn("Throttle and brake (combined pedals): Axis 3", self.ed.status.text())
+        self.ed.clear(throttle)
+        self.assertEqual(self.cfg.settings["wheel_axes"], f"steer=0,throttle={b.NO_AXIS}")
+        self.assertEqual(self.ed.status.text(), "Throttle and brake (combined pedals): not bound.")
+        self.ed.apply({"wheel_pedals": "auto"})
+        self.ed.refresh()
+        self.assertEqual(self.row("throttle").title.text(), "Throttle")
+        self.assertTrue(self.row("brake").clear.isEnabled())
 
     def test_steering_direction_sets_the_invert_switch(self):
         self.ed.begin(self.row("steer"))

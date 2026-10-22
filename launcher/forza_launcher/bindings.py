@@ -192,7 +192,27 @@ def wheel_binding(action, settings, wheel):
     return (n if n >= 0 else None), True
 
 
+def combined_pedals(settings):
+    """One axis for both pedals: the driver reads throttle and brake from the `throttle` axis, one
+    on each side, and ignores `brake`."""
+    return settings.get("wheel_pedals") == "combined"
+
+
+def wheel_action_label(action, settings):
+    if action.key == "throttle" and combined_pedals(settings):
+        return "Throttle and brake (combined pedals)"
+    return action.label
+
+
+def wheel_action_editable(action, settings):
+    """With combined pedals the brake is the throttle axis's other side: it has no binding of its
+    own to bind or clear (the throttle row does both)."""
+    return not (action.key == "brake" and combined_pedals(settings))
+
+
 def wheel_binding_text(action, settings, wheel):
+    if not wheel_action_editable(action, settings):
+        return "The throttle axis's other side (combined pedals)"
     n, default = wheel_binding(action, settings, wheel)
     if action.kind == "axis":
         if n is None:
@@ -225,10 +245,12 @@ def set_wheel_binding(settings, action, number):
 
 def wheel_conflicts(settings, wheel):
     """[(input text, [row labels])] for every axis or button that more than one row uses. Shifter
-    rows count only for the shifter mode that reads them."""
+    rows count only for the shifter mode that reads them, the brake not with combined pedals."""
     shifter = settings.get("wheel_shifter", "off")
     used = {}
     for action in WHEEL_ACTIONS:
+        if not wheel_action_editable(action, settings):
+            continue
         if action.setting == "wheel_shifter_buttons":
             sequential = action.field in ("up", "down")
             if shifter == "off" or (shifter == "h") == sequential:
@@ -236,7 +258,7 @@ def wheel_conflicts(settings, wheel):
         n, _ = wheel_binding(action, settings, wheel)
         if n is None:
             continue
-        used.setdefault((action.kind, n), []).append(action.label)
+        used.setdefault((action.kind, n), []).append(wheel_action_label(action, settings))
     return [(f"{'Axis' if kind == 'axis' else 'Button'} {n}", labels)
             for (kind, n), labels in sorted(used.items()) if len(labels) > 1]
 
