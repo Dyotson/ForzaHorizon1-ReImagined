@@ -514,9 +514,9 @@ class SetupPage(QWidget):
         self.c4 = StepCard(5, "Prebuild shaders",
                            "Optional. Builds the graphics pipelines the game uses before you play, so that new "
                            "places, cars and cameras do not stutter the first time you see them. The shaders "
-                           "come from your own game files. Takes a few minutes; the game window opens and stays "
-                           "black meanwhile. Offered again after a graphics driver, launcher or graphics "
-                           "setting change.")
+                           "come from your own game files. Takes from seconds to a few minutes, depending on the "
+                           "graphics driver; the game window opens and stays black meanwhile. Offered again "
+                           "after a graphics driver, launcher or graphics setting change.")
         brow = QHBoxLayout()
         self.go4 = QPushButton("Prebuild shaders")
         self.go4.clicked.connect(self._prebuild)
