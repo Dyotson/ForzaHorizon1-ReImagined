@@ -1,0 +1,302 @@
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index cf79f65..b0f9ecd 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -137,6 +137,8 @@ class VulkanCommandProcessor : public CommandProcessor {
+   ~VulkanCommandProcessor();
+ 
+   void ClearCaches() override;
++  // FH1 (#241): a device-local allocation failed; free unused render targets at the frame end.
++  void RequestRenderTargetTrim() { render_target_trim_requested_ = true; }
+   void InvalidateGpuMemory() override;
+   void InitializeShaderStorage(const std::filesystem::path& cache_root, uint32_t title_id,
+                                bool blocking) override;
+@@ -576,6 +578,14 @@ class VulkanCommandProcessor : public CommandProcessor {
+ 
+   bool cache_clear_requested_ = false;
+ 
++  // FH1 (#241): render targets are cached for the whole session, one per EDRAM layout, and
++  // at a high resolution scale they fill the device memory. TrimRenderTargetsIfNeeded frees
++  // those holding no EDRAM data at a frame end when the memory is nearly full.
++  void TrimRenderTargetsIfNeeded();
++  bool render_target_trim_requested_ = false;
++  uint64_t render_target_trim_next_check_frame_ = 0;
++  uint64_t render_target_trim_next_allowed_frame_ = 0;
++
+   // Host shader types that guest shaders can be translated into - they can
+   // access the shared memory (via vertex fetch, memory export, or manual index
+   // buffer reading) and textures.
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+index f30a657..80419e7 100644
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -94,6 +94,18 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+   bool Initialize(uint32_t shared_memory_binding_count);
+   void Shutdown(bool from_destructor = false);
+   void ClearCache() override;
++  // FH1 (#241): frees the cached render targets that hold no EDRAM data, as ClearCache does,
++  // but keeps the render passes (pipelines being created may reference them). Only between
++  // frames, after the GPU has finished all submitted work.
++  void TrimRenderTargets();
++  uint64_t render_target_memory_bytes() const { return render_target_memory_bytes_; }
++  uint32_t render_target_count() const { return render_target_count_; }
++  // Whether creating a render target image failed since the last call.
++  bool TakeRenderTargetAllocationFailure() {
++    bool failed = render_target_allocation_failed_;
++    render_target_allocation_failed_ = false;
++    return failed;
++  }
+ 
+   void CompletedSubmissionUpdated();
+   void EndSubmission();
+@@ -383,6 +395,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+ 
+     VkImage image_;
+     VkDeviceMemory memory_;
++   public:
++    // Device memory of the image, counted in the cache's render_target_memory_bytes_.
++    VkDeviceSize memory_size_ = 0;
++   private:
+ 
+     // TODO(Triang3l): Per-format drawing views for mutable formats with EDRAM
+     // aliasing without transfers.
+@@ -846,6 +862,10 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+ 
+   std::unordered_map<FramebufferKey, Framebuffer, FramebufferKey::Hasher> framebuffers_;
+ 
++  uint64_t render_target_memory_bytes_ = 0;
++  uint32_t render_target_count_ = 0;
++  bool render_target_allocation_failed_ = false;
++
+   // Set 0 - EDRAM storage buffer, set 1 - source depth sampled image (and
+   // unused stencil from the transfer descriptor set), HostDepthStoreConstants
+   // passed via push constants.
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 3810677..3d198e2 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -36,6 +36,7 @@
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+ #include <rex/graphics/util/fh1_hud.h>
++#include "fh1_render_target_trim.h"
+ REXCVAR_DECLARE(int32_t, forza_native_width);
+ REXCVAR_DECLARE(int32_t, forza_native_height);
+ REXCVAR_DECLARE(bool, forza_present_16_9);
+@@ -118,6 +119,13 @@ REXCVAR_DEFINE_BOOL(vulkan_hoist_shared_memory_uploads, true, "GPU/Vulkan",
+                     "pages, instead of ending the render pass for every upload")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_UINT32(vulkan_render_target_trim_percent, 90, "GPU/Vulkan",
++                      "Free the cached render targets that hold no EDRAM data when device-local "
++                      "memory use reaches this percentage of the driver's budget "
++                      "(VK_EXT_memory_budget), or after a device-local allocation failed; 0 "
++                      "keeps every render target for the session")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
+ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+                     "Use VK_KHR_dynamic_rendering for Vulkan GPU emulation when supported by the "
+                     "device (falls back to render passes otherwise)")
+@@ -770,6 +778,68 @@ void VulkanCommandProcessor::ClearCaches() {
+   cache_clear_requested_ = true;
+ }
+ 
++void VulkanCommandProcessor::TrimRenderTargetsIfNeeded() {
++  namespace trim = fh1_render_target_trim;
++  const uint32_t percent = REXCVAR_GET(vulkan_render_target_trim_percent);
++  if (!render_target_cache_ || !percent) {
++    render_target_trim_requested_ = false;
++    return;
++  }
++  if (render_target_cache_->TakeRenderTargetAllocationFailure() ||
++      (fh1_other_render_targets_ && fh1_other_render_targets_->TakeRenderTargetAllocationFailure())) {
++    render_target_trim_requested_ = true;
++  }
++  const bool failed = render_target_trim_requested_;
++  const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
++  const bool have_budget = vulkan_device->extensions().ext_EXT_memory_budget;
++  if (!trim::ShouldQuery(frame_current_, render_target_trim_next_check_frame_,
++                         render_target_trim_next_allowed_frame_, percent, failed, have_budget)) {
++    return;
++  }
++  uint64_t usage = 0, budget = 0;
++  if (have_budget) {
++    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget_properties = {};
++    budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
++    VkPhysicalDeviceMemoryProperties2 memory_properties = {};
++    memory_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
++    memory_properties.pNext = &budget_properties;
++    vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceMemoryProperties2(
++        vulkan_device->physical_device(), &memory_properties);
++    const VkPhysicalDeviceMemoryProperties& properties = memory_properties.memoryProperties;
++    for (uint32_t i = 0; i < properties.memoryHeapCount; ++i) {
++      if (properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
++        usage += budget_properties.heapUsage[i];
++        budget += budget_properties.heapBudget[i];
++      }
++    }
++  }
++  if (!failed && !trim::OverBudget(usage, budget, percent)) {
++    return;
++  }
++  if (!AwaitAllQueueOperationsCompletion()) {
++    return;
++  }
++  render_target_trim_requested_ = false;
++  uint64_t before = render_target_cache_->render_target_memory_bytes();
++  uint32_t count_before = render_target_cache_->render_target_count();
++  render_target_cache_->TrimRenderTargets();
++  uint64_t after = render_target_cache_->render_target_memory_bytes();
++  uint32_t count_after = render_target_cache_->render_target_count();
++  if (fh1_other_render_targets_) {
++    before += fh1_other_render_targets_->render_target_memory_bytes();
++    count_before += fh1_other_render_targets_->render_target_count();
++    fh1_other_render_targets_->TrimRenderTargets();
++    after += fh1_other_render_targets_->render_target_memory_bytes();
++    count_after += fh1_other_render_targets_->render_target_count();
++  }
++  render_target_trim_next_allowed_frame_ =
++      trim::NextAllowedFrame(frame_current_, failed, before - after);
++  REXGPU_INFO(
++      "Render targets trimmed ({}): {} -> {} ({} -> {} MB); device-local memory {} of {} MB",
++      failed ? "an allocation failed" : "memory nearly full", count_before, count_after,
++      before >> 20, after >> 20, usage >> 20, budget >> 20);
++}
++
+ void VulkanCommandProcessor::InvalidateGpuMemory() {
+   if (shared_memory_) {
+     shared_memory_->InvalidateAllPages();
+@@ -7003,6 +7073,9 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+     // Submission already closed now, so minus 1.
+     closed_frame_submissions_[(frame_current_++) % kMaxFramesInFlight] = GetCurrentSubmission() - 1;
+ 
++    if (!cache_clear_requested_) {
++      TrimRenderTargetsIfNeeded();
++    }
+     if (cache_clear_requested_ && AwaitAllQueueOperationsCompletion()) {
+       cache_clear_requested_ = false;
+ 
+diff --git a/src/graphics/vulkan/fh1_render_target_trim.h b/src/graphics/vulkan/fh1_render_target_trim.h
+new file mode 100644
+index 0000000..e38d8be
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_render_target_trim.h
+@@ -0,0 +1,40 @@
++#pragma once
++// FH1 (#241): when to free the cached render targets that hold no EDRAM data. The render
++// target cache keeps one image per EDRAM layout for the whole session; at render scale 3
++// each is about 90 MB, the paint shop alone adds some 30 of them, and after two hours at
++// 4K the device memory was full: render targets, resolves and a car's picture failed.
++#include <cstdint>
++
++namespace rex::graphics::vulkan::fh1_render_target_trim {
++
++// Frames between budget queries, and before the next trim (a trim waits for the GPU).
++constexpr uint64_t kCheckInterval = 30;
++constexpr uint64_t kAfterFailure = 60;
++constexpr uint64_t kAfterTrim = 300;
++constexpr uint64_t kAfterSmallTrim = 1800;
++constexpr uint64_t kSmallTrimBytes = uint64_t(256) << 20;
++
++// Called at every frame end. True: query the memory budget now (after a failed allocation,
++// trim whatever it says).
++inline bool ShouldQuery(uint64_t frame, uint64_t& next_check_frame, uint64_t next_allowed_frame,
++                        uint32_t percent, bool allocation_failed, bool have_budget) {
++  if (!percent || frame < next_allowed_frame) return false;
++  if (allocation_failed) return true;
++  if (!have_budget || frame < next_check_frame) return false;
++  next_check_frame = frame + kCheckInterval;
++  return true;
++}
++
++inline bool OverBudget(uint64_t usage, uint64_t budget, uint32_t percent) {
++  return percent && budget && usage * 100 >= budget * percent;
++}
++
++// The first frame of the next trim. Little freed: the memory is full of other things, so
++// wait longer before the next GPU wait.
++inline uint64_t NextAllowedFrame(uint64_t frame, bool after_failure, uint64_t freed_bytes) {
++  return frame + (freed_bytes < kSmallTrimBytes ? kAfterSmallTrim
++                  : after_failure              ? kAfterFailure
++                                               : kAfterTrim);
++}
++
++}  // namespace rex::graphics::vulkan::fh1_render_target_trim
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index b610922..2febf5f 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1116,6 +1116,22 @@ void VulkanRenderTargetCache::ClearCache() {
+   }
+   render_passes_.clear();
+ 
++  // The accumulated bindings may point to render targets the common ClearCache deletes.
++  ResetAccumulatedRenderTargets();
++  RenderTargetCache::ClearCache();
++}
++
++void VulkanRenderTargetCache::TrimRenderTargets() {
++  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
++  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
++  const VkDevice device = vulkan_device->device();
++  // Framebuffers reference views of the images that may be deleted.
++  last_update_framebuffer_ = VK_NULL_HANDLE;
++  for (const auto& framebuffer_pair : framebuffers_) {
++    dfn.vkDestroyFramebuffer(device, framebuffer_pair.second.framebuffer, nullptr);
++  }
++  framebuffers_.clear();
++  ResetAccumulatedRenderTargets();
+   RenderTargetCache::ClearCache();
+ }
+ 
+@@ -1856,6 +1872,8 @@ VulkanRenderTargetCache::VulkanRenderTarget::~VulkanRenderTarget() {
+   dfn.vkDestroyImageView(device, view_depth_color_, nullptr);
+   dfn.vkDestroyImage(device, image_, nullptr);
+   dfn.vkFreeMemory(device, memory_, nullptr);
++  render_target_cache_.render_target_memory_bytes_ -= memory_size_;
++  --render_target_cache_.render_target_count_;
+ }
+ 
+ uint32_t VulkanRenderTargetCache::GetMaxRenderTargetWidth() const {
+@@ -1930,9 +1948,11 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+   }
+   VkImage image;
+   VkDeviceMemory memory;
++  VkDeviceSize memory_size = 0;
+   if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+           vulkan_device, image_create_info, ui::vulkan::util::MemoryPurpose::kDeviceLocal, image,
+-          memory)) {
++          memory, nullptr, &memory_size)) {
++    render_target_allocation_failed_ = true;
+     REXGPU_ERROR(
+         "VulkanRenderTarget: Failed to create a {}x{} {}xMSAA {} render target "
+         "image",
+@@ -2094,9 +2114,13 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+   }
+   dfn.vkUpdateDescriptorSets(device, key.is_depth ? 2 : 1, descriptor_set_write, 0, nullptr);
+ 
+-  return new VulkanRenderTarget(key, *this, image, memory, view_depth_color, view_depth_stencil,
+-                                view_stencil, view_srgb, view_color_transfer_separate,
+-                                descriptor_set_index_transfer_source);
++  auto* render_target = new VulkanRenderTarget(
++      key, *this, image, memory, view_depth_color, view_depth_stencil, view_stencil, view_srgb,
++      view_color_transfer_separate, descriptor_set_index_transfer_source);
++  render_target->memory_size_ = memory_size;
++  render_target_memory_bytes_ += memory_size;
++  ++render_target_count_;
++  return render_target;
+ }
+ 
+ bool VulkanRenderTargetCache::IsHostDepthEncodingDifferent(
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index 3754f2b..70dd3f5 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -2454,6 +2454,7 @@ bool VulkanTextureCache::EnsureScaledResolveBufferAllocated(uint64_t start_scale
+       REXGPU_ERROR(
+           "VulkanTextureCache: Failed to allocate sparse memory for the "
+           "scaled resolve buffer");
++      command_processor_.RequestRenderTargetTrim();
+       return false;
+     }
+     scaled_resolve_buffer_memory_.push_back(allocation_memory);

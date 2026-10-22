@@ -581,6 +581,32 @@ Validation (copy of a save, local server, RX 9060 XT / RADV, TU4): buying the F5
 the car.
 
 
+### Car picture of upgrade parts after the paint shop (#241)
+
+Report (Windows, RX 9070 XT, 4096x2160, render scale 3): after the decal editor, the WRX
+STI's picture in Car Select and on the car card showed upgrade part images. It stayed after a
+restart; saving a design rewrote it correctly. The player's save holds it
+(`Thumbnail_3.xdc`, written 01:43:29): `tools/xdc_decode.py` shows rows of part images, the
+guest memory the picture's resolve was meant to overwrite.
+
+Cause: device memory ran out. The player's log has no GPU error for 1 h 54 min, then failed
+render target images (`Failed to create a 2520x2352 4xMSAA ... render target image`), failed
+scaled-resolve memory (`Failed to allocate sparse memory for the scaled resolve buffer`,
+`Failed to obtain the resolve destination memory region`) and 800,000 failed draws until the
+game was closed. A resolve that cannot get its memory writes nothing, so the CPU compressed
+what was there before. The Vulkan render target cache keeps every render target image for the
+session, about 90 MB each at scale 3, and the paint shop adds dozens (one per car side and
+layer size): 6.0 GB in free roam, 11.4 GB in the decal editor and 13.2 GB after switching
+sides here (720p, scale 3). The original game has nothing like it: the console has no host
+render target images.
+
+Fix: SDK patch 0112 frees the cached render targets that hold no EDRAM data when device-local
+memory reaches 90 % of the driver's budget, or after an allocation failed
+(`vulkan_render_target_trim_percent`, [SDK patches](sdk_patches.md)). Cancelling a decal
+(answering No) does not write a picture; saving one does, and wrote correct pictures at scale 3
+before and after trimming. A picture already broken stays until the car's design is saved
+again.
+
 ## Festival video flashes purple (#91, open)
 
 Report: RX 9070 XT, Windows 11, Vulkan, v0.1.12, `frame_rate` 240, render scale 2, AF 16x,
