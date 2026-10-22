@@ -61,7 +61,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_vfs_host_errors.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -78,10 +78,17 @@ jobs:
           clang++ -std=c++20 -pthread -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             tools/test_driver_pipeline_cache.cpp -o "$RUNNER_TEMP/driver-cache-test"
           "$RUNNER_TEMP/driver-cache-test"
+          overlay="$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64"
+          clang++ -std=c++23 -pthread -I"$overlay/include" tools/test_vfs_host_errors.cpp \
+            -L"$overlay/lib" -lrexruntime -Wl,-rpath,"$overlay/lib" -o "$RUNNER_TEMP/vfs-host-errors-test"
+          "$RUNNER_TEMP/vfs-host-errors-test"
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
       - name: Compile performance overlay against stock nightly headers
         run: |
           # Also runs on an SDK cache hit: game sources aren't part of that cache key.
+          if [ ! -d /usr/include/c++/14 ]; then
+            launcher/packaging/ci_linux_sdk_setup.sh --compiler-only
+          fi
           if [ ! -x "$HOME/llvm/bin/clang++" ]; then
             python3 launcher/packaging/ci_fetch.py llvm-linux "$HOME/llvm" --strip 1
           fi
@@ -116,7 +123,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-windows-amd64.tar.gz
-          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/tests/sdk-filesystem/**', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -161,6 +168,11 @@ jobs:
             -o "$RUNNER_TEMP/driver-cache-test.exe"
           "$RUNNER_TEMP/driver-cache-test.exe"
           cmake --install "$SRC/out/build/win"
+          cmake -S tools/tests/sdk-filesystem -B "$RUNNER_TEMP/sdk-filesystem" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PREFIX" \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/cmake/windows-native-clang-cl.cmake"
+          cmake --build "$RUNNER_TEMP/sdk-filesystem" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/sdk-filesystem" --output-on-failure
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
       - if: failure()

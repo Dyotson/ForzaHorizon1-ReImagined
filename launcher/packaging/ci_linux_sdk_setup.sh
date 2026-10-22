@@ -21,13 +21,55 @@ apt_get() {
     done
 }
 apt_get update
-apt_get install -y software-properties-common ca-certificates
+apt_get install -y software-properties-common ca-certificates curl
 $SUDO add-apt-repository --no-update -y ppa:ubuntu-toolchain-r/test
 apt_get update
+# ppa.launchpadcontent.net can answer 503 for hours (the index, the packages or both) while the
+# older ppa.launchpad.net name still serves the same PPA (APT checks its signature either way).
+old_ppa_host() {
+    echo "The toolchain PPA failed; trying ppa.launchpad.net" >&2
+    $SUDO sed -i 's#https://ppa.launchpadcontent.net/#http://ppa.launchpad.net/#' \
+        /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-*.list
+    apt_get update
+}
+# APT only warns when an index fails, and a missing package name is read as a pattern, so look
+# for g++-14 itself.
+if ! apt-cache show g++-14 2>/dev/null | grep -x "Package: g++-14" >/dev/null; then
+    old_ppa_host || true
+fi
+# Without the PPA, "install g++-14" matches clang-14 and the like instead of failing, so each
+# attempt counts only once the C++23 headers are there.
+have_headers() { [ -d "${CI_CXX_HEADERS:-/usr/include/c++/14}" ]; }
+# Last resort when both PPA hosts are down: Launchpad's file links for the exact packages.
+librarian_debs() {
+    echo "The toolchain PPA is unreachable; downloading its packages from Launchpad's files" >&2
+    debs="$(mktemp -d)"
+    local name
+    while IFS= read -r name || [ -n "$name" ]; do
+        name="${name%$'\r'}"
+        case "$name" in ''|'#'*) continue ;; esac
+        curl -fsSL --retry 3 -o "$debs/${name}_amd64.deb" \
+            "https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test/+files/${name}_amd64.deb" || return 1
+    done < "$HERE/ci_toolchain_debs.txt"
+}
+install_packages() {
+    if apt_get install -y "$@" && have_headers; then return 0; fi
+    old_ppa_host || true
+    if apt_get install -y "$@" && have_headers; then return 0; fi
+    if librarian_debs && apt_get install -y "$debs"/*.deb "$@" && have_headers; then return 0; fi
+    echo "g++-14 did not install the C++23 headers; is the toolchain PPA reachable?" >&2
+    exit 1
+}
+# A cached SDK overlay still needs C++23 headers for the stock-header HUD check.
+# Avoid installing the SDK's complete build dependencies for that compile alone.
+if [ "${1:-}" = --compiler-only ]; then
+    install_packages g++-14
+    exit 0
+fi
 # The -dev packages of PulseAudio and ALSA (and D-Bus, fribidi, libthai) matter at run time too: SDL3 inside
 # the runtime only gets those audio and input backends if its headers are present when it is built;
 # without them the game finds no audio device and stops (KeBugCheckEx).
-apt_get install -y g++-14 make ninja-build python3 git patchelf pkg-config \
+install_packages g++-14 make ninja-build python3 git patchelf pkg-config \
     libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxfixes-dev libxcursor-dev libxi-dev \
     libxrandr-dev libxss-dev libxrender-dev libxtst-dev x11proto-dev libwayland-dev \
     libxkbcommon-dev libdrm-dev libgl1-mesa-dev libvulkan-dev \

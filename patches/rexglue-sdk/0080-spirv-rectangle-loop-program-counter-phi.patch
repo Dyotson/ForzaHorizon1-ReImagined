@@ -1,0 +1,52 @@
+diff --git a/src/graphics/pipeline/shader/spirv_translator.cpp b/src/graphics/pipeline/shader/spirv_translator.cpp
+index ec6cdc1..9f04693 100644
+--- a/src/graphics/pipeline/shader/spirv_translator.cpp
++++ b/src/graphics/pipeline/shader/spirv_translator.cpp
+@@ -670,6 +670,7 @@ void SpirvShaderTranslator::StartTranslation() {
+ 
+ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
+   bool rectangle_vertex_loop = IsSpirvRectangleListVertexLoopEnabled();
++  spv::Instruction* rectangle_next_pc_phi = nullptr;
+   if (!is_depth_only_fragment_shader_) {
+     // Close flow control within the last switch case.
+     CloseExecConditionals();
+@@ -703,14 +704,22 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
+       // instruction not being implemented as of October 18, 2020), send an
+       // impossible program counter value (-1) to the OpPhi at the next
+       // iteration.
+-      if (main_switch_next_pc_phi_operands_.empty()) {
++      if (!rectangle_vertex_loop && main_switch_next_pc_phi_operands_.empty()) {
+         main_switch_next_pc_phi_operands_.push_back(builder_->makeIntConstant(-1));
+       }
+       std::unique_ptr<spv::Instruction> main_loop_pc_next_op = std::make_unique<spv::Instruction>(
+           main_loop_pc_next_, type_int_,
+-          main_switch_next_pc_phi_operands_.size() >= 2 ? spv::OpPhi : spv::OpCopyObject);
+-      for (spv::Id operand : main_switch_next_pc_phi_operands_) {
+-        main_loop_pc_next_op->addIdOperand(operand);
++          rectangle_vertex_loop || main_switch_next_pc_phi_operands_.size() >= 2
++              ? spv::OpPhi
++              : spv::OpCopyObject);
++      if (rectangle_vertex_loop) {
++        // The rectangle loop adds another predecessor while emitting its next
++        // guest vertex path below. Finalize the Phi only after that path exists.
++        rectangle_next_pc_phi = main_loop_pc_next_op.get();
++      } else {
++        for (spv::Id operand : main_switch_next_pc_phi_operands_) {
++          main_loop_pc_next_op->addIdOperand(operand);
++        }
+       }
+       builder_->getBuildPoint()->addInstruction(std::move(main_loop_pc_next_op));
+     }
+@@ -1154,6 +1163,12 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
+     }
+   }
+ 
++  if (rectangle_next_pc_phi) {
++    for (spv::Id operand : main_switch_next_pc_phi_operands_) {
++      rectangle_next_pc_phi->addIdOperand(operand);
++    }
++  }
++
+   // Write data for the last memexport.
+   ExportToMemory(current_shader().memexport_eM_potentially_written_before_end());
+ 

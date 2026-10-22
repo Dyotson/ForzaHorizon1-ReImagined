@@ -13,7 +13,7 @@
 
 #include <rex/logging.h>
 
-#ifndef _WIN32
+#if defined(__linux__) && defined(__x86_64__)
 #include <dlfcn.h>
 #include <signal.h>
 #include <sys/syscall.h>
@@ -34,7 +34,7 @@
 
 namespace forza::cpuprof {
 
-#ifndef _WIN32
+#if defined(__linux__) && defined(__x86_64__)
 namespace {
 
 struct Sample {
@@ -128,7 +128,7 @@ void Stop() {
               path && *path ? path : "cpuprof.txt");
 }
 #else
-void Start() { REXLOG_WARN("CPUPROF: not supported on Windows"); }
+void Start() { REXLOG_WARN("CPUPROF: only supported on Linux x86-64; use a host profiler"); }
 void Stop() {}
 #endif
 

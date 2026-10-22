@@ -18,7 +18,9 @@
 // parks the thread instead, so gdb can attach (gdb -p PID, then `thread apply all bt`).
 //
 // LogGuestThreads (called when the window closes) logs every guest thread's last call site
-// and call chain, so the log of a game that hangs without a fault shows where it waits.
+// and call chain, so the log of a game that hangs without a fault shows where it waits; the
+// stall watchdog (src/debug/stall_watch.cpp) logs the same for the main loop and render
+// threads during a long frame.
 
 #include "../platform/guest_memory.h"
 
@@ -257,31 +259,39 @@ void OnAbort(int sig) {
 
 }  // namespace
 
+// One guest thread as last stored in its PPCContext: its handle, start address, the guest
+// return address of its last call (lr: the call site of a kernel wait it is blocked in) and
+// its call chain (a thread running guest code without calls may be further on). Read
+// without stopping the thread, so a running thread's chain can be cut short. "" when the
+// thread has no context.
+std::string DescribeGuestThread(rex::system::XThread& thread) {
+  auto* kernel = rex::system::kernel_state();
+  auto* state = thread.thread_state();
+  PPCContext* ctx = state ? state->context() : nullptr;
+  if (!kernel || !ctx) return {};
+  std::string host;  // the [tNNNN] of its log lines (Windows thread ids; not on Linux)
+#ifdef _WIN32
+  if (auto* t = thread.thread()) host = fmt::format(" t{}", t->system_id());
+#endif
+  return fmt::format("thread {:08X}{}{} start {:08X} lr {:08X} chain{}", thread.handle(), host,
+                     thread.main_thread() ? " (main)" : "",
+                     thread.creation_params()->start_address, uint32_t(ctx->lr),
+                     GuestChain(kernel->memory()->virtual_membase(), ctx->r1.u32, 16));
+}
+
 // Where every guest thread is when the player closes the window (#76): a game that loads
-// forever logs nothing else, so this is what a hang report shows. One line per thread: its
-// handle, start address, the guest return address of its last call (lr: the call site of a
-// kernel wait it is blocked in) and its call chain, as last stored in its PPCContext (a
-// thread running guest code without calls may be further on). Read without stopping the
-// threads, so a running thread's chain can be cut short.
+// forever logs nothing else, so this is what a hang report shows. One line per thread
+// (DescribeGuestThread).
 void LogGuestThreads(const char* why) {
   auto* kernel = rex::system::kernel_state();
   if (!kernel || !kernel->object_table()) return;
-  uint8_t* base = kernel->memory()->virtual_membase();
   auto threads = kernel->object_table()->GetObjectsByType<rex::system::XThread>();
   REXLOG_INFO("FORZA: guest threads {}:", why);
   std::set<rex::system::XThread*> seen;  // a thread is listed once per handle
   for (auto& thread : threads) {
     if (!thread || !thread->is_guest_thread() || !seen.insert(thread.get()).second) continue;
-    auto* state = thread->thread_state();
-    PPCContext* ctx = state ? state->context() : nullptr;
-    if (!ctx) continue;
-    std::string host;  // the [tNNNN] of its log lines (Windows thread ids; not on Linux)
-#ifdef _WIN32
-    if (auto* t = thread->thread()) host = fmt::format(" t{}", t->system_id());
-#endif
-    REXLOG_INFO("  thread {:08X}{}{} start {:08X} lr {:08X} chain{}", thread->handle(), host,
-                thread->main_thread() ? " (main)" : "", thread->creation_params()->start_address,
-                uint32_t(ctx->lr), GuestChain(base, ctx->r1.u32, 16));
+    const std::string line = DescribeGuestThread(*thread);
+    if (!line.empty()) REXLOG_INFO("  {}", line);
   }
 }
 
