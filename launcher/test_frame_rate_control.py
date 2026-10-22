@@ -1,6 +1,10 @@
 """Editable frame rates commit with Qt's real validator and completion behavior."""
 import os
+from pathlib import Path
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
