@@ -15,7 +15,9 @@ file(GLOB_RECURSE HOST_SOURCES CONFIGURE_DEPENDS "${FORZA_ROOT}/forza-recomp/src
 list(FILTER HOST_SOURCES EXCLUDE REGEX "/(main|fiber_trace)\\.cpp$")
 add_library(forza_host_check OBJECT ${HOST_SOURCES} app_header_check.cpp)
 target_include_directories(forza_host_check PRIVATE
-    "${FORZA_ROOT}/forza-recomp" "${FORZA_ROOT}/forza-recomp/src")
+    "${FORZA_ROOT}/forza-recomp" "${FORZA_ROOT}/forza-recomp/src"
+    "${FORZA_ROOT}/forza-recomp/thirdparty/discord-rpc/include"
+    "${FORZA_ROOT}/forza-recomp/thirdparty/discord-rpc/src")
 target_link_libraries(forza_host_check PRIVATE rex::runtime rex::renderdoc)
 target_compile_definitions(forza_host_check PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
 

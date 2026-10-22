@@ -128,15 +128,21 @@ set(FORZA_SOURCES
     src/hooks/compressed_stream_stall.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
+    src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
     src/hooks/gpu_wait.cpp
+    src/hooks/render_idle.cpp
+    src/hooks/gamma_transition.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
+    src/hooks/resource_cache_eviction.cpp
+    src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
     src/hooks/challenge_hud.cpp
@@ -166,6 +172,8 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/discord_presence.cpp
+    src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
@@ -173,6 +181,7 @@ set(FORZA_SOURCES
     src/platform/socket.cpp
     src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
+    src/platform/wheel_bridge.cpp
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
@@ -202,9 +211,15 @@ else()
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
+include(cmake/discord.cmake)
+
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+
+# The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
+include(cmake/CpuTarget.cmake)
+forza_configure_cpu_target(forza)
 
 # src/platform/vulkan_hooks.cpp (and the app header) include the SDK's Vulkan headers,
 # which include <renderdoc_app.h> from this interface target and the X11/Wayland client

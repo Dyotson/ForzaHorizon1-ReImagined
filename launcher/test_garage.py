@@ -7,6 +7,9 @@ import struct
 import tempfile
 import unittest
 from unittest.mock import patch
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from forza_launcher import garage, saves, save_editor, unicorns
 from forza_launcher.config import Config

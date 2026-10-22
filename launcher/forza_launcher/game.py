@@ -576,9 +576,17 @@ def exit_is_crash(plan: "LaunchPlan", code, stopped=False) -> bool:
     return not closed_cleanly(plan)
 
 
+# The game exits with this code when it was built for a newer CPU than this one (x86-64-v3,
+# forza-recomp/src/platform/cpu_target.cpp): it starts nothing, so there is no crash to report.
+CPU_EXIT_CODE = 76
+
+
 def crash_reason(plan: "LaunchPlan", code) -> str:
     """A readable text for a game that stopped early: its exit code, the last error lines of its
     log and, for the usual causes, what to do."""
+    if code == CPU_EXIT_CODE:
+        from . import builder
+        return builder.CPU_TOO_OLD
     log = log_path_of(plan)
     errors = last_errors(_log_tail(plan))
     text = f"The game stopped (exit code {code})."
