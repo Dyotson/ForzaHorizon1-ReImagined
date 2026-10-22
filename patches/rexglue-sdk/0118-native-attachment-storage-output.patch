@@ -39,14 +39,12 @@ index 65e3a3c..1ca6207 100644
  
      VkImageView view_depth_color() const { return view_depth_color_; }
      VkImageView view_depth_stencil() const { return view_depth_stencil_; }
-@@ -385,6 +387,7 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+@@ -385,4 +387,5 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
      VulkanRenderTargetCache& render_target_cache_;
  
      VkImage image_;
 +    bool native_storage_ = false;
      VkDeviceMemory memory_;
- 
-     // TODO(Triang3l): Per-format drawing views for mutable formats with EDRAM
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
 index b5e5e6a..127a0d8 100644
 --- a/src/graphics/vulkan/command_processor.cpp
@@ -176,19 +174,14 @@ index 571976e..856197e 100644
    if (image_create_info.format == VK_FORMAT_UNDEFINED) {
      REXGPU_ERROR("VulkanRenderTargetCache: Unknown {} render target format {}",
                   key.is_depth ? "depth" : "color", static_cast<uint32_t>(key.resource_format));
-@@ -2095,9 +2109,11 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
-   }
-   dfn.vkUpdateDescriptorSets(device, key.is_depth ? 2 : 1, descriptor_set_write, 0, nullptr);
- 
--  return new VulkanRenderTarget(key, *this, image, memory, view_depth_color, view_depth_stencil,
-+  auto* target = new VulkanRenderTarget(key, *this, image, memory, view_depth_color, view_depth_stencil,
-                                 view_stencil, view_srgb, view_color_transfer_separate,
-                                 descriptor_set_index_transfer_source);
-+  target->SetNativeStorage((image_create_info.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0);
-+  return target;
+@@ -2095,6 +2109,7 @@
+   render_target->memory_size_ = memory_size;
+   render_target_memory_bytes_ += memory_size;
+   ++render_target_count_;
++  render_target->SetNativeStorage((image_create_info.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0);
+   return render_target;
  }
  
- bool VulkanRenderTargetCache::IsHostDepthEncodingDifferent(
 @@ -6335,25 +6351,28 @@ bool VulkanRenderTargetCache::CopyHdrScene(VkImage destination, uint32_t width,
  }
  

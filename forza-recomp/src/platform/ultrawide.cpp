@@ -26,13 +26,24 @@ REXCVAR_DEFINE_DOUBLE(forza_hud_offset_y, 0.0, "Display", "HUD vertical offset, 
 namespace forza::ultrawide {
 namespace {
 std::atomic<uint64_t> size{}, frame{}, gameplay_frame{}, map_frame{};
+std::atomic<uint64_t> drawing_size{};
 std::atomic<double> aspect_scale{1.0};
 std::atomic<bool> wide{}, ready{};
 Presentation present;
 std::mutex frame_mutex;
 }
 void Resize(uint32_t width, uint32_t height) { size.store((uint64_t(width)<<32)|height); }
+Extent OutputSize() {
+  const auto value = drawing_size.load() ? size.load() : 0;
+  return {uint32_t(value >> 32), uint32_t(value)};
+}
+Extent DrawingSize() {
+  const auto value = drawing_size.load();
+  return {uint32_t(value >> 32), uint32_t(value)};
+}
 void Prepare(uint32_t width, uint32_t height) {
+  drawing_size = 0;
+  Resize(width, height);
   if (!REXCVAR_GET(forza_ultrawide)) return;
   bool supported = false;
   for (const auto& flag : rex::cvar::GetRegistry()) supported |= flag.name == "forza_native_width";
@@ -42,18 +53,22 @@ void Prepare(uint32_t width, uint32_t height) {
   if (!supported || !NativeSizeSupported(width, height)) {
     rex::cvar::SetFlagByName("forza_ultrawide", "false");
     REXLOG_WARN("Native ultrawide unavailable at {}x{}: requires the patched Vulkan renderer "
-                "and a physical height divisible by 720 (for example 720, 1440 or 2160). "
+                "and physical dimensions within 8960x5040. "
                 "Using ordinary 16:9 rendering; native resolution flags were not applied.", width, height);
     return;
   }
-  // Integer scales describe tiled storage only. Rasterization and sampling use
-  // the physical window dimensions; the padded columns are not extra scenery.
+  // Keep resolve rows at an integer vertical scale. Shrinking only viewports
+  // leaves EDRAM tile origins and resolve rows at different scales, producing
+  // bands. Presentation filters the complete backing image to the window.
+  const auto drawing_height = DrawingHeight(height);
   const auto x = RenderScale(width, 1280, 1), y = RenderScale(height, 720, 1);
   rex::cvar::SetFlagByName("draw_resolution_scale_x", std::to_string(x));
   rex::cvar::SetFlagByName("draw_resolution_scale_y", std::to_string(y));
   rex::cvar::SetFlagByName("forza_native_width", std::to_string(width));
-  rex::cvar::SetFlagByName("forza_native_height", std::to_string(height));
-  REXLOG_INFO("Ultrawide native drawing/output {}x{}; tiled storage stride {}x{}", width, height, 1280*x, 720*y);
+  rex::cvar::SetFlagByName("forza_native_height", std::to_string(drawing_height));
+  drawing_size = (uint64_t(width) << 32) | drawing_height;
+  REXLOG_INFO("Ultrawide output {}x{}; drawing {}x{}; tiled storage stride {}x{}",
+              width, height, width, drawing_height, 1280*x, 720*y);
 }
 void Initialize(uint32_t width, uint32_t height, Presentation callback) {
   Resize(width,height);

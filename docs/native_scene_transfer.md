@@ -65,7 +65,7 @@ Missing storage views or descriptors retain the independent-snapshot fallback.
 The texture-cache owner drains recording/GPU work before destroying resources
 and unregisters the memory watch before releasing the state.
 
-SDK patches 0110 and 0111 connect these rules to Vulkan. Canonical headers and shader
+SDK patches 0125 and 0126 connect these rules to Vulkan. Canonical headers and shader
 sources are supplied through `REXGLUE_FH1_NATIVE_SOURCE_DIR`; builds without
 those sources keep the standalone fallback. The public Vulkan function-table
 ABI is unchanged.
@@ -144,7 +144,7 @@ with a lower 1% low. This does not establish a performance improvement. It
 remains opt-in, and the normal renderer is unchanged. The remaining canonical
 writes and image copies need profiling before further optimization; these
 end-to-end results do not attribute the regression to one GPU operation. These
-numbers precede the direct cached-image output in patch 0111.
+numbers precede the direct cached-image output in patch 0126.
 
 Pooled statistics use saved frame intervals: 7,130 baseline intervals over
 119.985673 seconds and 6,789 native intervals over 119.983235 seconds. CSV counts
