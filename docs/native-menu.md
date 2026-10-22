@@ -145,3 +145,9 @@ process private memory ranged from 2.97 to 2.99 GB, including screenshot and
 resource warming; these observations do not establish the absence of leaks or a
 stable long-session memory cost. Linux, other GPUs, races, Rally, multiplayer,
 paid travel and extended repeated-open testing remain unvalidated.
+
+Integration with main `04b7d31` preserved the current controls/remapping and
+gamertag behavior. Fourteen SDK-free model/archive CTest cases, 59 focused
+launcher/menu/bindings/gamertag tests and syntax checks of four enabled TU4 menu
+hooks passed after that merge. The game captures above predate this integration;
+no post-merge game session or full rebuilt SDK/game validation was performed.

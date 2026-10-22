@@ -227,6 +227,13 @@ add("input_backend", "Input backend", "Controls", "choice", "sdl",
     choices=[("sdl", "SDL"), ("xinput", "XInput")])
 add("hid_mappings_file", "Controller mapping file", "Controls", "str", "gamecontrollerdb.txt",
     "SDL game controller mappings.", "Controller")
+# Controller remapping (patch 0116, #279): the Controls page's Bindings write it.
+add("controller_remap", "Controller bindings", "Controls", "str", "",
+    "Set by Bindings on the Controls page. Profiles separated by ';', each the controller's SDL "
+    "GUID (or * for every controller) and target=source pairs, e.g. *:rt=a,a=none (throttle on "
+    "A). Sources: a button, lt or rt, a stick axis (lx, -lx inverted) or one direction of it "
+    "(ly+ is up), @0.3 for how far an axis presses a button. SDL backend only.", "Controller",
+    restart=True)
 
 # Racing wheels (patch 0074): an SDL joystick that is a wheel is presented as the Xbox 360 Wireless
 # Racing Wheel. SDL backend only.
@@ -269,7 +276,8 @@ add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is. The G29, G920 and G923 have their own maps "
+    "left=14,right=15. The hat is the d-pad unless a direction is set here (-1 turns it off). "
+    "The G29, G920 and G923 have their own maps "
     "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
@@ -424,6 +432,11 @@ add("vulkan_store_pipeline_cache", "Keep compiled Vulkan pipelines", "Advanced",
     "cache and Vulkan. New scenes may still compile shaders; driver changes rebuild the cache.", "GPU", restart=True)
 add("async_shader_compilation", "Compile shaders in the background", "Advanced", "bool", True,
     "", "GPU")
+add("gpu_wait_blocking", "Sleep while waiting for the GPU (testing)", "Advanced", "bool", False,
+    "The render thread sleeps until the GPU is done instead of keeping a CPU core busy, which "
+    "leaves more CPU and power to the game on laptops. On by default on Linux; not tested on "
+    "Windows yet: turn it on to try it, and report any freeze (GitHub issue #45).", "GPU",
+    platform="windows", restart=True)
 add("present_safe_area_x", "Safe area width %", "Advanced", "int", 90, "", "GPU",
     lo=0, hi=100)
 add("present_safe_area_y", "Safe area height %", "Advanced", "int", 90, "", "GPU",
