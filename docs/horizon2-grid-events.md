@@ -83,18 +83,18 @@ The earlier native list-controller discovery bridge was not used by the scene
 port and was removed. Its speculative layout adaptations are not part of the
 production API or the validation claims above.
 
-## Four-tab shoulder layout
+## Three-tab shoulder layout
 
 `fh2_tab_layout.h` adapts the native TU4 `SUPER_STACKER` that the original scene
 already creates. Its main tab stack has six triples of text, notification and
-divider bindings, followed by RB. Hiding the fifth and sixth tab does not remove
+divider bindings, followed by RB. Hiding unused tabs does not remove
 those bindings from layout, so RB retains the six-tab position.
 
-After native initialization and label binding, `UseFourTabs` verifies the
-controller vtable and the RB/fourth-divider/sixth-divider node identities. It
-moves RB immediately after the first four triples and limits relative background
-sizing to four tabs. After text measurement, `AnchorRightBumper` converts the
-fourth divider and RB parent to their shared ancestor's coordinate space. It
+After native initialization and label binding, `UseThreeTabs` verifies the
+controller vtable and the RB/third-divider/sixth-divider node identities. It
+moves RB immediately after the first three triples and limits relative background
+sizing to three tabs. `UseFourTabs` remains available for its original layout.
+After text measurement, `AnchorRightBumper` converts the active divider and RB parent to their shared ancestor's coordinate space. It
 sets the RB authored coordinate after subtracting the stacker's text-width
 delta. Their authored local coordinates cannot be compared directly because
 they have different parents. The common ancestor's intro animation is excluded

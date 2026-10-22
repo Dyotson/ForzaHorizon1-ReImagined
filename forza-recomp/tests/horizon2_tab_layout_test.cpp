@@ -18,7 +18,7 @@ struct Native {
     using namespace forza::fh2_tab_layout::detail;
     const auto controller = *args.begin();
     const auto scalar = [&](uint32_t at) { return std::bit_cast<float>(Read(base, at)); };
-    for (unsigned i = 0; i < 4; ++i) {
+    for (unsigned i = 0; i < Read(base, controller + 0x370); ++i) {
       const auto slot = 3 * i;
       // Model the native distinction: 378 gates the entire text setter.
       if (!Read(base, Slot(controller, slot) + 4) ||
@@ -152,5 +152,73 @@ int main() {
   backgrounds[3] = 0;
   assert(!CenterLabels(ui, controller, labels, backgrounds, metrics));
   assert(memory == centered); // Reject incomplete bindings atomically.
-  std::puts("Native tab stacker: four-tab compaction, shared-ancestor anchor, ownership and idempotence passed.");
+  // Three visible physical tabs map to logical pages 0/2/3 outside this
+  // helper. Their bindings remain contiguous and RB uses slot 9, not 12.
+  memory = original;
+  ui.calls = 0;
+  const auto third = BoundNode(ui.base, Slot(controller, 8));
+  assert(UseTabs(ui, controller, rb, third, sixth, 2) == Result::NotReady);
+  assert(memory == original);
+  assert(UseThreeTabs(ui, controller, rb, fourth, sixth) == Result::NotReady);
+  assert(memory == original);
+  assert(UseThreeTabs(ui, controller, rb, third, sixth) == Result::Applied);
+  assert(Read(ui.base, controller + 0x1AC) == 10);
+  assert(Read(ui.base, controller + 0x370) == 3);
+  assert(BoundNode(ui.base, Slot(controller, 9)) == rb);
+  bindings.clear();
+  for (unsigned i = 0; i < 20; ++i) bindings.push_back(Read(ui.base, Slot(controller, i)));
+  std::sort(bindings.begin(), bindings.end());
+  for (unsigned i = 0; i < 20; ++i) assert(bindings[i] == 0x1000 + 0x20 * i);
+  const auto three_compacted = memory;
+  assert(UseThreeTabs(ui, controller, rb, third, sixth) == Result::AlreadyApplied);
+  assert(memory == three_compacted && ui.calls == 1);
+  assert(UseFourTabs(ui, controller, rb, fourth, sixth) == Result::NotReady);
+  assert(memory == three_compacted); // Never remap already-owned records twice.
+
+  Write(ui.base, rb + 12, common);
+  Write(ui.base, third + 12, tab_parent);
+  Write(ui.base, tab_parent + 12, common);
+  transform(third, 0x500, 162.6327f, 1.f);
+  transform(tab_parent, 0x600, 313.f, 1.f);
+  Write(ui.base, controller + 0x374, 1);
+  Write(ui.base, controller + 0x1B0 + 9 * 4, std::bit_cast<uint32_t>(83.6327f));
+  assert(AnchorRightBumper(ui, controller, rb, third));
+  assert(std::abs(std::bit_cast<float>(Read(ui.base, Slot(controller, 9) + 12)) - 416.f) < .001f);
+
+  std::array<uint32_t, 3> three_labels{}, three_backgrounds{};
+  std::array<TabMetrics, 3> three_metrics{};
+  for (unsigned n = 0; n <= 10; ++n)
+    Write(ui.base, controller + 0x1B0 + n * 4, std::bit_cast<uint32_t>(float(n * 10)));
+  for (unsigned i = 0; i < 3; ++i) {
+    const auto slot = 3 * i, relative = controller + 0x208 + i * 0x24;
+    three_labels[i] = BoundNode(ui.base, Slot(controller, slot));
+    Write(ui.base, Slot(controller, slot) + 4, Read(ui.base, Slot(controller, slot)));
+    Write(ui.base, Slot(controller, slot), 0);
+    three_backgrounds[i] = 0x2800 + i * 0x20;
+    Write(ui.base, three_labels[i] + 12, common);
+    Write(ui.base, three_backgrounds[i] + 12, common);
+    Write(ui.base, relative, 0x1800 + i * 0x20);
+    Write(ui.base, 0x1804 + i * 0x20, three_backgrounds[i]);
+    Write(ui.base, relative + 4, std::bit_cast<uint32_t>(100.f + 120.f * i));
+    Write(ui.base, relative + 8, std::bit_cast<uint32_t>(70.f));
+    Write(ui.base, relative + 12, std::bit_cast<uint32_t>(1.f));
+    Write(ui.base, relative + 16, slot);
+    Write(ui.base, relative + 20, slot + 2);
+    Write(ui.base, relative + 24, 0);
+    Write(ui.base, Slot(controller, slot) + 8, std::bit_cast<uint32_t>(50.f));
+  }
+  ui.queried_alignments = {0, 1, 2, 0};
+  const std::array<uint32_t, 3> alignments{0, 1, 2};
+  assert(CenterLabels(ui, controller, three_labels, three_backgrounds, three_metrics, alignments));
+  for (unsigned i = 0; i < 3; ++i) {
+    assert(ui.placed_text_x[i] == three_metrics[i].background_x);
+    assert(three_metrics[i].text_width == 60.f && three_metrics[i].background_width == 100.f);
+  }
+  const auto three_centered = memory;
+  assert(CenterLabels(ui, controller, three_labels, three_backgrounds, three_metrics, alignments));
+  assert(memory == three_centered);
+  three_backgrounds[2] = 0;
+  assert(!CenterLabels(ui, controller, three_labels, three_backgrounds, three_metrics));
+  assert(memory == three_centered);
+  std::puts("Native tab stacker: three/four-tab ownership, compaction, centering and bumper anchors passed.");
 }

@@ -1,7 +1,7 @@
 # FH2 Xbox 360 pause menu in FH1 TU4
 
 The private scene build runs the owner's original FH2 Xbox 360 pause scene in
-FH1 with Home, Map, Cars and Settings. Extracted FH2 navigation, page-event and
+FH1 with Home, Cars and Settings. Extracted FH2 navigation, page-event and
 button-state functions drive the controls; authored adapters bind FH1 models,
 resources and native actions. This integrates selected original routines rather
 than replacing FH1's screen manager. Original executables, archives, saves and
@@ -9,7 +9,7 @@ translated game instructions remain private and ignored.
 
 ## Current controls and pages
 
-LB/RB navigate the four tabs and stop at their endpoints. Disabled pages follow
+LB/RB navigate the three tabs and stop at their endpoints. Disabled pages follow
 FH1's free-roam Map availability. Directional input selects available tiles;
 A activates them. B/Start resume driving. Left-stick click requests Reset Car
 Position from the footer on any tab when native recovery is available. Native
@@ -19,7 +19,6 @@ and existing held input must release before the parent consumes it again.
 | Page | Actions |
 | --- | --- |
 | Home | World Map, Settings, My Cars, Festival Progress, Photo Mode, My Profile |
-| Map | Original FH1 Colorado map |
 | Cars | Change Car, Go to Garage, Go to Autoshow |
 | Settings | Difficulty, Graphics, Audio, Controls, HUD, Video |
 
@@ -27,16 +26,63 @@ Settings replaces the former Home Resume tile; B/Start remain resume shortcuts.
 Difficulty remains in Settings. Reset Car Position is a global footer shortcut. Graphics opens the recomp panel. The other five categories use FH1's
 original child screens; Video contains the native brightness/subtitle options.
 
-Home, Map and Settings use authored Grid_Menu_01. Home maps six logical tiles
+Home and Settings use authored Grid_Menu_01. Home maps six logical tiles
 to native slots 0, 1, 2, 4, 5, 6, hiding the old Reset slot 3. My Cars copies
 Grid_Menu_04's native tall tile transforms, including labels, paper, underline
 and shadows. Settings restores the captured original geometry. Cars uses
-Grid_Menu_03: one large square and two stacked wide tiles. Unused buttons stay hidden. Layout
+Grid_Menu_03: a 550×370 current-car panel on the left and three 360×112 action
+tiles on the right. The informational panel is skipped by selection. Unused
+buttons stay hidden. Layout
 page events run only when geometry changes. Animated FOCUS/BLUR events restore
 the current selection after native initialization/SHOW: immediate FOCUSED/BLURRED
 leave prior first-button focus active in retained presentations. Fresh return
 selection is normalized after destination availability refresh, preventing an
 empty cache from resetting Garage/Autoshow to Change Car.
+
+## Home map preview
+
+World Map is a Home tile; there is no separate Map tab. Selecting it still
+opens FH1's full native map, and Back restores Home. The preview samples the
+existing HUD map target and record0 viewport. The 360×172 tile reserves a 42px heading above a 360×130 map body, keeping
+roads clear of the title. The body uses an aspect-preserving crop around the
+native player position and retains FH1's transparent road-map style.
+It acquires no full-screen profile and owns no gameplay camera.
+
+The crop reads the existing local-player map entity, flattens world Y to zero
+as native icon symbolizer 82DA77FC does, and projects with the current map-camera
+matrix after native material-pass preparation. The render-phase point is
+published atomically for the next UI crop; the earlier Tick camera has a
+different temporary projection. It clamps to the rendered viewport while keeping the native marker and
+padding inside the map body. It changes no camera settings or entity position.
+
+The private H_MAP alias supplies the textured Tip.Bar.Bar/Material1504 quad
+and caption. Its original untextured custom-render rectangle is hidden after
+placement. Borrowed controller dispatch is disabled after initialization;
+the native ownership map remains intact. The caption uses Home's title font.
+
+The paused HUD releases its icon atlas resources. The helper retains the
+existing record0 minimap profile, invokes the original minimap load callback
+only if unloaded, and waits for native readiness and both player-arrow texture
+references. On hiding it unloads only a load that the preview acquired, then
+releases its profile reference. No full-screen terrain textures are loaded.
+
+A scoped native material-pass hook validates the published record against the
+current service and rebuilds its map-camera matrices and transient geometry
+immediately before phase0 draws it. Other phases and inactive calls pass
+through unchanged. Hiding clears the atomic request before tab changes,
+resume or native child entry; destruction releases the donor before its parent.
+Original Home labels remain visible until the target and resources are ready.
+
+Prepare fresh private outputs from the progress overlay:
+
+```powershell
+python tools/fh1_pause_map_preview.py PROGRESS_OVERLAY --output MAP_OVERLAY
+python tools/fh2_cars_labels.py MAP_OVERLAY --output FINAL_OVERLAY --unxmem UNXMEM_EXE
+```
+
+The map aliases preserve all original compressed payloads. The second tool
+changes only identified Cars label anchors/tracks in the imported pause BGF.
+The local preview launcher uses `scene-update-fh1-map-cars2`.
 
 ## Festival Progress
 
@@ -76,7 +122,7 @@ continues beyond 4988 during navigation, so its lifetime must cover the full
 page rather than the donor's short placement interval. Tab visibility controls
 the ring; its own normalized PROGRESS curves remain unchanged.
 Only the private archive copy is changed; original game files remain intact.
-The preview launcher uses scene-update-fh1-progress5.
+The progress overlay is the input to the private Home map-preview overlay.
 
 The final smaa-completion1-720 run verifies overall completion at 1.4%,
 matching native Statistics General (raw getter 1.3513514%). The wristband/XP
@@ -90,6 +136,28 @@ payloads and all three executables byte-for-byte.
 ```powershell
 python tools/fh2_pause_progress_ring.py STYLED_OVERLAY --output PROGRESS_OVERLAY
 ```
+
+## Cars action text
+
+The two direct Grid03 action tiles contain native focus/blur position tracks
+for their titles and captions. Those tracks restore the original taller-card
+anchors after runtime styling. `fh2_cars_labels.py` changes only the four
+identified label records and their matching X/Y tracks in a new private
+overlay: X is -162, title Y is 38 and caption Y is -38. Native timing, focus
+behavior, other axes and unrelated payloads remain unchanged. Its strict
+record/value checks reject a different source scene before creating output.
+
+## Current-car panel
+
+Cars reuses the private FH1 garage donor's CAR_STATS subtree. It reads the
+current owned-car model without changing the garage selection, binds the
+localized manufacturer/model names through the native PlayerBar query, and
+uses the saved owned-car thumbnail with the native stock fallback. The native
+specifications model supplies power, torque, weight, weight distribution and
+displacement. No invented performance ratings or placeholder badges are shown.
+The subtree and PlayerBar retain their original controller ownership; only
+borrowed dispatch lists are filtered. Temporary native references are released,
+and the panel refreshes on binding/child return and periodically while visible.
 
 ## Change Car
 
@@ -130,7 +198,7 @@ separate FH1 destination; the Garage shortcut is for upgrades.
 The native footer rebuilds its A/B model and appends HELP_BUTTON glyph 14
 (left-stick click) with Reset Car Position, only while native recovery is
 available. Availability refreshes while pause is visible and on child return.
-The existing pressed-edge/held-input rules apply across all four tabs.
+The existing pressed-edge/held-input rules apply across all three tabs.
 
 fh1_car_recovery resolves USER0 using 825EC700 -> facade virtual +28 -> player
 virtual +44, matching original CHandOfGodControl. It checks the original gates
@@ -280,11 +348,18 @@ Keep all prepared data,
 extracted instructions, overlays and copied profiles under ignored paths.
 
 Visual validation is strictly 1280x720 at native scene scale 1. Perfect this
-baseline before trying another output resolution. Tests cover four-tab
-navigation, all six Settings children, native Map/Garage, selected-tile return,
+baseline before trying another output resolution. Current native checks cover
+three-tab navigation, Home preview/full-map/Back/resume transitions, current-car
+thumbnail/specifications and all three Cars focus positions. Earlier checks cover all six Settings children, native Map/Garage, selected-tile return,
 physical car changes, travel accept/cancel, recovery, resume/reopen and online
 receipt expiry. This does not establish race/rally/split-screen/multiplayer
 coverage, every possible profile, or paid travel behavior.
+
+The latest 720p captures confirm the preview heading stays clear of roads, the
+complete native player marker fits with padding, and the current-car card and
+action labels remain inside their panels. A seven-capture navigation check
+covered each Cars action focus, Settings, full Map and Back; a later lifecycle
+check also confirmed the driving HUD after resume.
 
 Synthetic asset checks:
 
@@ -297,6 +372,8 @@ python tools/test_fh2_pause_tabs.py
 python tools/test_fh1_pause_tile_theme.py
 python tools/test_fh2_pause_tile_depth.py
 python tools/test_fh2_pause_progress_ring.py
+python tools/test_fh1_pause_map_preview.py
+python tools/test_fh2_cars_labels.py
 ```
 
 Original navigation/events/focus and tab-layout C++ harnesses exercise their

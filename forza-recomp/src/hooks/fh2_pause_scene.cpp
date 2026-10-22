@@ -12,6 +12,9 @@
 #include "../platform/offline_cars.h"
 #include "../platform/fh1_festival_travel.h"
 #include "../platform/fh1_car_recovery.h"
+#include "../platform/fh1_map_preview.h"
+#include "../platform/fh2_cars_layout.h"
+#include "../platform/fh1_current_car.h"
 #include "../kernel/live.h"
 #include <rex/logging.h>
 #include <rex/ppc/func.h>
@@ -113,6 +116,12 @@ struct GarageHeader {
   bool username_styled = false;
   unsigned username_fit_frames = 0;
   uint32_t controller = 0;
+  uint32_t car_stats = 0, car_group = 0, car_controller = 0;
+  uint32_t car_name = 0, car_make = 0, car_material = 0, car_binding = 0;
+  uint32_t car_owned = 0, car_model = 0;
+  unsigned car_frames = 0;
+  bool car_bound = false;
+  std::vector<uint32_t> car_ancestry, car_hidden;
   uint32_t render_root = 0;
   uint32_t render_owner = 0;
   uint32_t render_runtime = 0;
@@ -143,6 +152,7 @@ struct TileLabelStyle {
 };
 std::vector<TileLabelStyle> tile_label_styles;
 std::vector<uint32_t> tile_underlines;
+std::vector<uint32_t> map_tile_labels;
 struct TileTransform {
   float x, y, scale_x, scale_y;
 };
@@ -452,8 +462,8 @@ constexpr Tile home[] = {
     {0x7111, "FESTIVAL\nPROGRESS", ""},
     {11, "PHOTO MODE", "Capture your Horizon"},
     {12, "MY\nPROFILE", "Your Horizon career"}};
-constexpr Tile map[] = {{2, "WORLD MAP", "Open the Colorado map"}};
 constexpr Tile cars[] = {
+    {0x7114, "CURRENT CAR", ""},
     {0x7108, "CHANGE CAR", "Choose from your owned cars"},
     {0x7112, "GO TO GARAGE", "Fast travel for car upgrades"},
     {0x7113, "GO TO AUTOSHOW", "Fast travel to buy cars"}};
@@ -466,7 +476,6 @@ constexpr Tile settings[] = {
     {0x710F, "VIDEO", "Brightness and subtitles"}};
 std::span<const Tile> Tiles() {
   switch (state.page) {
-    case 1: return map;
     case 2: return cars;
     case 3: return settings;
     default: return home;
@@ -487,6 +496,7 @@ bool NativeActionAvailable(uint8_t* base, uint32_t action) {
 }
 bool ActionAvailable(uint8_t* base, uint32_t action) {
   switch (action) {
+    case 0x7114: return false; // Informational current-car panel.
     case fh1_pause_actions::kResume:
     case 0x7000: // Graphics
     case 0x7104: // Difficulty
@@ -533,8 +543,9 @@ void UpdateFooter(Native& ui, bool force = false) {
   REXLOG_INFO("FH1 pause footer: reset available={}", available);
 }
 uint32_t EnabledPages(uint8_t* base) {
-  // Home and Settings remain available in races; Map and Cars follow FH1.
-  return NativeActionAvailable(base, 2) ? 0xF : 0x9;
+  // Keep the original internal IDs: Home=0, Cars=2, Settings=3. The removed
+  // Map page is never enabled; Home's map tile follows native availability.
+  return NativeActionAvailable(base, 2) ? 0xD : 0x9;
 }
 uint32_t FirstAvailableSelection(uint8_t* base) {
   const auto tiles = Tiles();
@@ -749,9 +760,9 @@ void RetainHeaderControllers(Native& ui, uint32_t presentation, uint32_t header)
       const auto wrapper = Read(ui.base, entry);
       auto node = wrapper ? Read(ui.base, wrapper + 0x10) : 0;
       unsigned depth = 0;
-      while (node && node != header && depth++ < 100)
+      while (node && node != header && node != garage_header.car_stats && depth++ < 100)
         node = Read(ui.base, node + 12);
-      if (node != header) continue;
+      if (node != header && node != garage_header.car_stats) continue;
       Write(ui.base, output, wrapper);
       Write(ui.base, output + 4, Read(ui.base, entry + 4));
       output += 8;
@@ -995,6 +1006,91 @@ void UpdateGarageUsername(Native& ui) {
                   Read(ui.base, text + 0xE0));
   }
 }
+void BindGarageCarCard(Native& ui) {
+  const auto stats = garage_header.car_stats;
+  if (!stats) return;
+  const auto named = [&](uint32_t parent, const char* name) {
+    const auto nodes = Descendants(ui.base, parent, Hash(name));
+    return nodes.empty() ? 0u : nodes.front();
+  };
+  garage_header.car_group = Read(ui.base, stats + 12);
+  garage_header.car_name = named(stats, "TEXT_CAR_NAME");
+  garage_header.car_make = named(stats, "TEXT_MANUFACTURER");
+  garage_header.car_material = named(stats, "Material_Car_Ima");
+  std::vector<uint32_t> header_ancestry;
+  for (auto node = garage_header.player_bar; node && header_ancestry.size() < 100;
+       node = Read(ui.base, node + 12)) {
+    header_ancestry.push_back(node);
+    if (node == garage_header.root) break;
+  }
+  for (auto node = stats; node && garage_header.car_ancestry.size() < 100;
+       node = Read(ui.base, node + 12)) {
+    garage_header.car_ancestry.push_back(node);
+    if (node == garage_header.root) break;
+  }
+  for (const auto parent : garage_header.car_ancestry) {
+    if (parent == stats) continue;
+    unsigned count = 0;
+    for (auto child = Read(ui.base, parent + 20); child && count++ < 1000;
+         child = Read(ui.base, child + 16)) {
+      if (std::find(garage_header.car_ancestry.begin(), garage_header.car_ancestry.end(), child) != garage_header.car_ancestry.end() ||
+          std::find(header_ancestry.begin(), header_ancestry.end(), child) != header_ancestry.end() ||
+          std::find(garage_header.username_ancestry.begin(), garage_header.username_ancestry.end(), child) != garage_header.username_ancestry.end() ||
+          Read(ui.base, child) == Hash("Camera") || Read(ui.base, child) == Hash("Light")) continue;
+      garage_header.car_hidden.push_back(child);
+    }
+  }
+  // These fields need distinct selection-model bindings. Hide them rather
+  // than showing the garage scene's authored placeholder class or drivetrain.
+  for (const auto* name : {"CLASS_SM", "FLAG", "LOGO", "DRIVETRAIN", "Car_Photo_Container"})
+    for (const auto node : Descendants(ui.base, stats, Hash(name)))
+      garage_header.car_hidden.push_back(node);
+  if (garage_header.car_material) {
+    garage_header.car_binding = REX_KERNEL_MEMORY()->SystemHeapAlloc(24);
+    if (garage_header.car_binding) {
+      ui.Call(0x82664A38, {garage_header.car_binding});
+      Write(ui.base, garage_header.car_binding + 4, garage_header.car_material);
+      Write(ui.base, garage_header.car_binding + 8, garage_header.presentation);
+    }
+  }
+  REXLOG_INFO("FH1 current-car card: stats={:08X} controller={:08X} material={:08X} name={:08X} make={:08X}",
+              stats, garage_header.car_controller, garage_header.car_material,
+              garage_header.car_name, garage_header.car_make);
+}
+void UpdateGarageCarCard(Native& ui) {
+  if (!garage_header.car_stats) return;
+  const bool visible = state.visible && state.page == 2;
+  ui.ShowIn(garage_header.presentation, garage_header.car_stats, visible);
+  if (!visible) { garage_header.car_frames = 0; return; }
+  for (const auto node : garage_header.car_ancestry)
+    ui.ShowIn(garage_header.presentation, node, true);
+  for (const auto node : garage_header.car_hidden)
+    ui.ShowIn(garage_header.presentation, node, false);
+  // Fit the original garage thumbnail and native specifications below the
+  // CURRENT CAR heading, retaining their authored relative layout/rotation.
+  ui.PositionIn(garage_header.presentation, garage_header.car_group, -285.f, 60.f);
+  ui.ScaleIn(garage_header.presentation, garage_header.car_group, .70f, .70f);
+  if (garage_header.car_bound && ++garage_header.car_frames < 300) return;
+  garage_header.car_frames = 0;
+  const auto current = fh1_current_car::ReadCurrentCar(ui);
+  if (!current) return;
+  if (garage_header.car_bound && current.owned_id == garage_header.car_owned &&
+      current.model_id == garage_header.car_model) return;
+  const bool names = fh1_current_car::BindNames(ui, garage_header.presentation,
+      garage_header.car_name, garage_header.car_make, current.model_id);
+  const bool stats = fh1_current_car::BindPerformance(ui,
+      garage_header.car_controller, current.owned_id);
+  if (garage_header.car_binding && !current.thumbnail.empty()) {
+    if (const auto path = ui.String(current.thumbnail))
+      ui.Call(0x82F38E80, {garage_header.car_binding, path, 0, 8});
+  }
+  garage_header.car_owned = current.owned_id;
+  garage_header.car_model = current.model_id;
+  garage_header.car_bound = names && stats;
+  REXLOG_INFO("FH1 current-car card: owned={} model={} thumbnail={} owned-image={} names={} performance={}",
+              current.owned_id, current.model_id, current.thumbnail,
+              current.owned_thumbnail, names, stats);
+}
 void UpdateGarageHeader(Native& ui) {
   if (!garage_header.preloader) return;
   if (!garage_header.ready) {
@@ -1058,6 +1154,8 @@ void UpdateGarageHeader(Native& ui) {
     garage_header.presentation = presentation;
     garage_header.root = root;
     garage_header.player_bar = player_bar;
+    const auto car_stats = Descendants(ui.base, root, Hash("CAR_STATS"));
+    if (!car_stats.empty()) garage_header.car_stats = car_stats.front();
     // The native FH1 credits strip is the complete BottomRow subtree. Keep
     // its text binding, paper artwork, rotation and automatic width together.
     const auto credit_rows = Descendants(ui.base, player_bar, Hash("BottomRow"));
@@ -1140,8 +1238,11 @@ void UpdateGarageHeader(Native& ui) {
         if (wrapper && controller && Read(ui.base, wrapper + 0x10) == player_bar &&
             Read(ui.base, controller) == 0x8207EB54) {
           garage_header.controller = controller;
-          break;
         }
+        if (wrapper && controller &&
+            Read(ui.base, wrapper + 0x10) == garage_header.car_stats &&
+            Read(ui.base, controller) == 0x82074F4C)
+          garage_header.car_controller = controller;
       }
     }
     if (const auto controller = garage_header.controller) {
@@ -1166,6 +1267,7 @@ void UpdateGarageHeader(Native& ui) {
         pending_nodes.push_back(child);
     }
     BindGarageUsername(ui);
+    BindGarageCarCard(ui);
     garage_header.ready = true;
     BindTiles(ui);
     UpdatePlayerIdentity(ui, true);
@@ -1185,6 +1287,7 @@ void UpdateGarageHeader(Native& ui) {
   if (garage_header.visible) {
     ui.Call(0x82FEE208, {garage_header.presentation});
     UpdateGarageUsername(ui);
+    UpdateGarageCarCard(ui);
     // PlayerBar's authored origin is (-253, 319). This places TEXT_CR's
     // original (+16, 0) anchor at approximately (1050, 67) on the 720p canvas.
     // The credits paper meets the username paper's painted lower edge.
@@ -1207,6 +1310,7 @@ void UpdateGarageHeader(Native& ui) {
 void ReleaseGarageHeader(Native& ui) {
   if (!garage_header.preloader) return;
   GarageHeaderVisibility(ui, false);
+  if (garage_header.car_binding) REX_KERNEL_MEMORY()->SystemHeapFree(garage_header.car_binding);
   const auto presentation = garage_header.presentation;
   if (garage_header.render_owner)
     ui.Call(0x82F2F828, {Read(ui.base, 0x833CAAC0), garage_header.render_owner, 0});
@@ -1327,6 +1431,7 @@ void BindTiles(Native& ui) {
   NormalizeSelection(ui.base);
   tile_label_styles.clear();
   tile_underlines.clear();
+  map_tile_labels.clear();
   festival_progress_nodes.clear();
   festival_next_nodes.clear();
   festival_progress_text.clear();
@@ -1339,7 +1444,7 @@ void BindTiles(Native& ui) {
   theme_hidden.clear();
   theme_tabs.clear();
   const auto tiles = Tiles();
-  // Cars uses FH2's authored large square and two stacked wide tiles.
+  // Cars reuses FH2's authored Grid03 with a current-car card and three actions.
   // Other tabs retain the existing first-page layout. Reapply a page event only
   // when its geometry changes, then restore selection after native default focus.
   const auto layout = GridLayout();
@@ -1376,15 +1481,16 @@ void BindTiles(Native& ui) {
       ui.Event(contract_for(button), fh2_grid_events::Blur(false));
       continue;
     }
-    const bool available = ActionAvailable(ui.base, tiles[i].action);
+    const bool current_car = state.page == 2 && i == 0;
+    const bool available = current_car || ActionAvailable(ui.base, tiles[i].action);
     for (const auto node : Descendants(ui.base, button, Hash("Orange_HL")))
       tile_underlines.push_back(node);
     const bool progress = state.page == 0 && tiles[i].action == 0x7111;
     const bool tall = state.page == 0 && i == 2;
     const bool square = state.page == 2 && i == 0;
-    const float width = square ? 370.f :
-        (state.page == 2 || slot < 2 || slot == 4 ? 369.f : 183.f);
-    const float height = tall || square ? 370.f : 183.f;
+    const float width = square ? 550.f : state.page == 2 ? 360.f :
+        (slot < 2 || slot == 4 ? 369.f : 183.f);
+    const float height = tall || square ? 370.f : state.page == 2 ? 112.f : 183.f;
     const float center_y = tall || (GridLayout() == 1 && slot == 4) ? 93.f : 0.f;
     const auto label_style = [&](uint32_t node, bool title) {
       const auto& fonts = title ? title_fonts : body_fonts;
@@ -1446,11 +1552,13 @@ void BindTiles(Native& ui) {
       ui.Text(node, tiles[i].label);
       label_style(node, true);
       theme_titles.push_back(node);
+      if (state.page == 0 && tiles[i].action == 2) map_tile_labels.push_back(node);
     }
     for (const auto node : Descendants(ui.base, button, Hash("Desc_Text"))) {
       ui.Text(node, tiles[i].description);
       if (!progress) label_style(node, false);
       theme_descriptions.push_back(node);
+      if (state.page == 0 && tiles[i].action == 2) map_tile_labels.push_back(node);
       if (state.page == 0 && tiles[i].action == 0x7111) festival_progress_nodes.push_back(node);
     }
     if (state.page == 0 && tiles[i].action == 0x7111) {
@@ -1501,33 +1609,35 @@ void BindTiles(Native& ui) {
   UpdatePlayerIdentity(ui, true);
   // Keep the original measured-width tab controller, with FH1's title font
   // and palette. Divider/notification nodes remain owned layout anchors.
-  constexpr const char* labels[] = {"HOME", "MAP", "CARS", "SETTINGS"};
+  constexpr const char* labels[] = {"HOME", "CARS", "SETTINGS"};
+  constexpr unsigned pages[] = {0, 2, 3};
   const auto enabled_pages = EnabledPages(ui.base);
   for (unsigned i = 0; i < 6; ++i) {
     const auto path = std::string("parent.Layer2.ANTH_TabControl_New.GROUP_ITEMS.Tab_") +
                       std::to_string(i + 1);
     const auto tab = ui.Node(path);
-    ui.Opacity(tab, i < 4 ? (enabled_pages & (1u << i) ? 100.f : 45.f) : 0.f);
-    if (i >= 4) {
+    ui.Opacity(tab, i < 3 ? (enabled_pages & (1u << pages[i]) ? 100.f : 45.f) : 0.f);
+    if (i >= 3) {
       ui.Show(tab, false);
       theme_hidden.push_back(tab);
     }
-    if (i < 4) {
+    if (i < 3) {
       ui.Text(ui.Node(path + ".Text_Tab"), labels[i]);
       for (const auto* name : {"TabDivider", "Notification"}) {
         const auto decoration = ui.Node(path + "." + name);
         ui.Show(decoration, false);
         theme_hidden.push_back(decoration);
       }
-      ui.Event(contract_for(tab), i == state.page ? fh2_grid_events::Select()
+      ui.Event(contract_for(tab), pages[i] == state.page ? fh2_grid_events::Select()
                                                 : fh2_grid_events::Unselect());
       for (const auto material : Descendants(ui.base, tab, Hash("Material252")))
-        theme_tabs.push_back({material, i == state.page ? 0xFF007Au : 0x292529u});
+        theme_tabs.push_back({material, pages[i] == state.page ? 0xFF007Au : 0x292529u});
     }
   }
   REXLOG_INFO("FH2 pause scene: page={} tiles={}", state.page, tiles.size());
   if (state.page == 0)
     REXLOG_INFO("FH2 pause festival progress: bound {} description nodes", festival_progress_nodes.size());
+  if (state.page == 2) fh2_cars_layout::Apply(ui, state.engine);
   BindFestivalGauge(ui);
   UpdateFestivalProgress(ui, true);
   theme_frames = 4;
@@ -1573,6 +1683,15 @@ void StyleTileLabels(Native& ui) {
   }
 }
 void MaintainTileSelectionVisuals(Native& ui) {
+  const bool map_ready = forza::fh1_map_preview::Ready();
+  for (const auto node : map_tile_labels) {
+    ui.Show(node, !map_ready);
+    ui.Opacity(node, map_ready ? 0.f : 100.f);
+  }
+  if (state.page == 2) {
+    fh2_cars_layout::Apply(ui, state.engine);
+    StyleTileLabels(ui);
+  }
   // The pink paper already marks selection. Native focus events can restore
   // Orange_HL, so suppress its visibility and opacity after those events run.
   for (const auto node : tile_underlines) {
@@ -1582,6 +1701,7 @@ void MaintainTileSelectionVisuals(Native& ui) {
 }
 void Theme(Native& ui) {
   ApplyHomeTileGeometry(ui);
+  if (state.page == 2) fh2_cars_layout::Apply(ui, state.engine);
   StyleTileLabels(ui);
   BindFestivalGauge(ui);
   // Presentation events apply their authored colors asynchronously. Apply the
@@ -1606,11 +1726,11 @@ void Theme(Native& ui) {
 void HeaderAndTabs(Native& ui) {
   const std::string tabs="parent.Layer2.ANTH_TabControl_New";
   unsigned styled_labels = 0;
-  std::array<uint32_t, 4> tab_labels{}, tab_backgrounds{};
+  std::array<uint32_t, 3> tab_labels{}, tab_backgrounds{};
   // Align the text to its own native background center, rather than using
   // font-dependent bottom alignment. The stacker continues to own horizontal
   // placement and sizes each background from the actual FH1 text width.
-  for (unsigned i = 1; i <= 4; ++i) {
+  for (unsigned i = 1; i <= 3; ++i) {
     const auto path = tabs + ".GROUP_ITEMS.Tab_" + std::to_string(i);
     const auto text_node = ui.Node(path + ".Text_Tab");
     const auto background = ui.Node(path + ".TabBg");
@@ -1660,20 +1780,20 @@ void HeaderAndTabs(Native& ui) {
     layouts=stackers[state.engine];
   }
   for(auto controller:layouts) {
-    auto result=fh2_tab_layout::UseFourTabs(ui,controller,
+    auto result=fh2_tab_layout::UseThreeTabs(ui,controller,
         ui.Node(tabs+".Component_RB"),
-        ui.Node(tabs+".GROUP_ITEMS.Tab_4.TabDivider"),
+        ui.Node(tabs+".GROUP_ITEMS.Tab_3.TabDivider"),
         ui.Node(tabs+".GROUP_ITEMS.Tab_6.TabDivider"));
     if(result==fh2_tab_layout::Result::Applied)
-      REXLOG_INFO("FH2 pause: native tab stacker now uses four tabs");
+      REXLOG_INFO("FH2 pause: native tab stacker now uses three tabs");
     if (result != fh2_tab_layout::Result::NotReady) {
       // Font/size changes alter native measured widths even after compaction.
       // 828D1E08 runs Measure then Place; it also honors the stacker's freeze flag.
       ui.Call(0x828D1E08, {controller});
-      std::array<fh2_tab_layout::TabMetrics, 4> metrics{};
-      std::array<uint32_t, 4> native_alignments{};
+      std::array<fh2_tab_layout::TabMetrics, 3> metrics{};
+      std::array<uint32_t, 3> native_alignments{};
       const auto alignment_hash = ui.Call(0x82F354E0, {ui.String("horzalign")});
-      for (unsigned i = 0; i < 4; ++i) {
+      for (unsigned i = 0; i < 3; ++i) {
         const auto binding = Read(ui.base, controller + 0x70 + 3 * i * 0x10);
         if (!binding) continue;
         Write(ui.base, ui.scratch + 800, 0);
@@ -1685,7 +1805,7 @@ void HeaderAndTabs(Native& ui) {
       const bool centered = fh2_tab_layout::CenterLabels(
           ui, controller, tab_labels, tab_backgrounds, metrics, native_alignments);
       if (theme_frames == 1) {
-        std::array<float, 4> widths{};
+        std::array<float, 3> widths{};
         for (unsigned i = 0; i < widths.size(); ++i) {
           const auto slot = 3 * i;
           const auto delta = [&](unsigned n) {
@@ -1694,15 +1814,15 @@ void HeaderAndTabs(Native& ui) {
           widths[i] = delta(slot + 1) - delta(slot) +
               std::bit_cast<float>(Read(ui.base, controller + 0x74 + slot * 0x10));
         }
-        REXLOG_INFO("FH1 pause tabs: styled={} measured widths={:.2f}/{:.2f}/{:.2f}/{:.2f} alignment-adjust={}",
-                    styled_labels, widths[0], widths[1], widths[2], widths[3],
+        REXLOG_INFO("FH1 pause tabs: styled={} measured widths={:.2f}/{:.2f}/{:.2f} alignment-adjust={}",
+                    styled_labels, widths[0], widths[1], widths[2],
                     unsigned(GuestPtr(ui.base, controller)[0x378]));
         if (!centered) {
           REXLOG_WARN("FH1 pause tabs: center binding rejected; first relative start={} end={} mode={}",
                       Read(ui.base, controller + 0x218), Read(ui.base, controller + 0x21C),
                       Read(ui.base, controller + 0x220));
         } else {
-          for (unsigned i = 0; i < 4; ++i) {
+          for (unsigned i = 0; i < 3; ++i) {
             const auto text = Read(ui.base, tab_labels[i] + 4);
             const auto background = Read(ui.base, tab_backgrounds[i] + 4);
             const auto x = [&](uint32_t instance, uint32_t offset) {
@@ -1718,13 +1838,14 @@ void HeaderAndTabs(Native& ui) {
       }
       state.tab_stacker = controller;
       state.right_bumper = ui.Node(tabs + ".Component_RB");
-      state.last_divider = ui.Node(tabs + ".GROUP_ITEMS.Tab_4.TabDivider");
+      state.last_divider = ui.Node(tabs + ".GROUP_ITEMS.Tab_3.TabDivider");
     }
   }
 }
 
 void Resume(PPCContext& ctx, uint8_t* base) {
   const auto screen = state.screen;
+  forza::fh1_map_preview::Update(ctx, base, screen, false);
   return_page.reset();
   return_selection.reset();
   if (fh1_pause_actions::Resume(ctx, base, screen) && state.screen == screen)
@@ -1747,7 +1868,8 @@ uint32_t Neighbor(uint8_t* base, uint16_t direction) {
   if (state.page == 1) return 0;
   NormalizeSelection(base);
   const auto tiles = Tiles();
-  constexpr Point cars_positions[] = {{1.f, 1.f}, {3.f, .5f}, {3.f, 1.5f}};
+  constexpr Point cars_positions[] = {
+      {1.f, 1.f}, {3.f, 0.f}, {3.f, 1.f}, {3.f, 2.f}};
   const auto positions = state.page == 2 ? cars_positions :
                          state.page == 3 ? settings_positions : home_positions;
   const auto origin = positions[state.selection];
@@ -1793,6 +1915,9 @@ void Activate(PPCContext& ctx, uint8_t* base) {
   const auto previous_return_selection = return_selection;
   return_page = state.page; // Set before a synchronous native transition.
   return_selection = state.selection;
+  // Return the preview's map-camera reference before any native child can
+  // acquire the full map, including Garage/Autoshow travel.
+  forza::fh1_map_preview::Update(ctx, base, screen, false);
   bool dispatched = false;
   if (action == 0x7111) {
     dispatched = fh1_pause_actions::OpenProgress(ctx, base, screen);
@@ -1893,6 +2018,7 @@ bool Input(PPCContext& ctx, uint8_t* base) {
 }
 bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
   if (!Owns(screen)) return false;
+  if (!show) forza::fh1_map_preview::Update(ctx, base, screen, false);
   state.visible = show;
   Native ui(ctx, base);
   if (ui.scratch) {
@@ -1913,10 +2039,12 @@ bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
 void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (!Owns(screen)) return;
   Native ui(ctx, base);
+  forza::fh1_map_preview::Release(ctx, base);
   if (ui.scratch) ReleaseGarageHeader(ui);
   player_identity = {};
   tile_label_styles.clear();
   tile_underlines.clear();
+  map_tile_labels.clear();
   home_tile_geometry.clear();
   festival_progress_nodes.clear();
   festival_gauge = {};
@@ -2050,6 +2178,8 @@ extern "C" REX_FUNC(sub_827DE0D0) {
   if (!Owns(screen)) return;
   Native ui(ctx, base);
   if (ui.scratch) UpdateGarageHeader(ui);
+  forza::fh1_map_preview::Update(ctx, base, screen,
+      state.visible && state.page == 0 && NativeActionAvailable(base, 2), state.selection == 0);
   if (ui.scratch) UpdateFestivalProgress(ui);
   if (ui.scratch) UpdatePlayerIdentity(ui);
   if (ui.scratch) UpdateFooter(ui);

@@ -126,6 +126,7 @@ set(FORZA_SOURCES
     src/hooks/graphics_menu.cpp
     src/hooks/pause_menu.cpp
     src/hooks/fh2_pause_scene.cpp
+    src/hooks/fh1_map_preview.cpp
     src/hooks/offline_cars.cpp
     src/hooks/festival_travel.cpp
     src/hooks/car_recovery.cpp

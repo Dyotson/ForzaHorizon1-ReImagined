@@ -45,23 +45,24 @@ struct TabMetrics {
 // SUPER_STACKER's optional alignment query then reports left alignment and
 // misses half the changed text width. Use its own relative-background records
 // to establish centered authored anchors, preserving native measured layout.
-template<class Native>
+template<class Native, std::size_t Count>
 bool CenterLabels(Native& ui, uint32_t stacker,
-                  const std::array<uint32_t, 4>& labels,
-                  const std::array<uint32_t, 4>& backgrounds,
-                  std::array<TabMetrics, 4>& metrics,
-                  const std::array<uint32_t, 4>& native_alignments = {}) {
+                  const std::array<uint32_t, Count>& labels,
+                  const std::array<uint32_t, Count>& backgrounds,
+                  std::array<TabMetrics, Count>& metrics,
+                  const std::array<uint32_t, Count>& native_alignments = {}) {
+  static_assert(Count == 3 || Count == 4);
   using namespace detail;
   if (!stacker || Read(ui.base, stacker) != 0x820814AC ||
-      Read(ui.base, stacker + 0x1AC) != 13 ||
-      Read(ui.base, stacker + 0x370) != 4 ||
+      Read(ui.base, stacker + 0x1AC) != 3 * Count + 1 ||
+      Read(ui.base, stacker + 0x370) != Count ||
       Read(ui.base, stacker + 0x374) != 1) return false;
-  std::array<float, 4> anchors{};
+  std::array<float, Count> anchors{};
   const auto scalar = [&](uint32_t at) {
     return std::bit_cast<float>(Read(ui.base, at));
   };
   const auto delta = [&](unsigned slot) { return scalar(stacker + 0x1B0 + slot * 4); };
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < Count; ++i) {
     const auto slot = 3 * i;
     const auto relative = stacker + 0x208 + 0x24 * i;
     const auto binding = Read(ui.base, relative);
@@ -94,7 +95,7 @@ bool CenterLabels(Native& ui, uint32_t stacker,
   // it enabled; the authored anchor above compensates its queried adjustment.
   // Native Place still owns all positioning and background resizing.
   GuestPtr(ui.base, stacker)[0x378] = 1;
-  for (unsigned i = 0; i < 4; ++i)
+  for (unsigned i = 0; i < Count; ++i)
     Write(ui.base, Slot(stacker, 3 * i) + 12, std::bit_cast<uint32_t>(anchors[i]));
   ui.Call(0x828CFAB8, {stacker});
   return true;
@@ -125,7 +126,7 @@ inline bool ToAncestor(uint8_t* base, uint32_t node, uint32_t ancestor,
   return false;
 }
 
-// The divider belongs to Tab_4, while RB belongs to the outer tab control.
+// The final visible divider and RB belong to different native parents.
 // Their authored X values cannot be subtracted directly. Apply after text has
 // settled; the native stacker then preserves this anchor on subsequent frames.
 template<class Native>
@@ -133,11 +134,13 @@ bool AnchorRightBumper(Native& ui, uint32_t stacker, uint32_t rb_node,
                       uint32_t divider, float gap = 24.f) {
   using namespace detail;
   if (!stacker || !rb_node || !divider || !std::isfinite(gap) ||
-      Read(ui.base, stacker) != 0x820814AC ||
-      Read(ui.base, stacker + 0x1AC) != 13 ||
-      Read(ui.base, stacker + 0x374) != 1 ||
-      BoundNode(ui.base, Slot(stacker, 12)) != rb_node ||
-      BoundNode(ui.base, Slot(stacker, 11)) != divider)
+      Read(ui.base, stacker) != 0x820814AC) return false;
+  const auto slot_count = Read(ui.base, stacker + 0x1AC);
+  if (slot_count != 10 && slot_count != 13) return false;
+  const auto rb_slot = slot_count - 1;
+  if (Read(ui.base, stacker + 0x374) != 1 ||
+      BoundNode(ui.base, Slot(stacker, rb_slot)) != rb_node ||
+      BoundNode(ui.base, Slot(stacker, rb_slot - 1)) != divider)
     return false;
   const auto rb_parent = Read(ui.base, rb_node + 12);
   uint32_t ancestor = divider;
@@ -155,48 +158,53 @@ bool AnchorRightBumper(Native& ui, uint32_t stacker, uint32_t rb_node,
   if (!ToAncestor(ui.base, divider, ancestor, divider_scale, divider_x) ||
       !ToAncestor(ui.base, rb_parent, ancestor, parent_scale, parent_x))
     return false;
-  const auto delta = std::bit_cast<float>(Read(ui.base, stacker + 0x1E0));
+  const auto delta = std::bit_cast<float>(Read(ui.base, stacker + 0x1B0 + rb_slot * 4));
   // The RB component's authored left edge is 24 units before its origin.
   // A 24-unit anchor therefore joins its panel to the last tab, matching the
   // LB panel's zero exterior gap. The old 36 left a right-only 12-unit gutter.
   const float authored_x = (divider_x - parent_x) / parent_scale + gap - delta;
   if (!std::isfinite(authored_x)) return false;
-  Write(ui.base, Slot(stacker, 12) + 12, std::bit_cast<uint32_t>(authored_x));
+  Write(ui.base, Slot(stacker, rb_slot) + 12, std::bit_cast<uint32_t>(authored_x));
   ui.Call(0x828D1E08, {stacker});
   return true;
 }
 
 // FH1 TU4 SUPER_STACKER, created by 826EE450/828DF810. Call after its init
-// (828CF6A8) has populated the bindings and after setting the four tab labels.
+// (828CF6A8) has populated the bindings and after setting the visible labels.
 // Capture its native controller from the factory return, not the UI wrapper.
 // Required nodes are under ANTH_TabControl_New: Component_RB and the two
-// GROUP_ITEMS.Tab_4/Tab_6.TabDivider nodes. These identify the top-level stacker
+// GROUP_ITEMS final-visible/Tab_6.TabDivider nodes. These identify the top-level stacker
 // unambiguously among the scene's notification stackers.
 template<class Native>
-Result UseFourTabs(Native& ui, uint32_t stacker, uint32_t rb_node,
-                   uint32_t fourth_divider, uint32_t sixth_divider) {
+Result UseTabs(Native& ui, uint32_t stacker, uint32_t rb_node,
+               uint32_t last_divider, uint32_t sixth_divider, unsigned count) {
   using namespace detail;
-  if (!stacker || !rb_node || !fourth_divider || !sixth_divider ||
+  if ((count != 3 && count != 4) || !stacker || !rb_node ||
+      !last_divider || !sixth_divider ||
       Read(ui.base, stacker) != 0x820814AC)
     return Result::NotReady;
-  const auto count = Read(ui.base, stacker + 0x1AC);
-  if (count == 13 && BoundNode(ui.base, Slot(stacker, 12)) == rb_node)
+  const auto rb_slot = 3 * count;
+  const auto slot_count = Read(ui.base, stacker + 0x1AC);
+  if (slot_count == rb_slot + 1 &&
+      BoundNode(ui.base, Slot(stacker, rb_slot)) == rb_node &&
+      BoundNode(ui.base, Slot(stacker, rb_slot - 1)) == last_divider &&
+      Read(ui.base, stacker + 0x370) == count)
     return Result::AlreadyApplied;
-  if (count < 19 || count > 20 ||
+  if (slot_count < 19 || slot_count > 20 ||
       BoundNode(ui.base, Slot(stacker, 18)) != rb_node ||
-      BoundNode(ui.base, Slot(stacker, 11)) != fourth_divider ||
+      BoundNode(ui.base, Slot(stacker, rb_slot - 1)) != last_divider ||
       BoundNode(ui.base, Slot(stacker, 17)) != sixth_divider)
     return Result::NotReady;
 
   const auto relative_count = Read(ui.base, stacker + 0x370);
-  if (relative_count > 10) return Result::NotReady;
+  if (relative_count < count || relative_count > 10) return Result::NotReady;
   const auto rb_x = std::bit_cast<float>(Read(ui.base, Slot(stacker, 18) + 12));
   if (!std::isfinite(rb_x)) return Result::NotReady;
 
-  // Move RB immediately after four (text, notification, divider) triples.
+  // Move RB after the visible (text, notification, divider) triples.
   // Swap entire owning records rather than copy their binding pointers:
   // destructor 828DF8E8 always destroys all 20 records via 828CA7F8.
-  const auto destination = Slot(stacker, 12), source = Slot(stacker, 18);
+  const auto destination = Slot(stacker, rb_slot), source = Slot(stacker, 18);
   std::array<uint32_t, 4> saved{};
   for (unsigned i = 0; i < saved.size(); ++i)
     saved[i] = Read(ui.base, destination + i * 4);
@@ -204,16 +212,30 @@ Result UseFourTabs(Native& ui, uint32_t stacker, uint32_t rb_node,
     Write(ui.base, destination + i * 4, Read(ui.base, source + i * 4));
   for (unsigned i = 0; i < saved.size(); ++i)
     Write(ui.base, source + i * 4, saved[i]);
-  Write(ui.base, stacker + 0x1AC, 13);
-  // The first four relative entries size Tab_1..Tab_4 backgrounds. Their source
-  // indices remain unchanged; hidden Tab_5/Tab_6 backgrounds no longer update.
-  Write(ui.base, stacker + 0x370, std::min(relative_count, 4u));
+  Write(ui.base, stacker + 0x1AC, rb_slot + 1);
+  // Visible relative entries retain their original source indices. Hidden
+  // background records remain owned but no longer participate in layout.
+  Write(ui.base, stacker + 0x370, count);
 
   // The original update measures current text widths and applies native X
   // properties. It continues doing this normally; no per-frame correction or
   // direct transform mutation is installed by this helper.
   ui.Call(0x828D1E08, {stacker});
   return Result::Applied;
+}
+
+// Physical labels stay in the first contiguous native tab slots. Callers map
+// logical pages separately (for example Home/Cars/Settings => 0/2/3).
+template<class Native>
+Result UseThreeTabs(Native& ui, uint32_t stacker, uint32_t rb_node,
+                    uint32_t third_divider, uint32_t sixth_divider) {
+  return UseTabs(ui, stacker, rb_node, third_divider, sixth_divider, 3);
+}
+
+template<class Native>
+Result UseFourTabs(Native& ui, uint32_t stacker, uint32_t rb_node,
+                   uint32_t fourth_divider, uint32_t sixth_divider) {
+  return UseTabs(ui, stacker, rb_node, fourth_divider, sixth_divider, 4);
 }
 
 }  // namespace forza::fh2_tab_layout
