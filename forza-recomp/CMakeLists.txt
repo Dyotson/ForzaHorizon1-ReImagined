@@ -170,6 +170,7 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/discord_presence.cpp
+    src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
     src/platform/benchmark.cpp
