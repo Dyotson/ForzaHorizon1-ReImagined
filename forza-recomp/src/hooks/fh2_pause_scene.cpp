@@ -118,6 +118,8 @@ struct GarageHeader {
   uint32_t controller = 0;
   uint32_t car_stats = 0, car_group = 0, car_controller = 0;
   uint32_t car_name = 0, car_make = 0, car_material = 0, car_binding = 0;
+  uint32_t car_spec_group = 0, car_spec_paper = 0;
+  std::array<uint32_t, 5> car_spec_rows{}, car_spec_names{}, car_spec_values{};
   uint32_t car_owned = 0, car_model = 0;
   unsigned car_frames = 0;
   bool car_bound = false;
@@ -1017,6 +1019,16 @@ void BindGarageCarCard(Native& ui) {
   garage_header.car_name = named(stats, "TEXT_CAR_NAME");
   garage_header.car_make = named(stats, "TEXT_MANUFACTURER");
   garage_header.car_material = named(stats, "Material_Car_Ima");
+  garage_header.car_spec_group = named(stats, "STATS");
+  garage_header.car_spec_paper = named(stats, "HUDPanel01");
+  for (unsigned i = 0; i < garage_header.car_spec_rows.size(); ++i) {
+    const auto name = std::string("CAR_STATS_PERFORMANCE_BARS") +
+                      (i ? std::to_string(i + 1) : "");
+    const auto row = named(garage_header.car_spec_group, name.c_str());
+    garage_header.car_spec_rows[i] = row;
+    garage_header.car_spec_names[i] = named(row, "TEXT_NAME");
+    garage_header.car_spec_values[i] = named(row, "TEXT_VALUE");
+  }
   std::vector<uint32_t> header_ancestry;
   for (auto node = garage_header.player_bar; node && header_ancestry.size() < 100;
        node = Read(ui.base, node + 12)) {
@@ -1057,6 +1069,31 @@ void BindGarageCarCard(Native& ui) {
               stats, garage_header.car_controller, garage_header.car_material,
               garage_header.car_name, garage_header.car_make);
 }
+void ConfigureGarageCarCard(Native& ui) {
+  const auto presentation = garage_header.presentation;
+  // Original 108_C_BUY_CARSELECT geometry: the thumbnail is 364.8 units
+  // wide, centered at (143, -67); TitleBar and INFO retain the native name,
+  // manufacturer, paper and rotation. At .8 scale the photo spans roughly
+  // x216..508, with the name above it, inside the left half of the card.
+  ui.PositionIn(presentation, garage_header.car_group, -392.f, 50.f);
+  ui.ScaleIn(presentation, garage_header.car_group, .80f, .80f);
+
+  // STATS owns five native specification rows. Move that complete group
+  // alongside the photo and space its rows without stretching the font.
+  // Before the retained three-degree RotationHelper, label/value anchors
+  // map to x536/692 and row baselines run y314..458. Compensate for the
+  // photo block's eight-pixel shift so the specifications stay in place.
+  ui.PositionIn(presentation, garage_header.car_spec_group, 465.f, 25.f);
+  for (unsigned i = 0; i < garage_header.car_spec_rows.size(); ++i) {
+    ui.PositionIn(presentation, garage_header.car_spec_rows[i], 0.f, -45.f * i);
+    ui.PositionIn(presentation, garage_header.car_spec_names[i], -105.f, -30.f);
+    ui.PositionIn(presentation, garage_header.car_spec_values[i], 90.f, -30.f);
+  }
+
+  // HUDPanel01's native texture paints only the bottom of its mesh. The
+  // existing charcoal card provides a consistent backing for all five rows.
+  ui.ShowIn(presentation, garage_header.car_spec_paper, false);
+}
 void UpdateGarageCarCard(Native& ui) {
   if (!garage_header.car_stats) return;
   const bool visible = state.visible && state.page == 2;
@@ -1066,10 +1103,7 @@ void UpdateGarageCarCard(Native& ui) {
     ui.ShowIn(garage_header.presentation, node, true);
   for (const auto node : garage_header.car_hidden)
     ui.ShowIn(garage_header.presentation, node, false);
-  // Fit the original garage thumbnail and native specifications below the
-  // CURRENT CAR heading, retaining their authored relative layout/rotation.
-  ui.PositionIn(garage_header.presentation, garage_header.car_group, -285.f, 60.f);
-  ui.ScaleIn(garage_header.presentation, garage_header.car_group, .70f, .70f);
+  ConfigureGarageCarCard(ui);
   if (garage_header.car_bound && ++garage_header.car_frames < 300) return;
   garage_header.car_frames = 0;
   const auto current = fh1_current_car::ReadCurrentCar(ui);

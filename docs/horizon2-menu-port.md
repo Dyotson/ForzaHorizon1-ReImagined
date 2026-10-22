@@ -165,6 +165,15 @@ The subtree and PlayerBar retain their original controller ownership; only
 borrowed dispatch lists are filtered. Temporary native references are released,
 and the panel refreshes on binding/child return and periodically while visible.
 
+The current-car card uses the full width: the enlarged native photo and name
+paper sit on the left, with five specification rows alongside on the right.
+The old footer backing is hidden so it does not leave a partial strip below the
+repositioned rows. Row anchors are narrowed and vertically spaced
+without stretching the native fonts. The photo, labels and values retain their
+original artwork, rotation, controller ownership and data bindings. A native
+1280x720 capture confirms the photo/name padding, all five rows and their values
+fit inside the current-car card.
+
 ## Change Car
 
 Change Car opens TU4 CMyCars screen 0xAF. Base-game screen 0xA1 is different:
