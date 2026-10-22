@@ -227,6 +227,93 @@ class CalibrationMathTests(unittest.TestCase):
         self.assertFalse(cal.skip() and False)
 
 
+XBOX = "030000005e0400008e02000014010000"
+XBOX_BT = "050000005e0400008e02000001000000"
+DS = "030000004c050000e60c000011810000"
+CA = {a.key: a for a in b.CONTROLLER_ACTIONS}
+
+
+class RemapTests(unittest.TestCase):
+    def test_parse_and_format(self):
+        text = f"{XBOX}:rt=a, A = none ,lb=rt@0.3,ly=-ly,rx=ry,lt=ly-;*:a=lt"
+        profiles = b.parse_remap(text)
+        self.assertEqual(b.format_rules(profiles[XBOX]), "a=none,lb=rt@0.3,lt=ly-,rt=a,ly=-ly,rx=ry")
+        self.assertEqual(b.format_remap(profiles),
+                         f"{XBOX}:a=none,lb=rt@0.3,lt=ly-,rt=a,ly=-ly,rx=ry;*:a=lt")
+        self.assertEqual(b.parse_remap(b.format_remap(profiles)), profiles)
+        # The SDK's parser drops the same pairs: a stick from a button, an inverted trigger, half
+        # a trigger, unknown names, and garbage.
+        rules = b.parse_rules("lx=a,rt=-lt,lt=lt+,zz=a,b=@,y=lx-@x,x=b,rb=-lx")
+        self.assertEqual(b.format_rules(rules), "x=b")
+        self.assertEqual(b.parse_source("rt@9").threshold, 0.95)
+        self.assertEqual(b.parse_remap("nonsense:a=b;12:a=b"), {})
+
+    def test_profiles_by_guid_model_and_star(self):
+        profiles = b.parse_remap(f"*:rt=a;{DS}:a=b;{XBOX}:lb=rb")
+        self.assertEqual(b.profile_key(profiles, XBOX), XBOX)
+        self.assertEqual(b.profile_key(profiles, XBOX.upper()), XBOX)
+        self.assertEqual(b.profile_key(profiles, XBOX_BT), XBOX)  # same pad over Bluetooth
+        self.assertEqual(b.profile_key(profiles, "03000000ffff00000100000000000000"), "*")
+        self.assertIsNone(b.profile_key(b.parse_remap(f"{DS}:a=b"), XBOX))
+        self.assertEqual(b.guid_model(DS), (0x054C, 0x0CE6))
+        self.assertIsNone(b.guid_model("05000000476f6f676c65205374616469"))
+
+    def test_bind_clear_reset_keep_other_profiles(self):
+        text = f"{DS}:a=b"
+        text = b.set_controller_binding(text, XBOX, CA["rt"], b.Source("a"))
+        self.assertEqual(text, f"{DS}:a=b;{XBOX}:rt=a")  # profiles sorted by GUID
+        text = b.set_controller_binding(text, XBOX, CA["a"], None)
+        self.assertEqual(b.controller_rules(text, XBOX), {"rt": b.Source("a"), "a": b.NONE})
+        text = b.set_controller_binding(text, XBOX, CA["a"], "default")
+        text = b.set_controller_binding(text, XBOX, CA["rt"], "default")
+        self.assertEqual(text, f"{DS}:a=b")
+        # A controller on '*' gets its own copy of it, and an empty own profile shadows '*'.
+        text = b.set_controller_binding("*:rt=a", XBOX, CA["lb"], b.Source("rb"))
+        self.assertEqual(text, f"{XBOX}:lb=rb,rt=a;*:rt=a")
+        self.assertEqual(b.format_remap({XBOX: {}, "*": {"rt": b.Source("a")}}), f"{XBOX}:;*:rt=a")
+        self.assertEqual(b.controller_rules(f"{XBOX}:;*:rt=a", XBOX), {})
+        self.assertEqual(b.format_remap({XBOX: {}}), "")
+        s = schema.BY_KEY["controller_remap"]
+        self.assertEqual(schema.coerce(s, text), text)
+
+    def test_conflicts_and_names(self):
+        self.assertEqual(b.controller_conflicts({}), [])
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=a")),
+                         [("A", ["Accelerate", "Handbrake / select"])])
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=a,a=none")), [])
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=a"), names={"a": "Cross"}),
+                         [("Cross", ["Accelerate", "Handbrake / select"])])
+        # A whole stick axis overlaps one direction of it, not the other stick.
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=lx+")),
+                         [("Left stick X", ["Steer", "Accelerate"])])
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=ry+,lt=ry-,ry=none")), [])
+        self.assertEqual(b.controller_conflicts(b.parse_rules("rt=paddle1")),
+                         [("Paddle 1", ["Accelerate", "Rewind"])])
+        self.assertEqual(b.source_text(b.Source("ly", half=1)), "Left stick up")
+        self.assertEqual(b.source_text(b.Source("lx", invert=True)), "Left stick X (inverted)")
+        self.assertEqual(b.source_text(b.Source("rt", threshold=0.3)), "RT past 30%")
+        self.assertEqual(b.source_text(b.NONE), "Not bound")
+
+    def test_detect_on_the_mapped_pad(self):
+        base = b.Snapshot(pad_buttons=frozenset({"a"}), pad_axes=(0, 0, 0, 0, 0, 0))
+
+        def pad(buttons=(), axes=(0, 0, 0, 0, 0, 0)):
+            return b.Snapshot(pad_buttons=frozenset(buttons), pad_axes=axes)
+        d = b.Detector(base, "trigger", controller=True)
+        self.assertIsNone(d.feed(pad({"a"})))           # held when binding started
+        self.assertIsNone(d.feed(pad()))
+        self.assertEqual(d.feed(pad({"a"})).source, b.Source("a"))
+        d = b.Detector(base, "trigger", controller=True)
+        self.assertEqual(d.feed(pad(axes=(0, .7, 0, 0, 0, 0))).source, b.Source("ly", half=1))
+        self.assertEqual(b.Detector(base, "button", controller=True).feed(
+            pad(axes=(0, 0, 0, 0, .8, 0))).source, b.Source("lt"))
+        # A stick row takes only a stick, inverted when moved the other way than asked.
+        d = b.Detector(base, "stick", controller=True)
+        self.assertIsNone(d.feed(pad({"b"}, (0, 0, 0, 0, 1, 0))))
+        self.assertEqual(d.feed(pad(axes=(0, 0, -.9, 0, 0, 0))).source, b.Source("rx", invert=True))
+        self.assertIsNone(b.Detector(base, "button", controller=True).feed(pad({"guide"})))
+
+
 try:
     from PySide6.QtWidgets import QApplication
     import sdl2
@@ -418,6 +505,79 @@ class EditorTests(unittest.TestCase):
             self.assertEqual(delivered, ["accept"])
         finally:
             QTimer.singleShot = orig
+
+
+@unittest.skipIf(QApplication is None, "PySide6 or PySDL2 is not installed")
+class ControllerEditorTests(unittest.TestCase):
+    """Remapping a controller in the editor: SDL's virtual gamepad stands in for an Xbox pad."""
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        from forza_launcher.config import Config
+        from forza_launcher.gamepad import Joysticks
+        from forza_launcher.ui.controls_page import ControlsPage
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.cfg = Config(Path(self.temp.name) / "launcher.json")
+        s = sdl2
+        self.backend = Joysticks()
+        self.index = s.SDL_JoystickAttachVirtual(s.SDL_JOYSTICK_TYPE_GAMECONTROLLER, 6, 21, 0)
+        self.assertGreaterEqual(self.index, 0, s.SDL_GetError())
+        self.addCleanup(lambda: s.SDL_JoystickDetachVirtual(self.index))
+        self.joy = s.SDL_JoystickOpen(self.index)
+        self.addCleanup(lambda: s.SDL_JoystickClose(self.joy))
+        self.instance = s.SDL_JoystickInstanceID(self.joy)
+        self.page = ControlsPage(self.cfg)
+        self.page.bindings.start(self.backend)
+        self.addCleanup(self.page.bindings.stop)
+        self.ed = self.page.bindings
+        self.ed.picker.setCurrentIndex(self.ed.picker.findData(self.instance))
+        self.guid = self.ed.device.guid
+        self.step()
+
+    def step(self, n=2):
+        for _ in range(n):
+            self.ed.poll()
+            self.app.processEvents()
+
+    def row(self, key):
+        return next(r for r in self.ed.rows if r.action.key == key)
+
+    def test_throttle_on_a_with_a_warning_then_its_own_profile(self):
+        s = sdl2
+        self.assertEqual(self.ed.kind(), "controller")
+        self.assertEqual(self.view_names()[:4], ["A", "B", "X", "Y"])
+        self.assertEqual(self.row("rt").value.text(), "RT (default)")
+        self.ed.begin(self.row("rt"))
+        self.assertTrue(self.page.captures(self.instance))
+        s.SDL_JoystickSetVirtualButton(self.joy, s.SDL_CONTROLLER_BUTTON_A, 1)
+        self.step()
+        s.SDL_JoystickSetVirtualButton(self.joy, s.SDL_CONTROLLER_BUTTON_A, 0)
+        self.assertEqual(self.cfg.settings["controller_remap"], f"{self.guid}:rt=a")
+        self.assertEqual(self.row("rt").value.text(), "A")
+        self.assertIn("A: Accelerate, Handbrake / select", self.ed.conflicts.text())
+        self.ed.clear(self.row("a"))
+        self.assertEqual(self.cfg.settings["controller_remap"], f"{self.guid}:a=none,rt=a")
+        self.assertEqual(self.row("a").value.text(), "Not bound")
+        # The handbrake on the left trigger, the brake on the right stick pulled down.
+        self.ed.begin(self.row("a"))
+        s.SDL_JoystickSetVirtualAxis(self.joy, s.SDL_CONTROLLER_AXIS_TRIGGERLEFT, 30000)
+        self.step()
+        s.SDL_JoystickSetVirtualAxis(self.joy, s.SDL_CONTROLLER_AXIS_TRIGGERLEFT, 0)
+        self.ed.begin(self.row("lt"))
+        s.SDL_JoystickSetVirtualAxis(self.joy, s.SDL_CONTROLLER_AXIS_RIGHTY, 30000)
+        self.step()
+        s.SDL_JoystickSetVirtualAxis(self.joy, s.SDL_CONTROLLER_AXIS_RIGHTY, 0)
+        self.assertEqual(self.cfg.settings["controller_remap"], f"{self.guid}:a=lt,lt=ry-,rt=a")
+        self.assertIn("Right stick Y: Brake / reverse, Look up / down", self.ed.conflicts.text())
+        self.ed.reset_everything()
+        self.assertEqual(self.cfg.settings["controller_remap"], "")
+        self.assertEqual(self.row("rt").value.text(), "RT (default)")
+
+    def view_names(self):
+        return list(self.ed.view.names.values())
 
 
 if __name__ == "__main__":

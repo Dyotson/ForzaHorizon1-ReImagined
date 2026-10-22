@@ -5,6 +5,15 @@ Wheels keep the SDK wheel driver's settings and formats (patches 0074, 0099, 010
 ("1=12,...,r=18" or "up=..,down=.."), plus the rotation, deadzone and invert switches. A field the
 string leaves out keeps the driver's default, which this module ports (known Logitech wheels by
 vendor:product) so the editor can show it.
+
+Controllers use `controller_remap` (patch 0116): profiles separated by ';', each
+"GUID:target=source,..." where GUID is SDL's joystick GUID (or '*' for every controller without a
+profile of its own). A target is a pad control of the game's XInput state (a b x y lb rb back start
+guide ls rs up down left right lt rt lx ly rx ry); a target left out keeps its own input. Sources:
+a button (the targets' buttons and misc1 paddle1-4 touchpad), a trigger (lt rt), a stick axis
+(lx ly rx ry, '-lx' inverted) or one direction of it (lx+ is right, ly+ is up), or none. '@0.3' after
+an axis sets how far it must move to press a button (default 0.5). A button bound to a trigger
+presses it fully. The SDK's parser (src/input/sdl/gamepad_remap.h) follows the same rules.
 """
 from dataclasses import dataclass
 import re
@@ -72,6 +81,30 @@ WHEEL_ACTIONS = [
     Action("gearr", "Reverse gear", "button", "wheel_shifter_buttons", "r", "Shifter"),
     Action("seq_up", "Sequential shift up", "button", "wheel_shifter_buttons", "up", "Shifter"),
     Action("seq_down", "Sequential shift down", "button", "wheel_shifter_buttons", "down", "Shifter"),
+]
+
+_C = "controller_remap"
+CONTROLLER_ACTIONS = [
+    Action("lx", "Steer", "stick", _C, "lx", "Driving"),
+    Action("rt", "Accelerate", "trigger", _C, "rt", "Driving"),
+    Action("lt", "Brake / reverse", "trigger", _C, "lt", "Driving"),
+    Action("a", "Handbrake / select", "button", _C, "a", "Driving"),
+    Action("b", "Back / shift up", "button", _C, "b", "Driving"),
+    Action("x", "Enter event / shift down", "button", _C, "x", "Driving"),
+    Action("y", "Rewind", "button", _C, "y", "Driving"),
+    Action("rb", "Change camera", "button", _C, "rb", "Driving"),
+    Action("lb", "Left bumper", "button", _C, "lb", "Driving"),
+    Action("rs", "Look back (right stick press)", "button", _C, "rs", "Driving"),
+    Action("back", "Open map", "button", _C, "back", "Menus and camera"),
+    Action("start", "Pause", "button", _C, "start", "Menus and camera"),
+    Action("ls", "Left stick press (friends)", "button", _C, "ls", "Menus and camera"),
+    Action("ly", "Left stick up / down (menus)", "stick", _C, "ly", "Menus and camera"),
+    Action("rx", "Look left / right", "stick", _C, "rx", "Menus and camera"),
+    Action("ry", "Look up / down", "stick", _C, "ry", "Menus and camera"),
+    Action("up", "D-pad up (radio)", "button", _C, "up", "Menus and camera"),
+    Action("down", "D-pad down (radio)", "button", _C, "down", "Menus and camera"),
+    Action("left", "D-pad left (radio)", "button", _C, "left", "Menus and camera"),
+    Action("right", "D-pad right (radio)", "button", _C, "right", "Menus and camera"),
 ]
 
 AXIS_ORDER = ("steer", "throttle", "brake", "clutch")
@@ -206,6 +239,242 @@ def wheel_conflicts(settings, wheel):
             for (kind, n), labels in sorted(used.items()) if len(labels) > 1]
 
 
+# --- controller remap --------------------------------------------------------------------------
+PAD_BUTTONS = ("a", "b", "x", "y", "back", "guide", "start", "ls", "rs", "lb", "rb", "up", "down",
+               "left", "right")
+EXTRA_BUTTONS = ("misc1", "paddle1", "paddle2", "paddle3", "paddle4", "touchpad")
+STICK_AXES = ("lx", "ly", "rx", "ry")
+TRIGGERS = ("lt", "rt")
+TARGETS = PAD_BUTTONS + TRIGGERS + STICK_AXES
+DEFAULT_THRESHOLD = 0.5
+_SOURCE = re.compile(r"^(-?)([a-z0-9]+)([+-]?)(?:@([0-9.]+))?$")
+
+
+@dataclass(frozen=True)
+class Source:
+    """One input of the pad: a button, a whole axis (sign -1 inverts it) or one direction of a
+    stick axis (half +1 or -1); threshold: how far an axis must move to press a button."""
+    name: str
+    half: int = 0
+    invert: bool = False
+    threshold: float = DEFAULT_THRESHOLD
+
+    @property
+    def is_button(self):
+        return self.name in PAD_BUTTONS or self.name in EXTRA_BUTTONS
+
+    @property
+    def token(self):
+        if self.name == "none":
+            return "none"
+        t = ("-" if self.invert else "") + self.name + {1: "+", -1: "-"}.get(self.half, "")
+        if not self.is_button and abs(self.threshold - DEFAULT_THRESHOLD) > 1e-6:
+            t += f"@{self.threshold:g}"
+        return t
+
+    def directions(self):
+        """The physical input and the directions of it this source reads, for conflicts."""
+        if self.is_button or self.name in TRIGGERS:
+            return self.name, {1}
+        return self.name, ({self.half} if self.half else {1, -1})
+
+
+NONE = Source("none")
+
+
+def parse_source(token):
+    m = _SOURCE.match("".join((token or "").split()).lower())
+    if not m:
+        return None
+    invert, name, half, threshold = m.groups()
+    if name == "none":
+        return NONE
+    if name in PAD_BUTTONS or name in EXTRA_BUTTONS:
+        return None if invert or half or threshold else Source(name)
+    if name not in STICK_AXES and name not in TRIGGERS:
+        return None
+    if name in TRIGGERS and (invert or half):
+        return None
+    if invert and half:
+        return None
+    t = DEFAULT_THRESHOLD
+    if threshold:
+        try:
+            t = min(0.95, max(0.05, float(threshold)))
+        except ValueError:
+            return None
+    return Source(name, {"+": 1, "-": -1}.get(half, 0), bool(invert), t)
+
+
+def accepts(target, source):
+    """Whether the SDK applies `source` to `target` (unsupported pairs are ignored there)."""
+    if source is NONE or source.name == "none":
+        return True
+    if target in STICK_AXES:
+        return source.name in STICK_AXES and not source.half
+    if target in TRIGGERS:
+        return source.is_button or source.name in TRIGGERS or (source.name in STICK_AXES and not source.invert)
+    return target in PAD_BUTTONS and (source.is_button or not source.invert)
+
+
+def parse_rules(text):
+    """"rt=a,a=none" to {"rt": Source("a"), "a": NONE}; unknown or unsupported pairs are dropped."""
+    rules = {}
+    for item in (text or "").split(","):
+        if "=" not in item:
+            continue
+        target, token = ("".join(p.split()).lower() for p in item.split("=", 1))
+        source = parse_source(token)
+        if target in TARGETS and source is not None and accepts(target, source):
+            rules[target] = source
+    return rules
+
+
+def format_rules(rules):
+    return ",".join(f"{t}={rules[t].token}" for t in TARGETS if t in rules)
+
+
+def parse_remap(text):
+    """{profile key: rules}; a profile key is a GUID (lower case) or '*'."""
+    profiles = {}
+    for part in (text or "").split(";"):
+        if ":" not in part:
+            continue
+        key, rules = part.split(":", 1)
+        key = key.strip().lower()
+        if key == "*" or re.fullmatch(r"[0-9a-f]{32}", key):
+            profiles[key] = parse_rules(rules)
+    return profiles
+
+
+def format_remap(profiles):
+    """'*' comes last. A profile without rules is left out unless it keeps a controller off '*'."""
+    keys = sorted(k for k in profiles if k != "*") + (["*"] if "*" in profiles else [])
+    keep = [k for k in keys if profiles[k] or (k != "*" and profiles.get("*"))]
+    return ";".join(f"{k}:{format_rules(profiles[k])}" for k in keep)
+
+
+def guid_model(guid):
+    """(vendor, product) from an SDL GUID that carries them (bytes 4-5 and 8-9, 6-7 and 10-11 zero),
+    else None (a GUID built from the name)."""
+    try:
+        b = bytes.fromhex(guid)
+    except (TypeError, ValueError):
+        return None
+    if len(b) != 16 or b[6:8] != b"\0\0" or b[10:12] != b"\0\0":
+        return None
+    vid, pid = int.from_bytes(b[4:6], "little"), int.from_bytes(b[8:10], "little")
+    return (vid, pid) if vid else None
+
+
+def profile_key(profiles, guid):
+    """The profile a controller uses: its own GUID, else one of the same model (vendor and product,
+    whichever connection or driver SDL reports), else '*'. None when there is none."""
+    guid = (guid or "").lower()
+    if guid in profiles:
+        return guid
+    model = guid_model(guid)
+    if model:
+        for key in profiles:
+            if key != "*" and guid_model(key) == model:
+                return key
+    return "*" if "*" in profiles else None
+
+
+def controller_rules(text, guid):
+    profiles = parse_remap(text)
+    key = profile_key(profiles, guid)
+    return dict(profiles[key]) if key else {}
+
+
+def controller_binding(rules, action):
+    """The source that drives `action` (its own input when the profile does not bind it)."""
+    if action.field in rules:
+        return rules[action.field], False
+    return Source(action.field), True
+
+
+def set_controller_binding(text, guid, action, source):
+    """The new controller_remap string with `action` bound to `source` in this controller's own
+    profile (made from the profile it used so far); source None clears, "default" resets."""
+    profiles = parse_remap(text)
+    key = (guid or "*").lower()
+    if key not in profiles:
+        used = profile_key(profiles, guid)
+        profiles[key] = dict(profiles[used]) if used else {}
+    rules = profiles[key]
+    if source == "default":
+        rules.pop(action.field, None)
+    else:
+        rules[action.field] = NONE if source is None else source
+    return format_remap(profiles)
+
+
+AXIS_NAMES = {"lx": "Left stick X", "ly": "Left stick Y", "rx": "Right stick X", "ry": "Right stick Y",
+              "lt": "LT", "rt": "RT"}
+HALF_NAMES = {("lx", 1): "Left stick right", ("lx", -1): "Left stick left",
+              ("ly", 1): "Left stick up", ("ly", -1): "Left stick down",
+              ("rx", 1): "Right stick right", ("rx", -1): "Right stick left",
+              ("ry", 1): "Right stick up", ("ry", -1): "Right stick down"}
+BUTTON_NAMES = {"a": "A", "b": "B", "x": "X", "y": "Y", "back": "Back", "guide": "Guide",
+                "start": "Start", "ls": "LS", "rs": "RS", "lb": "LB", "rb": "RB", "up": "D-pad up",
+                "down": "D-pad down", "left": "D-pad left", "right": "D-pad right", "misc1": "Share",
+                "paddle1": "Paddle 1", "paddle2": "Paddle 2", "paddle3": "Paddle 3",
+                "paddle4": "Paddle 4", "touchpad": "Touchpad"}
+
+
+def source_text(source, names=None):
+    """A player-facing name; `names` replaces button names (PlayStation prompts)."""
+    names = {**BUTTON_NAMES, **(names or {})}
+    if source.name == "none":
+        return "Not bound"
+    if source.is_button:
+        return names.get(source.name, source.name)
+    if source.half:
+        text = HALF_NAMES[(source.name, source.half)]
+    else:
+        text = names.get(source.name, AXIS_NAMES[source.name])
+        if source.invert:
+            text += " (inverted)"
+    if abs(source.threshold - DEFAULT_THRESHOLD) > 1e-6:
+        text += f" past {round(source.threshold * 100)}%"
+    return text
+
+
+# Without a remap the SDK's driver also presses Y, B, X and A with the Elite paddles.
+DEFAULT_EXTRA = {"y": "paddle1", "b": "paddle2", "x": "paddle3", "a": "paddle4"}
+
+
+def controller_conflicts(rules, actions=CONTROLLER_ACTIONS, names=None):
+    """[(input text, [row labels])] for physical inputs more than one row reads (a whole stick axis
+    overlaps either of its directions)."""
+    used = []
+    for action in actions:
+        source, default = controller_binding(rules, action)
+        if source.name == "none":
+            continue
+        used.append((action, source))
+        if default and action.field in DEFAULT_EXTRA:
+            used.append((action, Source(DEFAULT_EXTRA[action.field])))
+    out = []
+    seen = set()
+    for i, (action, source) in enumerate(used):
+        if i in seen:
+            continue
+        name, dirs = source.directions()
+        group = [action.label]
+        for j in range(i + 1, len(used)):
+            other_name, other_dirs = used[j][1].directions()
+            if other_name == name and dirs & other_dirs:
+                seen.add(j)
+                if used[j][0].label not in group:
+                    group.append(used[j][0].label)
+        if len(group) > 1:
+            out.append((source_text(Source(name), names) if source.is_button or name in TRIGGERS
+                        else AXIS_NAMES[name], group))
+    return out
+
+
 # --- detection ---------------------------------------------------------------------------------
 def norm(raw):
     """An SDL axis value as the wheel driver reads it (Norm): -1 to 1."""
@@ -226,16 +495,19 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class Detection:
-    kind: str           # "axis" or "button"
+    kind: str           # "axis" or "button" (wheel); "source" (controller)
     number: int = -1    # axis or button number
     direction: int = 0  # axis: +1 moved up from its rest, -1 down
     rest: int = 0       # axis: where it rested when binding started
+    source: Source | None = None
 
     def describe(self):
         if self.kind == "button":
             return f"Button {self.number}"
-        return (f"Axis {self.number}, {'up' if self.direction > 0 else 'down'} from "
-                f"{rest_text(self.rest)}")
+        if self.kind == "axis":
+            return (f"Axis {self.number}, {'up' if self.direction > 0 else 'down'} from "
+                    f"{rest_text(self.rest)}")
+        return source_text(self.source)
 
 
 def rest_text(raw):
@@ -246,16 +518,20 @@ def rest_text(raw):
 
 class Detector:
     """Waits for the first input that changes from where it was when binding started. kind: a
-    wheel row's kind ("axis", "button"; "steer" takes a smaller turn).
+    wheel row's kind ("axis", "button"; "steer" takes a smaller turn) or, with controller, a
+    controller target's ("button", "trigger", "stick"; the mapped gamepad inputs).
     Inputs held at the start count only after they were released."""
-    def __init__(self, baseline, kind, threshold=None):
+    def __init__(self, baseline, kind, controller=False, threshold=None):
         self.base = baseline
         self.kind = kind
+        self.controller = controller
         self.threshold = threshold if threshold is not None else (
             0.15 if kind == "steer" else 0.5)
         self.released = set()
 
     def feed(self, snap):
+        if self.controller:
+            return self._pad(snap)
         if self.kind in ("axis", "steer"):
             for n, raw in enumerate(snap.axes):
                 if n >= len(self.base.axes):
@@ -270,6 +546,34 @@ class Detector:
                 self.released.add(n)
             if down and (not held or n in self.released):
                 return Detection("button", n)
+        return None
+
+    def _pad(self, snap):
+        base_axes = self.base.pad_axes or (0.0,) * 6
+        names = ("lx", "ly", "rx", "ry", "lt", "rt")
+        if self.kind != "stick":
+            for name in PAD_BUTTONS + EXTRA_BUTTONS:
+                down = name in snap.pad_buttons
+                held = name in self.base.pad_buttons
+                if held and not down:
+                    self.released.add(name)
+                if down and (not held or name in self.released) and name != "guide":
+                    return Detection("source", source=Source(name))
+        for i, name in enumerate(names):
+            if i >= len(snap.pad_axes):
+                break
+            delta = snap.pad_axes[i] - base_axes[i]
+            if abs(delta) < self.threshold:
+                continue
+            sign = 1 if delta > 0 else -1
+            if name in TRIGGERS:
+                if self.kind != "stick" and sign > 0:
+                    return Detection("source", source=Source(name))
+                continue
+            if self.kind == "stick":
+                # The row asks for right or up: the other way binds the axis inverted.
+                return Detection("source", source=Source(name, invert=sign < 0))
+            return Detection("source", source=Source(name, half=sign))
         return None
 
 

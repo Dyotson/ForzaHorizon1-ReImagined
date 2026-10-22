@@ -15,6 +15,14 @@ from .widgets import label
 BIND_TIMEOUT = 10.0  # seconds without an input before a Bind gives up
 HATS = {1: "up", 2: "right", 4: "down", 8: "left", 3: "up right", 6: "down right", 12: "down left",
         9: "up left"}
+SONY = 0x054C
+PLAYSTATION_NAMES = {"a": "Cross", "b": "Circle", "x": "Square", "y": "Triangle", "lb": "L1",
+                     "rb": "R1", "lt": "L2", "rt": "R2", "ls": "L3", "rs": "R3", "back": "Create",
+                     "start": "Options", "guide": "PS", "misc1": "Mute"}
+PAD_AXES = ("Left stick X", "Left stick Y", "Right stick X", "Right stick Y", "LT", "RT")
+LAMP_NAMES = {"back": "Back", "guide": "Guide", "start": "Start", "up": "Up", "down": "Down",
+              "left": "Left", "right": "Right", "misc1": "Misc", "paddle1": "P1", "paddle2": "P2",
+              "paddle3": "P3", "paddle4": "P4", "touchpad": "Pad"}
 
 
 class InputView(QWidget):
@@ -24,28 +32,38 @@ class InputView(QWidget):
     def __init__(self):
         super().__init__()
         self.snap = None
+        self.names = None  # a controller: its mapped inputs, by name ({button: label})
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAccessibleName("Live view of the selected device's axes and buttons")
         self.setMinimumHeight(40)
 
-    def set_snapshot(self, snap):
-        old = self.snap
-        self.snap = snap
-        if old is None or snap is None or (len(old.axes), len(old.buttons), len(old.hats)) != \
+    def set_snapshot(self, snap, names=None):
+        old, old_names = self.snap, self.names
+        self.snap, self.names = snap, names
+        if old is None or snap is None or (old_names is None) != (names is None) or \
+                (len(old.axes), len(old.buttons), len(old.hats)) != \
                 (len(snap.axes), len(snap.buttons), len(snap.hats)):
             self.setFixedHeight(self.height_for(self.width()))
         self.update()
 
+    def lamp_width(self):
+        return 48 if self.names is not None else self.LAMP
+
     def lamps_per_row(self, width):
-        return max(1, (width + self.GAP) // (self.LAMP + self.GAP))
+        return max(1, (width + self.GAP) // (self.lamp_width() + self.GAP))
+
+    def counts(self):
+        if self.names is not None:
+            return len(PAD_AXES), len(self.names), 0
+        return len(self.snap.axes), len(self.snap.buttons), len(self.snap.hats)
 
     def height_for(self, width):
         if not self.snap:
             return 40
-        n = len(self.snap.buttons)
+        axes, n, hats = self.counts()
         rows = (n + self.lamps_per_row(width) - 1) // self.lamps_per_row(width) if n else 0
-        return (len(self.snap.axes) * self.ROW + (12 if n else 0) + rows * (self.LAMP + self.GAP)
-                + (self.ROW + 6 if self.snap.hats else 0) + 4)
+        return (axes * self.ROW + (12 if n else 0) + rows * (self.LAMP + self.GAP)
+                + (self.ROW + 6 if hats else 0) + 4)
 
     def resizeEvent(self, event):
         self.setFixedHeight(self.height_for(self.width()))
@@ -63,35 +81,46 @@ class InputView(QWidget):
             return
         y = 0
         w = self.width()
-        for n, raw in enumerate(self.snap.axes):
+        named = self.names is not None
+        if named:
+            pad = self.snap.pad_axes or (0.0,) * 6
+            axes = [(name, (v + 1) / 2 if i < 4 else v, f"{v:+.2f}" if i < 4 else f"{v:.2f}")
+                    for i, (name, v) in enumerate(zip(PAD_AXES, pad))]
+            lamps = [(label_, name in self.snap.pad_buttons) for name, label_ in self.names.items()]
+        else:
+            axes = [(f"Axis {n}", (bindings.norm(raw) + 1) / 2, str(raw))
+                    for n, raw in enumerate(self.snap.axes)]
+            lamps = [(str(n), down) for n, down in enumerate(self.snap.buttons)]
+        left = 104 if named else 64
+        for name, frac, text in axes:
             p.setPen(QColor(theme.MUTED))
-            p.drawText(QRectF(0, y, 60, self.ROW), Qt.AlignLeft | Qt.AlignVCenter, f"Axis {n}")
-            track = QRectF(64, y + 5, max(10, w - 128), self.ROW - 10)
+            p.drawText(QRectF(0, y, left - 4, self.ROW), Qt.AlignLeft | Qt.AlignVCenter, name)
+            track = QRectF(left, y + 5, max(10, w - left - 64), self.ROW - 10)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(theme.BORDER))
             p.drawRoundedRect(track, 4, 4)
-            frac = (bindings.norm(raw) + 1) / 2
             p.setBrush(QColor(theme.ORANGE))
             p.drawRoundedRect(QRectF(track.x(), track.y(), track.width() * frac, track.height()), 4, 4)
             p.setPen(QPen(QColor(theme.TEXT), 1))
             mid = track.x() + track.width() / 2
             p.drawLine(int(mid), int(track.y()) - 2, int(mid), int(track.bottom()) + 2)
             p.setPen(QColor(theme.MUTED))
-            p.drawText(QRectF(w - 60, y, 60, self.ROW), Qt.AlignRight | Qt.AlignVCenter, str(raw))
+            p.drawText(QRectF(w - 60, y, 60, self.ROW), Qt.AlignRight | Qt.AlignVCenter, text)
             y += self.ROW
-        if self.snap.buttons:
+        if lamps:
             y += 12
             per = self.lamps_per_row(w)
-            for n, down in enumerate(self.snap.buttons):
+            lw = self.lamp_width()
+            for n, (text, down) in enumerate(lamps):
                 r, c = divmod(n, per)
-                rect = QRectF(c * (self.LAMP + self.GAP), y + r * (self.LAMP + self.GAP), self.LAMP, self.LAMP)
+                rect = QRectF(c * (lw + self.GAP), y + r * (self.LAMP + self.GAP), lw, self.LAMP)
                 p.setPen(QPen(QColor(theme.ORANGE if down else theme.BORDER), 2))
                 p.setBrush(QColor(theme.ORANGE) if down else Qt.NoBrush)
-                p.drawEllipse(rect)
+                p.drawRoundedRect(rect, self.LAMP / 2, self.LAMP / 2)
                 p.setPen(QColor(theme.BG if down else theme.MUTED))
-                p.drawText(rect, Qt.AlignCenter, str(n))
-            y += ((len(self.snap.buttons) + per - 1) // per) * (self.LAMP + self.GAP)
-        if self.snap.hats:
+                p.drawText(rect, Qt.AlignCenter, text)
+            y += ((len(lamps) + per - 1) // per) * (self.LAMP + self.GAP)
+        if self.snap.hats and not named:
             y += 6
             text = "   ".join(f"Hat {n}: {HATS.get(v, 'centred')}" for n, v in enumerate(self.snap.hats))
             p.setPen(QColor(theme.ORANGE if any(self.snap.hats) else theme.MUTED))
@@ -337,6 +366,10 @@ class BindingsEditor(QWidget):
         self.table.setVerticalSpacing(4)
         lay.addWidget(self.table_box)
         tools = QHBoxLayout()
+        self.reset_all = QPushButton("Reset all to default")
+        self.reset_all.clicked.connect(self.reset_everything)
+        self.reset_all.hide()
+        tools.addWidget(self.reset_all)
         self.calibrate = QPushButton("Calibrate wheel")
         self.calibrate.clicked.connect(self.begin_calibration)
         self.calibrate.hide()
@@ -444,10 +477,23 @@ class BindingsEditor(QWidget):
         return bool(bindings.known_wheel(w.vid, w.pid)) and w.num_axes > 3
 
     # --- rows ---------------------------------------------------------------------------------
+    def kind(self):
+        return self.kind_of(self.device) if self.device is not None else None
+
     def actions(self):
-        if self.device is not None and self.kind_of(self.device) == "wheel":
-            return bindings.WHEEL_ACTIONS
-        return []
+        return {"wheel": bindings.WHEEL_ACTIONS,
+                "controller": bindings.CONTROLLER_ACTIONS}.get(self.kind(), [])
+
+    def names(self):
+        """Button names for this controller's prompts (PlayStation pads have their own)."""
+        return PLAYSTATION_NAMES if self.device is not None and self.device.vid == SONY else {}
+
+    def rules(self):
+        return bindings.controller_rules(self.settings().get("controller_remap", ""), self.device.guid)
+
+    def lamp_names(self):
+        names = {**bindings.BUTTON_NAMES, **LAMP_NAMES, **self.names()}
+        return {n: names[n] for n in bindings.PAD_BUTTONS + bindings.EXTRA_BUTTONS}
 
     def show_device(self):
         while self.table.count():
@@ -455,8 +501,9 @@ class BindingsEditor(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self.rows = []
-        kind = self.kind_of(self.device) if self.device is not None else None
+        kind = self.kind()
         self.calibrate.setVisible(kind == "wheel")
+        self.reset_all.setVisible(kind in ("wheel", "controller"))
         if kind == "wheel":
             name = bindings.known_wheel(self.device.vid, self.device.pid)
             self.intro.setText(
@@ -466,7 +513,11 @@ class BindingsEditor(QWidget):
                    "pedals released then). ")
                 + "Changes apply the next time the game starts.")
         elif kind == "controller":
-            self.intro.setText("Controllers use the game's standard layout.")
+            self.intro.setText(
+                "Bind a row, then press the button, pull the trigger or move the stick you want for "
+                "it: a button can work a trigger (a full press) and a trigger or stick direction a "
+                "button. These bindings belong to this controller model, so another controller "
+                "keeps its own. Changes apply the next time the game starts (SDL input backend).")
         elif kind == "unused":
             self.intro.setText("The game does not use this device: it is neither a controller SDL "
                                "knows nor a wheel. To use it as a wheel, set Racing wheel to On in "
@@ -496,9 +547,15 @@ class BindingsEditor(QWidget):
         return section
 
     def binding_text(self, action):
+        if self.kind() == "controller":
+            source, default = bindings.controller_binding(self.rules(), action)
+            text = bindings.source_text(source, self.names())
+            return text + (" (default)" if default else "")
         return bindings.wheel_binding_text(action, self.settings(), self.wheel())
 
     def conflict_list(self):
+        if self.kind() == "controller":
+            return bindings.controller_conflicts(self.rules(), names=self.names())
         return bindings.wheel_conflicts(self.settings(), self.wheel())
 
     def refresh(self):
@@ -518,6 +575,11 @@ class BindingsEditor(QWidget):
 
     # --- binding ------------------------------------------------------------------------------
     def prompt(self, action):
+        if self.kind() == "controller":
+            if action.kind == "stick":
+                way = "right" if action.field in ("lx", "rx") else "up"
+                return f"Move the stick for {action.label} to the {way}"
+            return f"Press the button, trigger or stick direction for {action.label}"
         if action.key == "steer":
             return "Turn the wheel to the right"
         if action.kind == "axis":
@@ -532,8 +594,10 @@ class BindingsEditor(QWidget):
         if self.snap is None:
             self.status.setText("Select a connected device first.")
             return
-        kind = "steer" if row.action.key == "steer" else row.action.kind
-        self.binding = (row, bindings.Detector(self.snap, kind), time.monotonic() + BIND_TIMEOUT)
+        controller = self.kind() == "controller"
+        kind = "steer" if row.action.key == "steer" and not controller else row.action.kind
+        self.binding = (row, bindings.Detector(self.snap, kind, controller),
+                        time.monotonic() + BIND_TIMEOUT)
         self.status.setText(f"{self.prompt(row.action)} now (press a button or move an axis). "
                             "Esc cancels.")
         self.refresh()
@@ -548,11 +612,18 @@ class BindingsEditor(QWidget):
     def finish(self, row, found):
         self.binding = None
         self.apply(self.changes_for(row.action, found))
-        self.status.setText(f"{row.action.label}: {found.describe()}.")
+        what = bindings.source_text(found.source, self.names()) if found.source else found.describe()
+        self.status.setText(f"{row.action.label}: {what}.")
         self.refresh()
+
+    def remap_changes(self, action, source):
+        text = self.settings().get("controller_remap", "")
+        return {"controller_remap": bindings.set_controller_binding(text, self.device.guid, action, source)}
 
     def changes_for(self, action, found):
         settings = self.settings()
+        if found.kind == "source":
+            return self.remap_changes(action, found.source)
         changes = bindings.set_wheel_binding(settings, action, found.number)
         if found.kind == "axis":
             if action.key == "steer":
@@ -564,13 +635,33 @@ class BindingsEditor(QWidget):
         return changes
 
     def clear(self, row):
-        self.apply(bindings.set_wheel_binding(self.settings(), row.action, None))
+        self.apply(self.remap_changes(row.action, None) if self.kind() == "controller"
+                   else bindings.set_wheel_binding(self.settings(), row.action, None))
         self.status.setText(f"{row.action.label}: not bound.")
         self.refresh()
 
     def reset(self, row):
-        self.apply(bindings.set_wheel_binding(self.settings(), row.action, "default"))
+        self.apply(self.remap_changes(row.action, "default") if self.kind() == "controller"
+                   else bindings.set_wheel_binding(self.settings(), row.action, "default"))
         self.status.setText(f"{row.action.label}: back to its default.")
+        self.refresh()
+
+    def reset_everything(self):
+        if self.binding is not None or self.device is None:
+            return
+        if self.kind() == "controller":
+            text = self.settings().get("controller_remap", "")
+            profiles = bindings.parse_remap(text)
+            key = bindings.profile_key(profiles, self.device.guid)
+            if key and key != "*":
+                del profiles[key]
+            elif key == "*":
+                profiles[self.device.guid.lower()] = {}  # an empty profile of its own shadows '*'
+
+            self.apply({"controller_remap": bindings.format_remap(profiles)})
+        else:
+            self.apply({"wheel_axes": "", "wheel_buttons": "", "wheel_shifter_buttons": ""})
+        self.status.setText("All bindings are back to their defaults.")
         self.refresh()
 
     # --- calibration --------------------------------------------------------------------------
@@ -614,7 +705,7 @@ class BindingsEditor(QWidget):
             self.scan(force=True)
             return
         self.snap = snap
-        self.view.set_snapshot(snap)
+        self.view.set_snapshot(snap, self.lamp_names() if self.kind() == "controller" else None)
         if self.capture:
             self.calibration.feed(snap)
         if self.binding is not None:
