@@ -275,7 +275,8 @@ add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is. The G29, G920 and G923 have their own maps "
+    "left=14,right=15. The hat is the d-pad unless a direction is set here (-1 turns it off). "
+    "The G29, G920 and G923 have their own maps "
     "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,

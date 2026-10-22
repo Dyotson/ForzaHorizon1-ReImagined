@@ -200,6 +200,8 @@ def wheel_binding_text(action, settings, wheel):
         else:
             text = f"Axis {n}"
     elif n is None:
+        # A d-pad direction set in wheel_buttons replaces the hat's (patch 0127): only the
+        # default reads the hat, and -1 turns the direction off.
         text = "Hat (d-pad)" if action.field in ("up", "down", "left", "right") and default \
             and wheel.num_hats else "Not bound"
     else:

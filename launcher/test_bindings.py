@@ -98,6 +98,24 @@ class ConflictTests(unittest.TestCase):
         self.assertEqual(b.wheel_conflicts(s, OTHER), [])
 
 
+class ReviewTests(unittest.TestCase):
+    """#284 review: a cleared d-pad direction."""
+    def test_dpad_rows_show_what_the_driver_reads(self):
+        # The driver reads the hat only for directions wheel_buttons leaves out (patch 0127):
+        # Clear writes up=-1, which now turns hat up off, and a button replaces it.
+        s = settings()
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Hat (d-pad)")
+        s.update(b.set_wheel_binding(s, ACT["up"], None))
+        self.assertEqual(s["wheel_buttons"], "up=-1")
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Not bound")
+        self.assertEqual(b.wheel_binding_text(ACT["down"], s, OTHER), "Hat (d-pad)")
+        s.update(b.set_wheel_binding(s, ACT["up"], 12))
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Button 12")
+        s.update(b.set_wheel_binding(s, ACT["up"], "default"))
+        self.assertEqual((s["wheel_buttons"], b.wheel_binding_text(ACT["up"], s, OTHER)),
+                         ("", "Hat (d-pad)"))
+
+
 class DetectorTests(unittest.TestCase):
     base = b.Snapshot((0, 32767, 32767, -32768), (False, True, False), (0,))
 
@@ -410,6 +428,12 @@ class EditorTests(unittest.TestCase):
         self.ed.reset(self.row("x"))
         self.assertEqual(self.cfg.settings["wheel_buttons"], "rb=7")
         self.assertEqual(self.ed.conflicts.text() if self.ed.conflicts.isVisible() else "", "")
+
+    def test_cleared_dpad_direction_is_not_bound(self):
+        self.assertEqual(self.row("up").value.text(), "Hat (d-pad)")
+        self.ed.clear(self.row("up"))
+        self.assertEqual(self.cfg.settings["wheel_buttons"], "up=-1")
+        self.assertEqual(self.row("up").value.text(), "Not bound")
 
     def test_steering_direction_sets_the_invert_switch(self):
         self.ed.begin(self.row("steer"))
