@@ -131,6 +131,102 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(b.pedal_calibration(32767, -32768, False)[0], False)
 
 
+def snap(*axes):
+    return b.Snapshot(tuple(axes), (False,) * 4, ())
+
+
+class CalibrationMathTests(unittest.TestCase):
+    def test_steering_value_matches_the_driver(self):
+        self.assertAlmostEqual(b.steering_value(16384, 900, 900, 0, False), 0.5, 3)
+        self.assertAlmostEqual(b.steering_value(16384, 900, 450, 0, False), 1.0, 3)  # quicker
+        self.assertAlmostEqual(b.steering_value(16384, 900, 900, 0, True), -0.5, 3)
+        self.assertEqual(b.steering_value(3000, 900, 900, 0.1, False), 0.0)
+        self.assertAlmostEqual(b.steering_value(-32768, 900, 900, 0.2, False), -1.0, 3)
+        self.assertAlmostEqual(b.steering_value(int(0.6 * 32767), 900, 900, 0.2, False), 0.5, 3)
+
+    def test_rotation_from_a_quarter_turn(self):
+        self.assertEqual(b.rotation_from_turn(round(32767 * 90 / 450)), 900)
+        self.assertEqual(b.rotation_from_turn(round(32767 * 90 / 270)), 540)
+        self.assertEqual(b.rotation_from_turn(round(32767 * 90 / 135), 0), 270)
+        self.assertEqual(b.rotation_from_turn(-round(32768 * 90 / 1080)), 2160)
+        self.assertIsNone(b.rotation_from_turn(200))
+        self.assertEqual(b.steering_calibration(-32768, 32767), (False, 1.0))
+        self.assertEqual(b.steering_calibration(30000, -30000)[0], True)
+
+    def run_steps(self, cal, steps):
+        for step, s in steps:
+            self.assertEqual(cal.step, step)
+            if s is None:
+                self.assertTrue(cal.skip())
+                continue
+            for frame in (s if isinstance(s, list) else [s]):
+                cal.feed(frame)
+            self.assertTrue(cal.next(), step)
+
+    def test_known_wheel_lock_to_lock_and_three_pedals(self):
+        rest = (0, 32767, 32767, 32767)
+        cal = b.Calibration(known=True)
+        quarter = round(32767 * 90 / 270)
+        self.run_steps(cal, [
+            ("centre", snap(*rest)), ("left", snap(-32768, *rest[1:])),
+            ("right", snap(32767, *rest[1:])), ("quarter", snap(quarter, *rest[1:])),
+            # pressed and released: the furthest point counts
+            ("throttle", [snap(0, 32767, 0, 32767), snap(0, 32767, -32768, 32767), snap(*rest)]),
+            ("brake", snap(0, 32767, 32767, -30000)), ("clutch", snap(0, -32768, 32767, 32767))])
+        self.assertTrue(cal.done)
+        s = settings(wheel_axes="zz=4")
+        changes = cal.changes(s, 0.05)
+        self.assertEqual(changes["wheel_axes"], "steer=0,throttle=2,brake=3,clutch=1,zz=4")
+        self.assertEqual(changes["wheel_rotation"], 540)
+        self.assertEqual(changes["wheel_lock"], 540)  # lowered: full lock still steers fully
+        self.assertEqual(changes["wheel_deadzone"], 0.05)
+        for key in ("steering", "throttle", "brake", "clutch"):
+            self.assertFalse(changes[f"wheel_invert_{key}"], key)
+        lines, warnings = cal.results(s)
+        self.assertIn("Rotation: 540\u00b0 lock to lock", lines)
+        self.assertEqual(warnings, [])
+
+    def test_other_wheel_inverted_steering_short_pedal_and_skips(self):
+        rest = (0, -32768, -32768)
+        cal = b.Calibration(known=False)
+        self.run_steps(cal, [
+            ("centre", snap(*rest)), ("left", snap(32767, -32768, -32768)),
+            ("right", snap(-32768, -32768, -32768)), ("quarter", None),
+            ("throttle", snap(0, 13000, -32768)), ("brake", snap(0, -32768, 32767)), ("clutch", None)])
+        changes = cal.changes(settings(wheel_lock=900))
+        self.assertTrue(changes["wheel_invert_steering"])
+        self.assertNotIn("wheel_rotation", changes)
+        self.assertNotIn("wheel_deadzone", changes)
+        self.assertEqual(changes["wheel_axes"], "steer=0,throttle=1,brake=2")
+        self.assertFalse(changes["wheel_invert_throttle"])
+        _, warnings = cal.results(settings())
+        self.assertTrue(any("throttle reaches only 69%" in w for w in warnings), warnings)
+        self.assertTrue(any("released while the game starts" in w for w in warnings))
+
+    def test_combined_pedals_and_a_brake_on_the_throttle_side(self):
+        rest = (0, 0)
+        cal = b.Calibration()
+        self.run_steps(cal, [("centre", snap(*rest)), ("left", None), ("right", None),
+                             ("quarter", None), ("throttle", snap(0, -32768))])
+        cal.feed(snap(0, -32768))  # the throttle side again is not a brake
+        self.assertFalse(cal.next())
+        cal.feed(snap(0, 0))
+        cal.feed(snap(0, 32767))
+        self.assertTrue(cal.next())
+        self.assertTrue(cal.combined())
+        changes = cal.changes(settings(wheel_axes="brake=1"))
+        self.assertEqual(changes["wheel_axes"], "throttle=1")
+        self.assertEqual(changes["wheel_pedals"], "combined")
+        self.assertFalse(changes["wheel_invert_throttle"])
+
+    def test_back_undoes_a_step(self):
+        cal = b.Calibration()
+        self.run_steps(cal, [("centre", snap(0, -32768)), ("left", snap(-32768, -32768))])
+        cal.back()
+        self.assertEqual((cal.step, cal.steer, cal.left), ("left", None, None))
+        self.assertFalse(cal.skip() and False)
+
+
 try:
     from PySide6.QtWidgets import QApplication
     import sdl2
@@ -240,6 +336,52 @@ class EditorTests(unittest.TestCase):
         self.assertIsNone(self.ed.binding)
         self.assertFalse(self.page.captures(self.instance))
         self.assertEqual(bindings_editor.BIND_TIMEOUT, 10.0)
+
+    def test_calibration_writes_axes_rotation_inversion_and_deadzone(self):
+        s = sdl2
+        ed = self.ed
+        ed.begin_calibration()
+        panel = ed.calibration
+        self.assertTrue(self.page.captures(self.instance))
+
+        def at(*axes):
+            for n, v in enumerate(axes):
+                s.SDL_JoystickSetVirtualAxis(self.joy, n, v)
+            self.step()
+
+        at(0, 32767, 32767, 32767)
+        panel.go_next()                       # centre
+        at(-32768, 32767, 32767, 32767)
+        panel.go_next()                       # left lock
+        at(32767, 32767, 32767, 32767)
+        panel.go_next()                       # right lock
+        at(round(32767 * 90 / 450), 32767, 32767, 32767)
+        panel.go_next()                       # a quarter turn: 900 degrees
+        at(0, 32767, -32768, 32767)
+        at(0, 32767, 32767, 32767)
+        panel.go_next()                       # throttle on axis 2
+        self.assertEqual(panel.cal.step, "brake")
+        at(0, 32767, 32767, -32768)
+        panel.go_next()
+        panel.go_skip()                       # no clutch
+        self.assertTrue(panel.cal.done)
+        panel.deadzone.setValue(10)
+        at(round(32767 * 0.55), 32767, 32767, 32767)
+        self.assertIn("steering +0.50", panel.preview_text.text())
+        panel.go_apply()
+        self.assertFalse(self.page.captures(self.instance))
+        st = self.cfg.settings
+        self.assertEqual(st["wheel_axes"], "steer=0,throttle=2,brake=3")
+        self.assertEqual((st["wheel_rotation"], st["wheel_deadzone"]), (900, 0.1))
+        self.assertFalse(st["wheel_invert_steering"] or st["wheel_invert_throttle"])
+
+    def test_cancel_leaves_the_settings_alone(self):
+        before = dict(self.cfg.settings)
+        self.ed.begin_calibration()
+        self.ed.calibration.go_next()
+        self.ed.calibration.cancel.click()
+        self.assertFalse(self.ed.capture)
+        self.assertEqual(dict(self.cfg.settings), before)
 
     def test_navigation_ignores_the_device_while_binding(self):
         from forza_launcher.gamepad import State

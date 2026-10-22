@@ -301,3 +301,261 @@ def pedal_calibration(rest_raw, full_raw, known):
     invert = error(True) + 1e-6 < error(False)
     travel = abs(norm(full_raw) - norm(rest_raw)) / 2.0
     return invert, min(1.0, travel)
+
+
+# --- calibration -------------------------------------------------------------------------------
+def steering_value(raw, rotation, lock, deadzone, invert):
+    """The steering the driver sends (-1 to 1) for an axis value: scaled by rotation / lock,
+    inverted, then the deadzone (the steps of ComputeStateLocked)."""
+    s = norm(raw) * (rotation / max(1, lock)) * (-1.0 if invert else 1.0)
+    a = abs(s)
+    if a <= deadzone or deadzone >= 1:
+        return 0.0
+    out = min(1.0, (a - deadzone) / (1.0 - deadzone))
+    return out if s > 0 else -out
+
+
+def rotation_from_turn(raw, centre_raw=0, degrees=90):
+    """The wheel's rotation (lock to lock, degrees) from the axis read with the wheel turned
+    `degrees` from the centre: the axis spans the whole rotation, so one side of it is half.
+    Rounded to the setting's 10 degree steps; None when the wheel was not turned."""
+    moved = abs(norm(raw) - norm(centre_raw))
+    if moved < 0.02:
+        return None
+    return int(max(90, min(2520, round(2 * degrees / moved / 10) * 10)))
+
+
+def steering_calibration(left_raw, right_raw):
+    """(invert, travel) from the axis at full left lock and at full right lock."""
+    left, right = norm(left_raw), norm(right_raw)
+    return left > right, min(1.0, abs(right - left) / 2.0)
+
+
+def busiest_axis(baseline, snap, exclude=()):
+    """(axis, distance) of the axis furthest from where it was in `baseline`."""
+    best, best_delta = None, 0.0
+    for n, raw in enumerate(snap.axes):
+        if n in exclude or n >= len(baseline.axes):
+            continue
+        delta = abs(norm(raw) - norm(baseline.axes[n]))
+        if delta > best_delta:
+            best, best_delta = n, delta
+    return best, best_delta
+
+
+class Calibration:
+    """Wheel calibration, step by step: centre (wheel centred, pedals released), full left and full
+    right lock (the steering axis, its direction and travel), a quarter turn (the rotation), then
+    each pedal pressed fully (its axis, travel and invert switch). Any step but the first can be
+    skipped, which keeps what the settings have for it. `known`: a wheel with a built-in profile
+    (its pedals are taken to rest at the maximum)."""
+    STEPS = ("centre", "left", "right", "quarter", "throttle", "brake", "clutch", "finish")
+    PROMPTS = {
+        "centre": "Centre the wheel and release every pedal, then press Next.",
+        "left": "Turn the wheel all the way to the left, to its lock, and hold it there.",
+        "right": "Now turn it all the way to the right, to its lock, and hold it there.",
+        "quarter": "Turn the wheel a quarter turn to the right from the centre: the top of the "
+                   "rim points right (90°). Hold it there.",
+        "throttle": "Press the throttle pedal all the way down and release it.",
+        "brake": "Press the brake pedal all the way down and release it. "
+                 "One pedal axis for both (combined pedals)? Press the brake side.",
+        "clutch": "Press the clutch pedal all the way down and release it (Skip without one).",
+        "finish": "Check the steering deadzone, then Apply.",
+    }
+    MIN_MOVE = {"left": 0.3, "right": 0.3, "quarter": 0.02, "throttle": 0.3, "brake": 0.3, "clutch": 0.3}
+
+    def __init__(self, known=False):
+        self.known = known
+        self.index = 0
+        self.base = None
+        self.steer = None   # axis
+        self.left = self.right = None  # raw values at the locks
+        self.quarter = None
+        self.pedals = {}    # name -> (axis, rest, full)
+        self.peak = None    # (axis, raw furthest from the centre snapshot) in a pedal step
+        self.far = {}       # axis -> (distance, raw) furthest from the centre in this step
+        self.last = None
+
+    @property
+    def step(self):
+        return self.STEPS[self.index]
+
+    @property
+    def done(self):
+        return self.step == "finish"
+
+    def exclude(self):
+        used = {self.steer} | {p[0] for n, p in self.pedals.items()}
+        if self.step == "brake" and "throttle" in self.pedals:
+            used.discard(self.pedals["throttle"][0])  # combined pedals share the axis
+        return used - {None}
+
+    def feed(self, snap):
+        """Track the step's input; returns a line describing what is seen."""
+        self.last = snap
+        step = self.step
+        if self.base is None or step in ("centre", "finish"):
+            return ""
+        if step in ("left", "right", "quarter"):
+            axis = self.steer
+            if axis is None:
+                axis, _ = busiest_axis(self.base, snap, {p[0] for p in self.pedals.values()})
+            if axis is None or axis >= len(snap.axes):
+                return ""
+            return f"Steering: axis {axis} at {round(norm(snap.axes[axis]) * 100)}%"
+        excluded = self.exclude()
+        for n, raw in enumerate(snap.axes):
+            if n in excluded or n >= len(self.base.axes):
+                continue
+            moved = norm(raw) - norm(self.base.axes[n])
+            key = (n, 1 if moved > 0 else -1)
+            if abs(moved) > self.far.get(key, (0.0, 0))[0]:
+                self.far[key] = (abs(moved), raw)
+        t = self.pedals.get("throttle")
+        # Only the other side of the throttle's axis can be a brake (combined pedals).
+        taken = (t[0], 1 if norm(t[2]) > norm(t[1]) else -1) if step == "brake" and t else None
+        best = max((k for k in self.far if k != taken), key=lambda k: self.far[k][0], default=None)
+        if best is not None and self.far[best][0] >= self.MIN_MOVE[step] / 2:
+            self.peak = (best[0], self.far[best][1])
+        if self.peak is None:
+            return "Waiting for a pedal…"
+        axis, raw = self.peak
+        travel = abs(norm(raw) - norm(self.base.axes[axis])) / 2
+        return f"{step.capitalize()}: axis {axis}, pressed {round(travel * 100)}% of its travel"
+
+    def can_advance(self):
+        step = self.step
+        if step == "centre":
+            return self.last is not None
+        if step == "finish":
+            return False
+        if step in ("left", "right", "quarter"):
+            if self.last is None or self.base is None:
+                return False
+            axis = self.steer
+            if axis is None:
+                axis, delta = busiest_axis(self.base, self.last, {p[0] for p in self.pedals.values()})
+            else:
+                delta = abs(norm(self.last.axes[axis]) - norm(self.base.axes[axis]))
+            return axis is not None and delta >= self.MIN_MOVE[step]
+        return self.peak is not None and \
+            abs(norm(self.peak[1]) - norm(self.base.axes[self.peak[0]])) >= self.MIN_MOVE[step]
+
+    def next(self):
+        """Record the step from what was fed, then go on."""
+        if not self.can_advance():
+            return False
+        step, snap = self.step, self.last
+        if step == "centre":
+            self.base = snap
+        elif step in ("left", "right", "quarter"):
+            if self.steer is None:
+                self.steer, _ = busiest_axis(self.base, snap, {p[0] for p in self.pedals.values()})
+            setattr(self, step, snap.axes[self.steer])
+        else:
+            axis, raw = self.peak
+            self.pedals[step] = (axis, self.base.axes[axis], raw)
+        self.peak, self.far = None, {}
+        self.index += 1
+        return True
+
+    def skip(self):
+        if self.step in ("centre", "finish"):
+            return False
+        self.peak, self.far = None, {}
+        self.index += 1
+        return True
+
+    def back(self):
+        if self.index == 0:
+            return
+        self.index -= 1
+        self.peak, self.far = None, {}
+        step = self.step
+        if step in ("left", "right", "quarter"):
+            setattr(self, step, None)
+            if step == "left":
+                self.steer = None
+        elif step in self.pedals:
+            del self.pedals[step]
+        elif step == "centre":
+            self.base = None
+
+    def combined(self):
+        """Throttle and brake were found on one axis, in opposite directions."""
+        t, br = self.pedals.get("throttle"), self.pedals.get("brake")
+        return bool(t and br and t[0] == br[0] and (norm(t[2]) > norm(t[1])) != (norm(br[2]) > norm(br[1])))
+
+    def rotation(self):
+        if self.quarter is None or self.base is None or self.steer is None:
+            return None
+        return rotation_from_turn(self.quarter, self.base.axes[self.steer])
+
+    def results(self, settings):
+        """(lines, warnings) to show before Apply."""
+        lines, warnings = [], []
+        if self.steer is not None and self.left is not None and self.right is not None:
+            invert, travel = steering_calibration(self.left, self.right)
+            lines.append(f"Steering: axis {self.steer}{', inverted' if invert else ''}")
+            if travel < 0.9:
+                warnings.append(f"The wheel reaches only {int(travel * 100)}% of its axis at full "
+                                "lock: check the rotation set in the wheel's own software.")
+        rotation = self.rotation()
+        if rotation:
+            lines.append(f"Rotation: {rotation}° lock to lock")
+        for name in ("throttle", "brake", "clutch"):
+            if name not in self.pedals:
+                continue
+            axis, rest, full = self.pedals[name]
+            if self.combined() and name == "brake":
+                lines.append(f"Brake: the other side of axis {axis} (combined pedals)")
+                continue
+            invert, travel = pedal_calibration(rest, full, self.known)
+            lines.append(f"{name.capitalize()}: axis {axis}, rests at {rest_text(rest)}"
+                         f"{', inverted' if invert else ''}")
+            if travel < 0.9 and not (self.combined() and name == "throttle"):
+                warnings.append(f"The {name} reaches only {int(travel * 100)}% of its axis, so a "
+                                f"full press gives {int(travel * 100)}% {name}: check the pedal's "
+                                "range in the wheel's own software.")
+        if not self.known and self.pedals:
+            warnings.append("Keep the pedals released while the game starts: it reads where they "
+                            "rest then.")
+        return lines, warnings
+
+    def changes(self, settings, deadzone=None):
+        """The settings Apply writes. Steps that were skipped leave theirs alone."""
+        out = {}
+        axes = parse_kv(settings.get("wheel_axes", ""))
+        if self.steer is not None and self.left is not None and self.right is not None:
+            axes["steer"] = self.steer
+            out["wheel_invert_steering"], _ = steering_calibration(self.left, self.right)
+        rotation = self.rotation()
+        if rotation:
+            out["wheel_rotation"] = rotation
+            if int(settings.get("wheel_lock", 900)) > rotation:
+                out["wheel_lock"] = rotation  # full lock must still give full steering
+        if self.combined():
+            axis, rest, full = self.pedals["throttle"]
+            axes["throttle"] = axis
+            axes.pop("brake", None)
+            out["wheel_pedals"] = "combined"
+            # Combined: the driver takes the axis below its centre as throttle unless inverted.
+            out["wheel_invert_throttle"] = norm(full) > norm(rest)
+        else:
+            for name in ("throttle", "brake"):
+                if name in self.pedals:
+                    axis, rest, full = self.pedals[name]
+                    axes[name] = axis
+                    out[f"wheel_invert_{name}"], _ = pedal_calibration(rest, full, self.known)
+            if "throttle" in self.pedals and "brake" in self.pedals and \
+                    settings.get("wheel_pedals") == "combined":
+                out["wheel_pedals"] = "auto"
+        if "clutch" in self.pedals:
+            axis, rest, full = self.pedals["clutch"]
+            axes["clutch"] = axis
+            out["wheel_invert_clutch"], _ = pedal_calibration(rest, full, self.known)
+        if axes != parse_kv(settings.get("wheel_axes", "")):
+            out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+        if deadzone is not None:
+            out["wheel_deadzone"] = round(float(deadzone), 2)
+        return out

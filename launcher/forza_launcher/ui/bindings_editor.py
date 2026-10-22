@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                               QSizePolicy, QVBoxLayout, QWidget)
+                               QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
 from .. import bindings, paths, schema
 from ..paths import IS_WINDOWS
@@ -132,11 +132,167 @@ class BindingRow(QWidget):
         self.value.setText(text)
         self.value.setStyleSheet(f"color: {theme.ORANGE};" if conflict else "")
 
+class SteeringPreview(QWidget):
+    """The steering the game would get: -1 (full left) to 1 (full right)."""
+    def __init__(self):
+        super().__init__()
+        self.value = 0.0
+        self.setFixedHeight(22)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setAccessibleName("Steering sent to the game")
+
+    def set_value(self, value):
+        self.value = value
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        track = QRectF(0, 4, self.width(), self.height() - 8)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(theme.BORDER))
+        p.drawRoundedRect(track, 4, 4)
+        mid = track.width() / 2
+        width = mid * abs(self.value)
+        p.setBrush(QColor(theme.ORANGE))
+        x = mid if self.value >= 0 else mid - width
+        p.drawRoundedRect(QRectF(x, track.y(), width, track.height()), 3, 3)
+        p.setPen(QPen(QColor(theme.TEXT), 1))
+        p.drawLine(int(mid), 0, int(mid), self.height())
+
+
+class CalibrationPanel(QWidget):
+    """Wheel calibration, one step at a time (bindings.Calibration does the work)."""
+    finished = Signal(dict)  # the settings to apply; {} when cancelled
+
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+        self.cal = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        self.title = label("", "cardTitle")
+        lay.addWidget(self.title)
+        self.prompt = label("", "")
+        lay.addWidget(self.prompt)
+        self.live = label("", "muted")
+        lay.addWidget(self.live)
+        self.results = label("", "")
+        lay.addWidget(self.results)
+        self.warnings = label("", "")
+        self.warnings.setStyleSheet(f"color: {theme.ORANGE};")
+        lay.addWidget(self.warnings)
+        self.deadzone_box = QWidget()
+        dz = QVBoxLayout(self.deadzone_box)
+        dz.setContentsMargins(0, 0, 0, 0)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Steering deadzone"), 1)
+        self.deadzone_value = QLabel("")
+        row.addWidget(self.deadzone_value)
+        dz.addLayout(row)
+        self.deadzone = QSlider(Qt.Horizontal)
+        self.deadzone.setRange(0, 50)
+        self.deadzone.setAccessibleName("Steering deadzone")
+        self.deadzone.valueChanged.connect(lambda _v: self.update_preview())
+        dz.addWidget(self.deadzone)
+        dz.addWidget(label("Turn the wheel: the bar is the steering the game gets.", "help"))
+        self.preview = SteeringPreview()
+        dz.addWidget(self.preview)
+        self.preview_text = label("", "muted")
+        dz.addWidget(self.preview_text)
+        lay.addWidget(self.deadzone_box)
+        buttons = QHBoxLayout()
+        self.back = QPushButton("Back")
+        self.back.clicked.connect(self.go_back)
+        self.skip = QPushButton("Skip")
+        self.skip.clicked.connect(self.go_skip)
+        self.next = QPushButton("Next")
+        self.next.clicked.connect(self.go_next)
+        self.apply = QPushButton("Apply")
+        self.apply.clicked.connect(self.go_apply)
+        self.cancel = QPushButton("Cancel")
+        self.cancel.clicked.connect(lambda: self.finished.emit({}))
+        for b in (self.back, self.skip, self.next, self.apply, self.cancel):
+            b.setCursor(Qt.PointingHandCursor)
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        lay.addLayout(buttons)
+
+    def begin(self, known):
+        self.cal = bindings.Calibration(known)
+        self.deadzone.setValue(round(float(self.settings().get("wheel_deadzone", 0.0)) * 100))
+        self.show_step()
+
+    def show_step(self):
+        cal = self.cal
+        n = len(cal.STEPS)
+        self.title.setText(f"Wheel calibration \u00b7 step {cal.index + 1} of {n}")
+        self.prompt.setText(cal.PROMPTS[cal.step])
+        final = cal.done
+        self.back.setEnabled(cal.index > 0)
+        self.skip.setVisible(not final and cal.step != "centre")
+        self.next.setVisible(not final)
+        self.apply.setVisible(final)
+        self.deadzone_box.setVisible(final)
+        self.live.setVisible(not final)
+        if final:
+            lines, warnings = cal.results(self.settings())
+            self.results.setText("\n".join(lines) or "Nothing measured: only the deadzone changes.")
+            self.warnings.setText("\n".join(warnings))
+        self.results.setVisible(final)
+        self.warnings.setVisible(final and bool(self.warnings.text()))
+        self.update_preview()
+
+    def feed(self, snap):
+        if self.cal is None:
+            return
+        text = self.cal.feed(snap)
+        self.live.setText(text)
+        self.next.setEnabled(self.cal.can_advance())
+        if self.cal.done:
+            self.update_preview()
+
+    def settings_after(self):
+        merged = dict(self.settings())
+        merged.update(self.cal.changes(self.settings()))
+        return merged
+
+    def update_preview(self):
+        dz = self.deadzone.value() / 100
+        self.deadzone_value.setText(f"{dz:.2f}")
+        cal = self.cal
+        if cal is None or not cal.done:
+            return
+        s = self.settings_after()
+        axis = bindings.parse_kv(s.get("wheel_axes", "")).get("steer", 0)
+        snap = cal.last
+        raw = snap.axes[axis] if snap is not None and 0 <= axis < len(snap.axes) else 0
+        value = bindings.steering_value(raw, int(s.get("wheel_rotation", 900)),
+                                        int(s.get("wheel_lock", 900)), dz,
+                                        bool(s.get("wheel_invert_steering", False)))
+        self.preview.set_value(value)
+        self.preview_text.setText(f"Axis {axis}: {raw} \u2192 steering {value:+.2f}")
+
+    def go_next(self):
+        if self.cal.next():
+            self.show_step()
+
+    def go_skip(self):
+        if self.cal.skip():
+            self.show_step()
+
+    def go_back(self):
+        self.cal.back()
+        self.show_step()
+
+    def go_apply(self):
+        self.finished.emit(self.cal.changes(self.settings(), self.deadzone.value() / 100))
+
 
 class BindingsEditor(QWidget):
     """The Bindings card's content. `apply(changes)` stores settings ({key: value})."""
     settings_requested = Signal()
-    calibrate_requested = Signal()
 
     def __init__(self, settings, apply):
         super().__init__()
@@ -171,13 +327,18 @@ class BindingsEditor(QWidget):
         self.conflicts.setStyleSheet(f"color: {theme.ORANGE};")
         self.conflicts.hide()
         lay.addWidget(self.conflicts)
-        self.table = QGridLayout()
+        self.calibration = CalibrationPanel(settings)
+        self.calibration.finished.connect(self.end_calibration)
+        self.calibration.hide()
+        lay.addWidget(self.calibration)
+        self.table_box = QWidget()
+        self.table = QGridLayout(self.table_box)
         self.table.setContentsMargins(0, 0, 0, 0)
         self.table.setVerticalSpacing(4)
-        lay.addLayout(self.table)
+        lay.addWidget(self.table_box)
         tools = QHBoxLayout()
         self.calibrate = QPushButton("Calibrate wheel")
-        self.calibrate.clicked.connect(self.calibrate_requested)
+        self.calibrate.clicked.connect(self.begin_calibration)
         self.calibrate.hide()
         tools.addWidget(self.calibrate)
         advanced = QPushButton("Text settings (advanced)")
@@ -214,6 +375,8 @@ class BindingsEditor(QWidget):
 
     def stop(self):
         self.cancel("")
+        if self.capture:
+            self.end_calibration({})
         self.timer.stop()
         if self.backend is not None:
             self.backend.close()
@@ -263,6 +426,8 @@ class BindingsEditor(QWidget):
         if device is not None and self.device is not None and device.instance == self.device.instance:
             return
         self.cancel("")
+        if self.capture:
+            self.end_calibration({})
         self.device = device
         self.snap = None
         if device is not None and self.backend is not None and not self.backend.open(device.instance):
@@ -408,6 +573,31 @@ class BindingsEditor(QWidget):
         self.status.setText(f"{row.action.label}: back to its default.")
         self.refresh()
 
+    # --- calibration --------------------------------------------------------------------------
+    def begin_calibration(self):
+        if self.device is None or self.capture:
+            return
+        self.cancel("")
+        self.capture = True
+        self.table_box.hide()
+        self.conflicts.hide()
+        self.calibrate.setEnabled(False)
+        self.status.setText("")
+        self.calibration.begin(self.known_wheel())
+        self.calibration.show()
+        if self.snap is not None:
+            self.calibration.feed(self.snap)
+
+    def end_calibration(self, changes):
+        self.capture = False
+        self.calibration.hide()
+        self.table_box.show()
+        self.calibrate.setEnabled(True)
+        if changes:
+            self.apply(changes)
+            self.status.setText("Calibration applied.")
+        self.refresh()
+
     def poll(self):
         if self.backend is None:
             return
@@ -418,11 +608,15 @@ class BindingsEditor(QWidget):
         snap = self.backend.read()
         if snap is None:  # unplugged
             self.cancel("The device was disconnected.")
+            if self.capture:
+                self.end_calibration({})
             self.device = None
             self.scan(force=True)
             return
         self.snap = snap
         self.view.set_snapshot(snap)
+        if self.capture:
+            self.calibration.feed(snap)
         if self.binding is not None:
             row, detector, deadline = self.binding
             found = detector.feed(snap)
