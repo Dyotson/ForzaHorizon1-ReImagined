@@ -17,6 +17,14 @@ and ultrawide HUD placement. Irrelevant rows dim immediately without requiring
 hover or selection, and restore when relevant. Inactive values are retained.
 The game's font cache is updated separately from native row input state.
 
+Ultrawide shows the physical window output and automatic drawing size. Its
+rendering controls are read-only because changing them requires a launcher
+restart; frame pacing, filtering and HUD controls still save independently.
+Fractional heights such as 1080 use a 1440-line backing that is downsampled to
+the window. Default/720p and custom launcher output modes display their current
+value instead of selecting 1080p visually. Windows live rendering controls at
+those modes unlock after choosing a supported 1080p/1440p/4K output.
+
 MSAA scene resolution is independent of output/HUD resolution: at 1440p output,
 1x renders a 1280x720 scene with a 2560x1440 HUD; 2x renders both at 2560x1440.
 Native SMAA, DLAA and FSR Native AA use output-sized input. Upscaling chooses
@@ -42,6 +50,12 @@ permits native play. Saved choices are written atomically to
 `graphics-settings.json`; the launcher validates and imports them at startup
 and before launching again. Unrelated configuration and profile data remain.
 
+The native macOS app also updates its external `forza.toml` on Save, since it
+starts without the Python launcher. Mac-only choices include native 720p output
+and MetalFX Temporal/Spatial reconstruction at 1440p or 4K output. Unsupported
+MetalFX output sizes are rejected before rebuilding the renderer. At 720p,
+presets retain a native 1x scene and adjust filtering.
+
 Validation: the combined Windows TU4 build was tested on an RTX 5060 Ti using
 disposable copied saves at 2560x1440 with a 120 FPS cap. MSAA 720p scene/native
 1440p HUD, MSAA 1440p, SMAA 1440p and DLSS changes were exercised. Changing a
@@ -61,7 +75,7 @@ its range to include long hitches. Stale samples expire when frames stop.
 
 White text appears at the top right without a background, border or input focus.
 The optional graph is transparent. It uses an installed bold font (Arial Bold
-on Windows or DejaVu Sans Condensed Bold on Linux), falling back to the SDK font.
+on Windows and macOS or DejaVu Sans Condensed Bold on Linux), falling back to the SDK font.
 It does not use the game's proprietary vector font. SDK patch 0078 allows this
 passive dialog to draw with game frames without driving continuous presenter
 redraws; interactive dialogs keep their existing input/animation repainting.

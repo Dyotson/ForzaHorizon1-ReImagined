@@ -9,13 +9,31 @@ int main() {
   assert(NativeSizeSupported(5120, 1440));
   assert(NativeSizeSupported(1720, 720));
   assert(NativeSizeSupported(5120, 2160));
-  assert(!NativeSizeSupported(2560, 1080));
-  assert(!NativeSizeSupported(1920, 1080));
-  assert(!NativeSizeSupported(3440, 1439));
+  assert(NativeSizeSupported(2560, 1080));
+  assert(NativeSizeSupported(1920, 1080));
+  assert(NativeSizeSupported(3440, 1439));
   assert(!NativeSizeSupported(0, 1440));
   assert(!NativeSizeSupported(3440, 0));
   assert(!NativeSizeSupported(1280 * 7 + 1, 1440));
   assert(!NativeSizeSupported(3440, 720 * 8));
+  for (uint32_t height = 1; height <= 5040; ++height) {
+    const auto drawing = DrawingHeight(height);
+    assert(drawing >= height && drawing - height < 720);
+    assert(drawing % 720 == 0 && drawing <= 5040);
+    assert(RenderScale(height, 720, 1) * 720 == drawing);
+  }
+  assert(DrawingHeight(1080) == 1440);
+  assert(DrawingHeight(1440) == 1440);
+  assert(DrawingHeight(2160) == 2160);
+  // Presentation scales the whole backing, not a crop. A square HUD widget
+  // remains square after the unequal drawing-to-window scale at 1080 lines.
+  for (const auto dimensions : {std::pair{2560u,1080u}, std::pair{3840u,1080u},
+                                std::pair{3440u,1440u}}) {
+    const auto layout = ComputeLayout(dimensions.first, dimensions.second, 100, 100, 0, 0);
+    const double drawn_width = 100.0 / 1280 * layout.hud_scale_x * dimensions.first;
+    const double drawn_height = 100.0 / 720 * layout.hud_scale_y * DrawingHeight(dimensions.second);
+    assert(Near(drawn_width, drawn_height * dimensions.second / DrawingHeight(dimensions.second)));
+  }
   auto native = ComputeLayout(2560,1440,100,100,0,0);
   assert(Near(native.aspect_scale,1) && Near(native.hud_scale_x,1));
   auto wide = ComputeLayout(3440,1440,100,100,0,0);

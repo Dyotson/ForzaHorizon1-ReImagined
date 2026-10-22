@@ -170,3 +170,23 @@ resume, and rejection of changed constants/counter/validation controls on resume
 Raw build logs, provenance, captures, manifests, CPU/frame samples and AI reports
 remain under `build/vulkan-bindings`. No binaries, generated game code, captures
 or personal saves are included in the source change.
+
+## Main integration, 2026-10-22
+
+Integrated main `58bfc10`, including the Controls changes. Patch 0092 retains its
+number and opt-in behavior. Its redundant `<cstdlib>` insertion is removed:
+main's later device-loss patch 0104 supplies the include, so adding it earlier
+would break the ordered series.
+
+All 92 SDK patches apply in order to pinned SDK `bd833a2`. The exact public series
+passes an isolated Windows x64 Release Vulkan/D3D12 GPU-plugin and runtime build.
+The standalone dynamic-uniform GPU test and its shader compile. GPU execution,
+synchronization validation and integrated game/race qualification are deferred
+for this head. Earlier 1,600-dispatch validation and benchmark results retain
+their recorded provenance; this integration supplies no new performance result.
+
+A source-only cross-PR audit applies all 105 patches from current main and all
+open SDK-changing PRs together, including #157's 0117-0126, #192's 0094 and #286's
+0114-0115, with unique numbers. This is an ordered-application check, not combined
+runtime qualification. Dynamic constants remain off by default and the PR stays
+draft pending its existing runtime gate.

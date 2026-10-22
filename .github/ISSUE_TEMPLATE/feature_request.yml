@@ -1,0 +1,41 @@
+name: Feature request
+description: "An idea or improvement for Forza Horizon 1: ReImagined"
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Please check the [open issues](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement) first. If yours is already there, add a 👍 or a comment to it instead. For something that's broken, use the bug report.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Launcher, Graphics, Performance, Audio, "Controls, keyboard or wheels", Online, Gameplay, Saves, Mods, Steam Deck, Website, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+      description: Describe the feature or change. Screenshots, videos or examples from other games help.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What problem it solves or what it would make better for you.
+    validations:
+      required: true
+  - type: textarea
+    id: ideas
+    attributes:
+      label: How it could work (optional)
+      description: Ideas for the design, a setting name, or how the original game or a later Forza does it.
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Checks
+      options:
+        - label: My request doesn't need game files, keys or other copyrighted content to be shared.
+          required: true

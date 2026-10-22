@@ -8,6 +8,9 @@ import math, struct, sys, time
 
 pid, secs, out = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 mem = open("/proc/%s/mem" % pid, "rb")
+# The car list's root: 0x832DF024 in the base executable, 0x833CAAE4 in Title Update 4 (a TU4
+# game runs with --update_data_root), as in tools/autodrive.py.
+CAR_ROOT = 0x833CAAE4 if b"--update_data_root" in open("/proc/%s/cmdline" % pid, "rb").read() else 0x832DF024
 
 
 def rd(a, n):
@@ -24,7 +27,7 @@ def ok(a):
 
 
 def cars():
-    root = u32(0x832DF024)
+    root = u32(CAR_ROOT)
     if not ok(root):
         return []
     holder = u32(root + 4)

@@ -31,8 +31,10 @@
 #include <cstdlib>
 #include <cstring>
 
-#ifndef _WIN32
+#ifdef __linux__
 #include <sys/prctl.h>
+#endif
+#ifndef _WIN32
 #include <time.h>
 #endif
 
@@ -105,10 +107,12 @@ void BetweenPolls(Clock::time_point now) {
 #ifdef _WIN32
   rex::thread::MaybeYield();
 #else
+#ifdef __linux__
   if (!w.slack_set) {
     prctl(PR_SET_TIMERSLACK, 5000UL);
     w.slack_set = true;
   }
+#endif
   timespec ts{0, kSleepNs};
   nanosleep(&ts, nullptr);
 #endif

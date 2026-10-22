@@ -48,14 +48,6 @@ diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graph
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -14,6 +14,7 @@
- #include <chrono>
- #include <cmath>
- #include <cstdint>
-+#include <cstdlib>
- #include <cstring>
- #include <iterator>
- #include <fstream>
 @@ -707,6 +708,10 @@
      VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
      SpirvShaderTranslator::kConstantBufferCount* kLinkedTypeDescriptorPoolSetCount};

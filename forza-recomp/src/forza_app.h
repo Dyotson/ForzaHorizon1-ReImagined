@@ -5,8 +5,10 @@
 #pragma once
 
 #include "debug/frame_stats.h"
+#include "debug/stall_watch.h"
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
+#include "platform/discord_presence.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
 #include "platform/vulkan_hooks.h"
@@ -27,6 +29,9 @@
 
 #include <filesystem>
 #include <string>
+#ifdef __APPLE__
+#include <rex/filesystem.h>
+#endif
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
@@ -46,6 +51,7 @@ std::string ForzaGpuBackend();
 class ForzaApp : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
+  ~ForzaApp() override { forza::discord::Shutdown(); }
 
   static std::unique_ptr<rex::ui::WindowedApp> Create(
       rex::ui::WindowedAppContext& ctx) {
@@ -100,6 +106,7 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    stall_watchdog_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
       achievement_listener_ = 0;
@@ -110,6 +117,10 @@ class ForzaApp : public rex::ReXApp {
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    // The SDK terminates guest threads immediately after accepting this request.
+    // A retained XThread handle does not keep its guest stack alive.
+    stall_watchdog_.Stop();
+    forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
     return true;
@@ -122,6 +133,8 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::discord::Initialize();
+
     if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),
@@ -144,6 +157,8 @@ class ForzaApp : public rex::ReXApp {
     // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
     // nothing else takes.
     forza::InstallFaultGuard();
+    // Long frames and where the game was during them (#187).
+    stall_watchdog_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
@@ -159,11 +174,19 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
-  // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
-  // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
-  // update_data_root setting; default: tu4 next to the game folder).
+#if defined(__APPLE__) || (defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4)
   void OnConfigurePaths(rex::PathConfig& paths) override {
+#ifdef __APPLE__
+    const auto exe = rex::filesystem::GetExecutableFolder();
+    if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
+      // Settings must stay writable without changing the signed app bundle.
+      paths.config_path = paths.user_data_root / "forza.toml";
+    }
+#endif
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+    // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
+    // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
+    // update_data_root setting; default: tu4 next to the game folder).
     if (paths.update_data_root.empty()) {
       auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
       if (!game.has_filename()) game = game.parent_path();
@@ -174,7 +197,10 @@ class ForzaApp : public rex::ReXApp {
                    "(tools/apply_title_update.py; set update_data_root)",
                    paths.update_data_root.string());
     }
+#endif
   }
+#endif
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.
   void OnLoadXexImage(std::string& /*xex_image*/) override {
@@ -188,6 +214,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  forza::stall::Watchdog stall_watchdog_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

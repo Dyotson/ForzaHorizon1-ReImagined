@@ -196,6 +196,69 @@ class SaveUITests(unittest.TestCase):
             saves.restore(self.profile, backup)
             self.assertEqual(path.read_bytes(), original)
 
+    def test_editor_unicorn_edit_uses_selected_profile_and_preserves_unapplied_edits(self):
+        from forza_launcher import save_editor
+        from test_save_editor import KEYS, profile_bytes
+        path = self.profile.folder/'ForzaProfile/ForzaProfile'
+        path.parent.mkdir()
+        path.write_bytes(profile_bytes())
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.refresh()
+            self.wait_done()
+            self.page.edit_button.click()
+            self.wait_done()
+            dialog = self.page.editor
+            self.assertTrue(dialog.unicorn_button.isEnabled())
+            self.assertFalse(hasattr(self.win.play, 'claim_unicorns'))
+            from forza_launcher import garage
+            with patch.object(garage, 'add_missing', return_value=garage.Result((320,), (326,))) as claim:
+                dialog.controls['Main/Credits'].setValue(1500)
+                dialog.unicorn_button.click()
+                claim.assert_not_called()
+                self.assertIn('Apply your profile changes', dialog.message.text())
+                self.assertEqual(dialog.controls['Main/Credits'].value(), 1500)
+                dialog.controls['Main/Credits'].setValue(500)
+                dialog.unicorn_button.click()
+                self.wait_done()
+                self.assertEqual(claim.call_args.args[1], self.profile)
+                self.assertFalse(self.page.busy())
+                self.assertIn('Added 1 unicorn car', dialog.message.text())
+
+    def test_editor_finishes_an_unfinished_1000_club_tutorial_after_a_backup(self):
+        from forza_launcher import save_editor
+        from test_save_editor import KEYS, body, car_challenges, profile_bytes
+        path = self.profile.folder/'ForzaProfile/ForzaProfile'
+        path.parent.mkdir()
+        original = profile_bytes(body(car_challenges()))
+        path.write_bytes(original)
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.refresh()
+            self.wait_done()
+            self.page.edit_button.click()
+            self.wait_done()
+            dialog = self.page.editor
+            self.assertFalse(dialog.tutorial.isHidden())
+            self.assertTrue(dialog.tutorial_button.isEnabled())
+            dialog.tutorial_button.click()
+            self.wait_done()
+            self.assertIn('tutorial marked finished', dialog.message.text())
+            self.assertTrue(dialog.document.values[save_editor.CAR_CHALLENGE_TUTORIAL].value)
+            self.assertTrue(dialog.tutorial.isHidden())
+            self.assertFalse(dialog.tutorial_button.isEnabled())
+            self.assertEqual(dialog.document.values['Main/Credits'].value, 500)
+            backup = saves.snapshots(self.profile)[0][0]
+            self.assertEqual(backup.kind, 'before-edit')
+            self.assertEqual((backup.path/'save/ForzaProfile/ForzaProfile').read_bytes(), original)
+            dialog.close()
+            self.wait_done()
+        path.write_bytes(profile_bytes())
+        with patch.object(save_editor, '_keys', return_value=(KEYS,)):
+            self.page.edit_button.click()
+            self.wait_done()
+            self.assertTrue(self.page.editor.tutorial.isHidden())
+            self.page.editor.close()
+            self.wait_done()
+
     def test_editor_failure_is_visible_and_leaves_no_enabled_apply_action(self):
         self.page.refresh()
         self.wait_done()
@@ -204,6 +267,7 @@ class SaveUITests(unittest.TestCase):
         dialog = self.page.editor
         self.assertIsNone(dialog.document)
         self.assertFalse(dialog.apply_button.isEnabled())
+        self.assertFalse(dialog.unicorn_button.isEnabled())
         self.assertTrue(dialog.reload_button.isEnabled())
         self.assertTrue(dialog.message.text())
         dialog.close()
