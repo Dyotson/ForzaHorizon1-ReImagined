@@ -502,6 +502,9 @@ World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, l
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
 a free-form "other settings" box for any further `forza.toml` key, a live preview of the
 generated `forza.toml` and command line). Keys that hold their default are not written.
+Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
+keeps the instrument backlight of your own car on by day too; the headlights and other cars
+stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

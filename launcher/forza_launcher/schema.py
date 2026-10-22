@@ -163,6 +163,10 @@ add("present_dither", "Output dithering", "Display", "bool", False,
     "Dither the final image to hide banding.", "Picture", restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
+add("cockpit_gauges_lit", "Cockpit gauges always lit", "Display", "bool", False,
+    "Keep your car's instrument backlight on by day too, as the game shows it at night, so the "
+    "gauges are easy to read in cockpit view. The headlights stay as they are, and other "
+    "players' cars are not changed.", "Picture")
 if IS_WINDOWS:
     add("gpu_backend", "Graphics API", "Display", "choice", "vulkan",
         "Vulkan includes this project's fixes and is recommended; Direct3D 12 is the SDK's own and "
