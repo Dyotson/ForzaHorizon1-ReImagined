@@ -132,6 +132,22 @@ driver ignores wheels the wheel driver takes. Local builds need `libudev.h` (Hom
 `tools/build_rexglue_sdk.sh`), otherwise SDL is built without udev and sees no joystick at all.
 Test: a uinput virtual wheel; see [Playing](playing.md#racing-wheels-issue-4).
 
+0099 adds the clutch pedal and a shifter to that driver (issue #125). FH1 already reads both from a 360 wheel:
+the capabilities (`sub_82CBAFE0`) mark an H-pattern shifter when thumb RX is neither 0 nor 1 (its high byte is
+the number of forward gears), the car's input frame (`sub_824B7360`) then takes the gear from the state's thumb
+RX through control 7 (`sub_82CBC320`: -1 reverse, 0 neutral, 1 to 8), which the wheel layouts bind to it
+(`sub_82598A38`), and the wheel layouts in `gamedb.slt` (`WheelLayouts`) put the clutch on the right stick Y. So
+the clutch pedal goes to thumb RY (`wheel_clutch`, `wheel_invert_clutch`), and with `wheel_shifter = h` the
+held gear button to thumb RX and the capabilities report the shifter; no gear button is neutral. The gear
+buttons default to the Logitech Driving Force Shifter (G29, G920, G923: 12-17, reverse 18) and are set with
+`wheel_shifter_buttons`; `wheel_shifter_clutch` / `wheel_clutch_threshold` engage a new gear only with the
+clutch pressed; `wheel_shifter = sequential` adds up/down buttons as the bumpers. Clutch and gear are sent only
+after the game itself read the capabilities (its flags are not 0; the SDK's own deadzone lookup passes 0), so a
+game that took the wheel for a gamepad does not get them as right stick movement. The gear logic is in
+`include/rex/input/wheel/wheel_shifter.h` (no SDL), tested by `forza-recomp/tests/wheel_shifter_test.cpp`.
+Test: a uinput G29 with shifter and clutch in the game (gears, reverse, neutral, clutch, realistic and sequential
+modes); see [Playing](playing.md#racing-wheels-issue-4).
+
 0075 adds an atomic Vulkan graphics-settings transaction. A complete request
 is consumed at a closed frame, after pending submissions finish. Scale-dependent
 render targets, textures, reconstruction and pipelines are replaced together;
