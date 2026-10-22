@@ -1,6 +1,6 @@
 diff --git a/src/input/sdl/gamepad_remap.h b/src/input/sdl/gamepad_remap.h
 new file mode 100644
-index 0000000..ef8f76a
+index 0000000..9537e22
 --- /dev/null
 +++ b/src/input/sdl/gamepad_remap.h
 @@ -0,0 +1,351 @@
@@ -60,16 +60,16 @@ index 0000000..ef8f76a
 +  int axis;                   // SDL axis for a trigger or stick target, -1 for a button
 +  uint32_t default_buttons;   // SDL buttons that press it without a remap
 +};
-+constexpr uint32_t B(int i) { return 1u << i; }
++constexpr uint32_t Bit(int i) { return 1u << i; }
 +constexpr std::array<Target, 21> kTargets = {{
-+    {"a", 0x1000, -1, B(0) | B(19)},  {"b", 0x2000, -1, B(1) | B(17)},
-+    {"x", 0x4000, -1, B(2) | B(18)},  {"y", 0x8000, -1, B(3) | B(16)},
-+    {"lb", 0x0100, -1, B(9)},         {"rb", 0x0200, -1, B(10)},
-+    {"back", 0x0020, -1, B(4)},       {"start", 0x0010, -1, B(6)},
-+    {"guide", 0x0400, -1, B(5) | B(15) | B(20)},
-+    {"ls", 0x0040, -1, B(7)},         {"rs", 0x0080, -1, B(8)},
-+    {"up", 0x0001, -1, B(11)},        {"down", 0x0002, -1, B(12)},
-+    {"left", 0x0004, -1, B(13)},      {"right", 0x0008, -1, B(14)},
++    {"a", 0x1000, -1, Bit(0) | Bit(19)},  {"b", 0x2000, -1, Bit(1) | Bit(17)},
++    {"x", 0x4000, -1, Bit(2) | Bit(18)},  {"y", 0x8000, -1, Bit(3) | Bit(16)},
++    {"lb", 0x0100, -1, Bit(9)},         {"rb", 0x0200, -1, Bit(10)},
++    {"back", 0x0020, -1, Bit(4)},       {"start", 0x0010, -1, Bit(6)},
++    {"guide", 0x0400, -1, Bit(5) | Bit(15) | Bit(20)},
++    {"ls", 0x0040, -1, Bit(7)},         {"rs", 0x0080, -1, Bit(8)},
++    {"up", 0x0001, -1, Bit(11)},        {"down", 0x0002, -1, Bit(12)},
++    {"left", 0x0004, -1, Bit(13)},      {"right", 0x0008, -1, Bit(14)},
 +    {"lt", 0, kLeftTrigger, 0},       {"rt", 0, kRightTrigger, 0},
 +    {"lx", 0, 0, 0},                  {"ly", 0, 1, 0},
 +    {"rx", 0, 2, 0},                  {"ry", 0, 3, 0},

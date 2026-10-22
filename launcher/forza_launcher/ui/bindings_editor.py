@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
-from .. import bindings, paths, schema
+from .. import bindings, paths
 from ..paths import IS_WINDOWS
 from . import theme
 from .widgets import label
