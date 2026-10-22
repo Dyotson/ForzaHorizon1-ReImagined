@@ -11,6 +11,7 @@
 #include "platform/discord_presence.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
+#include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
@@ -80,6 +81,7 @@ class ForzaApp : public rex::ReXApp {
     }
     graphics_ = config.graphics.get();
     ApplyForzaGpuCvarDefaults();
+    forza::benchmark::PrepareRuntime();
   }
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
@@ -133,6 +135,7 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::benchmark::Initialize(user_data_root());
     forza::discord::Initialize();
 
     if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
@@ -174,8 +177,8 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(__APPLE__) || (defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4)
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    forza::benchmark::ConfigurePaths(paths);
 #ifdef __APPLE__
     const auto exe = rex::filesystem::GetExecutableFolder();
     if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
@@ -199,7 +202,6 @@ class ForzaApp : public rex::ReXApp {
     }
 #endif
   }
-#endif
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.

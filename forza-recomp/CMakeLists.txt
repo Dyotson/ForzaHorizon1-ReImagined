@@ -172,6 +172,8 @@ set(FORZA_SOURCES
     src/platform/discord_presence.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
+    src/platform/benchmark.cpp
+    src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
     src/platform/sdk_import.cpp
