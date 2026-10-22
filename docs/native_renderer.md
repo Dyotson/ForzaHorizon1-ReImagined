@@ -599,13 +599,14 @@ do not establish a complete geometry renderer or a performance improvement.
 
 ## Main integration, 2026-10-22
 
-Integrated main `3390ef0`. Native SDK patches are now 0117-0126, leaving main's
-0102-0105 and the other open PRs' 0114-0116 intact. The attachment-storage patch
+Integrated main `58bfc10`, including the Controls changes. Native SDK patches are
+now 0117-0126, leaving main's 0102-0105 and 0116 plus open PR #286's 0114-0115 intact.
+The attachment-storage patch
 marks the newly allocated target without bypassing main's device-memory accounting.
 Release CI retains both main's regression checks and the canonical native-source
 cache inputs.
 
-All 100 SDK patches apply in order to pinned SDK `bd833a2`. A fresh isolated
+All 101 SDK patches apply in order to pinned SDK `bd833a2`. A fresh isolated
 Windows x64 Release build of the Vulkan/D3D12 GPU plugin and runtime passes with
 the canonical native sources. All seven standalone CPU tests pass; the Vulkan
 fixtures and shaders compile, but GPU tests and gameplay were not run for this

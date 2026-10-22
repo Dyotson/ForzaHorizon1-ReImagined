@@ -226,6 +226,13 @@ add("input_backend", "Input backend", "Controls", "choice", "sdl",
     choices=[("sdl", "SDL"), ("xinput", "XInput")])
 add("hid_mappings_file", "Controller mapping file", "Controls", "str", "gamecontrollerdb.txt",
     "SDL game controller mappings.", "Controller")
+# Controller remapping (patch 0116, #279): the Controls page's Bindings write it.
+add("controller_remap", "Controller bindings", "Controls", "str", "",
+    "Set by Bindings on the Controls page. Profiles separated by ';', each the controller's SDL "
+    "GUID (or * for every controller) and target=source pairs, e.g. *:rt=a,a=none (throttle on "
+    "A). Sources: a button, lt or rt, a stick axis (lx, -lx inverted) or one direction of it "
+    "(ly+ is up), @0.3 for how far an axis presses a button. SDL backend only.", "Controller",
+    restart=True)
 
 # Racing wheels (patch 0074): an SDL joystick that is a wheel is presented as the Xbox 360 Wireless
 # Racing Wheel. SDL backend only.
