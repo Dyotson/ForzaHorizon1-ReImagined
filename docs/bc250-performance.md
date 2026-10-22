@@ -108,7 +108,7 @@ existing baseline binary and this executable; it is not counted as a boot pass.
 
 ### Main integration validation, 2026-10-22
 
-Merged main `3390ef0`, retaining its Discord host source and CPU-target module.
+Merged main through `58bfc10`, retaining its Discord host source and CPU-target module.
 The guest-FMA guard now uses `.preinit_array` too: an ordinary constructor can
 run after SDK shared-library initializers that call guest-exported inline code.
 Unsupported hosts use `_Exit` so rejection cannot enter teardown callbacks.
@@ -130,6 +130,12 @@ constructor executes. The supported-host control reaches that constructor and
 passes arithmetic. This simulates missing features; it is not a test of an
 actual unsupported CPU/OS. The production V3 feature checker also passes its
 synthetic missing-CPUID/XCR0 tests.
+
+Production-module configure probes confirm default/OFF behavior, both facade
+targets' flags, unchanged host flags, and rejection of Windows, Darwin, ARM,
+unsupported compilers and a missing generated-code target when FMA is ON.
+Focused Linux launcher CPU-target, hardware-spec and build-tree tests pass
+(44 tests: 43 passed, one Windows-only test skipped).
 
 No full game build, game/GPU benchmark, BC-250 execution, driving or audio
 validation was performed in this integration pass. Earlier game-build and
