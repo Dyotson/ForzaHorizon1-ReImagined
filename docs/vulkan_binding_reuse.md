@@ -172,3 +172,17 @@ The frozen seed is hashed and verified unchanged. Binary hashes, exact SDK trees
 patch hash, all retained runs, excluded diagnostics and overlap proofs are in
 [the portable results](benchmarks/vulkan-binding-reuse-2026-10-20.json). Raw logs,
 captures and private builds remain under `build/binding-reuse`.
+
+### Main integration, 2026-10-22
+
+Integrated main `58bfc10`, including the Controls changes. Patch 0094 retains its
+number and behavior. Its explicit binding-header include is inserted away from
+the include context that main's shader-prebuild patch 0113 modifies.
+
+All 92 SDK patches apply in order to pinned SDK `bd833a2`. The exact public
+series passes an isolated Windows x64 Release Vulkan/D3D12 GPU-plugin and runtime
+build. The production binding-reuse CPU guard test passes (1/1). GPU/gameplay
+validation and benchmarks were not repeated; the preceding measurements retain
+their original provenance. Current-branch runtime qualification, broader workload
+coverage and repeated native-resolution frame-time checks remain outstanding.
+Binding reuse stays off by default and the PR remains draft.

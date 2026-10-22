@@ -1,14 +1,14 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, Signal
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -78,7 +78,7 @@ class HudSlider(QWidget):
         self.slider.setValue(int(value))
 
 
-def make_control(s: schema.Setting, value, on_change, note=None):
+def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
     """A widget for the setting, calling on_change(value) when the player changes it. note(value)
     may return a reason that is appended to a choice's label (a GPU's known problem, #52)."""
     if s.kind == "float" and s.key.startswith("forza_hud_"):
@@ -138,9 +138,11 @@ def make_control(s: schema.Setting, value, on_change, note=None):
     if s.kind == "fps":
         w = Combo()
         w.setEditable(True)
-        for v in (30, 60, 90, 120, 144, 165, 240):
+        w.addItem(display.label(monitor), 0)
+        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
-        w.lineEdit().setValidator(QIntValidator(1, 999))
+        w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
+        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
@@ -149,9 +151,14 @@ def make_control(s: schema.Setting, value, on_change, note=None):
         w.setMinimumWidth(130)
 
         def changed(_=None, w=w):
+            if w.currentIndex() == 0 and w.currentText() == w.itemText(0):
+                on_change(0)    # Match display
+                return
             digits = "".join(c for c in w.currentText() if c.isdigit())
             if digits:
-                on_change(schema.coerce(s, int(digits)))
+                rate = schema.coerce(s, int(digits))
+                w.setEditText(f"{rate} fps")
+                on_change(rate)
         w.currentIndexChanged.connect(changed)
         w.lineEdit().editingFinished.connect(changed)
         return w
@@ -190,7 +197,8 @@ class SettingRow(QWidget):
         vendor = cfg.gpu_vendor()
         self.control = make_control(s, cfg.settings.get(s.key, s.default),
                                     lambda v, s=s: changed(s.key, v),
-                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v))
+                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v),
+                                    monitor=cfg.settings.get("monitor", 0))
         tip = f"{s.key}" + (f" (default {s.default!r})" if s.default != "" else "")
         self.control.setToolTip(tip)
         self.control.setAccessibleName(s.label)
@@ -315,6 +323,37 @@ class SettingsPage(QWidget):
                 row.control.blockSignals(True)
                 row.control.setCurrentIndex(row.control.findData("none"))
                 row.control.blockSignals(False)
+        if key == "monitor" and "frame_rate" in self.rows:    # Match display names the new monitor's rate
+            control = self.rows["frame_rate"].control
+            selected = control.currentIndex() == 0
+            control.setItemText(0, display.label(value))
+            if selected:
+                control.setCurrentIndex(0)
+                control.setEditText(control.itemText(0))
+        self._apply_dependencies()
+        self.touched()
+
+    def apply_external(self, changes):
+        """Values set elsewhere (the Controls page's bindings): store them, show them in their
+        controls and save."""
+        for key, value in changes.items():
+            s = schema.BY_KEY[key]
+            value = schema.coerce(s, value)
+            self.cfg.settings[key] = value
+            row = self.rows.get(key)
+            if row is None:
+                continue
+            control = row.control
+            control.blockSignals(True)
+            if isinstance(control, QLineEdit):
+                control.setText(str(value))
+            elif hasattr(control, "setChecked"):
+                control.setChecked(bool(value))
+            elif hasattr(control, "findData") and s.kind == "choice":
+                control.setCurrentIndex(max(0, control.findData(value)))
+            elif hasattr(control, "setValue"):
+                control.setValue(value)
+            control.blockSignals(False)
         self._apply_dependencies()
         self.touched()
 
@@ -333,6 +372,14 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        discord = self.rows.get("discord_presence")
+        if discord:
+            identifier = str(self.cfg.settings.get("discord_application_id", ""))
+            valid = (17 <= len(identifier) <= 20 and identifier.isascii() and identifier.isdigit()
+                     and not identifier.startswith("0") and int(identifier) <= 2 ** 64 - 1)
+            discord.warning.setText("Discord sharing needs a valid public Application ID. "
+                                    "Add it under Advanced > Discord setup.")
+            discord.warning.setVisible(bool(self.cfg.settings.get("discord_presence")) and not valid)
         active = dlss.enabled(self.cfg)
         temporal = fsr3.enabled(self.cfg)
         ultrawide = bool(self.cfg.settings.get("forza_ultrawide"))
@@ -355,6 +402,14 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+        shifter = self.cfg.settings.get("wheel_shifter", "off")
+        states["wheel_invert_clutch"] = (bool(self.cfg.settings.get("wheel_clutch", True)),
+                                         "Turn on Clutch pedal to adjust this setting.")
+        states["wheel_shifter_buttons"] = (shifter != "off", "Choose a shifter to set its buttons.")
+        states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_clutch_threshold"] = (
+            shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
+            "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")
 
         hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
@@ -554,7 +609,7 @@ class SettingsPage(QWidget):
     def _refresh_gpu_warnings(self):
         vendor = self.cfg.gpu_vendor()
         found = {}
-        warning_settings = dict(self.cfg.settings)
+        warning_settings = self.cfg.effective_settings()
         if (dlss.enabled(self.cfg) and warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
                 warning_settings.get("fh1_output_resolution") == "4k"):
             # The 3x allocation belongs to the native UI; these modes render
@@ -567,6 +622,8 @@ class SettingsPage(QWidget):
             if w.key and w.key not in vendor_keys:
                 found.setdefault(w.key, []).append(w.text)
         for key, row in self.rows.items():
+            if key == "discord_presence":
+                continue  # its setup warning is managed by _apply_dependencies
             row.set_warning(" ".join(found.get(key, [])))
         self._refresh_banner()
 

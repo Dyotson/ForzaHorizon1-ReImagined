@@ -87,14 +87,14 @@ diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/com
 index 54b35f0..ce99f3f 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -56,6 +56,7 @@ REXCVAR_DECLARE(double, forza_ultrawide_hud_offset_y);
- #include <rex/graphics/vulkan/fh1_dlss.h>
- #include <rex/graphics/vulkan/fh1_fsr3.h>
- #include <rex/graphics/vulkan/pipeline_cache.h>
-+#include <rex/graphics/vulkan/binding_reuse.h>
+@@ -62,6 +62,7 @@ REXCVAR_DECLARE(double, forza_ultrawide_hud_offset_y);
  #include <rex/graphics/vulkan/render_target_cache.h>
  #include <rex/graphics/vulkan/shader.h>
  #include <rex/graphics/vulkan/shared_memory.h>
++#include <rex/graphics/vulkan/binding_reuse.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/kernel/xboxkrnl/video.h>
+ #include <rex/types.h>
 @@ -4576,19 +4577,25 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      // different for some reason (like a race condition with the guest in index
      // buffer processing in the primitive processor resulting in different host

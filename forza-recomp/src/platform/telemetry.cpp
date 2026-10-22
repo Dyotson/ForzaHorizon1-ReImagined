@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #endif
 #include "telemetry.h"
+#include "driving_gate.h"
 #include "xbox_haptics.h"
 #include "guest_addr.h"
 #include "guest_memory.h"
@@ -195,6 +196,9 @@ void Input(bool connected, uint8_t left, uint8_t right, uint16_t buttons, int16_
   s.input_time = connected ? Now() : 0;
   s.left = left; s.right = right; s.buttons = buttons; s.steer = steer;
 }
+void Rumble(uint16_t left, uint16_t right) {
+  Gate().Rumble(left, right, Now());  // always: the wheel reads it without the bridge
+}
 void Physics(uint8_t* base) {
   auto& s = State();
   if (!s.enabled) return;
@@ -237,13 +241,15 @@ void Physics(uint8_t* base) {
   s.sent[sequence % s.sent.size()] = {sequence, now};
   Put(packet, offset, s.token); Put(packet, offset, sequence); Put(packet, offset, flags);
   Put(packet, offset, now); Put(packet, offset, car);
-  Put(packet, offset, uint32_t(valid && (flags & 2)));
+  // Driving: a local car, fresh input and the game's rumble running; not in menus.
+  const bool driving = valid && (flags & 2) && Gate().Driving(now);
+  Put(packet, offset, uint32_t(driving));
   for (auto v : {position, velocity, acceleration, forward}) for (float f : v) Put(packet, offset, f);
   Put(packet, offset, s.left); Put(packet, offset, s.right);
   Put(packet, offset, uint8_t(0)); Put(packet, offset, int8_t(s.steer / 256));
   Put(packet, offset, s.buttons); Put(packet, offset, uint16_t(0));
   sendto(s.socket, reinterpret_cast<const char*>(packet.data()), int(packet.size()), 0,
          reinterpret_cast<sockaddr*>(&s.destination), sizeof(s.destination));
-  ReceiveXbox(s, now, valid && (flags & 2));
+  ReceiveXbox(s, now, driving);
 }
 }
