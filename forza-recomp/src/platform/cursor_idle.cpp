@@ -82,13 +82,12 @@ struct CursorIdle::Impl {
     auto* context = &window->app_context();
     // A slow UI loop must not accumulate timer work. Queued callbacks hold a
     // weak reference, so shutdown cannot leave a callback with a dead window.
-    timer = std::jthread([weak = std::weak_ptr<State>(state), context](std::stop_token stop) {
-      std::mutex mutex;
-      std::condition_variable_any wake;
+    // Apple's libc++ does not yet provide jthread/stop_token. The owner stops
+    // and joins this thread before releasing state or the app context.
+    timer = std::thread([this, weak = std::weak_ptr<State>(state), context] {
       std::unique_lock lock(mutex);
-      while (!stop.stop_requested()) {
-        wake.wait_for(lock, stop, std::chrono::milliseconds(100), [] { return false; });
-        if (stop.stop_requested()) break;
+      while (!stopping) {
+        if (wake.wait_for(lock, std::chrono::milliseconds(100), [this] { return stopping; })) break;
         auto live = weak.lock();
         if (!live || live->queued.exchange(true)) continue;
         if (!context->CallInUIThreadDeferred([weak] {
@@ -102,14 +101,21 @@ struct CursorIdle::Impl {
   }
 
   ~Impl() {
-    timer.request_stop();
+    {
+      std::lock_guard lock(mutex);
+      stopping = true;
+    }
+    wake.notify_one();
     timer.join();
     state->Detach();
     state.reset();
   }
 
   std::shared_ptr<State> state;
-  std::jthread timer;
+  std::mutex mutex;
+  std::condition_variable wake;
+  bool stopping = false;
+  std::thread timer;
 };
 
 CursorIdle::CursorIdle(rex::ui::Window* window, rex::ui::ImGuiDrawer* drawer) {
