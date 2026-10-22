@@ -3,16 +3,20 @@
 // so the game's spring becomes the wheel's autocentre. The probe drives the actual WheelInputDriver
 // through the kernel-facing calls (GameFf*) and reads back what reaches the device: the autocentre
 // must follow the spring and drop to 0 when it stops, is reset or becomes another type (#219 review:
-// a reset left the hardware autocentre at its last value).
+// a reset left the hardware autocentre at its last value). Then (#256) the forces fade out while
+// the game says the player is not driving (ForzaWheelPlayerDriving) and come back when they are,
+// and wheel_ffb_spring_strength scales the spring.
 //
 // Linux only (needs write access to /dev/uinput). Build against the patched SDK source
 // (tools/build_rexglue_sdk.sh --source-only) and link the patched runtime, from the repository root:
 //   SDK=~/rexglue-sdk-src-forza/sdk; clang++ -std=c++23 -msse4.1 -I$SDK/include
 //       -I$SDK/thirdparty/sdl3/include -I$SDK/thirdparty/fmt/include -I$SDK/thirdparty/spdlog/include
+//       -I$SDK/thirdparty/simde
 //       -DSPDLOG_COMPILED_LIB -DSPDLOG_FMT_EXTERNAL forza-recomp/tests/wheel_ff_probe.cpp
 //       -L ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -lrexruntime -pthread
 //       -Wl,-rpath,$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -o wheel-ff-probe
 //   ./wheel-ff-probe
+#include <rex/cvar.h>
 #include <rex/input/wheel/wheel_ff.h>
 #include <rex/input/wheel/wheel_input_driver.h>
 
@@ -33,6 +37,8 @@
 using namespace rex::input::wheel;
 using rex::X_STATUS;
 
+extern "C" void ForzaWheelPlayerDriving(int driving);  // the runtime's export (#256)
+
 namespace {
 
 void Check(bool ok, const char* what) {
@@ -49,6 +55,7 @@ struct VirtualWheel {
   std::atomic<bool> stop{false};
   std::atomic<int> autocenter{-1};
   std::atomic<int> autocenter_writes{0};
+  std::atomic<int> autocenter_between{0};  // writes strictly between 0 and full (a fade's steps)
   std::thread reader;
 
   bool Create() {
@@ -112,6 +119,9 @@ struct VirtualWheel {
         } else if (ev.type == EV_FF && ev.code == FF_AUTOCENTER) {
           autocenter = ev.value;
           autocenter_writes++;
+          if (ev.value > 0 && ev.value < 0xFFFF * 30 / 100) {
+            autocenter_between++;
+          }
         }
       }
     }
@@ -151,6 +161,25 @@ FfEffect Spring(uint32_t type = kFfSpring) {
   e.pos_coeff = e.neg_coeff = 63;
   e.pos_sat = e.neg_sat = 127;
   return e;
+}
+
+// The game polls the pad every frame; the driver steps the fade there.
+void Poll(WheelInputDriver& driver, rex::input::DeviceId id, int ms) {
+  for (int t = 0; t < ms; t += 10) {
+    rex::input::X_INPUT_STATE state{};
+    driver.GetDeviceState(id, &state);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+void SetCvar(const char* name, const char* value) {
+  for (rex::cvar::FlagEntry& entry : rex::cvar::GetRegistry()) {
+    if (entry.name == name) {
+      entry.setter(value);
+      return;
+    }
+  }
+  Check(false, "cvar not found");
 }
 
 }  // namespace
@@ -197,7 +226,32 @@ int main() {
   quiet.gain = 0;
   Check(GameFfUpdateEffect(quiet, 0x100), "gain 0 (a car at a standstill)");
   Check(dev.AutocenterIs(0), "gain 0: autocentre 0");
-  std::printf("wheel ff probe: autocentre follows the spring (%d writes); all checks passed\n",
+
+  // #256: not driving (the pause menu, a rewind, a replay): the forces fade out, then back in.
+  const rex::input::DeviceId id = found[0].id;
+  Check(GameFfUpdateEffect(Spring(), 0x100), "the spring at full gain again");
+  Check(dev.AutocenterIs(spring), "full gain: autocentre");
+  Poll(driver, id, 100);
+  Check(dev.AutocenterIs(spring), "the game never said: no fade");
+  ForzaWheelPlayerDriving(0);
+  Poll(driver, id, 100);
+  Check(dev.autocenter > 0 && dev.autocenter < 0xFFFF * spring / 100, "fading out");
+  Poll(driver, id, 300);
+  Check(dev.AutocenterIs(0), "not driving: the spring has faded out");
+  Check(GameFfUpdateEffect(Spring(), 0x100), "the game updates its spring while not driving");
+  Poll(driver, id, 50);
+  Check(dev.AutocenterIs(0), "an update while not driving stays faded out");
+  const int between = dev.autocenter_between;
+  ForzaWheelPlayerDriving(1);
+  Poll(driver, id, 700);
+  Check(dev.AutocenterIs(spring), "driving again: the spring is back");
+  Check(dev.autocenter_between - between >= 3, "it came back in steps");
+  // wheel_ffb_spring_strength 50: half the centring (autocentre 15).
+  SetCvar("wheel_ffb_spring_strength", "50");
+  Check(GameFfUpdateEffect(Spring(), 0x100), "the spring again");
+  Check(dev.AutocenterIs(spring / 2), "spring strength 50: half the autocentre");
+  std::printf("wheel ff probe: autocentre follows the spring (%d writes), fades while not driving, "
+              "spring strength; all checks passed\n",
               dev.autocenter_writes.load());
   return 0;
 }

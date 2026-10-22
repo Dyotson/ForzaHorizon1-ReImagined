@@ -184,6 +184,58 @@ int main() {
   Check(s.device_gain() == 255, "device gain clamped");
   s.SetDeviceGain(128);
   Check(s.device_gain() == 128, "device gain");
+
+  // Separate strengths (#256). The defaults (100 percent) leave everything at the overall strength,
+  // as before.
+  FfStrengths st;
+  st.overall = 0.6f;
+  for (uint32_t type : {kFfConstant, kFfSpring, kFfDamper, kFfInertia, kFfFriction}) {
+    Check(Near(FfTypeStrength(type, st), 0.6f), "default strengths: the overall strength");
+  }
+  Check(Near(FfRumbleLevel(30000, 50000, st), 50000 / 65535.0f * 0.6f),
+        "default strengths: the stronger motor, as before");
+  // The spring strength scales the centring spring and the damper only.
+  st.spring = 0.5f;
+  Check(Near(FfTypeStrength(kFfSpring, st), 0.3f) && Near(FfTypeStrength(kFfDamper, st), 0.3f),
+        "spring strength: spring and damper");
+  Check(Near(FfTypeStrength(kFfConstant, st), 0.6f), "spring strength: not the steering force");
+  Check(Near(FfScale(spring, 255, FfTypeStrength(kFfSpring, st)), 0.3f), "spring strength: scale");
+  a.Operate(4, 2);
+  Check(Near(FfAutocenter(a, FfTypeStrength(kFfSpring, st)), spring_level * 0.5f),
+        "spring strength: the autocentre for the spring");
+  // The rumble: each motor by its own strength, the stronger one plays.
+  st.engine = 0.25f;  // the right motor
+  Check(Near(FfRumbleLevel(0, 65535, st), 0.25f * 0.6f), "engine strength: the right motor");
+  Check(Near(FfRumbleLevel(65535, 0, st), 0.6f), "road strength 100: the left motor");
+  Check(Near(FfRumbleLevel(20000, 65535, st), 20000 / 65535.0f * 0.6f),
+        "the road shows through a weakened engine near the redline");
+  st.road = 0.0f;
+  Check(Near(FfRumbleLevel(65535, 0, st), 0.0f), "road strength 0: no road rumble");
+  st.overall = 0.0f;
+  st.engine = st.road = 1.0f;
+  Check(Near(FfRumbleLevel(65535, 65535, st), 0.0f), "overall 0: nothing");
+
+  // The fade while the player is not driving (#256): out in 0.25 s, in in 0.5 s, held at the ends.
+  FfFade fade;
+  Check(fade.level == 1.0f && !fade.Step(true, 0.1f), "driving: full forces");
+  Check(fade.Step(false, 0.125f) && Near(fade.level, 0.5f), "not driving: half way out");
+  Check(fade.Step(false, 0.125f) && Near(fade.level, 0.0f), "not driving: out after 0.25 s");
+  Check(!fade.Step(false, 1.0f) && fade.level == 0.0f, "stays out");
+  Check(fade.Step(true, 0.25f) && Near(fade.level, 0.5f), "driving again: half way in");
+  Check(fade.Step(true, 5.0f) && fade.level == 1.0f, "a long step lands at full forces");
+  Check(!fade.Step(true, -1.0f) && fade.level == 1.0f, "a step back in time changes nothing");
+  // The fade scales every force: the steering force, the spring's coefficients and the rumble.
+  fade.Step(false, 0.0625f);  // 0.75
+  const float faded = 0.6f * fade.level;
+  Check(Near(FfConstantLevel(constant, FfScale(constant, 255, faded)),
+             FfConstantLevel(constant, FfScale(constant, 255, 0.6f)) * 0.75f),
+        "fade: the steering force");
+  Check(Near(FfConditionOf(spring, FfScale(spring, 255, faded)).right_coeff,
+             FfConditionOf(spring, FfScale(spring, 255, 0.6f)).right_coeff * 0.75f),
+        "fade: the spring");
+  fade.Step(false, 1.0f);
+  Check(!FfConditionFelt(FfConditionOf(spring, FfScale(spring, 255, 0.6f * fade.level))),
+        "faded out: the spring is not felt (it stops)");
   std::puts("wheel ff: all checks passed");
   return 0;
 }

@@ -263,17 +263,30 @@ add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is. G29 and G923 have their own map built in.",
+    "left=14,right=15. The d-pad hat is used as is. The G29, G920 and G923 have their own maps "
+    "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "The game's own wheel forces: the car's steering force, a centring spring that grows with "
-    "speed, a light damper, and its rumble as a vibration. Not yet tested on a real wheel.",
+    "speed, a light damper, and its rumble as a vibration. They fade out while you are not "
+    "driving (pause menu, rewind, replays).",
     "Racing wheel", restart=True)
 add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
     "Turn on if the wheel pulls away from the centre in corners instead of towards it (wheel "
     "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100,
+    "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
+    "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
+    "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 100,
+    "The vibration from the game's engine motor (its right motor), 0 to 100 percent of the force "
+    "feedback strength. Lower it if the engine near the redline drowns out the road.",
+    "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 100,
+    "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
+    "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
 add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
     "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",
@@ -287,7 +300,9 @@ add("wheel_shifter", "Shifter", "Controls", "choice", "off",
     choices=[("off", "None"), ("h", "H-pattern"), ("sequential", "Sequential")], restart=True)
 add("wheel_shifter_buttons", "Shifter buttons", "Controls", "str", "",
     "e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18 (gears 1 to 7 and reverse) or up=..,down=.. "
-    "(sequential). Empty uses the Logitech Driving Force Shifter on a G29, G920 or G923.",
+    "(sequential). Empty uses the Logitech Driving Force Shifter on a G29, G920 or G923: gears "
+    "on 12 to 17, reverse on 18 (G29, PlayStation G923) or 11 (G920, Xbox G923). These buttons "
+    "press nothing else.",
     "Shifter and clutch", restart=True)
 add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
     "H-pattern: a gear engages only with the clutch pressed; without it the car stays in neutral.",

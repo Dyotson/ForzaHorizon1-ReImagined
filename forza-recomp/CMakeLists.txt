@@ -172,6 +172,7 @@ set(FORZA_SOURCES
     src/platform/socket.cpp
     src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
+    src/platform/wheel_bridge.cpp
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.

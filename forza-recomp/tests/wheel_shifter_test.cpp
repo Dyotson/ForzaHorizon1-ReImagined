@@ -5,6 +5,7 @@
 //       forza-recomp/tests/wheel_shifter_test.cpp -o wheel-shifter-test && ./wheel-shifter-test
 #include <rex/input/wheel/wheel_shifter.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -29,6 +30,38 @@ int main() {
   Check(df.gear[0] == 18 && df.gear[7] == -1, "Driving Force Shifter reverse");
   Check(TopGear(df) == 6, "six forward gears");
   Check(TopGear(ShifterMap{}) == 0, "an empty map has no gears");
+
+  // The built-in map by model (#256): reverse is 18 on the PlayStation wheels, 11 on the Xbox ones
+  // (a G923 for Xbox owner's reverse); gears 1-6 are 12-17 on all of them.
+  struct Model {
+    uint16_t pid;
+    int reverse;
+  };
+  for (const Model& model : {Model{0xC24F, 18}, Model{0xC266, 18}, Model{0xC267, 18},
+                             Model{0xC262, 11}, Model{0xC26E, 11}, Model{0xC26D, 11}}) {
+    const ShifterMap m = DefaultShifter(0x046D, model.pid);
+    Check(m.gear[0] == model.reverse, "the model's reverse button");
+    for (int g = 1; g <= 6; g++) {
+      Check(m.gear[g] == 11 + g, "the model's gear buttons");
+    }
+    Check(m.gear[7] == -1 && m.up == -1 && m.down == -1 && TopGear(m) == 6, "six gears, no up/down");
+  }
+  for (uint16_t pid : {0xC29B, 0xC299, 0xC29A, 0xC26F}) {
+    Check(TopGear(DefaultShifter(0x046D, pid)) == 0, "other Logitech wheels: no built-in shifter");
+  }
+  Check(TopGear(DefaultShifter(0x044F, 0xC26E)) == 0, "another vendor: no built-in shifter");
+  // wheel_shifter_buttons still overrides the model's map.
+  Check(ApplyShifterOverrides(DefaultShifter(0x046D, 0xC26E), {{"r", 18}}).gear[0] == 18,
+        "an override wins over the model's reverse");
+
+  // The buttons the shifter reads, which press no pad button (wheel_buttons.h).
+  const std::set<int> xbox_h = ShifterButtons(DefaultShifter(0x046D, 0xC26E), "h");
+  Check(xbox_h == std::set<int>{11, 12, 13, 14, 15, 16, 17}, "H-pattern: the gears and reverse");
+  ShifterMap seq = ApplyShifterOverrides(df, {{"up", 20}, {"down", 21}});
+  Check(ShifterButtons(seq, "sequential") == std::set<int>{20, 21}, "sequential: up and down");
+  Check(ShifterButtons(seq, "off").empty(), "no shifter: none");
+  Check(ShifterButtons(ApplyShifterOverrides(df, {{"r", -1}}), "h").count(-1) == 0,
+        "an unmapped gear takes no button");
 
   // Overrides: gears, reverse, a seventh gear, unmapping, sequential up/down; junk is ignored.
   ShifterMap m = ApplyShifterOverrides(df, {{"r", 20}, {"7", 19}, {"6", -1}, {"up", 4},
