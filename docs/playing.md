@@ -163,7 +163,7 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   image at 1080p, 1440p or 4K for about the cost of bilinear. `forza.toml`: `present_effect = "fsr"`.
 - Render scale 2 adds real detail for about 30 % fewer fps (42 fps at a 60 fps target on an
   RX 9060 XT); fine at 30 fps. Above 2 is experimental and halves the frame rate (#47).
-- `fsr2` / `fsr3` do not exist (no temporal data); `cas` only sharpens. See `docs/rendering.md`.
+- **AMD FSR 3 (temporal)** is a heavier, temporal upscaler; on integrated graphics and the Deck, FSR 1 is the better choice. `cas` only sharpens. See `docs/rendering.md`.
 
 ## Steam Deck
 
