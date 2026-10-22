@@ -46,6 +46,8 @@ import struct
 import time
 import zlib
 
+import forza_limits as limits
+
 log = logging.getLogger("forza-live")
 
 KIND = 22
@@ -132,6 +134,7 @@ class Store:
 
     def seen(self, xuid, name):
         p = self.get(xuid, create=True)
+        name = limits.clean_gamertag(name, xuid) if name else name
         if name and p["name"] != name:
             p["name"] = name
             self.dirty = True
@@ -199,7 +202,7 @@ class Store:
 
     def name(self, xuid):
         p = self.get(xuid)
-        return p["name"] if p and p["name"] else "%016X" % xuid
+        return limits.clean_gamertag(p["name"] if p else "", xuid)
 
     # --- the file ---
 

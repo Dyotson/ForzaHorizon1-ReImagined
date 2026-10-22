@@ -156,7 +156,7 @@ def submit(xuid, gamertag, kind, data, extra=None):
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
     if not old and len(board) >= limits.MAX_PLAYERS:
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
-    entry = {"xuid": key, "gamertag": gamertag, "type": kind, "score": score,
+    entry = {"xuid": key, "gamertag": limits.clean_gamertag(gamertag, xuid), "type": kind, "score": score,
              "submitted": int(time.time()), "scoreId": score_id.hex(),
              "carId": data["carId"], "carClassId": data["carClassId"],
              "carPerformanceIndex": data["carPerformanceIndex"], "ghostFileId": -1}
