@@ -313,8 +313,10 @@ and a pedal's invert switch follows from where it rests), **Clear** unbinds it, 
 the profile's or the detected input. Inputs that two rows share are listed in orange (a paddle on a shifter
 gear, for example: the shifter wins). Rows: steering, throttle, brake and clutch pedal; shift up and down (RB
 and LB, the paddles), clutch button (A), handbrake (B), Activate (X), Rewind (Y), camera (Back), pause
-(Start), the stick presses and the d-pad (the hat by default); gears 1 to 7, reverse and the sequential up and
-down of a shifter.
+(Start), the stick presses and the d-pad (the hat by default; a button bound to a direction replaces the hat's,
+and Clear turns the direction off, SDK patch 0127); gears 1 to 7, reverse and the sequential up and down of a
+shifter. With combined pedals (*Pedals: Combined*) one axis is both: the throttle row binds and clears it for
+both pedals, and the brake row has nothing of its own to change.
 
 **Calibrate wheel** goes through the rest: centre the wheel with the pedals released, turn it to full left and
 full right lock (the steering axis, its direction and how much of the axis it covers), turn it a quarter turn
@@ -346,7 +348,7 @@ edited by hand:
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
-| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). A button the shifter uses presses none of these |
+| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 100, 100 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble) |

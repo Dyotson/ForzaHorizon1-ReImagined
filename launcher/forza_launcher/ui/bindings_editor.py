@@ -560,16 +560,32 @@ class BindingsEditor(QWidget):
             return bindings.controller_conflicts(self.rules(), names=self.names())
         return bindings.wheel_conflicts(self.settings(), self.wheel())
 
+    def label_of(self, action):
+        if self.kind() == "wheel":
+            return bindings.wheel_action_label(action, self.settings())
+        return action.label
+
+    def editable(self, action):
+        return self.kind() != "wheel" or bindings.wheel_action_editable(action, self.settings())
+
     def refresh(self):
         conflicts = self.conflict_list()
         involved = {label_ for _, labels in conflicts for label_ in labels}
         for row in self.rows:
-            row.show_value(self.binding_text(row.action), row.action.label in involved)
+            title = self.label_of(row.action)
+            row.title.setText(title)
+            row.show_value(self.binding_text(row.action), title in involved)
             busy = self.binding is not None
+            editable = self.editable(row.action)
             row.bind.setText("Cancel" if busy and self.binding[0] is row else "Bind")
-            row.bind.setEnabled(not busy or self.binding[0] is row)
-            row.clear.setEnabled(not busy)
-            row.reset.setEnabled(not busy)
+            row.bind.setEnabled(editable and (not busy or self.binding[0] is row))
+            row.clear.setEnabled(editable and not busy)
+            row.reset.setEnabled(editable and not busy)
+            tip = "" if editable else ("Combined pedals: the throttle row binds the axis for both. "
+                                       "Set Pedals to Separate in Control settings to bind the "
+                                       "brake on its own.")
+            for widget in (row.bind, row.clear, row.reset, row.value):
+                widget.setToolTip(tip)
         if conflicts:
             self.conflicts.setText("Bound twice: " + "; ".join(
                 f"{what}: {', '.join(labels)}" for what, labels in conflicts))
@@ -589,6 +605,8 @@ class BindingsEditor(QWidget):
         return f"Press the button for {action.label}"
 
     def begin(self, row):
+        if not self.editable(row.action):
+            return
         if self.binding is not None:
             if self.binding[0] is row:
                 self.cancel("Binding cancelled.")
@@ -613,9 +631,10 @@ class BindingsEditor(QWidget):
 
     def finish(self, row, found):
         self.binding = None
+        label_ = self.label_of(row.action)
         self.apply(self.changes_for(row.action, found))
         what = bindings.source_text(found.source, self.names()) if found.source else found.describe()
-        self.status.setText(f"{row.action.label}: {what}.")
+        self.status.setText(f"{label_}: {what}.")
         self.refresh()
 
     def remap_changes(self, action, source):
@@ -630,6 +649,9 @@ class BindingsEditor(QWidget):
         if found.kind == "axis":
             if action.key == "steer":
                 changes["wheel_invert_steering"] = found.direction < 0
+            elif action.key == "throttle" and bindings.combined_pedals(settings):
+                # Combined: the driver takes the axis's low side as throttle unless inverted.
+                changes["wheel_invert_throttle"] = found.direction > 0
             else:
                 full = 32767 if found.direction > 0 else -32768
                 invert, _ = bindings.pedal_calibration(found.rest, full, self.known_wheel())
@@ -637,15 +659,20 @@ class BindingsEditor(QWidget):
         return changes
 
     def clear(self, row):
+        if not self.editable(row.action):
+            return
+        label_ = self.label_of(row.action)
         self.apply(self.remap_changes(row.action, None) if self.kind() == "controller"
                    else bindings.set_wheel_binding(self.settings(), row.action, None))
-        self.status.setText(f"{row.action.label}: not bound.")
+        self.status.setText(f"{label_}: not bound.")
         self.refresh()
 
     def reset(self, row):
+        if not self.editable(row.action):
+            return
         self.apply(self.remap_changes(row.action, "default") if self.kind() == "controller"
                    else bindings.set_wheel_binding(self.settings(), row.action, "default"))
-        self.status.setText(f"{row.action.label}: back to its default.")
+        self.status.setText(f"{self.label_of(row.action)}: back to its default.")
         self.refresh()
 
     def reset_everything(self):
