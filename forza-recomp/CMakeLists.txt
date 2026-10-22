@@ -128,6 +128,7 @@ set(FORZA_SOURCES
     src/hooks/compressed_stream_stall.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
+    src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
     src/hooks/cockpit_gauges.cpp
