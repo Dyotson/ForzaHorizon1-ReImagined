@@ -28,7 +28,7 @@ jobs:
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          # The Discord role to ping (the "Updates" role), its numeric ID as a repository
+          # The Discord role to ping ("Updates ping", opt-in), its numeric ID as a repository
           # variable. Unset: the post pings nobody.
           ROLE: ${{ vars.DISCORD_UPDATES_ROLE_ID }}
         run: |
