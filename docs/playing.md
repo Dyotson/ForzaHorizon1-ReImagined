@@ -21,6 +21,9 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   achievement name and Gamerscore. Multiple unlocks queue in order; ordinary alerts and
   challenge prompts take priority, then the interrupted unlock resumes. The F7 achievement
   browser remains available in the overlay.
+- **Cockpit gauges:** the game lights the instruments only when the headlights are on;
+  `cockpit_gauges_lit = true` in `forza.toml` (launcher: Display, Picture, Cockpit gauges
+  always lit) keeps them lit by day too, for your own car only.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a

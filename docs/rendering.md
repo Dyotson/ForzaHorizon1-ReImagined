@@ -725,3 +725,37 @@ and its first blit have an explicit transfer-write dependency.
 Presentation-complete semaphores belong to swapchain images rather than CPU
 frame slots. Reacquiring an image permits reuse of its semaphore. Swapchain
 retirement drains the presentation queue before destroying these resources.
+
+## Cockpit gauges lit by day (#183)
+
+In cockpit view the instrument backlight only shows when the car's headlights are on. The
+game sends a car's headlight amount (0 by day, 1 with the lights on) through
+`ICarPresentation::SetHeadLightAmount` (the deferred one on the game thread, TU4 `82E81A48`,
+disc `82DBFB78`; the render thread's stores it at render object + 0x342C) and `82448F90`
+(disc `82418FE0`) copies it into the pixel shader constant `dynamicLights2.x` (c108.x) once per
+car and view. Every car material that glows with the lights multiplies by it: the
+headlight, tail light and number plate lenses as well as the cockpit's gauge faces and
+needles (`CockpitGaugesEmissive * GaugeEmissiveScale * dynamicLights2.x` in the
+`cockpit_gauge` shaders of `media/shaders/Cars/shaders_v16.fxobj`). Raising the amount for the
+whole car lights the lamps too (checked: the tail lights glow).
+
+The car is drawn model by model: `8246CEC8(presentation, ?, pass, group, lod)` (disc
+`8243CDC0`) per model group, each drawn at once by `824469B0(constants, model)` (disc
+`82416A00`). Group 16 is the cockpit interior, 1-15 are the analog gauge needles (the table of
+`8248A5A0`); raising c108.x for group 16 alone lit the gauge faces and left the tail lights
+as they were, groups 1-3 lit the 300SL's needles. `src/hooks/cockpit_gauges.cpp`
+(`cockpit_gauges_lit`, launcher Display > Picture > **Cockpit gauges always lit**, off by
+default) raises c108.x to at least 1 around those draws of the local player's car only and
+writes the game's value back after each (constant shadow: pixel register r at
+`(r + 376) * 16`, dirty flag bit `63 - r / 4` of the word at +8, `src/platform/cockpit_gauges.h`).
+The local car is the vehicle of kind 0 in the vehicle list (`world_challenge.cpp`); its
+deferred presentation is at vehicle + 0x2D94, whose + 4 is the render thread's presentation.
+The game thread matches each car's `SetHeadLightAmount` against the list and publishes that
+pointer; the render thread only compares pointers, so CPU drivers and other players' cars
+online keep the game's lighting.
+
+Checked on TU4 offline, by day at the Montano Plains outpost (setting off and on, same spot
+and time): Mercedes 300SL Gullwing, Aston Martin DB5 and Plymouth Cuda 426 HEMI gauges lit with
+the setting on and dark without; the Cuda's tail lights and the rest of the picture unchanged;
+at dusk with the headlights on the gauges look as the game draws them. The Lamborghini
+Aventador's digital display (drawn from a UI texture) is lit either way.
