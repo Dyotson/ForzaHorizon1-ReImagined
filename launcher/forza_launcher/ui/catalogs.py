@@ -14,7 +14,7 @@ from .. import TITLE_ID, paths, ugc
 from . import theme
 from .widgets import label
 
-CATALOG_PAGE_ID = 6  # Gallery uses 4; leave 5 available for Saves.
+CATALOG_PAGE_ID = 7  # Preserve main: Gallery 4, Controls 5, Saves 6.
 MAX_PREVIEWS = 16 * 1024**2
 
 

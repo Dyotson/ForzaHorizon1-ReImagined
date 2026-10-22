@@ -5,9 +5,11 @@
 #pragma once
 
 #include "debug/frame_stats.h"
+#include "debug/stall_watch.h"
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/hud_overlay.h"
+#include "platform/graphics_menu.h"
 #include "platform/vulkan_hooks.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
@@ -26,6 +28,9 @@
 
 #include <filesystem>
 #include <string>
+#ifdef __APPLE__
+#include <rex/filesystem.h>
+#endif
 
 namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
@@ -55,6 +60,10 @@ class ForzaApp : public rex::ReXApp {
   // Runs after forza.toml and the command line are applied, before the window opens.
   void OnPostInitLogging() override { ApplyForzaCvarDefaults(); }
 
+  void OnConfigureFonts(ImFontAtlas* atlas) override {
+    forza::ConfigurePerformanceFont(atlas);
+  }
+
   void OnPreSetup(rex::RuntimeConfig& config) override {
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
@@ -73,8 +82,7 @@ class ForzaApp : public rex::ReXApp {
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
   // calls (swapchain present-mode log, RECOMP_PERF timing; src/platform/vulkan_hooks.h).
-  // Also the text box of the Horizon World's head-to-head challenges and of the invite
-  // prompts (platform/hud_overlay.h).
+  // Friends/chat/invite overlays remain separate from native HUD notifications.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
@@ -91,19 +99,25 @@ class ForzaApp : public rex::ReXApp {
     forza::ultrawide::Resize(width, height);
   }
 
-  // The SDK's achievement toasts, registered with the ImGui drawer only while one shows, so
-  // the window is not repainted nonstop (src/platform/achievement_toast.h; from
-  // RecompiledHaloReach).
+  // Notifications go directly from the SDK event API to the native HUD.
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog()
-      override {
-    return forza::MakeOnDemandToast(rex::ReXApp::CreateAchievementNotificationDialog(),
-                                    imgui_drawer(), app_context());
+      override { return {}; }
+
+  void OnShutdown() override {
+    stall_watchdog_.Stop();
+    if (achievement_listener_) {
+      forza::RemoveAchievementHud(achievements(), achievement_listener_);
+      achievement_listener_ = 0;
+    }
   }
 
   // The SDK hard-exits right after a close request is accepted (SIGINT included), so the
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    // The SDK terminates guest threads immediately after accepting this request.
+    // A retained XThread handle does not keep its guest stack alive.
+    stall_watchdog_.Stop();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
     return true;
@@ -115,6 +129,8 @@ class ForzaApp : public rex::ReXApp {
   // raw Cache0/Cache1 partitions with a null device), so cache:\ fails with "device
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
+    forza::graphics_menu::Initialize(user_data_root());
+    if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),
         [this, last = std::array<double, 6>{-1,-1,-1,-1,-1,-1}]
@@ -136,6 +152,8 @@ class ForzaApp : public rex::ReXApp {
     // After the runtime's own handlers (MMIO, GPU watches), so it only sees faults
     // nothing else takes.
     forza::InstallFaultGuard();
+    // Long frames and where the game was during them (#187).
+    stall_watchdog_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
@@ -151,11 +169,19 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
-  // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
-  // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
-  // update_data_root setting; default: tu4 next to the game folder).
+#if defined(__APPLE__) || (defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4)
   void OnConfigurePaths(rex::PathConfig& paths) override {
+#ifdef __APPLE__
+    const auto exe = rex::filesystem::GetExecutableFolder();
+    if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
+      // Settings must stay writable without changing the signed app bundle.
+      paths.config_path = paths.user_data_root / "forza.toml";
+    }
+#endif
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+    // Title Update 4 build: the patched executable, its facade DLLs and the update's media.zip
+    // are in one folder (tools/apply_title_update.py), mounted as update: (the SDK's
+    // update_data_root setting; default: tu4 next to the game folder).
     if (paths.update_data_root.empty()) {
       auto game = std::filesystem::absolute(paths.game_data_root).lexically_normal();
       if (!game.has_filename()) game = game.parent_path();
@@ -166,7 +192,10 @@ class ForzaApp : public rex::ReXApp {
                    "(tools/apply_title_update.py; set update_data_root)",
                    paths.update_data_root.string());
     }
+#endif
   }
+#endif
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.
   void OnLoadXexImage(std::string& /*xex_image*/) override {
@@ -180,5 +209,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  forza::stall::Watchdog stall_watchdog_;
+  uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

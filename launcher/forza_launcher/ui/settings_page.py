@@ -4,11 +4,11 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, QTimer, Qt, Signal
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
-                               QFrame, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
+                               QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
+from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -183,7 +183,7 @@ class SettingRow(QWidget):
         self.warning.setStyleSheet(f"color: {theme.ORANGE}; font-size: 12px;")
         self.warning.hide()
         col.addWidget(self.warning)
-        self.dependency = label("", "help")
+        self.dependency = label("", "reason")
         self.dependency.hide()
         col.addWidget(self.dependency)
         lay.addLayout(col, 1)
@@ -226,6 +226,7 @@ def section_card(lay, title, index=None):
 
 class SettingsPage(QWidget):
     changed = Signal()
+    rebuilt = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -243,6 +244,7 @@ class SettingsPage(QWidget):
         self.search = SettingsSearch(self)
         self.search.chosen.connect(self._show_search_result)
         root.addWidget(self.search)
+        self._specs_banner(root)
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
@@ -280,25 +282,39 @@ class SettingsPage(QWidget):
 
     def set_value(self, key, value):
         self.cfg.settings[key] = schema.coerce(schema.BY_KEY[key], value)
-        if key in ("fh1_upscaler", "fh1_output_resolution") and dlss.enabled(self.cfg):
-            resolution, _, _, scale = dlss.output_settings(self.cfg)
-            for dep, fixed in (("gpu_backend", "vulkan"), ("resolution", resolution), ("resolution_scale", scale)):
+        if key in ("fh1_upscaler", "fh1_output_resolution", "forza_antialiasing") and dlss.enabled(self.cfg):
+            resolution, _, _, _ = dlss.output_settings(self.cfg)
+            for dep, fixed in (("gpu_backend", "vulkan"), ("resolution", resolution)):
                 self.cfg.settings[dep] = fixed
                 row = self.rows.get(dep)
                 if row:
                     control = row.control
                     control.blockSignals(True)
-                    if dep == "resolution_scale":
-                        control.setValue(fixed)
-                    else:
-                        control.setCurrentIndex(control.findData(fixed))
+                    control.setCurrentIndex(control.findData(fixed))
                     control.blockSignals(False)
+        # Scene reconstruction already includes AA. Keep the selectors exclusive.
+        if key in ("fh1_upscaler", "present_effect") and value not in ("off", "bilinear", "fsr", "cas"):
+            self.cfg.settings["forza_antialiasing"] = "game"
+            row = self.rows.get("forza_antialiasing")
+            if row:
+                row.control.blockSignals(True)
+                row.control.setCurrentIndex(row.control.findData("game"))
+                row.control.blockSignals(False)
         if key == "forza_ultrawide" and value and "gpu_backend" in self.rows:
             self.cfg.settings["gpu_backend"] = "vulkan"
             control = self.rows["gpu_backend"].control
             control.blockSignals(True)
             control.setCurrentIndex(control.findData("vulkan"))
             control.blockSignals(False)
+        scene_aa = self.cfg.settings.get("forza_antialiasing", "game") != "game"
+        scaling = self.cfg.settings.get("fh1_upscaler", "off") != "off" or self.cfg.settings.get("present_effect") == "fsr3"
+        if scene_aa or scaling:
+            self.cfg.settings["swap_post_effect"] = "none"
+            row = self.rows.get("swap_post_effect")
+            if row:
+                row.control.blockSignals(True)
+                row.control.setCurrentIndex(row.control.findData("none"))
+                row.control.blockSignals(False)
         self._apply_dependencies()
         self.touched()
 
@@ -339,14 +355,66 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+
+        hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
+        states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
+        for key in self.rows:
+            if key.startswith("present_hdr_"):
+                states[key] = (hdr_supported and bool(self.cfg.settings.get("present_hdr")),
+                               "Enable HDR output with Vulkan to adjust this setting.")
+
         for key, dep in DEPENDS.items():
             states[key] = (bool(self.cfg.settings.get(dep)), "")
+        scaling = self.cfg.settings.get("fh1_upscaler", "off") != "off" or self.cfg.settings.get("present_effect") == "fsr3"
+        supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan" and not ultrawide
+        aa_reason = ("Upscaling includes anti-aliasing; turn it off to choose a separate method." if scaling else
+                     "Separate scene AA currently requires Vulkan and standard 16:9 output." if not supported else "")
+        states["forza_antialiasing"] = (not scaling and supported, aa_reason)
+        aa_row = self.rows.get("forza_antialiasing")
+        if aa_row:
+            model = aa_row.control.model()
+            for index in range(aa_row.control.count()):
+                item = model.item(index)
+                if item:
+                    item.setEnabled(aa_row.control.itemData(index) != "dlaa" or self.cfg.gpu_vendor() == gpu.NVIDIA)
+            aa_row.control.setToolTip(aa_reason or schema.BY_KEY["forza_antialiasing"].help)
+        states["swap_post_effect"] = (
+            not active and not temporal and self.cfg.settings.get("forza_antialiasing", "game") == "game",
+            "Disable upscaling and select Game MSAA to use this setting.")
+        scene_aa = (self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan" and
+                    self.cfg.settings.get("forza_antialiasing", "game") != "game")
+        scene_reason = "Native AA renders at output resolution; this setting only affects Game MSAA."
+        if scene_aa:
+            states["resolution_scale"] = (False, scene_reason)
+        if "resolution_scale" in self.rows:
+            self.rows["resolution_scale"].control.setToolTip(
+                scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
+        states["vulkan_store_pipeline_cache"] = (
+            bool(self.cfg.settings.get("store_shaders")) and
+            self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan",
+            "Enable shader storage with Vulkan to keep compiled pipelines.")
         for s in schema.S:
             if s.key.startswith("keybind_"):
                 states[s.key] = (bool(self.cfg.settings.get("mnk_mode")), "")
         for key, (available, reason) in states.items():
             if key in self.rows:
                 self.rows[key].set_available(available, reason)
+        for row in self.rows.values():
+            enabled = row.control.isEnabled()
+            if row.control.property("dependencyEnabled") != enabled:
+                row.control.setProperty("dependencyEnabled", enabled)
+                effect = row.graphicsEffect()
+                if effect is None and not enabled:
+                    effect = QGraphicsOpacityEffect(row)
+                    row.setGraphicsEffect(effect)
+                if effect is not None:
+                    effect.setOpacity(1.0 if enabled else 0.55)
+                row.update()
+                for widget in [row.control, *row.control.findChildren(QWidget)]:
+                    style = widget.style()
+                    style.unpolish(widget)
+                    style.polish(widget)
+                    widget.update()
         self._refresh_gpu_warnings()
 
     def _rows(self, lay, group, skip=()):
@@ -437,10 +505,15 @@ class SettingsPage(QWidget):
         lay.addWidget(w)
         self.gpu_notes = label("", "help")
         lay.addWidget(self.gpu_notes)
+        self.specs_line = label("", "help")
+        lay.addWidget(self.specs_line)
         self.gpu_apply = QPushButton("Use the recommended settings for this card")
         self.gpu_apply.clicked.connect(lambda: self._gpu_chosen(self.gpu_combo.currentData(), True))
         lay.addWidget(self.gpu_apply, 0, Qt.AlignLeft)
         self.gpu_combo.activated.connect(lambda _i: self._gpu_chosen(self.gpu_combo.currentData(), False))
+        recheck = QPushButton("Check this PC again")
+        recheck.clicked.connect(self._recheck_specs)
+        lay.addWidget(recheck, 0, Qt.AlignLeft)
         self._gpu_texts()
         self.search.add("Your graphics card", "Display", "Graphics card", w, self.gpu_combo,
                         "GPU vendor NVIDIA AMD Intel recommended settings")
@@ -456,6 +529,9 @@ class SettingsPage(QWidget):
                  ["No recommendation for this card: the launcher's general defaults apply."])
         for text, issue in (p.notes if p else []):
             lines.append(f"{text}{gpu.issue_text(issue)}")
+        pc = self.cfg.pc_specs()
+        self.specs_line.setText(specs.describe(pc))
+        lines += [w.text for w in specs.warnings(pc, {}) if not w.key]    # about the PC, not a setting
         self.gpu_notes.setText("\n".join(lines))
         self.gpu_apply.setEnabled(p is not None)
 
@@ -486,8 +562,53 @@ class SettingsPage(QWidget):
             warning_settings["resolution_scale"] = 2
         for key, text, issue in gpu.warnings(vendor, warning_settings):
             found.setdefault(key, []).append(text + gpu.issue_text(issue))
+        vendor_keys = set(found)    # the vendor's own warning on a setting says it already
+        for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
+            if w.key and w.key not in vendor_keys:
+                found.setdefault(w.key, []).append(w.text)
         for key, row in self.rows.items():
             row.set_warning(" ".join(found.get(key, [])))
+        self._refresh_banner()
+
+    # --- settings heavy for this PC (#206) --------------------------------------------
+    def _specs_banner(self, root):
+        self.banner = QFrame()
+        self.banner.setObjectName("specsBanner")
+        self.banner.setStyleSheet(f"#specsBanner {{ border: 1px solid {theme.ORANGE}; border-radius: 8px; }}")
+        row = QHBoxLayout(self.banner)
+        row.setContentsMargins(16, 10, 16, 10)
+        row.setSpacing(12)
+        self.banner_text = label("Some settings are heavy for this PC.", "")
+        row.addWidget(self.banner_text, 1)
+        use = QPushButton("Use recommended")
+        use.clicked.connect(self._use_recommended)
+        keep = QPushButton("Keep mine")
+        keep.clicked.connect(self._keep_mine)
+        row.addWidget(use)
+        row.addWidget(keep)
+        self.banner.hide()
+        root.addWidget(self.banner)
+
+    def _refresh_banner(self):
+        self.banner.setVisible(self.cfg.specs_banner_due())
+
+    def _use_recommended(self):
+        changed = self.cfg.use_recommended()
+        self.touched()
+        self.rebuild()
+        self.window.status("Recommended settings applied: " + ", ".join(
+            schema.BY_KEY[k].label for k in changed) if changed else "Nothing to change", False)
+
+    def _keep_mine(self):
+        self.cfg.dismiss_specs_banner()
+        self.touched()
+        self._refresh_banner()
+
+    def _recheck_specs(self):
+        self.cfg.detect_specs(force=True)
+        self.touched()
+        self.rebuild()
+        self.window.status("Checked this PC again", False)
 
     def _pad_block(self, lay):
         lay = section_card(lay, "Players", 2)
@@ -777,3 +898,4 @@ class SettingsPage(QWidget):
         self.stack.setCurrentIndex(cur)
         self._apply_dependencies()
         self.search.refresh()
+        self.rebuilt.emit()

@@ -177,7 +177,7 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(result.root,self.root/'relative')
         self.assertEqual(result.identity.hex().upper(),'E000000000000003')
 
-    def test_session_holds_the_same_lease_until_process_exit(self):
+    def test_session_holds_the_same_lease_until_cleanup(self):
         plan=game.LaunchPlan(game=None,cwd=self.root,
             argv=[sys.executable,'-c','import time;time.sleep(10)',f'--user_data_root={self.target.root}'],
             env={'FORZA_XUID':self.target.identity.hex()},unset=[],toml_path=self.root/'forza.toml',
@@ -187,11 +187,30 @@ class ImportTests(unittest.TestCase):
             session.start()
             with self.assertRaisesRegex(ValueError,'Close the game'):
                 with ci.locked(self.target):pass
-            session.proc.terminate();session.proc.wait(timeout=5);session.poll()
+            session.proc.terminate();session.proc.wait(timeout=5);session.poll();session.cleanup()
             with ci.locked(self.target):pass
         finally:
             if session.proc and session.proc.poll() is None:
-                session.proc.kill();session.proc.wait(timeout=5);session.poll()
+                session.proc.kill();session.proc.wait(timeout=5);session.poll();session.cleanup()
+
+    def test_session_reuses_save_manager_lock_and_recovers_before_launch(self):
+        plan=game.LaunchPlan(game=None,cwd=self.root,argv=['forza'],env={},unset=[],
+            toml_path=self.root/'forza.toml',toml_text='',log_dir=self.root,
+            save_profile=self.target)
+        session=game.Session(plan)
+        try:
+            with patch.object(ci,'locked',wraps=ci.locked) as lease, \
+                    patch.object(ci,'recover',wraps=ci.recover) as recover, \
+                    patch('subprocess.Popen') as spawn:
+                session.start()
+                lease.assert_not_called()
+                recover.assert_called_once()
+                spawn.assert_called_once()
+                with self.assertRaisesRegex(ValueError,'Close the game'):
+                    with ci.locked(self.target):pass
+        finally:
+            session.cleanup()
+        with ci.locked(self.target):pass
 
     def test_a_busy_save_does_not_start_even_a_local_server(self):
         plan=game.LaunchPlan(game=None,cwd=self.root,argv=['forza'],env={},unset=[],

@@ -26,6 +26,14 @@ set(CMAKE_C_FLAGS_INIT "--target=x86_64-pc-windows-msvc -fuse-ld=lld-link /clang
 # they only exist in recent MSVC runtimes, so an SDK built with the newest MSVC failed to link
 # on a player's older Visual Studio 2022 (#64). The plain templates work with any of them.
 set(CMAKE_CXX_FLAGS_INIT "--target=x86_64-pc-windows-msvc -fuse-ld=lld-link /clang:-msse4.1 /D_USE_STD_VECTOR_ALGORITHMS=0")
+# With xwin's CRT there is no Visual Studio for clang-cl to take the MSVC version from, and
+# it may find an old one instead (Visual Studio 2013 is MSVC 18: char16_t is no keyword and
+# the STL fails with "deduced return types are a C++14 extension", #173). The launcher
+# sets FORZA_MSVC_COMPAT for xwin builds (builder.XWIN_MSVC_COMPAT).
+if(DEFINED ENV{FORZA_MSVC_COMPAT})
+    string(APPEND CMAKE_C_FLAGS_INIT " -fms-compatibility-version=$ENV{FORZA_MSVC_COMPAT}")
+    string(APPEND CMAKE_CXX_FLAGS_INIT " -fms-compatibility-version=$ENV{FORZA_MSVC_COMPAT}")
+endif()
 set(CMAKE_EXE_LINKER_FLAGS_INIT "/manifest:embed")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "/manifest:embed")
 set(CMAKE_MODULE_LINKER_FLAGS_INIT "/manifest:embed")

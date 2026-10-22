@@ -1,5 +1,52 @@
 # Rendering issues
 
+## Cross-scale minimap corruption at 3x
+
+The scene and native HUD have separate texture caches when their integer render
+scales differ. At 4K DLSS Quality, for example, the scene backing is 2x and the
+HUD is 3x. `Fh1SynchronizeResolve` mirrors render-to-texture results between them.
+The old transfer treated storage as repeated individual pixels, but the SDK
+actually repeats 16-byte quads in column-major order. This scrambled roads and
+icons in the minimap. Disabling `fh1_fast_resolve_copy` did not fix the underlying
+byte-path mapping.
+
+SDK patch 0100 resamples within those quads and preserves the resolve's endian
+order. Whole-word loads remain enabled for compatible pixel layouts; the byte
+fallback uses the same corrected address calculation. No game assets change.
+
+The standalone Vulkan check executes the actual shader against independently
+encoded dense image patterns, including 2x-to-3x and 3x-to-2x transfers, six endian
+modes, five pixel sizes, offset bindings and destination guards. Both fast-copy
+settings pass 1,470 cases each on Windows / RTX 5060 Ti. A pre-fix 2x-to-3x RGBA
+control fails as expected. Run `tools/test_vulkan_cross_scale_resolve.py --sdk
+/path/to/patched-sdk --fast-copy 1` (and `--fast-copy 0`); Python `vulkan` and
+`glslangValidator` are required. A baseline source can be checked with
+`--original-control --baseline-cpp /path/to/old/command_processor.cpp`.
+
+The full Windows TU4 host and SDK build with Vulkan and D3D12 enabled. Matched
+offline festival captures on RTX 5060 Ti / driver 617.14 reproduce the minimap
+corruption before the fix and show clean road/icon edges and restored markers
+afterward at 4K DLSS Quality (2x scene / 3x HUD). A live DLSS Quality to native
+3x to native 2x sequence completes with visible scene shadows retained. This is
+not a reproduction or a confirmed fix of the separately reported shadow failure.
+
+A private TU4 fixture stimulates `CHudDrivingFeatsControl` through its native
+feat method (`828A62A0`) on the UI update thread, with a synthetic label, score,
+and icon selection. It awards no gameplay points. Captures retain the native
+score, multiplier, label and icon through 1x, 2x and 3x, including live cache
+replacement. The same simulated feat is visible at 4K DLSS Quality both before
+and after the minimap correction, and at 4K FSR 3 Quality afterward. This does
+not reproduce the missing-icon report or cover the gameplay event-generation
+path. The fixture, binaries, copied profiles and captures remain outside Git;
+neither test hook is part of patch 0100.
+
+An additional 4K DLSS simulation selects native feat kinds 0, 1 and 2 explicitly.
+Kinds 0/1 produce text-only presentations; kind 2 produces the combo icon and
+backing. This agrees with `8289B968`, which updates `COMPONENT_COMBO_ICON` only
+when the child control's kind at +0xF8 is 2. Event/layout selection is therefore
+a separate lead for the missing-icon report; forcing every event to kind 2 is
+not included as a fix. An affected gameplay event has not been captured yet.
+
 ## Minimap icon resolution
 
 The minimap profile requests `MapIconSheetSmall.tga`: a 512x512 BC3 atlas
@@ -661,3 +708,20 @@ compile-checked; playback on TU0 and AMD hardware was not tested.
 This addresses missing CPU-to-GPU invalidation. The original purple/white striped
 transition has not been independently reproduced with the fix disabled, so the
 related AMD report still needs confirmation on the affected machine.
+
+## Vulkan DLSS initialization and presentation lifetime
+
+Patch 0076 enables the buffer-device-address extension and feature required by
+the NVIDIA runtime. Feature creation and a first evaluation use cleared private
+images in a dedicated initialization submission. Its fence completes before the
+renderer reports the feature ready; the first game frame still resets temporal
+history. This does not add a CPU wait to each game frame or reduce the normal
+frame queue depth.
+
+Evaluation barriers also cover NGX's private history and scratch allocations,
+which are outside the renderer's input/output image barriers. The input clear
+and its first blit have an explicit transfer-write dependency.
+
+Presentation-complete semaphores belong to swapchain images rather than CPU
+frame slots. Reacquiring an image permits reuse of its semaphore. Swapchain
+retirement drains the presentation queue before destroying these resources.

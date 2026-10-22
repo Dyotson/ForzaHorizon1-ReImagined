@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__, paths, pins
-from . import build_env, cleanenv, datafolder, fetch
+from . import build_env, cleanenv, datafolder, fetch, specs
 from .fetch import Cancelled
 
 IS_WIN = sys.platform == "win32"
@@ -168,14 +168,40 @@ def tu_id(title_update: str = "") -> str:
         return "tu4:" + p.name
 
 
+CPU_BASELINE, CPU_V3 = "baseline", "x86-64-v3"
+CPU_TOO_OLD = ("The game was built for a newer CPU (x86-64-v3: AVX2, FMA, BMI2, MOVBE) than this PC's and cannot "
+               "start here. Rebuild it on this PC: Setup > Build.")
+
+
+def cpu_target() -> str:
+    """The CPU the game's generated code is compiled for (FORZA_CPU_TARGET, #220, docs/perf.md): x86-64-v3 when
+    this PC's CPU and OS have all of it (the game's code then needs 8-11% less CPU time), else baseline (SSE4.1,
+    any x86-64 CPU). FORZA_CPU_TARGET=baseline|x86-64-v3 in the environment overrides."""
+    forced = os.environ.get("FORZA_CPU_TARGET", "").strip().lower()
+    if forced in (CPU_BASELINE, CPU_V3):
+        return forced
+    return CPU_V3 if specs.x86_64_v3() is True else CPU_BASELINE
+
+
 def current_build_id(root: Path, title_update: str = "") -> str | None:
-    """Changes with the launcher version, the project sources, the SDK pin and whether (and
-    which) Title Update 4 is used, so choosing or dropping the update asks for a rebuild."""
+    """Changes with the launcher version, the project sources, the SDK pin, whether (and
+    which) Title Update 4 is used and the CPU target, so choosing or dropping the update, or
+    moving the data folder to a PC with another CPU, asks for a rebuild."""
     proj = project_dir()
     if proj is None:
         return None
-    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}|{tu_id(title_update)}"
-                        .encode()).hexdigest()[:16]
+    return hashlib.sha1(f"{__version__}|{sources_hash(proj)}|{pins.SDK_TAG}|{PLAT}|{tu_id(title_update)}|"
+                        f"{cpu_target()}".encode()).hexdigest()[:16]
+
+
+def cpu_blocker(root: Path, install_dir: Path | None = None) -> str:
+    """Why the game the launcher built cannot start on this CPU ('' = it can): it was built for x86-64-v3
+    and this CPU lacks part of it. Unknown CPUs are let through: the game checks again at start."""
+    if install_dir is not None and Path(install_dir) != runtime_dir(root):
+        return ""
+    if read_state(root).get("cpu_target") == CPU_V3 and specs.x86_64_v3() is False:
+        return CPU_TOO_OLD
+    return ""
 
 
 def read_state(root: Path) -> dict:
@@ -204,6 +230,13 @@ def build_status(root: Path, title_update: str = ""):
         if bool(st.get("tu4")) != bool(title_update):
             return "stale", ("A Title Update 4 package is chosen: rebuild to play Horizon Rally and the 1000 Club."
                              if title_update else "The title update was removed: rebuild for the base game.")
+        built_for = st.get("cpu_target", CPU_BASELINE)
+        if built_for != cpu_target():
+            if cpu_blocker(root):
+                return "stale", CPU_TOO_OLD
+            if built_for == CPU_BASELINE:
+                return "stale", "This CPU can run a faster build of the game (x86-64-v3): rebuild it."
+            return "stale", "The game was built for x86-64-v3 CPUs; this PC gets the build for any CPU: rebuild it."
         return "stale", "A new version of the project needs a rebuild."
     if st.get("started"):
         return "partial", "A build was started and not finished; it resumes where it stopped."
@@ -667,6 +700,12 @@ def sync_toolchain_file(root: Path) -> Path:
     return dst
 
 
+# The MSVC version clang-cl assumes when it finds no Visual Studio at all (LLVM 23: _MSC_VER
+# 1933), which is what xwin builds were tested with; pinned so an old Visual Studio on the
+# machine cannot lower it (#173).
+XWIN_MSVC_COMPAT = "19.33"
+
+
 def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     """Windows: the environment (INCLUDE, LIB, PATH) of the MSVC CRT and Windows SDK, from an
     installed Visual Studio, else from xwin, which needs the player to accept Microsoft's license."""
@@ -693,6 +732,9 @@ def msvc_environment(opts: Options, rep: Reporter, tools, lo, hi):
     env = cleanenv.clean_environment()
     env["INCLUDE"] = os.pathsep.join(map(str, inc))
     env["LIB"] = os.pathsep.join(map(str, lib))
+    # clang-cl takes the MSVC version from a Visual Studio it finds, which here is none or one
+    # too old for this CRT (#173); the toolchain file passes this on as -fms-compatibility-version.
+    env["FORZA_MSVC_COMPAT"] = XWIN_MSVC_COMPAT
     return env
 
 
@@ -795,6 +837,10 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
             raise BuildError("These project sources have no Title Update 4 support (forza_manifest_tu4.toml).")
     cmake_extra.append("-DFORZA_TITLE_UPDATE=" + ("4" if tu is not None else "0"))
     rep.log("building " + ("with Title Update 4 (" + manifest + ")" if tu is not None else "the base game"))
+    target = cpu_target()
+    cmake_extra.append("-DFORZA_CPU_TARGET=" + target)
+    rep.log("CPU target: " + ("x86-64-v3 (this CPU has AVX2, FMA, BMI2 and MOVBE)" if target == CPU_V3 else
+                              "baseline (SSE4.1, any x86-64 CPU)"))
 
     # Codegen: recompile the player's default.xex (and its two DLLs) to C++.
     rep.status("Generating code from your default.xex (a minute or two)")
@@ -855,8 +901,8 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     wall = time.time() - t0
     peak = monitor.get("peak", 0)
     write_state(root, {"started": t0, "id": cid, "complete": True,
-                       "when": time.strftime("%Y-%m-%d %H:%M"), "tu4": tu is not None, "seconds": round(wall),
-                       "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
+                       "when": time.strftime("%Y-%m-%d %H:%M"), "tu4": tu is not None, "cpu_target": target,
+                       "seconds": round(wall), "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
     (rt / "version.txt").write_text(f"built {time.strftime('%Y-%m-%d')} (sources {sources_hash(project_dir())[:8]})\n")
     rep.progress(1.0, "done")
     rep.log(f"Build finished in {wall / 60:.1f} min, jobs {opts.jobs}, "
@@ -868,6 +914,11 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     """Copy what the game needs to run into runtime/ so the build tree can be deleted."""
     rt = runtime_dir(opts.root)
     rt.mkdir(parents=True, exist_ok=True)
+    telemetry = bdir / "forza-telemetry.json"
+    if telemetry.is_file():
+        shutil.copy2(telemetry, rt / telemetry.name)
+    else:
+        (rt / telemetry.name).unlink(missing_ok=True)
     notice = bdir / "LICENSE-Pinyon-Shift"
     if notice.is_file():
         shutil.copy2(notice, rt / notice.name)

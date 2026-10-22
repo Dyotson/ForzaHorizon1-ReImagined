@@ -33,6 +33,7 @@
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
 #include "frame_stats.h"
+#include "stall_watch.h"
 #include "../hooks/frame_time.h"
 #include "../platform/ultrawide.h"
 
@@ -51,7 +52,9 @@
 #include <rex/system/xmemory.h>
 #include <rex/thread/mutex.h>
 
+#ifndef __APPLE__
 #include <renderdoc/renderdoc_app.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -178,6 +181,15 @@ void MaybeInvalidatePhysicalMemory(double now) {
 // Captures explicitly with Start/EndFrameCapture spanning a few guest frames:
 // TriggerCapture never produced a file with this runtime's presenter.
 void MaybeTriggerRenderDocCapture(double now) {
+#ifdef __APPLE__
+  // RenderDoc does not support macOS. Guest dumps and host screenshots still work.
+  static std::once_flag warning;
+  std::call_once(warning, [] {
+    if (std::getenv("FORZA_RDCAPTURE") || std::getenv("FORZA_RDCAPTURE_TRIGGER")) {
+      REXLOG_WARN("FORZA_RDCAPTURE: RenderDoc capture is unavailable on macOS");
+    }
+  });
+#else
   static const std::vector<double> times = ParseTimes(std::getenv("FORZA_RDCAPTURE"));
   static size_t next = 0;
   static int swaps = 0;  // swaps captured so far in the open capture, 0 when idle
@@ -221,6 +233,7 @@ void MaybeTriggerRenderDocCapture(double now) {
   api->StartFrameCapture(nullptr, nullptr);
   REXLOG_INFO("FORZA_RDCAPTURE: capture started at t={:.2f}s", now);
   swaps = 1;
+#endif
 }
 
 // Saves the presenter's current guest output image (what the window shows before
@@ -269,6 +282,7 @@ extern "C" REX_FUNC(__imp__VdSwap) {
   forza::perf::OnGuestFrame();
   forza::ultrawide::Frame();
   forza::frame_time::OnGuestSwap();
+  forza::stall::OnGuestSwap();
   MaybeTriggerRenderDocCapture(elapsed);
   MaybeInvalidatePhysicalMemory(elapsed);
   static const bool fps_log = [] {

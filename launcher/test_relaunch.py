@@ -127,7 +127,7 @@ class RelaunchTests(unittest.TestCase):
 class WindowPollTests(unittest.TestCase):
     """MainWindow._poll on code 75: a restart keeps the session; a refused one ends it."""
 
-    def run_poll(self, relaunch_result):
+    def run_poll(self, relaunch_result, closing=False):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
         try:
@@ -138,7 +138,9 @@ class WindowPollTests(unittest.TestCase):
         session = MagicMock()
         session.poll.return_value = game.RELAUNCH_EXIT_CODE
         session.relaunch.return_value = relaunch_result
-        win = SimpleNamespace(_close_after_game=False, session=session, session_plan=None, poll=MagicMock(), play=MagicMock())
+        win = SimpleNamespace(session=session, session_plan=None, poll=MagicMock(), play=MagicMock(),
+                              _prepare_crash_report=MagicMock(),
+                              _close_after_game=closing, close=MagicMock())
         MainWindow._poll(win)
         return win, session
 
@@ -155,6 +157,12 @@ class WindowPollTests(unittest.TestCase):
         self.assertIsNone(win.session)
         session.cleanup.assert_called_once()
         win.poll.stop.assert_called_once()
+
+    def test_closing_does_not_restart_the_game(self):
+        win, session = self.run_poll(True, closing=True)
+        session.relaunch.assert_not_called()
+        session.cleanup.assert_called_once()
+        win.close.assert_called_once()
 
 
 if __name__ == "__main__":
