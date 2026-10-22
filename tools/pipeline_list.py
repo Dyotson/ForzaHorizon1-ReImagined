@@ -26,7 +26,7 @@ Usage:
                                           what the launcher's "Prebuild shaders" writes to
                                           <cache root>/shaders/prebuild: the listed shaders
                                           rebuilt from the player's files (.xsh) and the
-                                          pipelines for the SDK (.xpl, patch 0112)
+                                          pipelines for the SDK (.xpl, patch 0113)
   pipeline_list.py write-storage LIST.json --sources SRC... --out DIR
                                           experiment: rebuild the listed shaders from the
                                           player's files and write SDK storage files

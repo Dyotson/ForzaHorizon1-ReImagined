@@ -4,7 +4,7 @@ so that new places, cars and cameras stop compiling shaders mid-game.
 The launcher ships a list of pipelines (data/pipelines-4D5309C9.json: shader hashes and decoded render
 state, no game data). This step rebuilds the listed shaders from the player's own game files
 (tools/pipeline_list.py), writes them and the list for the SDK to <cache root>/shaders/prebuild/
-(patch 0112 reads them at every start), then starts the game with --shader_prebuild_only: it builds
+(patch 0113 reads them at every start), then starts the game with --shader_prebuild_only: it builds
 every stored and listed pipeline into the driver's cache, reporting the usual SHADER_WARMUP progress,
 and exits before the game itself starts.
 

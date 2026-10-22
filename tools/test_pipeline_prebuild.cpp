@@ -1,4 +1,4 @@
-// The shader prebuild's pipeline list (patch 0112, docs/shader_prebuild.md). No game files, GPU or
+// The shader prebuild's pipeline list (patch 0113, docs/shader_prebuild.md). No game files, GPU or
 // Vulkan SDK required. Description is a copy of the SDK's VulkanPipelineCache::PipelineDescription
 // declarations (packed bit fields, enums of uint32_t): ToDescription must produce exactly the bytes
 // of the descriptions the game stored, in this compiler's layout (58 bytes with Clang/GCC, 60 with

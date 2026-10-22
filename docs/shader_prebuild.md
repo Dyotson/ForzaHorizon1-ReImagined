@@ -6,7 +6,7 @@ playing, so that new places, cars and cameras no longer compile shaders mid-game
 render state), and the shader code is read from the player's own game files.
 
 Phase 1, the feasibility study, added three tools and changed no SDK or launcher code.
-Phase 2 ([below](#phase-2-the-prebuild-linux-amd)) builds the feature: SDK patch 0112
+Phase 2 ([below](#phase-2-the-prebuild-linux-amd)) builds the feature: SDK patch 0113
 imports a shipped list, the launcher has a "Prebuild shaders" step in Setup, and the list
 in `launcher/forza_launcher/data/` is captured from scripted runs. The phase 1 tools:
 
@@ -269,8 +269,8 @@ Proposed fix:
 
 1. SDK patch: the store fixes above (1-4), and the import of `shaders/prebuild/` with
    device filtering, plus the prebuild-only run. **Done**: 0102 and 0086 (#253) cover
-   fixes 1, 2 and 4, 0112 the import and the prebuild-only run; fix 3 is replaced (see
-   [below](#sdk-patch-0112)).
+   fixes 1, 2 and 4, 0113 the import and the prebuild-only run; fix 3 is replaced (see
+   [below](#sdk-patch-0113)).
 2. Capture lists from scripted runs that cover the map, every car class, the cameras,
    photo mode, Autoshow and the UI scenes. `tools/perf_scenario.sh` and `live_session.sh`
    on Linux AMD, Windows NVIDIA and the Steam Deck. Merge per storage version. Keep D24S8
@@ -292,7 +292,7 @@ Proposed fix:
 Done on Linux: AMD Radeon RX 9060 XT (RADV, Mesa driver 0x6802001), 8 cores. Windows and
 NVIDIA captures and measurements, and the Steam Deck, are still to do (plan above).
 
-### SDK: patch 0112
+### SDK: patch 0113
 
 Each Vulkan pipeline cache reads `<cache root>/shaders/prebuild/` at every start (the
 top cache root, also with split rendering):
