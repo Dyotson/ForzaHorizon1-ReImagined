@@ -73,7 +73,7 @@ machine from their own copy:
    "Recommended" again after a graphics driver change (the driver cache files of the last prebuild are
    gone), a launcher, list or GPU plugin update, or a graphics setting that selects other pipeline
    stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
-   start also warms the listed pipelines. [Shader prebuild](shader_prebuild.md).
+   start also warms the listed pipelines. The step refuses to start the game while the Build step says "Rebuild needed" or "Not built" (a game built by an older launcher does not know `--shader_prebuild_only`): it shows "Rebuild first" and asks for Setup > Build. [Shader prebuild](shader_prebuild.md).
 5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or

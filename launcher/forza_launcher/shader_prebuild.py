@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -33,6 +34,24 @@ STORE_ARGS = ("--gpu_backend", "--render_target_path_vulkan", "--fh1_upscaler",
 
 class PrebuildError(Exception):
     pass
+
+
+REBUILD_FIRST = "Rebuild the game first (Setup > Build): Prebuild shaders needs the current build."
+STOPPED_NO_LOG = ("The game stopped right away without writing a log; rebuilding the game "
+                  "(Setup > Build) usually fixes this.")
+UNKNOWN_FLAG = ("The game does not know the prebuild option: it was built by an older launcher. "
+                "Rebuild the game (Setup > Build).")
+
+
+def build_problem(cfg) -> str:
+    """Why the game cannot be prebuilt yet ('' when its build is current). Same test as the Setup page's
+    Build step: the build is complete and made from the project of this launcher (builder.build_status)."""
+    from . import builder
+    try:
+        state, _detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
+    except Exception:
+        return ""
+    return "" if state == "built" else REBUILD_FIRST
 
 
 def list_path() -> Path | None:
@@ -138,9 +157,11 @@ def read_stamp(plan) -> dict | None:
         return None
 
 
-def status(plan) -> tuple:
+def status(plan, build_problem_text="") -> tuple:
     """(state, text): 'unavailable', 'none' (never prebuilt here), 'stale' (offer it again: the text
-    says why) or 'done'."""
+    says why) or 'done'. 'rebuild' when the game's build is missing or out of date (build_problem)."""
+    if build_problem_text:
+        return "rebuild", build_problem_text
     lst = list_path()
     if lst is None:
         return "unavailable", "This launcher has no pipeline list."
@@ -226,8 +247,14 @@ def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
         env.pop(k, None)
     env.update(plan.env)
     start = time.monotonic()
-    proc = subprocess.Popen(prebuild_command(plan), cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    started_at = time.time()
+    out = tempfile.TemporaryFile()
+    try:
+        proc = subprocess.Popen(prebuild_command(plan), cwd=plan.cwd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=subprocess.STDOUT)
+    except BaseException:
+        out.close()
+        raise
     part, last, seen_active = 0, None, False
     try:
         while proc.poll() is None:
@@ -252,8 +279,16 @@ def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
         if not paths.IS_WINDOWS:
             clean_shm()
     seconds = time.monotonic() - start
-    tail = _log_tail(log_file)
+    console = _console_text(out)
+    # Only a log written during this run counts: an older forza.log says nothing about this one.
+    tail = _log_tail(log_file) if _written_since(log_file, started_at) else []
     if proc.returncode != 0 or not any(DONE_LINE in line for line in tail):
+        if not tail:
+            low = console.lower()
+            if ("unknown" in low or "unrecognized" in low or "unrecognised" in low) and \
+                    ("flag" in low or "option" in low or "argument" in low):
+                raise PrebuildError(UNKNOWN_FLAG)
+            raise PrebuildError(STOPPED_NO_LOG)
         errors = [line.strip() for line in tail if "[error]" in line or "[critical]" in line][-2:]
         raise PrebuildError("The game stopped before the prebuild finished"
                             + (f" (exit code {proc.returncode})" if proc.returncode else "")
@@ -266,6 +301,23 @@ def run_game(plan, progress=None, cancelled=None, log=print, poll=0.25) -> dict:
             except (IndexError, ValueError):
                 pass
     return {"seconds": seconds, "pipelines": created, "parts": part}
+
+
+def _written_since(log_file, started_at, slack=2.0) -> bool:
+    try:
+        return log_file is not None and Path(log_file).stat().st_mtime >= started_at - slack
+    except OSError:
+        return False
+
+
+def _console_text(f, max_bytes=16 * 1024) -> str:
+    try:
+        f.seek(0)
+        return f.read(max_bytes).decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        return ""
+    finally:
+        f.close()
 
 
 def _log_tail(log_file, max_bytes=256 * 1024):
@@ -297,6 +349,8 @@ def write_stamp(plan, result: dict, files: dict):
 def prebuild(cfg, game, status_cb=None, progress=None, cancelled=None, log=print) -> str:
     """The whole step. status_cb(text); progress(fraction 0..1, detail)."""
     from . import game as game_mod
+    if build_problem(cfg):
+        raise PrebuildError(REBUILD_FIRST)
     plan = game_mod.build_plan(cfg, game, write=True, log=log)
     if not uses_vulkan(plan):
         raise PrebuildError("Shader prebuild needs the Vulkan graphics API (Settings > Graphics API).")
