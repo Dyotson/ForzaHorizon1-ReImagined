@@ -1,0 +1,47 @@
+name: pause-menu-tests
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/pause-menu-tests.yml'
+      - 'forza-recomp/CMakeLists.txt'
+      - 'forza-recomp/cmake/Fh2Pause.cmake'
+      - 'forza-recomp/src/hooks/*pause*'
+      - 'forza-recomp/src/hooks/fh1_map_preview.cpp'
+      - 'forza-recomp/src/hooks/graphics_menu.cpp'
+      - 'forza-recomp/src/hooks/offline_cars.cpp'
+      - 'forza-recomp/src/hooks/festival_travel.cpp'
+      - 'forza-recomp/src/hooks/car_recovery.cpp'
+      - 'forza-recomp/src/platform/fh1_*.h'
+      - 'forza-recomp/src/platform/fh2_*.h'
+      - 'forza-recomp/src/platform/offline_cars.h'
+      - 'forza-recomp/src/platform/pause_menu.h'
+      - 'forza-recomp/tests/pause-stubs/**'
+      - 'forza-recomp/tests/pause_stubs_test.cpp'
+      - 'tools/*horizon2*'
+      - 'tools/*fh1*'
+      - 'tools/*fh2*'
+      - 'tools/*offline_cars*'
+      - 'tools/xcontent_extract.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preparation-and-configuration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Synthetic preparation and configure-only matrix
+        run: |
+          cmake --version
+          python -m unittest discover -s tools -p 'test_fh*.py' -v
+          python -m unittest discover -s tools -p 'test_horizon2*.py' -v
+          python -m unittest discover -s tools -p 'test_offline_cars_flow.py' -v
+      - name: Disabled pause API stubs without the SDK
+        run: |
+          cmake -S forza-recomp/tests/pause-stubs -B build/pause-stubs
+          cmake --build build/pause-stubs --parallel 2
+          ctest --test-dir build/pause-stubs --output-on-failure

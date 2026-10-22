@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins
+from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
+               shader_prebuild)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -91,6 +92,19 @@ class PlayPage(QWidget):
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
+        self.crash_report = QPushButton("Review crash report…")
+        self.crash_report.setObjectName("link")
+        self.crash_report.hide()
+        self.crash_report.clicked.connect(window.review_crash_report)
+        lay.addWidget(self.crash_report, 0, Qt.AlignLeft)
+        self.shader_label = label("", "muted")
+        self.shader_label.hide()
+        lay.addWidget(self.shader_label)
+        self.shader_progress = QProgressBar()
+        self.shader_progress.setTextVisible(False)
+        self.shader_progress.setMaximumHeight(10)
+        self.shader_progress.hide()
+        lay.addWidget(self.shader_progress)
         lay.addWidget(c)
         self.install_details = Disclosure("Installation details")
         self.install_paths = label("", "help")
@@ -142,14 +156,25 @@ class PlayPage(QWidget):
             details.append(f"Online server: {PUBLIC_SERVER}")
         self.install_paths.setText("\n".join(details))
         ready = files_ok and install is not None
-        if self.window._dlss_task is not None:
+        save_page = getattr(self.window, 'saves', None)
+        if self.window._crash_probe is not None:
+            self.play.setText("Reading crash report…")
+            self.play.setEnabled(False)
+            self.stop.hide()
+        elif save_page is not None and save_page.busy():
+            self.play.setText("Preparing saves…")
+            self.play.setEnabled(False)
+            self.stop.setText("Cancel")
+            self.stop.show()
+        elif self.window._dlss_task is not None:
             self.play.setText("Preparing DLSS…")
             self.play.setEnabled(False)
             self.stop.setText("Cancel")
             self.stop.show()
         elif self.window.running():
             self.stop.setText("Stop")
-            self.play.setText("Playing...")
+            warmup = getattr(self.window, "_shader_warmup_status", None)
+            self.play.setText("Preparing shaders…" if warmup and warmup.active else "Playing...")
             self.play.setEnabled(False)
             self.stop.show()
         else:
@@ -170,6 +195,18 @@ class PlayPage(QWidget):
         self.warn.hide()
         self.msg.setText("")
         self.msg.hide()
+
+    def set_shader_warmup(self, status):
+        active = status is not None and status.active
+        self.shader_label.setVisible(active)
+        self.shader_progress.setVisible(active)
+        if active:
+            self.shader_label.setText(status.message)
+            self.shader_progress.setRange(0, status.total)
+            self.shader_progress.setValue(status.done)
+            self.play.setText("Preparing shaders…")
+        elif self.window.running():
+            self.play.setText("Playing...")
 
     def show_message(self, text, warn=False, keep=False):
         """A warning stays until the next start: refresh() runs right after it and used to hide
@@ -303,7 +340,7 @@ class SetupPage(QWidget):
         l0.addWidget(t0)
         folder_help = "Your game files, downloads, build and saves live here. Allow at least 15 GB of free space."
         if sys.platform == "win32":
-            folder_help += " Prefer a folder outside Documents, Desktop and OneDrive to avoid sync and permission problems."
+            folder_help += " Choose a folder outside Documents, Desktop and OneDrive to avoid sync and permission problems."
         l0.addWidget(label(folder_help, "help"))
         frow = QHBoxLayout()
         frow.setSpacing(12)
@@ -327,7 +364,7 @@ class SetupPage(QWidget):
         # 1. game files ---------------------------------------------------------------
         self.c1 = StepCard(1, "Your game files",
                            "Choose your Games on Demand package (the file in 4D5309C9/00007000, next to its "
-                           ".data folder), your disc 1 ISO, a default.xex, or a folder you already extracted. The base version of "
+                           ".data folder), your disc 1 ISO, a default.xex, or a folder you have already extracted. The base version of "
                            "the game is needed, without title updates.")
         row, self.pkg, _ = path_row("Package, default.xex or folder", self._pick_file, self._pick_dir)
         self.pkg.setText(cfg["game_package"])
@@ -472,6 +509,30 @@ class SetupPage(QWidget):
         self.build_details.content.addWidget(self.logview)
         self.c3.lay.addWidget(self.build_details)
         lay.addWidget(self.c3.frame)
+
+        # 5. prebuild shaders (#226) -------------------------------------------------------
+        self.c4 = StepCard(5, "Prebuild shaders",
+                           "Optional. Builds the graphics pipelines the game uses before you play, so that new "
+                           "places, cars and cameras do not stutter the first time you see them. The shaders "
+                           "come from your own game files. Takes from seconds to a few minutes, depending on the "
+                           "graphics driver; the game window opens and stays black meanwhile. Offered again "
+                           "after a graphics driver, launcher or graphics setting change.")
+        brow = QHBoxLayout()
+        self.go4 = QPushButton("Prebuild shaders")
+        self.go4.clicked.connect(self._prebuild)
+        brow.addWidget(self.go4)
+        self.cancel4 = QPushButton("Cancel")
+        self.cancel4.hide()
+        self.cancel4.clicked.connect(self._cancel)
+        brow.addWidget(self.cancel4)
+        brow.addStretch(1)
+        self.c4.lay.addLayout(brow)
+        self.bar4 = QProgressBar()
+        self.bar4.hide()
+        self.c4.lay.addWidget(self.bar4)
+        self.msg4 = label("", "muted")
+        self.c4.lay.addWidget(self.msg4)
+        lay.addWidget(self.c4.frame)
         lay.addStretch(1)
 
         self.timer = QTimer(self)
@@ -567,7 +628,25 @@ class SetupPage(QWidget):
         self.go1.setEnabled(not busy and bool(self.pkg.text().strip()))
         self.go2.setEnabled(not busy and bool(self.dlc.text().strip()))
         self.go3.setEnabled(not busy and have)
+        self._refresh_prebuild(busy)
         self._pkg_kind()
+
+    def _refresh_prebuild(self, busy):
+        g, _looked = game.find_game(self.cfg)
+        state, text = "unavailable", "Build the game first."
+        if g is not None:
+            try:
+                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False))
+            except Exception as e:  # a settings combination the plan refuses: say so, do not break the page
+                state, text = "unavailable", str(e)
+        badge = {"none": ("Optional", None), "stale": ("Recommended", None), "done": ("Done", True),
+                 "unavailable": ("Unavailable", None)}[state]
+        self.c4.set_badge(*badge)
+        self.go4.setText("Prebuild again" if state in ("done", "stale") else "Prebuild shaders")
+        self.go4.setEnabled(not busy and state != "unavailable")
+        if not self.fail.get("msg4") and not (busy and getattr(self, "_msg", None) is self.msg4):
+            self.msg4.setText(text)
+            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state == 'stale' else theme.MUTED};")
 
     @staticmethod
     def _dlc_text(found, skipped):
@@ -914,6 +993,14 @@ class SetupPage(QWidget):
         self.timer.start()
         self._start(t, self.bar3, self.cancel3, self.status3, status_to=self.status3)
 
+    def _prebuild(self):
+        if getattr(self.window, "running", lambda: False)():
+            QMessageBox.information(self, "Prebuild shaders", "Close the game first: the prebuild starts it.")
+            return
+        self.bar4.setRange(0, 1000)
+        t = workers.prebuild_task(self.cfg)
+        self._start(t, self.bar4, self.cancel4, self.msg4)
+
     def _clean(self):
         if QMessageBox.question(self, "Free disk space",
                                 "Delete the build files? The game keeps working. If the project updates, "
@@ -936,7 +1023,7 @@ class SetupPage(QWidget):
     def _start(self, task, bar, cancel_btn, msg, status_to=None):
         if self.busy():
             return
-        self.tabs.setCurrentIndex(2 if bar is self.bar3 else 1 if bar is self.bar2 else 0)
+        self.tabs.setCurrentIndex(2 if bar in (self.bar3, self.bar4) else 1 if bar is self.bar2 else 0)
         self.task = task
         self.fail.clear()
         self._bar, self._cancel_btn, self._msg = bar, cancel_btn, msg
@@ -950,7 +1037,7 @@ class SetupPage(QWidget):
                                                                    msg.setText(d[-90:])))
         task.status.connect(lambda s: self._set_status(s))
         task.done.connect(self._finished)
-        for b in (self.go1, self.go2, self.go3):
+        for b in (self.go1, self.go2, self.go3, self.go4):
             b.setEnabled(False)
         task.start()
         self.window.set_busy(True)
@@ -973,7 +1060,8 @@ class SetupPage(QWidget):
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
             self._cancel_btn.hide()
-        key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3"}.get(id(self._msg), "msg")
+        key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3",
+               id(self.msg4): "msg4"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
         blocked = bool(getattr(self.task, "blocked", False))
         if blocked:
@@ -985,7 +1073,7 @@ class SetupPage(QWidget):
         if not ok and self._bar is self.bar3 and not blocked:
             message += "  Press Resume build to continue."
         if failed:
-            self.tabs.setCurrentIndex(2 if self._bar is self.bar3 else 1 if self._bar is self.bar2 else 0)
+            self.tabs.setCurrentIndex(2 if self._bar in (self.bar3, self.bar4) else 1 if self._bar is self.bar2 else 0)
             self._show_fail(key, self._msg, message)
             if self._bar is self.bar3:
                 self.build_details.set_expanded(True)

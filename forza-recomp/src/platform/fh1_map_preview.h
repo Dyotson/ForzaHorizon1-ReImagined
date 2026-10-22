@@ -2,7 +2,7 @@
 
 #include "guest_addr.h"
 #include <cstdint>
-#include <rex/ppc/context.h>
+struct PPCContext;
 
 namespace forza::fh1_map_preview {
 #if FORZA_TU4 && defined(FORZA_FH2_PAUSE_SCENE)

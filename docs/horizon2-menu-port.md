@@ -354,6 +354,34 @@ Both use the new styled overlay at 1280x720/native scale 1.
 
 ## Private preparation and validation
 
+### Main integration, 2026-10-22
+
+The prototype is integrated with main `3390ef0`. The integration pass ran no
+game, GPU benchmark, real save or public server. Existing screenshots and native
+720p gameplay checks below predate this integration (`c7165e8` and earlier).
+
+Current CPU validation covers 32 affected-hook compilations: base disabled,
+TU4 disabled, TU4 navigation-only and TU4 scene-enabled. The five private native
+navigation/grid/layout/connection CTest cases pass, as do two SDK-free base/TU4
+disabled-API executables. Ten configure-only cases verify default-off behavior,
+valid private-input combinations, missing translations, and early rejection
+before SDK lookup or codegen. The 38 synthetic preparation tests and 67 focused
+launcher graphics/settings/exit/relaunch tests pass.
+
+The complete launcher suite ran 498 tests with 34 skips. Its unchanged symlink
+test has one failure and one subtest error on this Windows host without symlink
+privileges (WinError 1314); the affected fetch implementation and test match main.
+The new `pause-menu-tests` workflow runs synthetic preparation/configuration
+checks and both disabled-API executables without SDK or game inputs.
+
+Post-integration runtime validation remains required: stock pause/title Graphics
+and Back; an opted-in binary with stock scene assets; actual-scene map, Garage
+and Graphics child return; resume; and quit-to-title/reload with donor teardown
+before title-movie loading. Main's title/movie, HDR and driving-gate code is
+retained, but a static review and hook compilation do not establish those flows.
+Full release builds and Linux/macOS gameplay remain unvalidated; the draft's
+race/rally, split-screen, multiplayer, profile-state and paid-travel limits remain.
+
 Prepare the owner's FH2 executable/assets and extract navigation/events using
 prepare_horizon2_ui.py, extract_horizon2_navigation.py and
 extract_horizon2_grid_events.py. Stage with stage_horizon2_pause_scene.py,

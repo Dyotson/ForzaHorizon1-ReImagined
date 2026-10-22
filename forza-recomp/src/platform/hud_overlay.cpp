@@ -1,4 +1,4 @@
-// forza - the challenge text box over the game; see hud_overlay.h.
+// forza - the friends, chat and invite overlay; see hud_overlay.h.
 
 #include "hud_overlay.h"
 #include "performance_history.h"
@@ -282,6 +282,8 @@ void ConfigurePerformanceFont(ImFontAtlas* atlas) {
 #ifdef _WIN32
   if (const char* windows = std::getenv("WINDIR"))
     path = std::filesystem::path(windows) / "Fonts" / "arialbd.ttf";
+#elif defined(__APPLE__)
+  path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf";
 #else
   path = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf";
 #endif

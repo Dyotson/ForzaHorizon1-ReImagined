@@ -1,0 +1,20 @@
+diff --git a/resources/templates/codegen/register_cpp.inja b/resources/templates/codegen/register_cpp.inja
+index 0be31c4..5fb8578 100644
+--- a/resources/templates/codegen/register_cpp.inja
++++ b/resources/templates/codegen/register_cpp.inja
+@@ -17,8 +17,13 @@ void ReXModule_Register(rex::runtime::IModuleRegistrar* registrar) {
+ {% else %}
+ void {{ project }}_RegisterFunctions(rex::runtime::IModuleRegistrar* registrar) {
+ {% endif %}
+-{% for fn in functions %}{% if not fn.below_code_base or fn.is_import %}  registrar->SetFunction({{ fn.address }}, {{ fn.name }});
+-{% endif %}{% endfor %}}
++  // init.cpp already emits this exact ordered mapping list with a null sentinel.
++  // Iterating it avoids a huge straight-line function that is expensive for
++  // ARM64 SelectionDAG construction, even when optimization is disabled.
++  for (const PPCFuncMapping* mapping = PPCFuncMappings; mapping->host; ++mapping) {
++    registrar->SetFunction(static_cast<uint32_t>(mapping->guest), mapping->host);
++  }
++}
+ 
+ {% if is_dll %}
+ // The runtime uses this baked layout for the dispatch table. It must match the

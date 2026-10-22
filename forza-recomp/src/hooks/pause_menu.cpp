@@ -3,8 +3,8 @@
 #include "../platform/pause_menu.h"
 #include "../platform/fh2_pause_scene.h"
 #include "../platform/guest_addr.h"
-#include "../platform/guest_memory.h"
 #if FORZA_TU4 && defined(FORZA_FH2_PAUSE)
+#include "../platform/guest_memory.h"
 #include "../platform/fh2_navigation_adapter.h"
 #include "../platform/offline_cars.h"
 #include <rex/cvar.h>

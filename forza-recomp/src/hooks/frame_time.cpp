@@ -26,6 +26,7 @@
 // FORZA_FRAMETIME_LOG=1 logs the dt statistics every 10 s, FORZA_FRAMETIME_CSV each frame.
 
 #include "frame_time.h"
+#include "../debug/stall_watch.h"
 #include "../platform/graphics_menu.h"
 
 #include "../platform/guest_addr.h"
@@ -159,12 +160,22 @@ void ReadVblank(uint64_t& count, uint64_t& actual, uint64_t& nominal) {
 // frame waits until the render thread has swapped since the previous one (at most 50 ms),
 // so the game runs at the rate it draws. The frame's timestamp is taken before the wait, so
 // dt still adds up to real time. When the render thread keeps up, nothing waits.
+// The wait also ends when the render thread finds no main frame to draw (its loop,
+// sub_8259F3E8, leaves its frame count alone and returns): it is waiting for this main frame
+// then, and no swap can come before the main loop goes on. A frame it skips is not swapped
+// (with mainthread30fps off it draws every second one), so waiting for a swap ran into the
+// 50 ms limit on every such frame; the swaps then came about every 55 ms, which kept the
+// average high and the waits going: about 18 fps until a restart (#187).
 // FORZA_RENDER_SYNC=0 turns it off.
+constexpr uint32_t kRenderFrameCount = 0x948;  // render object: main frames it has taken
+
 struct RenderState {
   std::mutex mutex;
   std::condition_variable swapped;
   uint64_t swaps = 0, last_tick = 0;
   double interval_ema = 0;  // ticks between swaps
+  std::atomic<uint64_t> waiting{0};  // the main loop's wait in progress (0: none)
+  uint64_t idle = 0;                 // the wait in which the render loop found nothing to draw
 } render;
 
 struct SyncStats {
@@ -186,8 +197,12 @@ void WaitForRender() {
   const bool behind = render.interval_ema > 1.15 * target_ticks &&
                       start < render.last_tick + freq / 10;  // swaps are coming (100 ms)
   if (behind && render.swaps == seen) {
+    static uint64_t waits = 0;
+    const uint64_t id = ++waits;
+    render.waiting.store(id, std::memory_order_release);
     render.swapped.wait_for(lock, std::chrono::milliseconds(50),
-                            [&] { return render.swaps != seen; });
+                            [&] { return render.swaps != seen || render.idle == id; });
+    render.waiting.store(0, std::memory_order_relaxed);
     sync_stats.waits += 1;
     sync_stats.wait_ms +=
         double(rex::chrono::Clock::QueryGuestTickCount() - start) * 1000.0 / double(freq);
@@ -359,6 +374,23 @@ extern "C" REX_FUNC(sub_8247C678) {
   __imp__sub_8247C678(ctx, base);
 }
 
+// One pass of the render thread's loop (r3: the render object): it takes the next main frame
+// and draws it, or skips it, or finds none and sleeps 0 ms. A pass that began while a main
+// frame waits (render sync) and took no frame ends that wait.
+extern "C" REX_FUNC(__imp__sub_8259F3E8);
+extern "C" REX_FUNC(sub_8259F3E8) {
+  const uint64_t wait = render.waiting.load(std::memory_order_acquire);
+  const uint32_t frames = ctx.r3.u32 + kRenderFrameCount;
+  const uint32_t before = wait ? Load32(forza::GuestPtr(base, frames)) : 0;
+  __imp__sub_8259F3E8(ctx, base);
+  if (!wait || Load32(forza::GuestPtr(base, frames)) != before) return;
+  {
+    std::lock_guard<std::mutex> lock(render.mutex);
+    render.idle = wait;
+  }
+  render.swapped.notify_all();
+}
+
 // sub_823ED888 calls this right after the frame time in ms (r30) and dt = ms * 0.001 (f31);
 // true makes the loop store f31 as the frame's dt (game +0x1C0) and pass it on.
 extern "C" REX_FUNC(__imp__sub_8247C168);
@@ -367,6 +399,7 @@ extern "C" REX_FUNC(sub_8247C168) {
   const uint32_t game_ms = ctx.r30.u32;
   __imp__sub_8247C168(ctx, base);
   if (lr != kFrameTimeCallReturn) return;
+  forza::stall::OnMainFrame();
   forza::graphics_menu::Tick(ctx, base);
   if (REXCVAR_GET(frame_rate) <= 30) return;
   double dt;

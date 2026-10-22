@@ -1,0 +1,37 @@
+# Private translated inputs are opt-in; normal base and TU4 builds stay native.
+include_guard(GLOBAL)
+set(FORZA_FH2_NAVIGATION_DIR "" CACHE PATH "Private translated FH2 pause navigation directory")
+set(FORZA_FH2_GRID_EVENTS_DIR "" CACHE PATH "Private translated FH2 grid and button events directory")
+
+# Call before finding the SDK or running codegen so configuration mistakes do
+# not require either the SDK or game inputs to diagnose.
+function(forza_validate_fh2_pause)
+    if(FORZA_FH2_NAVIGATION_DIR)
+        if(NOT FORZA_TITLE_UPDATE STREQUAL "4")
+            message(FATAL_ERROR "The FH2 pause adapter currently requires FH1 Title Update 4")
+        endif()
+        if(NOT EXISTS "${FORZA_FH2_NAVIGATION_DIR}/pause_navigation.inc")
+            message(FATAL_ERROR "Generate pause_navigation.inc with tools/extract_horizon2_navigation.py")
+        endif()
+    endif()
+    if(FORZA_FH2_GRID_EVENTS_DIR)
+        if(NOT FORZA_FH2_NAVIGATION_DIR)
+            message(FATAL_ERROR "The FH2 scene requires FORZA_FH2_NAVIGATION_DIR")
+        endif()
+        if(NOT EXISTS "${FORZA_FH2_GRID_EVENTS_DIR}/grid_events.inc")
+            message(FATAL_ERROR "Generate grid_events.inc with tools/extract_horizon2_grid_events.py")
+        endif()
+    endif()
+endfunction()
+
+# Keep target changes separate: the target does not exist at early validation.
+function(forza_apply_fh2_pause target)
+    if(FORZA_FH2_NAVIGATION_DIR)
+        target_include_directories(${target} PRIVATE "${FORZA_FH2_NAVIGATION_DIR}")
+        target_compile_definitions(${target} PRIVATE FORZA_FH2_PAUSE=1)
+    endif()
+    if(FORZA_FH2_GRID_EVENTS_DIR)
+        target_include_directories(${target} PRIVATE "${FORZA_FH2_GRID_EVENTS_DIR}")
+        target_compile_definitions(${target} PRIVATE FORZA_FH2_PAUSE_SCENE=1)
+    endif()
+endfunction()

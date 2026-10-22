@@ -7,7 +7,7 @@ import ast
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 root = Path(SPECPATH).resolve()
 repo = root.parent
@@ -33,6 +33,8 @@ datas = [
     (str(repo / "forza-recomp" / "resources" / "forza.ico"), "assets"),
     (str(images / "social-preview.png"), "assets"),
     (str(root / "forza_launcher" / "ui" / "down.svg"), "forza_launcher/ui"),
+    (str(root / "forza_launcher" / "ui" / "check.svg"), "forza_launcher/ui"),
+    (str(root / "forza_launcher" / "ui" / "controller_art"), "forza_launcher/ui/controller_art"),
     (str(repo / "tools" / "xcontent_extract.py"), "tools"),
     (str(repo / "tools" / "xiso_extract.py"), "tools"),
     (str(repo / "tools" / "install_dlc.py"), "tools"),
@@ -40,18 +42,30 @@ datas = [
 # certifi's cacert.pem (the fallback CA bundle of fetch.py) and truststore (the OS certificate store on
 # Windows/macOS), both imported lazily and so invisible to the import scan (#85).
 datas += collect_data_files("certifi")
+datas += [(str(root / 'forza_launcher' / 'haptics' / 'vendor' / name), 'forza_launcher/haptics/vendor')
+          for name in ('LICENSE', 'README.md')]
+if sys.platform != 'linux':
+    hidden += ['hid']
 hidden += ["certifi"] + collect_submodules("truststore")
+# PySDL2 loads SDL through ctypes; retain the wheel's DLL directory and licenses.
+datas += collect_data_files("sdl2dll")
+hidden += ["sdl2dll"]
 
-# The title update step (a Python tool the frozen app runs itself with --run-script).
-for _tool in ("apply_title_update.py", "lzx_delta.py"):
+# The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
+# prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
+for _tool in ("apply_title_update.py", "lzx_delta.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
+# The shipped pipeline list (hashes and render state only).
+datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
 
 a = Analysis(
     [str(root / "main.py")],
     pathex=[str(root), str(repo / "tools")],
     datas=datas,
-    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib"],
+    binaries=collect_dynamic_libs("sdl2dll"),
+    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib", "pipeline_list",
+                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],

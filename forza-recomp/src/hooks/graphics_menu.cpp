@@ -6,6 +6,12 @@
 #include "../platform/fh2_pause_scene.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
+#include "../platform/graphics_resolution.h"
+#include "../platform/ultrawide.h"
+#ifdef __APPLE__
+#include "../platform/macos_graphics_config.h"
+#include <iterator>
+#endif
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include <algorithm>
@@ -32,8 +38,14 @@
 namespace forza::graphics_menu {
 namespace {
 std::filesystem::path pending_path;
+#ifdef __APPLE__
+std::filesystem::path native_config_path;
+#endif
 }
 void Initialize(const std::filesystem::path &root) {
+#ifdef __APPLE__
+  native_config_path = root / "forza.toml";
+#endif
   const char *path = std::getenv("FORZA_GRAPHICS_SETTINGS");
   pending_path = path && *path ? std::filesystem::path(path)
                                : root / "graphics-settings.json";
@@ -277,7 +289,8 @@ constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
-    aa.choices = {{"integrated", "Included (upscaler)"}};
+    aa.choices = {{"integrated", settings[1].value == "metalfx_spatial" ?
+        "Game MSAA (spatial upscale)" : "Included (upscaler)"}};
     aa.value = "integrated";
     return;
   }
@@ -353,6 +366,9 @@ void Snapshot() {
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
   };
+#ifdef __APPLE__
+  settings[0].choices.insert(settings[0].choices.begin(), {"720p", "1280 x 720"});
+#endif
   auto &modes = settings[1].choices;
 #ifdef _WIN32
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan" &&
@@ -364,6 +380,10 @@ void Snapshot() {
   }
 #endif
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan") {
+#ifdef __APPLE__
+    modes.insert(modes.end(), {{"metalfx_temporal", "MetalFX Temporal"},
+                              {"metalfx_spatial", "MetalFX Spatial"}});
+#endif
     modes.insert(modes.end(), {{"fsr3_quality", "FSR 3 Quality"},
                                {"fsr3_balanced", "FSR 3 Balanced"},
                                {"fsr3_performance", "FSR 3 Performance"}});
@@ -371,8 +391,35 @@ void Snapshot() {
   for (auto &setting : settings) {
     if (setting.key == "preset" || setting.key == "anti_aliasing") continue;
     setting.value = rex::cvar::GetFlagByName(setting.cvar);
+#ifdef __APPLE__
+    if (setting.key == "output" && setting.value.empty()) {
+      const auto mode = rex::cvar::GetFlagByName("fh1_upscaler");
+      const bool split = mode != "off" ||
+          rex::cvar::GetFlagByName("fh1_scene_720p_native_hud") == "true";
+      const auto extent = split ? rex::cvar::GetFlagByName("fh1_output_height") :
+          rex::cvar::GetFlagByName("resolution_scale") == "3" ? "2160" :
+          rex::cvar::GetFlagByName("resolution_scale") == "2" ? "1440" : "720";
+      setting.value = extent == "2160" ? "4k" : extent == "1440" ? "1440p" :
+          extent == "1080" ? "1080p" : "720p";
+    }
+#endif
+    if (setting.key == "output") setting.value = CurrentOutput(setting.value);
     if (setting.value.empty())
       setting.value = setting.choices.front().value;
+  }
+  // Never let an unknown/current launcher mode silently select spinner index
+  // zero (1080p). Native ultrawide owns drawing and output until restart.
+  auto &output = settings[0];
+  if (const auto extent = forza::ultrawide::OutputSize(); extent.width) {
+    output.choices = {{output.value, std::to_string(extent.width) + " x " +
+        std::to_string(extent.height) + " (window)"}};
+    const auto drawing = forza::ultrawide::DrawingSize();
+    settings[2].choices = {{settings[2].value, std::to_string(drawing.width) +
+        " x " + std::to_string(drawing.height) + " (automatic)"}};
+  } else if (std::none_of(output.choices.begin(), output.choices.end(),
+                         [&](const Choice &choice) { return choice.value == output.value; })) {
+    output.choices.insert(output.choices.begin(),
+                          {output.value, OutputLabel(output.value) + " (current)"});
   }
   if (rex::cvar::GetFlagByName("fh1_scene_720p_native_hud") == "true")
     settings[2].value = rex::cvar::GetFlagByName("fh1_native_scene_scale");
@@ -406,6 +453,10 @@ bool Save() {
   bool first = true;
   for (const auto &s : settings) {
     if (s.key == "preset") continue;
+    if (s.key == "output" && s.value != "720p" && !LiveOutputSupported(s.value)) continue;
+    if (forza::ultrawide::OutputSize().width &&
+        (s.key == "output" || s.key == "upscaler" ||
+         s.key == "resolution_scale" || s.key == "anti_aliasing")) continue;
     if (!first) out << ",\n";
     first = false;
     out << "    \"" << s.key << "\": \"" << s.value << "\"";
@@ -425,14 +476,48 @@ bool Save() {
 #endif
 }
 
+#ifdef __APPLE__
+bool SaveNativeConfig() {
+  std::ifstream input(native_config_path, std::ios::binary);
+  std::error_code ec;
+  if (!input && std::filesystem::exists(native_config_path, ec)) return false;
+  const std::string original((std::istreambuf_iterator<char>(input)), {});
+  std::vector<std::pair<std::string, std::string>> updates;
+  for (const char* name : {"resolution", "frame_rate", "video_mode_refresh_rate",
+      "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
+      "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
+      "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
+      "forza_hud_edges", "forza_performance_overlay"}) {
+    auto value = rex::cvar::GetFlagByName(name);
+    if (value.empty()) continue;
+    const std::string key(name);
+    if (key == "resolution" || key == "fh1_upscaler" || key == "swap_post_effect" ||
+        key == "forza_performance_overlay") value = "\"" + value + "\"";
+    updates.emplace_back(key, value);
+  }
+  auto temporary = native_config_path;
+  temporary += ".graphics.tmp";
+  std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+  output << RewriteGraphicsConfig(original, updates);
+  output.close();
+  if (!output) return false;
+  std::filesystem::rename(temporary, native_config_path, ec);
+  return !ec;
+}
+#endif
+
 bool CommitSettings() {
   if (!ApplyPreview()) return false;
   const bool rate_changed = rex::cvar::GetFlagByName("frame_rate") != settings[3].value;
   rex::cvar::SetFlagByName("frame_rate", settings[3].value);
   rex::cvar::SetFlagByName("video_mode_refresh_rate", std::to_string(frame_time::VblankHz()));
   if (rate_changed) frame_time::ResetRenderTiming();
-  rex::cvar::SetFlagByName("resolution", settings[0].value);
-  const bool saved = Save();
+  if (!forza::ultrawide::OutputSize().width)
+    rex::cvar::SetFlagByName("resolution", settings[0].value);
+  bool saved = Save();
+#ifdef __APPLE__
+  saved = saved && SaveNativeConfig();
+#endif
   saved_settings = settings;
   RememberPreview();
   return saved;
@@ -502,6 +587,15 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
   }
 }
 std::string Help(size_t i) {
+  if ((i <= 2 || i == 8 || i == kAntiAliasing) && forza::ultrawide::OutputSize().width) {
+    const auto drawing = forza::ultrawide::DrawingSize();
+    return "Ultrawide follows the window. Drawing: " + std::to_string(drawing.width) +
+        " x " + std::to_string(drawing.height) +
+        ". Scaled to the window; higher drawing sizes use more GPU work. Change display settings in the launcher and restart.";
+  }
+  if ((i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      !LiveOutputSupported(settings[0].value))
+    return "This launcher resolution is active. Live rendering changes require 1080p, 1440p or 4K. Use the launcher for other modes.";
   if (i == 1 || i == 2 || i == kAntiAliasing) {
     const auto mode = BackendMode();
     const auto output = settings[0].value == "4k" ? "3840 x 2160" :
@@ -546,6 +640,12 @@ uint32_t MakeChoices(Native &ui, uint8_t *base, size_t i) {
   return choices;
 }
 bool Relevant(size_t i) {
+  if ((i == 0 || i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      forza::ultrawide::OutputSize().width) return false;
+#ifndef __APPLE__
+  if ((i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      !LiveOutputSupported(settings[0].value)) return false;
+#endif
   if (i == 2) return BackendMode() == "off";
   if (i == kAntiAliasing) return settings[1].value == "off";
   if (i == 6) return rex::cvar::GetFlagByName("forza_ultrawide") == "true" ||
@@ -642,7 +742,8 @@ void SyncSettings(Native &ui, uint8_t *base) {
   }
   AntiAliasingChoices();
   const bool aa_changed = old_aa_choices.size() != settings[kAntiAliasing].choices.size() ||
-      old_aa_choices.front().value != settings[kAntiAliasing].choices.front().value;
+      old_aa_choices.front().value != settings[kAntiAliasing].choices.front().value ||
+      old_aa_choices.front().label != settings[kAntiAliasing].choices.front().label;
   if (aa_changed) {
     if (const auto choices = MakeChoices(ui, base, kAntiAliasing)) {
       retired_choices.push_back(Read(base, native_rows[kAntiAliasing] + 4));

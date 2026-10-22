@@ -49,6 +49,27 @@ class InGameGraphicsTests(unittest.TestCase):
         # Reconstruction selectors have separate, higher-output schemas.
         self.assertIn(saved.settings["fsr3_output_resolution"], ("1080p", "1440p", "4k"))
 
+    def test_current_720p_does_not_reset_reconstruction_output(self):
+        previous = self.cfg.settings["fsr3_output_resolution"]
+        self.request(output="720p", upscaler="off", anti_aliasing="game", frame_rate="120")
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        saved = Config(self.cfg.path)
+        self.assertEqual(saved.settings["resolution"], "720p")
+        self.assertEqual(saved.settings["fsr3_output_resolution"], previous)
+        self.assertEqual(saved.settings["frame_rate"], 120)
+
+    def test_ultrawide_live_settings_preserve_launcher_rendering(self):
+        self.cfg.settings.update(forza_ultrawide=True, resolution="720p", resolution_scale=1)
+        self.request(frame_rate="120", vsync="false", anisotropic_override="5",
+                     forza_hud_edges="true", forza_performance_overlay="fps")
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        saved = Config(self.cfg.path)
+        self.assertTrue(saved.settings["forza_ultrawide"])
+        self.assertEqual(saved.settings["resolution"], "720p")
+        self.assertEqual(saved.settings["resolution_scale"], 1)
+        self.assertTrue(saved.settings["forza_hud_edges"])
+        self.assertEqual(saved.settings["frame_rate"], 120)
+
     @unittest.skipUnless("fh1_upscaler" in schema.BY_KEY, "Windows NVIDIA setting")
     def test_dlss_choice_preserves_native_output_setting(self):
         self.request(output="1440p", upscaler="quality")

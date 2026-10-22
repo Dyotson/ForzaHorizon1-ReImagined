@@ -6,6 +6,17 @@ facade DLLs (PowerPC Xenon) to C++ with the ReXGlue SDK. The approach, tooling a
 runtime fixes come from [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach)
 (same SDK, same author); files taken from it say so.
 
+## Native achievement notifications
+
+Achievement notifications now subscribe to the SDK event API and queue for the game's
+CHudCombinedNotificationControl. The native trophy texture accompanies the achievement
+name and Gamerscore; no ImGui achievement notification dialog is registered. Only the guest
+UI thread binds native elements. Unlocks retain their remaining visible time across
+loading/unbinding, ordinary alerts and challenge prompts. Duplicate pending IDs are
+suppressed; distinct unlocks keep delivery order. F7's achievement browser is unchanged.
+Standalone queue tests cover timing, interruption, ordering and concurrent delivery on
+Windows and Linux.
+
 ## The game files
 
 | | |
@@ -834,6 +845,44 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
     sign-in ("server error 4"); after B's "Mute in chat" on A, A's session message did not
     reach B. Not driven: the world channel in a real Horizon World (unit tests only), and
     typing on a real keyboard (headless games, pad input only).
+
+- 2026-10-22: **Crash quitting to the title screen, write to guest 0x00000006 (#262)**, Linux
+  Mint, Intel Iris Xe, v0.1.27, base game (no Title Update), offline: a new career, Pause >
+  Quit right after the first autosave at the festival; the player's next quit worked. The
+  render thread (`sub_825A6208`) runs the movie manager (`sub_823E5988` -> `sub_82E638F0`),
+  which opens the main menu's background movie (`sub_82E6C108`: it pushes the movie allocator
+  0x834B49F8, `sub_82E5E9F8`, as the thread's XMemAlloc heap, then calls XMediaFacade's export
+  3 through `sub_82E5D730`). XMediaFacade (0x88000000 and up: `sub_88159030` -> `sub_8815E468`
+  -> `sub_8815B9F8`, its malloc) asked for 0x2B2100 bytes (two 1280x720 4:2:0 frames:
+  r20 = 45 macroblock rows, r21 = 80 columns), attributes 0x248C8001 (allocator 0x8C, XMV;
+  read/write; not physical). XMemAlloc (`sub_82CC1B10`) finds the thread's heap
+  (`sub_82CBC390`: thread id -> heap, table at 0x8349F978) and calls it: the movie allocator
+  (`sub_82E5B7C8`) takes blocks of 64 KB and more from heap 0x20, "streamingGPU" (88,832 KB:
+  `sub_82E5B0B0` -> `sub_82CBFDC8` -> `sub_82CBFBA8` -> the heap's alloc `sub_823FCCA8`, the
+  crash's ctr), and when that gives nothing XMemAlloc writes the size to address 6 on purpose
+  (`stw r27,6(r0)` at 0x82CC1D90; r27 was 0x2B2100). Title Update 4 has the same code
+  (XMemAlloc `sub_82D83590`, the store at 0x82D83810, the allocator `sub_82F1D3F0`). The
+  heaps: eight arenas at 0x832AAC24 (`sub_82CBBDA0`), layout in `src/platform/game_heap.h`.
+  Measured (Linux, base, the test save's free roam, 9 quits, heap 0x20 sampled every 20 ms):
+  the world holds 55 MB of the heap, the quit frees it from 30 ms before the quit's XAM
+  message 0x2B004 to 150 ms after (56 -> 9 MB within 20 ms, the rest in steps), and the movie
+  opens 240 ms after the message with 18.6 MB in use and a 70 MB free block. The menu counts
+  on the world being gone first. In the player's log every frame before the quit took 200-500
+  ms, and 0.42 s after the message the heap had no 2.7 MB in one piece: the world was not
+  freed yet (or left the heap in pieces) when the movie opened. Not reproduced in 17 quits on
+  the test PC (Ryzen 7 7800X3D, RX 9060 XT), 2 of them on 2 cores at render scale 3: the
+  frees always came first.
+  `src/hooks/movie_memory.cpp` now takes a movie block that heap 0x20 cannot give from
+  physical memory (XPhysicalAllocEx `sub_82A6F2D8` with the protection and alignment the
+  allocator gives its own physical blocks: physical like the heap's, so the GPU can read the
+  movie's planes from them), and XMemFree (`sub_82CC1DA0`) and XMemSize (`sub_82CC1ED8`)
+  answer for those blocks (the game would take them for its general heap's) and free them
+  with XPhysicalFree (`sub_82CBB348`).
+  Each logs a `FORZA: a movie needs N bytes ...` line with the heap's state, so a recurrence
+  shows in the log. `FORZA_MOVIE_FALLBACK=always` takes every such block from physical memory:
+  4 quits that way on the base game (209 blocks: the boot videos, title and menu movies) and
+  2 on Title Update 4 (151) played right, every block of a finished movie went back, no
+  fault. `=0` switches the hook off. Unit test: `forza-recomp/tests/game_heap_test.cpp`.
 
 ## Debugging recipes
 

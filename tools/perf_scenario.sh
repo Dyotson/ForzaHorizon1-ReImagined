@@ -5,8 +5,8 @@
 #   menu      boot, title screen, START, main menu
 #   drive     a profile that has not finished the prologue: main menu, Single Player,
 #             the festival intro video (skipped), then the opening drive at full throttle
-#   freeroam  a profile in free roam: main menu, Single Player, 90 s of free roam
-#             driving (use FORZA_XUID and --user_data_root for a copied save)
+#   freeroam  a profile in free roam: main menu, the "MISSING CONTENT" notice, Single Player, 90 s
+#             of free roam driving (use FORZA_XUID and --user_data_root for a copied save)
 #   race      the user's Xenia save (as freeroam): free roam, the GoPro Millennia Masters
 #             sign-up at the spawn point, the race with the throttle held RACE_SECS (26) s
 #             from the countdown; screenshots every ~1.6 s (race clock, speedometer) and the
@@ -71,7 +71,9 @@ case "$SCENARIO" in
         for _ in $(seq 1 12); do say RT:5; wait_s 5; done
         prof STOP ;;
     freeroam)
-        wait_s 10; say A; say SCENE:loading; wait_s 40
+        # As in race: the first A dismisses the Xenia save's "MISSING CONTENT" (DLC) notice,
+        # the second picks SINGLE PLAYER.
+        wait_s 10; say A; wait_s 3; say A; say SCENE:loading; wait_s 40
         say SCENE:freeroam; prof START
         for _ in $(seq 1 18); do say RT:5; wait_s 5; done
         prof STOP ;;
