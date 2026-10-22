@@ -295,7 +295,13 @@ held counts only after it is released), gives up after 10 seconds, and Esc cance
   wheels by USB id, the generic button map, the Driving Force Shifter). **Calibrate wheel** measures the
   steering axis and its direction (lock to lock), the rotation (a quarter turn), each pedal's axis, travel and
   invert switch, and sets the steering deadzone with a live preview computed like the driver
-  (`steering_value`); details in [playing.md](playing.md#racing-wheels-issue-4).
+  (`steering_value`); details in [playing.md](playing.md#racing-wheels-issue-4). Pedals and a shifter on
+  their own USB devices (#272) bind on the wheel's pedal and gear rows: while such a row waits, the editor
+  watches every other connected device that is no game controller too (`bindings.merge`, `split`), and a press
+  there writes `wheel_pedal_device` / `wheel_pedal_axes` or `wheel_shifter_device` /
+  `wheel_shifter_device_buttons` (`set_aux_binding`). The picker shows them as *pedals* or *shifter, read with
+  the wheel* (`pick_aux`, the driver's choice ported with its table of known devices). On Linux, devices SDL 2
+  leaves out (no X and Y axis) are read from evdev (`evdev_joysticks.py`).
 - **Controllers** write `controller_remap` (SDK patch 0116), a profile per controller model by SDL GUID;
   format and supported pairs in [playing.md](playing.md#remapping-a-controller-279).
   Resetting all bindings, or the last custom binding, keeps an empty profile for the selected GUID when
@@ -306,7 +312,8 @@ The editor reads SDL joysticks itself (`gamepad.Joysticks`, the same SDL as the 
 calibration runs, gamepad navigation ignores that device and afterwards waits for it to be neutral, so the
 presses that bind never move the launcher's focus. Changes go through the Settings page, which shows them,
 saves and rewrites `forza.toml`. `launcher/test_bindings.py` covers the strings, defaults, conflicts,
-detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad).
+detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad);
+`launcher/test_wheel_devices.py` the pedal and shifter devices (a wheel, pedals and a shifter).
 
 ## Launcher updates
 
@@ -549,7 +556,7 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
-racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, clutch and shifter; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
+racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, clutch and shifter, pedal and shifter devices; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
 deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,

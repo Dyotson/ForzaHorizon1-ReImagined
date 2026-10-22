@@ -318,6 +318,38 @@ and Clear turns the direction off, SDK patch 0127); gears 1 to 7, reverse and th
 shifter. With combined pedals (*Pedals: Combined*) one axis is both: the throttle row binds and clears it for
 both pedals, and the brake row has nothing of its own to change.
 
+**Pedals and a shifter on their own USB device (#272).** Many setups plug the pedals and the shifter into the
+PC, not into the wheel base: Simagic P1000 or P2000 pedals and a DS-8X next to an Alpha or EVO base, Fanatec
+USB pedals or the ClubSport Shifter SQ, a Thrustmaster T-LCM or TH8A. The game's wheel driver reads them together
+with the first wheel as one wheel: steering, buttons and force feedback stay on the base, the throttle, brake
+and clutch come from the pedal device and the gears from the shifter device (SDK patch 0128). They are found by
+themselves: known models by USB id (the table in `sdk_patches.md`, 0128) and any device named like pedals or a
+shifter (a TH8A, Moza's SR-P and HGP); the picker lists them as *pedals, read with the wheel* and *shifter, read
+with the wheel*, and they never become a second controller. In Bindings, with the wheel picked, a pedal or gear
+row binds on whatever device you press: press the pedal on the pedal set and that device becomes the pedal device
+(`wheel_pedal_device`, its axes in `wheel_pedal_axes`); put the shifter in a gear and it becomes the shifter
+device (`wheel_shifter_device`, `wheel_shifter_device_buttons`). The rows then say where they read, e.g. *Axis 2
+on SIMAGIC P1000*. Steering and the button rows stay on the wheel. **Calibrate wheel** finds the pedals on their
+own device too. Known pedal sets have their axes built in when they report the three pedal axes PMR's maps list
+(Simagic: throttle Rz, brake Ry, clutch Rx); others are detected like a wheel's pedals, from where each axis
+rests at start (keep them released). Known shifters have their gears built in (the DS-8X: gears 1 to 7 on
+buttons 0 to 6, reverse 8); set **Shifter** to H-pattern (or Sequential) as for a wheel's own shifter. A pedal
+bound on the wheel itself (`wheel_axes`) stays there, so a wheel's own clutch can go with separate pedals.
+Unplugged while the game runs, the pedals or shifter stop and the wheel's own pedals and buttons count again;
+plugged back in, they are read again (the log says `Wheel: pedal device "..." removed` and `... is read with
+"..."`). `wheel_pedal_device = none` (or `wheel_shifter_device = none`) keeps the wheel's own. The H-pattern's
+gear count goes to the game when it first sees the wheel, so plug the shifter in before starting the game. On
+Linux the launcher (SDL 2) does not list a device without an X and a Y axis (most pedal sets, shifters); it reads
+those straight from evdev with the numbers the game's SDL 3 gives them (`launcher/forza_launcher/evdev_joysticks.py`).
+A pedal set or shifter without buttons that Linux does not mark as a joystick at all needs a udev rule, such as
+those of [simracing-hwdb](https://github.com/JacKeTUs/simracing-hwdb).
+Tested with Linux uinput devices: a "SIMAGIC EVO PRO" base, Simagic P1000 pedals (0483:0525, Rx/Ry/Rz) and a
+DS-8X shifter (0483:0531, 11 buttons). In the launcher the throttle, brake, clutch and gears 1, 2 and reverse were
+bound by pressing them on their devices; in the game the P1000's throttle drove the car (45 km/h in
+*Automatic*), and with *Manual with clutch* the DS-8X's first gear engaged (N to 1 with the P1000's clutch
+pressed, then 63 km/h in 1st) and the car went back to N when the lever left the gear. Not tested with real
+devices yet: please report the models and the log's `Wheel:` lines.
+
 **Calibrate wheel** goes through the rest: centre the wheel with the pedals released, turn it to full left and
 full right lock (the steering axis, its direction and how much of the axis it covers), turn it a quarter turn
 (the top of the rim pointing right: the axis spans the whole rotation, so 90 degrees reading 20 percent is a
@@ -346,6 +378,8 @@ edited by hand:
 | `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
+| `wheel_pedal_device` | found | Pedals on their own USB device: empty finds a known pedal set or one named like pedals; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one; `none` reads the wheel's own pedals |
+| `wheel_pedal_axes` | by model or detected | Axis numbers on the pedal device, e.g. `throttle=2,brake=1,clutch=0`; a pedal set here reads the pedal device, one set in `wheel_axes` the wheel |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
@@ -357,6 +391,8 @@ edited by hand:
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
+| `wheel_shifter_device` | found | A shifter on its own USB device: empty finds a known one or one named like a shifter; a name, SDL GUID or `vid:pid` picks one; `none` reads the wheel's own buttons |
+| `wheel_shifter_device_buttons` | by model | Its gears, e.g. `1=0,2=1,3=2,4=3,5=4,6=5,r=6`, or `up=..,down=..`; while a shifter device is connected every gear comes from it |
 
 **Steering around the centre.** A G29 owner reported that the first degrees of every turn did nothing: the game
 took the wheel for a gamepad then (#219) and applied a gamepad's inner deadzone, and a 900 degree wheel turned 50
@@ -392,8 +428,9 @@ button.
   gears on the Controls page (Bindings, the Shifter rows: put the lever in each gear when asked), which writes
   `wheel_shifter_buttons`, e.g.
   `1=8,2=9,3=10,4=11,5=12,6=13,r=14`; up to 7 gears and reverse (the log prints the map: `Wheel: H-pattern
-  shifter, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB shifters) is
-  not read yet: only buttons of the wheel itself.
+  shifter on the wheel, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB
+  shifters, a Simagic DS-8X) is read with the wheel: [above](#racing-wheels-issue-4), *Pedals and a shifter on
+  their own USB device*.
 - **The shifter's buttons press nothing else.** Every button the shifter uses (its gears and reverse with `h`, up
   and down with `sequential`) is taken out of the wheel's pad buttons, whatever the defaults or `wheel_buttons`
   say: on a G923 for Xbox reverse is button 11, which the generic map had as the left stick press, so engaging
