@@ -26,6 +26,12 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   always lit) keeps them lit by day too, for your own car only.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
+- **Mouse cursor:** the game hides it after three seconds without movement and shows it
+  when the mouse moves. Mouse-look capture keeps it hidden; interactive host overlays
+  and text entry keep it visible. The same policy applies in windowed, borderless and
+  fullscreen modes. It only controls the game window, not the launcher. The standalone
+  `tools/test_cursor_idle.cpp` checks timing, focus, overlays and capture transitions;
+  Windows/X11/Wayland desktop and in-game checks are still needed before release (#291).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a
   Forza Live server (`server/forza_live_server.py`, Python 3 standard library only).
   `play.sh` starts one on this machine for the session (UDP 21200, HTTP 21201, data in

@@ -9,6 +9,7 @@
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/discord_presence.h"
+#include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
 #include "platform/benchmark.h"
@@ -91,6 +92,7 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
     forza::InstallFriendsKey();
+    cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
@@ -108,6 +110,7 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    cursor_idle_.reset();
     stall_watchdog_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
@@ -216,6 +219,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
