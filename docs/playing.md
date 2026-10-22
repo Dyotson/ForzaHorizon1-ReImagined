@@ -235,6 +235,12 @@ left stick X over its full range, throttle and brake on the right and left trigg
 the bumpers, Back and Start, and a hat as the d-pad. The clutch pedal and an H-pattern shifter go in the way
 the game reads them from the 360 wheel (below). Gamepads and keyboard and mouse work as before.
 
+The game then treats it as a wheel: My Profile, Options, Controls shows the *Wheel layout* (the paddles shift,
+the face buttons are clutch, handbrake, Activate and Rewind), its Advanced wheel options (steering, pedal and
+clutch deadzones, force feedback scale) apply, the car uses the game's full-range wheel steering and the game
+sends its own force feedback (below). Until #219 a bug in our capabilities hook hid the wheel from the game,
+which took every wheel for a gamepad (found by a G923 owner in #4).
+
 Tested here with a virtual wheel (Linux uinput) and by a Logitech G29 owner on Windows (issue #4: steering,
 pedals, buttons and force feedback work). Other wheels are untested: please report the model and what works.
 
@@ -254,26 +260,27 @@ Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
-| `wheel_steer_offset` | 0.05 | Compensates the game's own inner steering deadzone for wheels (below) |
+| `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps) |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | see below | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
 
-**Steering feels dead for the first degrees (reported on a G29).** The game applies its own inner deadzone to
-wheels (its wheel options carry a steering deadzone), and a 900 degree wheel turned 50 degrees is only 5.5
-percent of its range, so the first part of every turn did nothing. Our own deadzone is 0 and the configured
-rotation is mapped linearly onto the full steering, so the fix is `wheel_steer_offset`: any movement beyond a
-hair (about 1 degree) already gives that share of the full steering (0.05 = 5 percent), which the game's deadzone
-then removes, so small movements register and the rest stays linear. Raise it if the first degrees still do
-nothing, lower it (0 switches it off) if the car twitches when driving straight. It is an estimate taken from the
-report (about 50 degrees of 900), not read from the game.
+**Steering around the centre.** A G29 owner reported that the first degrees of every turn did nothing: the game
+took the wheel for a gamepad then (#219) and applied a gamepad's inner deadzone, and a 900 degree wheel turned 50
+degrees is only 5.5 percent of its range. `wheel_steer_offset` compensated: any movement beyond a hair (about 1
+degree) already gives that share of the full steering (0.05 = 5 percent). Now that the game knows the wheel, its
+full-range steering (`wheel_900_steering`, on by default) follows the wheel's angle from the centre, and the
+offset is not applied there: its step at the centre made the car twitch left and right when driving straight
+(#219). It still applies in the 270 degree mode (`wheel_900_steering = false`), where the game filters the
+steering. The game's own wheel deadzones are in its Advanced wheel options.
 
 **Clutch pedal and H-shifter (issue #125).** The game has both for the 360 wheel (third-party 360 wheels had
 them; on the Xbox One a G920's clutch and shifter work in this game). Its wheel layouts bind the right stick Y
@@ -322,15 +329,30 @@ the middle is the steering, those resting at an end are the pedals (throttle, br
 **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
 fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
-8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=4,x=5,y=3,lb=7,rb=6,back=8,start=9,ls=11,rs=10`
-(cross, right paddle, left paddle, triangle, L2, R2, Share, Options, L3, R3). Wheel buttons differ between models, so check the numbers (for example
+8 Back, 9 Start, 10 and 11 stick presses; the G29/G923 map is `a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10`
+(cross, circle, square, triangle, right paddle, left paddle, Share, Options, L3, R3; R2 and L2 are free). With the
+game's Wheel layout 1 the paddles shift up and down, cross is the clutch, circle the handbrake, square Activate,
+triangle Rewind and Share the camera (the paddles were on B and X while the game took the wheel for a gamepad,
+whose layout shifts with those). Wheel buttons differ between models, so check the numbers (for example
 with `jstest-gtk`) and override as needed. Wheels that SDL also maps as a gamepad are taken by the wheel driver
 instead; Xbox (Microsoft) wheels keep using the gamepad path.
 
-**Force feedback is approximate.** The 360 wheel got its force through the vibration motors, and nothing says
-how FH1 uses them (no hardware here to see). So the SDL driver does only this: a centring spring (20 percent
-of the strength, rising to 80 percent while the game drives the motors hard) and a 25 Hz vibration whose size
-follows the larger motor. There is no self-aligning torque from speed or grip, no road detail. Switch it off with
-`wheel_ffb = false` if it fights the steering, or lower the strength. The wheel's own autocentre is turned off
-while the game runs. The SDK's SDL is now built with haptics (Linux and Windows) for this. On Linux the
-wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most wheels).
+**Force feedback (#219).** The game drives the 360 wheel's force feedback itself, through the kernel's
+`XInputdFF*` calls, which SDK patch 0101 plays on the wheel with SDL haptics. It sets up five effects and keeps
+them running: a **constant force** that it updates every frame with the car's steering force (in a corner it pulls
+the wheel back towards the centre; scraping a wall or crashing makes it kick), a **centring spring** that is off
+at a standstill, grows with speed and fades while the rear wheels slide, a light **damper**, and an inertia and a
+friction effect set to zero. Its tuning is `media/ControllerFFB.ini`; the game's Advanced wheel options scale it
+(Force feedback scale) and the rumble (Vibration scale). The rumble (engine, road surface, impacts) comes as a 25 Hz
+vibration. `wheel_ffb_strength` scales everything (default 60 percent), `wheel_ffb = false` switches it off. The
+wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
+the G25, G27 and G29 has only constant force and autocentre) the game's spring sets the autocentre strength
+instead. On Linux the wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most
+wheels).
+
+Tested with a virtual wheel (uinput) that logs what it receives, not yet on a real one. Wheel drivers disagree about
+which way a positive force turns the wheel: if yours pulls further into a corner instead of back to the centre,
+turn on `wheel_ffb_reverse` (launcher: Reverse force direction), and please report the model.
+
+A game that takes the wheel for a gamepad only sets the vibration motors; the driver then makes an approximate
+centring spring and vibration from them.

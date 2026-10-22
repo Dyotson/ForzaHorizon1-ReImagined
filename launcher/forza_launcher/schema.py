@@ -236,9 +236,9 @@ add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
 add("wheel_deadzone", "Steering deadzone", "Controls", "float", 0.0,
     "Fraction of the wheel's range, 0 to 0.5.", "Racing wheel", lo=0, hi=0.5, step=0.01)
 add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float", 0.05,
-    "The game has its own inner steering deadzone for wheels; this makes any wheel movement beyond a "
-    "hair already give this fraction of the full steering (0 to 0.3). Lower it if the car twitches "
-    "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
+    "Only with full-range wheel steering off: any wheel movement beyond a hair already gives this "
+    "fraction of the full steering (0 to 0.3), to cancel an inner steering deadzone. Full-range "
+    "steering follows the wheel from the centre without it.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
 add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
@@ -266,8 +266,12 @@ add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "left=14,right=15. The d-pad hat is used as is. G29 and G923 have their own map built in.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
-    "Approximate: a centring spring and a vibration taken from the game's rumble motors. "
-    "Untested on real wheels.", "Racing wheel", restart=True)
+    "The game's own wheel forces: the car's steering force, a centring spring that grows with "
+    "speed, a light damper, and its rumble as a vibration. Not yet tested on a real wheel.",
+    "Racing wheel", restart=True)
+add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
+    "Turn on if the wheel pulls away from the centre in corners instead of towards it (wheel "
+    "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
