@@ -132,7 +132,7 @@ def read_photo(path, size=None):
             continue
         if best and pixels <= best[0]:
             continue
-        if size:
+        if size and (dimensions.width() > size[0] or dimensions.height() > size[1]):
             reader.setScaledSize(dimensions.scaled(QSize(*size), Qt.KeepAspectRatio))
         image = reader.read()
         if image.isNull():
@@ -143,14 +143,14 @@ def read_photo(path, size=None):
     return best[1:]
 
 
-def load_group(directory, files, cancelled=lambda: False):
+def load_group(directory, files, cancelled=lambda: False, thumbnail_size=(800, 450)):
     """One tile per named photo; prefer the full picture over its saved preview."""
     best = None
     for path in files:
         if cancelled():
             return None
         try:
-            image, width, height = read_photo(path, (400, 225))
+            image, width, height = read_photo(path, thumbnail_size)
             modified = path.stat().st_mtime
         except (OSError, ValueError):
             continue

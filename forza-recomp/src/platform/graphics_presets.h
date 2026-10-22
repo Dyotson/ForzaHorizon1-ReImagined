@@ -12,6 +12,8 @@ struct Preset {
 inline Preset ChoosePreset(std::string_view name, std::string_view output,
                            bool dlss, bool fsr) {
   const bool automatic = name == "auto";
+  if (output == "720p")
+    return {"off", 1, name == "low" ? 2 : name == "medium" ? 4 : 5};
   const bool native = automatic && output == "1080p";
   const std::string quality = name == "low" ? "performance" :
                               name == "medium" ? "balanced" : "quality";

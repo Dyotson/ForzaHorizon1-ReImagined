@@ -26,6 +26,7 @@
 // FORZA_FRAMETIME_LOG=1 logs the dt statistics every 10 s, FORZA_FRAMETIME_CSV each frame.
 
 #include "frame_time.h"
+#include "../debug/stall_watch.h"
 #include "../platform/graphics_menu.h"
 
 #include "../platform/guest_addr.h"
@@ -367,6 +368,7 @@ extern "C" REX_FUNC(sub_8247C168) {
   const uint32_t game_ms = ctx.r30.u32;
   __imp__sub_8247C168(ctx, base);
   if (lr != kFrameTimeCallReturn) return;
+  forza::stall::OnMainFrame();
   forza::graphics_menu::Tick(ctx, base);
   if (REXCVAR_GET(frame_rate) <= 30) return;
   double dt;

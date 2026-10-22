@@ -1,0 +1,59 @@
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index b4857c1..a04122f 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1170,10 +1170,43 @@ bool VulkanRenderTargetCache::Resolve(const memory::Memory& memory,
+   const VkDevice device = vulkan_device->device();
+   DeferredCommandBuffer& command_buffer = command_processor_.deferred_command_buffer();
+ 
++  // A scene resolve must use the render target that owns the complete tile
++  // rectangle, not the target from the most recent draw. Mixed ownership,
++  // wrapped ranges and offset/reinterpreted sources retain the original path.
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++  static const bool native_scene_resolve = [] {
++    const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
++    return mode && std::string_view(mode) == "rgba8-resolve";
++  }();
++  uint32_t scene_width = native_width, scene_height = native_height;
++  if (native_scene_resolve && GetPath() == Path::kHostRenderTargets &&
++      resolve_info.copy_dest_extent_length && !resolve_info.IsCopyingDepth() &&
++      resolve_info.color_edram_info.format == uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
++      resolve_info.color_edram_info.msaa_samples == xenos::MsaaSamples::k1X) {
++    uint32_t base, row_length, rows, pitch;
++    resolve_info.GetCopyEdramTileSpan(base, row_length, rows, pitch);
++    GetResolveCopyRectanglesToDump(base, row_length, rows, pitch, dump_rectangles_);
++    if (dump_rectangles_.size() == 1 && uint64_t(base) + uint64_t(rows - 1) * pitch + row_length <= xenos::kEdramTileCount) {
++      const auto& coverage = dump_rectangles_[0];
++      auto* owner = static_cast<VulkanRenderTarget*>(coverage.render_target);
++      const auto key = owner->key();
++      if (!key.is_depth && key.resource_format == uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) &&
++          key.msaa_samples == xenos::MsaaSamples::k1X && key.base_tiles == base && key.GetPitchTiles() == pitch &&
++          !coverage.row_first && coverage.rows == rows && !coverage.row_first_start && coverage.row_last_end == row_length) {
++        native_source = owner;
++        scene_width = resolve_info.coordinate_info.width_div_8 * 8 * draw_resolution_scale_x();
++        scene_height = resolve_info.height_div_8 * 8 * draw_resolution_scale_y();
++      }
++    }
++  }
++#else
++  const uint32_t scene_width = native_width, scene_height = native_height;
++#endif
++
+   // Copying.
+   bool copied = false;
+   if (native_source && resolve_info.copy_dest_extent_length && TryNativeRgba8Resolve(native_source,
+-      native_width, native_height, resolve_info, shared_memory, texture_cache)) {
++      scene_width, scene_height, resolve_info, shared_memory, texture_cache)) {
+     written_address_out = resolve_info.copy_dest_extent_start;
+     written_length_out = resolve_info.copy_dest_extent_length;
+     copied = true;
+@@ -6419,7 +6452,8 @@ bool VulkanRenderTargetCache::TryNativeRgba8Resolve(VulkanRenderTarget* source,
+     VulkanSharedMemory& shared_memory, VulkanTextureCache& texture_cache) {
+ #if defined(REXGLUE_FH1_NATIVE_RENDERER)
+   const char* mode = std::getenv("FORZA_NATIVE_RENDERER");
+-  if (!mode || std::string_view(mode) != "velocity-resolve" || !source || native_resolve_failed_ ||
++  if (!mode || (std::string_view(mode) != "velocity-resolve" && std::string_view(mode) != "rgba8-resolve") ||
++      !source || native_resolve_failed_ ||
+       GetPath() != Path::kHostRenderTargets || info.IsCopyingDepth() ||
+       info.color_edram_info.format != uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8) ||
+       info.color_edram_info.msaa_samples != xenos::MsaaSamples::k1X ||

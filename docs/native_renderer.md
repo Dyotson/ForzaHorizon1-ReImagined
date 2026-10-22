@@ -39,8 +39,8 @@ The components below remain independently testable:
 - `velocity_pass` owns Vulkan depth, motion and blur attachments. Its authored
   compute shader decodes packed depth/stencil, reconstructs per-object movement,
   and keeps unclamped temporal motion separate from shaped blur. It executes in
-  the standalone GPU test and, through SDK patch 0079, in the game's draw stream.
-  Patch 0081 resolves that pass's RGBA8 image directly into the existing guest
+  the standalone GPU test and, through SDK patch 0102, in the game's draw stream.
+  Patch 0104 resolves that pass's RGBA8 image directly into the existing guest
   texture buffer, bypassing its EDRAM dump. Most geometry, reflections, other effects
   and HUD composition retain the existing renderer. The resource planner does
   not schedule these runtime passes yet.
@@ -48,7 +48,7 @@ The components below remain independently testable:
 - `geometry_pass` owns vertex/index snapshots and an authored vertex shader for
   rigid signed-normalized packed positions. It draws depth and stencil into a
   caller-owned native render pass. Synthetic GPU tests and a private original-
-  shader comparison execute it offscreen; patch 0084 also connects a strictly
+  shader comparison execute it offscreen; patch 0107 also connects a strictly
   matched rigid depth draw to the live SDK stream.
 
 The planner currently works at whole-resource granularity. Layout transitions,
@@ -141,7 +141,7 @@ advertises `VK_KHR_portability_enumeration`, then rejects instance creation when
 is enabled. A standalone extension probe isolated that extension; omitting it
 when RenderDoc is attached allowed the AI race capture. Validation reported
 swapchain and queue-use errors at the capture boundary, so that run cannot establish
-integration validation or performance. The workaround is not included in patch 0079.
+integration validation or performance. The workaround is not included in patch 0102.
 
 A subsequent race ran without RenderDoc at native 2560x1440 scene/HUD resolution,
 120 FPS cap and SMAA, with threaded submission and Khronos synchronization
@@ -228,7 +228,7 @@ The recovered final output is 2560x1440, including the HUD, minimap and car labe
 
 ## Native RGBA8 resolve
 
-Patch 0081 adds `FORZA_NATIVE_RENDERER=velocity-resolve`. After the recognized
+Patch 0104 adds `FORZA_NATIVE_RENDERER=velocity-resolve`. After the recognized
 native motion pass, one compute dispatch writes its RGBA8 image directly into
 the existing tiled/scaled texture buffer. This replaces the attachment-to-EDRAM
 dump and EDRAM-to-texture-buffer resolve. The ordinary texture upload, CPU
@@ -244,7 +244,7 @@ is derived from the SDK's 32-bit tiled texture layout under its included BSD
 license. The runtime accepts only a full, immediately preceding native RGBA8
 output, single-sample unsigned normalized RGBA8 destinations, integer scales and
 matching guest base/pitch. Format conversion, exponent bias, array destinations,
-MSAA and unsupported layouts use the original resolve. Patch 0083 adds the
+MSAA and unsupported layouts use the original resolve. Patch 0106 adds the
 half-pixel edge filling described below.
 Intervening draws and cache resets invalidate the candidate. Pipeline creation
 and range validation happen before recording resource transitions, retaining
@@ -277,7 +277,7 @@ and AI-variation limitations apply; this is not evidence of a speedup.
 
 ## Resolve from tracked attachment ownership
 
-Patch 0082 adds the independent `FORZA_NATIVE_RENDERER=rgba8-resolve` mode. It
+Patch 0105 adds the independent `FORZA_NATIVE_RENDERER=rgba8-resolve` mode. It
 selects the source from the SDK's render-target ownership map rather than the
 most recent motion draw. The complete requested tile rectangle must belong to
 one RGBA8, single-sample target with the same base and pitch. Mixed owners,
@@ -298,12 +298,12 @@ matched all 921,600 words exactly through three executions, with padding
 preserved and no synchronization errors. Both standalone SDK fallback and
 canonical native build modes compile.
 
-These results establish only the two supported resolve passes at patch 0082,
+These results establish only the two supported resolve passes at patch 0105,
 not complete native world rendering or a performance improvement.
 
 ## Full-scene half-pixel edge filling
 
-Patch 0083 extends the native resolve to the SDK's half-pixel edge-fill contract.
+Patch 0106 extends the native resolve to the SDK's half-pixel edge-fill contract.
 When D3D9 pixel-center behavior leaves the first scaled rows or columns uncovered,
 the resolve fills them from the first surely covered texel at `scale / 2`, using
 integer division independently on each axis. This changes source selection only;
@@ -311,7 +311,7 @@ tiled destination addressing, endianness and R/B conversion remain unchanged.
 The flag occupies the fourth bounds word (0 or 1); other values are rejected.
 The mapping is derived from the SDK's BSD-licensed resolve implementation, not
 from a game shader. Destination aliases and source ownership retain the checks
-from patch 0082. The runtime accepts endian modes 0 through 3, matching the
+from patch 0105. The runtime accepts endian modes 0 through 3, matching the
 SDK's fast 32-bit shader; 64/128-bit swaps retain the original path until those
 contracts are reconciled. The standalone encoder also tests those larger swaps.
 
@@ -413,7 +413,7 @@ remain volatile local fixtures outside the repository.
 
 ### Live rigid depth integration
 
-SDK patch 0084 adds `FORZA_NATIVE_RENDERER=geometry`, independently of the
+SDK patch 0107 adds `FORZA_NATIVE_RENDERER=geometry`, independently of the
 motion/resolve modes. It matches the validated rigid position shader's guest
 identity and exact constant/fetch maps, not compiled binary size. Five float
 vectors become four clip columns and a scale/translation; fetch 95 describes
