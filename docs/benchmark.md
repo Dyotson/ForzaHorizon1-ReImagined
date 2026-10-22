@@ -26,6 +26,23 @@ Writable profiles are copied byte-for-byte; no profile is hard-linked. Installed
 
 Compile and run `forza-recomp/tests/benchmark_stats_test.cpp` and `benchmark_profile_test.cpp` as standalone C++20 programs. They check time-weighted FPS, percentile/1% low behavior, real stalls, invalid samples and save-copy independence. End-to-end validation additionally needs the user's TU4 game data and a disposable saved profile.
 
+With the pinned ReXGlue SDK installed, the focused CMake suite also runs the
+actual title-selection hook against synthetic guest memory and checks controller
+capability routing from current main:
+
+```sh
+cmake -S forza-recomp/tests/benchmark -B build/benchmark-tests \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$REXSDK"
+cmake --build build/benchmark-tests --parallel 2
+ctest --test-dir build/benchmark-tests --output-on-failure
+```
+
+The title regression repeats each stock choice 20 times with both one and two
+extra rows, checking local/world transforms and child geometry after every
+modal, plus benchmark setup, departure and restoration. It does not exercise
+native input repeat, render labels or emulate a physical controller. The
+release workflow runs these tests in `sdk-linux`.
+
 For scripted title-menu navigation, use explicit short taps such as
 `FORZA_AUTOPRESS="28:DOWN:0.08,29:DOWN:0.08,30:DOWN:0.08,35:DOWN:0.08"`
 after reaching the menu. The default 0.3-second hold can trigger native button
@@ -33,3 +50,14 @@ repeat after about 0.2 seconds, even with a full second between presses. With
 0.08-second taps, four Down presses from Single Player should select Multiplayer,
 Horizon Rally, Graphics, then Benchmark. Check the hold duration when diagnosing
 skipped rows; test timing is relative to the first input poll, not process launch.
+
+For the maintainer's runtime retest (#138 and #223), start offline on a disposable
+profile copy. From Single Player, use three distinct Down taps to reach Graphics
+and a fourth to reach Benchmark, then navigate back through all five rows.
+Repeatedly select and dismiss each stock choice that opens a dialog, including
+Horizon Rally's Xbox LIVE profile dialog and Multiplayer Unavailable. Check that
+each highlighted label remains on its own row while the dialog is open and after
+dismissal. When Single Player leaves the title, return to a fresh title screen
+before repeating. Also open Graphics, go Back and repeat the navigation. Record
+physical-controller testing separately from scripted taps, including OS, GPU,
+build SHA and hold duration for scripts.
