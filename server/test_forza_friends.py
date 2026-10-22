@@ -261,6 +261,29 @@ class FriendsTest(unittest.TestCase):
         self.assertEqual(names, [("Driver2", 1), ("Driver3", 1), ("Driver4", 1),
                                  ("OfflineDriver", 0)])
 
+    def test_search_cleans_stored_names(self):
+        # A friends.json record from before the ASCII rule (#290): saved, loaded back, then found
+        # by search. The reply carries the cleaned name, never the stored combining marks.
+        a = self.peers[0]
+        store = self.server.friends.store
+        x = 0x0009000000600000
+        store.seen(x, "Zed")
+        store.get(x)["name"] = "Zed" + "\u0301" * 12
+        with tempfile.TemporaryDirectory() as tmp:
+            store.path = os.path.join(tmp, fr.FILE)
+            self.assertTrue(store.save())
+            store.players.clear()
+            store.load()
+        self.transport.sent.clear()
+        self.op(a, struct.pack(">BH", fr.SEARCH, 9) + s8("zed"))
+        body = self.got(a)[-1]
+        _, count = struct.unpack_from(">HB", body, 1)
+        pos, names = 4, []
+        for _ in range(count):
+            name, pos = fr.read8(body, pos + 10)
+            names.append(name)
+        self.assertEqual(names, ["Zed"])
+
     def test_file(self):
         a, b, c = self.peers[:3]
         self.request(a, b)

@@ -369,6 +369,10 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     from . import ingame
     if write:
         ingame.import_pending(cfg, log)
+    if cfg.gamertag_cleaned:
+        log("The saved Gamertag %r is not plain ASCII (letters, digits, spaces, at most 15): "
+            "using %r" % cfg.gamertag_cleaned)
+        cfg.gamertag_cleaned = None
     home = cfg.data_home()
     data = cfg.game_files()
     toml_path = game.dir / "forza.toml"

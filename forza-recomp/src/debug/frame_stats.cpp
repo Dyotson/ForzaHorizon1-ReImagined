@@ -2,6 +2,7 @@
 
 #include "frame_stats.h"
 #include "../platform/hud_overlay.h"
+#include "../platform/benchmark.h"
 
 #include "../hooks/frame_time.h"
 
@@ -204,6 +205,7 @@ bool Enabled() { return GetConfig().enabled; }
 
 void OnGuestFrame() {
   PerformanceOverlayFrame();
+  benchmark::OnSwap();
   if (!Enabled()) return;
   const Clock::time_point now = Clock::now();
   Guest().OnFrame(now);

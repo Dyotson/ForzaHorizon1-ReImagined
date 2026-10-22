@@ -120,11 +120,12 @@ def history(xuid, club, action, role=0):
 
 
 def gamertag(xuid):
-    return (PLAYER(xuid) if PLAYER else {}).get("gamertag", "") or "%016X" % xuid
+    return limits.clean_gamertag((PLAYER(xuid) if PLAYER else {}).get("gamertag", ""), xuid)
 
 
 def names(club):
-    return {"clanName": club["name"], "clanTag": club["tag"]}
+    return {"clanName": limits.clean_ascii_text(club["name"], limits.CLUB_NAME_MAX, "Club %s" % club["id"]),
+            "clanTag": limits.clean_ascii_text(club["tag"], limits.CLUB_TAG_MAX, "CLUB")}
 
 
 def tell(club, ntype, params, roles=(LEADER, CO_LEADER, MEMBER), skip=()):
@@ -190,13 +191,14 @@ def accepts_invites(xuid):
 def create_clan(xuid, body):
     p, _ = x.decode(A.ClanCreateClan_Params, body)
     d = CLUBS.load()
-    tag, name = p["clanTag"].strip(), p["clanName"].strip()
+    tag = limits.clean_ascii_text(p["clanTag"], limits.CLUB_TAG_MAX)
+    name = limits.clean_ascii_text(p["clanName"], limits.CLUB_NAME_MAX)
     if membership(xuid)[0]:
         return x.failure(1, "already in a club")
     if not tag or any(c["tag"].lower() == tag.lower() for c in d["clubs"].values()):
         return x.failure(2, "tag taken")
     cid = CLUBS.new_id()
-    club = {"id": cid, "tag": tag[:4], "name": name[:20], "description": "",
+    club = {"id": cid, "tag": tag, "name": name or "Club %d" % cid, "description": "",
             "open": True, "created": time.time(), "requests": []}
     d["clubs"][str(cid)] = club
     join(xuid, club, LEADER)
@@ -401,9 +403,10 @@ def change_clan_details(xuid, body):
     club, role = membership(xuid)
     if not club or role not in (LEADER, CO_LEADER):
         return x.failure(1, "not allowed")
-    if p["newClanName"].strip():
-        club["name"] = p["newClanName"].strip()[:20]
-    club["description"] = p["newClanDescription"][:128]
+    name = limits.clean_ascii_text(p["newClanName"], limits.CLUB_NAME_MAX)
+    if name:
+        club["name"] = name
+    club["description"] = limits.clean_ascii_text(p["newClanDescription"], limits.CLUB_DESC_MAX)
     club["open"] = bool(p["isOpenForMembership"])
     CLUBS.save()
     return x.reply()

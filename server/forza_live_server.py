@@ -245,10 +245,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         version, token, xuid, local_ip, local_port = struct.unpack_from(">HQQIH", body, 0)
         pos = 24
         room_len = body[pos]
-        room = body[pos + 1:pos + 1 + room_len].decode()[:MAX_ROOM]
+        room = body[pos + 1:pos + 1 + room_len].decode("utf-8", "replace")[:MAX_ROOM]
         pos += 1 + room_len
         name_len = body[pos]
-        name = body[pos + 1:pos + 1 + name_len].decode()[:MAX_NAME]
+        name = limits.clean_gamertag(body[pos + 1:pos + 1 + name_len].decode("utf-8", "replace"), xuid)
         pos += 1 + name_len
         features = body[pos] if pos < len(body) else 0
         friend_key = b""  # after the features byte: u8 length + the friends key
@@ -725,7 +725,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 addr = (d["addr"][0], d["addr"][1])
                 if d["id"] in self.peers or addr in self.by_addr:
                     continue
-                peer = Peer(d["id"], addr, d["token"], d["xuid"], d["name"], d["room"],
+                peer = Peer(d["id"], addr, d["token"], d["xuid"],
+                            limits.clean_gamertag(d["name"], d["xuid"]), d["room"],
                             tuple(d["local"]))
                 peer.proxied = d["proxied"]
                 peer.since = d["since"]

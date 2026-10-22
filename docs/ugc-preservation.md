@@ -163,3 +163,24 @@ and their original member hashes compared with the earlier read-only extraction.
 `tools/test_livery_codec.py` adds synthetic authentication, tamper, format, length,
 identity-derivation and no-edit round-trip checks, plus a published NIST AES-CBC vector.
 No game keys, save bytes or recovered artwork are test fixtures.
+
+### Windows package follow-up (2026-10-22)
+
+Integrated main `8c20da9` without conflicts, retaining catalog recovery warnings and
+the shared game/import lease. The full Windows launcher suite passed: 590 tests,
+37 skips; all nine synthetic livery-codec tests passed. A fresh PyInstaller 6.22.3
+build and Windows release-folder assembly completed successfully.
+
+The assembled frozen launcher ran a private, entirely synthetic catalog fixture
+through the actual Qt import worker. The destination payload authenticated for its
+new identity, creator attribution and the lock remained, a catalog backup manifest
+was created, and the disposable career remained byte-identical. A malformed journal
+produced the verified-backup warning while allowing a harmless frozen `--version`
+process to start; the session lease still blocked another import until cleanup.
+The Designs page and import/backup controls were inspected at 900 by 620 using Qt's
+offscreen platform with the Windows Segoe UI font explicitly registered for capture.
+
+This checks the packaged modules, crypto/SQLite dependencies, worker and Windows
+file-lock behavior. It does not repeat real-package import or in-game application,
+which retain the earlier macOS/TU4 provenance above. No game/GPU session, real profile
+or shared SDK installation was used in this follow-up.

@@ -79,7 +79,7 @@ machine from their own copy:
    "Recommended" again after a graphics driver change (the driver cache files of the last prebuild are
    gone), a launcher, list or GPU plugin update, or a graphics setting that selects other pipeline
    stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
-   start also warms the listed pipelines. [Shader prebuild](shader_prebuild.md).
+   start also warms the listed pipelines. The step refuses to start the game while the Build step says "Rebuild needed" or "Not built" (a game built by an older launcher does not know `--shader_prebuild_only`): it shows "Rebuild first" and asks for Setup > Build. [Shader prebuild](shader_prebuild.md).
 5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -230,8 +230,9 @@ File pickers use Qt dialogs so controller focus works there too. Text entry stil
 keyboard or the system's on-screen keyboard. Steam Input users should select a gamepad
 layout; a mouse/keyboard layout continues to work through normal Qt input.
 
-Input is ignored while the launcher is inactive or the game is running. Reconnects and
-returning to the launcher require neutral input before another action. Directions repeat
+Input is ignored while the launcher is inactive or the game is running, and from a device
+that the Controls page is binding or calibrating. Reconnects, returning to the launcher and
+the end of a Bind require neutral input before another action. Directions repeat
 after 400 ms, then every 120 ms; action buttons never repeat. The left stick has a roughly
 49% dead zone. One controller is used at a time; unplugging it allows another to take over.
 Unsupported/unmapped devices do not prevent mouse/keyboard use. Initialization or read
@@ -255,7 +256,8 @@ driving action and the matching Xbox prompt. The **All driving controls** sectio
 provides the same reference as text. The guide describes the default layout;
 the in-game control layout and transmission settings can change some actions.
 
-The controller selector changes the guide, not the game's bindings or prompts.
+The controller selector changes the guide, not the game's bindings or prompts
+(**Bindings**, below, changes the bindings).
 **Control settings** opens Settings > Controls for the existing keyboard, mouse,
 player, and racing-wheel options.
 
@@ -282,6 +284,42 @@ reports whether the current controller/driver exposes impulse triggers, or
 whether the launcher and game need an update/rebuild. Xbox 360 controllers keep
 their normal body rumble. The default game control layout is required for the
 LT/RT effect mapping.
+
+## Bindings and wheel calibration (#279)
+
+The **Bindings** card on the Controls page binds a device's inputs by pressing them, as sim racing games do.
+Pick a connected controller or wheel (a wheel is what the game's wheel driver takes for one: SDL's wheel type
+or a wheel-like name, or any unmapped joystick with Racing wheel set to On). The live view shows a wheel's raw
+axes (bars) and buttons (numbered lamps) and a controller's mapped sticks, triggers and buttons by name. Each
+game action has a row with its current input, **Bind**, **Clear** and **Reset to default**; inputs bound twice
+are listed. Bind takes the first input that changes from where it was when Bind was pressed (an input already
+held counts only after it is released), gives up after 10 seconds, and Esc cancels it.
+
+- **Wheels** read and write the wheel driver's own settings in their formats: `wheel_axes`, `wheel_buttons`,
+  `wheel_shifter_buttons`, and the invert switches (from the direction the steering was turned and where a pedal
+  rests). The rows show the driver's defaults, ported in `launcher/forza_launcher/bindings.py` (known Logitech
+  wheels by USB id, the generic button map, the Driving Force Shifter). **Calibrate wheel** measures the
+  steering axis and its direction (lock to lock), the rotation (a quarter turn), each pedal's axis, travel and
+  invert switch, and sets the steering deadzone with a live preview computed like the driver
+  (`steering_value`); details in [playing.md](playing.md#racing-wheels-issue-4). Pedals and a shifter on
+  their own USB devices (#272) bind on the wheel's pedal and gear rows: while such a row waits, the editor
+  watches every other connected device that is no game controller too (`bindings.merge`, `split`), and a press
+  there writes `wheel_pedal_device` / `wheel_pedal_axes` or `wheel_shifter_device` /
+  `wheel_shifter_device_buttons` (`set_aux_binding`). The picker shows them as *pedals* or *shifter, read with
+  the wheel* (`pick_aux`, the driver's choice ported with its table of known devices). On Linux, devices SDL 2
+  leaves out (no X and Y axis) are read from evdev (`evdev_joysticks.py`).
+- **Controllers** write `controller_remap` (SDK patch 0116), a profile per controller model by SDL GUID;
+  format and supported pairs in [playing.md](playing.md#remapping-a-controller-279).
+  Resetting all bindings, or the last custom binding, keeps an empty profile for the selected GUID when
+  needed to block another saved profile for the same model or `*`. It restores the default inputs without
+  deleting the other saved profiles. The SDK already treats an exact empty profile as the default mapping.
+
+The editor reads SDL joysticks itself (`gamepad.Joysticks`, the same SDL as the navigation). While a Bind or a
+calibration runs, gamepad navigation ignores that device and afterwards waits for it to be neutral, so the
+presses that bind never move the launcher's focus. Changes go through the Settings page, which shows them,
+saves and rewrites `forza.toml`. `launcher/test_bindings.py` covers the strings, defaults, conflicts,
+detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad);
+`launcher/test_wheel_devices.py` the pedal and shifter devices (a wheel, pedals and a shifter).
 
 ## Launcher updates
 
@@ -524,7 +562,7 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
-racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, clutch and shifter; [playing.md](playing.md#racing-wheels-issue-4)),
+racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, rumble style, clutch and shifter, pedal and shifter devices; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
 deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
