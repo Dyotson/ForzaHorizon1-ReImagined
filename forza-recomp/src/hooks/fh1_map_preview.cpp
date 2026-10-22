@@ -792,7 +792,47 @@ void Release(const PPCContext& context, uint8_t* base) {
 }
 // Prepare at the original phase0 boundary so transient dynamic-layer buffers
 // are rebuilt immediately before their native render pass consumes them.
-void PrepareHudPass(const PPCContext& context, uint8_t* base) {
+struct HudPassScope {
+  uint8_t* base = nullptr;
+  uint32_t camera = 0, fov = 0;
+  std::array<uint8_t, 256> matrices{};
+  static constexpr float span = 3.f;
+
+  bool Apply(uint8_t* memory, uint32_t camera_address) {
+    const float original_fov = Float(memory, camera_address + 0x34);
+    const float original_distance = Float(memory, camera_address + 0x38);
+    if (!std::isfinite(original_fov) || original_fov <= 0.f || original_fov >= 3.0f ||
+        !std::isfinite(original_distance) || original_distance <= 0.f) return false;
+    const float preview_fov = 2.f * std::atan(span * std::tan(original_fov * .5f));
+    if (!std::isfinite(preview_fov) || preview_fov >= 3.13f) return false;
+    base = memory;
+    camera = camera_address;
+    fov = Read(base, camera + 0x34);
+    std::copy_n(GuestPtr(base, camera + 0x50), matrices.size(), matrices.begin());
+    // Native82DA2648 builds projection cot(FOV/2). Increasing tan(FOV/2)
+    // threefold expands the visible world span while preserving camera distance
+    // and every native icon's DynamicSize, offsets and distance-dependent state.
+    // DynamicSize scales world geometry by distance (82DA7A58), not FOV, so
+    // original45px player icons become15px in the source /21px in this card.
+    Write(base, camera + 0x34, std::bit_cast<uint32_t>(preview_fov));
+    static thread_local uint32_t logged_camera = 0;
+    if (logged_camera != camera) {
+      REXLOG_INFO("FH1 map preview: scoped FOV camera={:08X} distance={} fov={} -> {} pitch={} unchanged span=3 native_icons_unchanged",
+          camera, original_distance, original_fov, preview_fov, Float(base, camera + 0x30));
+      logged_camera = camera;
+    }
+    return true;
+  }
+
+  ~HudPassScope() {
+    if (!camera) return;
+    // Native draw constants are copied during the pass; restore shared state.
+    Write(base, camera + 0x34, fov);
+    std::copy(matrices.begin(), matrices.end(), GuestPtr(base, camera + 0x50));
+  }
+};
+
+void PrepareHudPass(const PPCContext& context, uint8_t* base, HudPassScope& scope) {
   const auto record = requested_hud_record.load(std::memory_order_acquire);
   if (!record || context.r4.u32 != 0 || !base) return;
   const auto service = context.r3.u32;
@@ -808,8 +848,9 @@ void PrepareHudPass(const PPCContext& context, uint8_t* base) {
   const auto camera = Read(base, record + 0x24);
   if (!map || !Read(base, map + 4) || !camera || !Read(base, record + 12) ||
       !Read(base, record + 16)) return;
-  // Exact Register826E2E20 preparation tail, with the original HUD settings,
-  // map and camera. Do not register the donor or change the record's viewport.
+  if (!scope.Apply(base, camera)) return;
+  // Exact Register826E2E20 preparation tail with temporary preview framing.
+  // Do not register the donor or change the existing record's viewport.
   PPCContext call = context;
   call.r3.u64 = camera;
   rex::runtime::ResolveIndirectFunction(0x82DA2388)(call, base);
@@ -817,6 +858,7 @@ void PrepareHudPass(const PPCContext& context, uint8_t* base) {
   rex::runtime::ResolveIndirectFunction(0x82DA4A80)(call, base);
   float player_x = 0.f, player_y = 0.f, icon_size = 0.f;
   if (PlayerPixel(base, record, player_x, player_y, icon_size)) {
+    icon_size /= HudPassScope::span;
     rendered_player_size.store(std::bit_cast<uint32_t>(icon_size), std::memory_order_relaxed);
     rendered_player_pixel.store((uint64_t(std::bit_cast<uint32_t>(player_x)) << 32) |
                                std::bit_cast<uint32_t>(player_y), std::memory_order_release);
@@ -865,7 +907,8 @@ void PrepareHudPass(const PPCContext& context, uint8_t* base) {
 }
 } // namespace forza::fh1_map_preview
 extern "C" REX_FUNC(sub_826E22A8) {
-  forza::fh1_map_preview::PrepareHudPass(ctx, base);
+  forza::fh1_map_preview::HudPassScope scope;
+  forza::fh1_map_preview::PrepareHudPass(ctx, base, scope);
   __imp__sub_826E22A8(ctx, base);
 }
 #endif

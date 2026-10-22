@@ -53,7 +53,13 @@ as native icon symbolizer 82DA77FC does, and projects with the current map-camer
 matrix after native material-pass preparation. The render-phase point is
 published atomically for the next UI crop; the earlier Tick camera has a
 different temporary projection. It clamps to the rendered viewport while keeping the native marker and
-padding inside the map body. It changes no camera settings or entity position.
+padding inside the map body. The preview expands tan(FOV/2) threefold at the
+original HUD camera distance and angle. This shows three times
+the world span and naturally shrinks native markers to one third of their
+previous screen size (about 21px for the player in the 720p tile). The scoped
+render override restores FOV and all cached camera matrices after the
+pass. Icon profiles, sizes, offsets, geometry ownership and entity positions
+remain native.
 
 The private H_MAP alias supplies the textured Tip.Bar.Bar/Material1504 quad
 and caption. Its original untextured custom-render rectangle is hidden after
@@ -68,7 +74,7 @@ releases its profile reference. No full-screen terrain textures are loaded.
 
 A scoped native material-pass hook validates the published record against the
 current service and rebuilds its map-camera matrices and transient geometry
-immediately before phase0 draws it. Other phases and inactive calls pass
+immediately before phase0 draws it. Preview camera overrides last only for that pass. Other phases and inactive calls pass
 through unchanged. Hiding clears the atomic request before tab changes,
 resume or native child entry; destruction releases the donor before its parent.
 Original Home labels remain visible until the target and resources are ready.
@@ -360,6 +366,10 @@ complete native player marker fits with padding, and the current-car card and
 action labels remain inside their panels. A seven-capture navigation check
 covered each Cars action focus, Settings, full Map and Back; a later lifecycle
 check also confirmed the driving HUD after resume.
+
+The FOV-only zoom follow-up passed six 720p captures: Home, Cars, native full
+Map, Back, resumed driving HUD and reopened Home. The native player arrow is
+visible at the smaller scale, and normal full-map/HUD scale restores.
 
 Synthetic asset checks:
 
