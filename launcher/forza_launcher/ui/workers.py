@@ -123,6 +123,24 @@ def build_task(opts, game_files):
     return Task(fn, "build")
 
 
+def prebuild_task(cfg):
+    """Prebuild shaders (#226): rebuild the listed shaders from the game files, then let the game build
+    every pipeline into the driver's cache and exit."""
+    def fn(t: Task):
+        from .. import game, shader_prebuild
+        g, looked = game.find_game(cfg)
+        if g is None:
+            raise builder.BuildError(game.missing_message(looked))
+        try:
+            return shader_prebuild.prebuild(cfg, g, t.status.emit, lambda f, d: t.progress.emit(f, d),
+                                            t.cancelled, t.log.emit)
+        except InterruptedError:
+            raise installer.Cancelled() from None
+        except shader_prebuild.PrebuildError as e:
+            raise builder.BuildError(str(e)) from e
+    return Task(fn, "prebuild shaders")
+
+
 def move_task(old, new, with_user, with_game):
     """Copy the user data of the old data folder into the new one (the old one is left as it is)."""
     def fn(t: Task):

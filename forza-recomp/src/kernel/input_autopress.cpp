@@ -24,8 +24,11 @@
 // the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp); "PROF:START" and
 // "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp).
 
+#include "input_caps.h"
+
 #include "../platform/guest_memory.h"
 #include "../platform/telemetry.h"
+#include "../platform/wheel_bridge.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -331,6 +334,7 @@ bool RoutedUser(uint32_t user_index, uint32_t flags, uint32_t& user) {
 extern "C" REX_FUNC(__imp__XamInputGetState) {
   static GuestFunc sdk = Sdk("__imp__XamInputGetState");
   InitScripting();
+  forza::wheel::UpdateDriving();  // the wheel's forces fade while the player is not driving (#256)
   const uint32_t flags = ctx.r4.u32, buffer = ctx.r5.u32;
   uint32_t user;
   if (!RoutedUser(ctx.r3.u32, flags, user)) {
@@ -392,11 +396,10 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
 
 namespace {
 // Capabilities of user 0: the first connected slot's (a scripted run always has one).
-void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, int user_reg, int flags_reg) {
-  auto reg = [&ctx](int n) -> PPCRegister& { return (&ctx.r0)[n]; };
+void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, forza::input_caps::Args args) {
   InitScripting();
   uint32_t user;
-  if (!RoutedUser(reg(user_reg).u32, reg(flags_reg).u32, user) || PadPerUser()) {
+  if (!RoutedUser(args.user.u32, args.flags.u32, user) || PadPerUser()) {
     if (sdk) sdk(ctx, base);
     return;
   }
@@ -404,19 +407,7 @@ void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, int user_reg, i
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
-  const uint64_t saved = reg(user_reg).u64, saved_flags = reg(flags_reg).u64;
-  for (uint32_t slot = 0; slot < kSlots; ++slot) {
-    reg(user_reg).u64 = slot;
-    reg(flags_reg).u64 = saved_flags & ~kFlagAnyUser;
-    if (sdk) sdk(ctx, base);
-    if (sdk && ctx.r3.u32 == kErrorSuccess) {
-      reg(user_reg).u64 = saved;
-      reg(flags_reg).u64 = saved_flags;
-      return;
-    }
-  }
-  reg(user_reg).u64 = saved;
-  reg(flags_reg).u64 = saved_flags;
+  if (sdk && forza::input_caps::FirstSlot(sdk, ctx, base, args, kSlots)) return;
   if (scripted) {
     // A scripted run without hardware: the SDK's answer for slot 0 (its capabilities
     // struct is filled even when nothing is connected), reported as connected.
@@ -431,19 +422,25 @@ void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, int user_reg, i
 // DWORD XamInputGetCapabilities(DWORD user_index, DWORD flags, X_INPUT_CAPABILITIES* caps)
 extern "C" REX_FUNC(__imp__XamInputGetCapabilities) {
   static GuestFunc sdk = Sdk("__imp__XamInputGetCapabilities");
-  Capabilities(sdk, ctx, base, 3, 4);
+  Capabilities(sdk, ctx, base, forza::input_caps::CapabilitiesArgs(ctx));
 }
 
 // DWORD XamInputGetCapabilitiesEx(DWORD unk, DWORD user_index, DWORD flags, caps*)
 extern "C" REX_FUNC(__imp__XamInputGetCapabilitiesEx) {
   static GuestFunc sdk = Sdk("__imp__XamInputGetCapabilitiesEx");
-  Capabilities(sdk, ctx, base, 4, 5);
+  Capabilities(sdk, ctx, base, forza::input_caps::CapabilitiesExArgs(ctx));
 }
 
 // DWORD XamInputSetState(DWORD user_index, DWORD unk, X_INPUT_VIBRATION* vibration)
 extern "C" REX_FUNC(__imp__XamInputSetState) {
   static GuestFunc sdk = Sdk("__imp__XamInputSetState");
   uint32_t user;
+  // Player one's rumble is how the trigger effects tell driving from a menu (#224).
+  if (ctx.r5.u32 && RoutedUser(ctx.r3.u32, 0, user) && user == 0) {
+    uint16_t motors[2];  // X_INPUT_VIBRATION, big endian: left, right
+    std::memcpy(motors, GuestPtr(base, ctx.r5.u32), sizeof(motors));
+    forza::telemetry::Rumble(__builtin_bswap16(motors[0]), __builtin_bswap16(motors[1]));
+  }
   if (PadPerUser() || !RoutedUser(ctx.r3.u32, 0, user) || !sdk) {
     if (sdk) sdk(ctx, base);
     return;

@@ -1,0 +1,42 @@
+name: discord-presence-tests
+on:
+  pull_request:
+    paths:
+      - 'forza-recomp/cmake/discord.cmake'
+      - 'forza-recomp/thirdparty/**'
+      - 'forza-recomp/src/platform/discord*'
+      - 'forza-recomp/tests/discord*'
+      - 'forza-recomp/tests/discord/**'
+      - 'tools/test_discord_rpc.py'
+      - '.github/workflows/discord-presence-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-discord:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            exe: out/discord/forza
+          - os: windows-2022
+            exe: out/discord/Release/forza.exe
+          - os: macos-14
+            exe: out/discord/forza
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the isolated native client and activity model
+        env:
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          ALL_PROXY: http://127.0.0.1:9
+        run: cmake -S forza-recomp/tests/discord -B out/discord -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build out/discord --config Release --parallel 4
+      - run: ctest --test-dir out/discord -C Release --output-on-failure
+      - name: Exercise private IPC endpoints (no real Discord client)
+        run: python tools/test_discord_rpc.py --exe '${{ matrix.exe }}' -v

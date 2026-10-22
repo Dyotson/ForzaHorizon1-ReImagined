@@ -4,6 +4,8 @@
 #include "../platform/graphics_menu.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
+#include "../platform/graphics_resolution.h"
+#include "../platform/ultrawide.h"
 #ifdef __APPLE__
 #include "../platform/macos_graphics_config.h"
 #include <iterator>
@@ -398,8 +400,23 @@ void Snapshot() {
           extent == "1080" ? "1080p" : "720p";
     }
 #endif
+    if (setting.key == "output") setting.value = CurrentOutput(setting.value);
     if (setting.value.empty())
       setting.value = setting.choices.front().value;
+  }
+  // Never let an unknown/current launcher mode silently select spinner index
+  // zero (1080p). Native ultrawide owns drawing and output until restart.
+  auto &output = settings[0];
+  if (const auto extent = forza::ultrawide::OutputSize(); extent.width) {
+    output.choices = {{output.value, std::to_string(extent.width) + " x " +
+        std::to_string(extent.height) + " (window)"}};
+    const auto drawing = forza::ultrawide::DrawingSize();
+    settings[2].choices = {{settings[2].value, std::to_string(drawing.width) +
+        " x " + std::to_string(drawing.height) + " (automatic)"}};
+  } else if (std::none_of(output.choices.begin(), output.choices.end(),
+                         [&](const Choice &choice) { return choice.value == output.value; })) {
+    output.choices.insert(output.choices.begin(),
+                          {output.value, OutputLabel(output.value) + " (current)"});
   }
   if (rex::cvar::GetFlagByName("fh1_scene_720p_native_hud") == "true")
     settings[2].value = rex::cvar::GetFlagByName("fh1_native_scene_scale");
@@ -433,6 +450,10 @@ bool Save() {
   bool first = true;
   for (const auto &s : settings) {
     if (s.key == "preset") continue;
+    if (s.key == "output" && s.value != "720p" && !LiveOutputSupported(s.value)) continue;
+    if (forza::ultrawide::OutputSize().width &&
+        (s.key == "output" || s.key == "upscaler" ||
+         s.key == "resolution_scale" || s.key == "anti_aliasing")) continue;
     if (!first) out << ",\n";
     first = false;
     out << "    \"" << s.key << "\": \"" << s.value << "\"";
@@ -488,7 +509,8 @@ bool CommitSettings() {
   rex::cvar::SetFlagByName("frame_rate", settings[3].value);
   rex::cvar::SetFlagByName("video_mode_refresh_rate", std::to_string(frame_time::VblankHz()));
   if (rate_changed) frame_time::ResetRenderTiming();
-  rex::cvar::SetFlagByName("resolution", settings[0].value);
+  if (!forza::ultrawide::OutputSize().width)
+    rex::cvar::SetFlagByName("resolution", settings[0].value);
   bool saved = Save();
 #ifdef __APPLE__
   saved = saved && SaveNativeConfig();
@@ -554,6 +576,15 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
   }
 }
 std::string Help(size_t i) {
+  if ((i <= 2 || i == 8 || i == kAntiAliasing) && forza::ultrawide::OutputSize().width) {
+    const auto drawing = forza::ultrawide::DrawingSize();
+    return "Ultrawide follows the window. Drawing: " + std::to_string(drawing.width) +
+        " x " + std::to_string(drawing.height) +
+        ". Scaled to the window; higher drawing sizes use more GPU work. Change display settings in the launcher and restart.";
+  }
+  if ((i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      !LiveOutputSupported(settings[0].value))
+    return "This launcher resolution is active. Live rendering changes require 1080p, 1440p or 4K. Use the launcher for other modes.";
   if (i == 1 || i == 2 || i == kAntiAliasing) {
     const auto mode = BackendMode();
     const auto output = settings[0].value == "4k" ? "3840 x 2160" :
@@ -597,6 +628,12 @@ uint32_t MakeChoices(Native &ui, uint8_t *base, size_t i) {
   return choices;
 }
 bool Relevant(size_t i) {
+  if ((i == 0 || i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      forza::ultrawide::OutputSize().width) return false;
+#ifndef __APPLE__
+  if ((i == 1 || i == 2 || i == 8 || i == kAntiAliasing) &&
+      !LiveOutputSupported(settings[0].value)) return false;
+#endif
   if (i == 2) return BackendMode() == "off";
   if (i == kAntiAliasing) return settings[1].value == "off";
   if (i == 6) return rex::cvar::GetFlagByName("forza_ultrawide") == "true" ||

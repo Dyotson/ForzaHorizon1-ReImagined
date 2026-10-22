@@ -17,6 +17,14 @@ and ultrawide HUD placement. Irrelevant rows dim immediately without requiring
 hover or selection, and restore when relevant. Inactive values are retained.
 The game's font cache is updated separately from native row input state.
 
+Ultrawide shows the physical window output and automatic drawing size. Its
+rendering controls are read-only because changing them requires a launcher
+restart; frame pacing, filtering and HUD controls still save independently.
+Fractional heights such as 1080 use a 1440-line backing that is downsampled to
+the window. Default/720p and custom launcher output modes display their current
+value instead of selecting 1080p visually. Windows live rendering controls at
+those modes unlock after choosing a supported 1080p/1440p/4K output.
+
 MSAA scene resolution is independent of output/HUD resolution: at 1440p output,
 1x renders a 1280x720 scene with a 2560x1440 HUD; 2x renders both at 2560x1440.
 Native SMAA, DLAA and FSR Native AA use output-sized input. Upscaling chooses
