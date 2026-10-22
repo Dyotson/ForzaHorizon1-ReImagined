@@ -10,7 +10,10 @@ keep the existing launcher behavior.
 This prepares **previously encountered pipelines**. An empty cache has nothing to
 warm, and a new race, car, effect or graphics configuration can still introduce
 new shader combinations during gameplay. No game shaders or driver binaries are
-bundled or downloaded by this feature.
+bundled or downloaded by this feature. On Vulkan, Setup's optional **Prebuild
+shaders** step adds the pipelines of a shipped list (hashes and render state; the
+shaders are rebuilt from the player's own game files) to every warm-up:
+[shader prebuild](shader_prebuild.md).
 
 ## Local Vulkan driver cache
 
