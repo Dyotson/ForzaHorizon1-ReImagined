@@ -49,7 +49,8 @@ def add(*a, **k):
 # --- Display ---------------------------------------------------------------------------
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
-    "physics speed. Pick a rate or type your own, such as your display's refresh rate.", "Frame rate")
+    "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
+    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS.", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
@@ -441,8 +442,8 @@ def coerce(setting, value):
             return bool(value)
         if setting.kind in ("int", "fps"):
             v = int(float(value))
-            if setting.kind == "fps":
-                return 30 if v < 60 else min(v, 240)
+            if setting.kind == "fps":    # 0 = Match display, resolved by the launcher at launch
+                return 0 if v == 0 else 30 if v < 60 else min(v, 240)
             lo = -(10 ** 9) if setting.lo is None else int(setting.lo)
             hi = 10 ** 9 if setting.hi is None else int(setting.hi)
             return max(lo, min(hi, v))

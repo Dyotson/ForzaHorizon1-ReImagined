@@ -31,7 +31,7 @@ class FrameRateControlTests(unittest.TestCase):
         self.app.processEvents()
         try:
             presets = [30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240]
-            self.assertEqual([control.itemData(i) for i in range(control.count())], presets)
+            self.assertEqual([control.itemData(i) for i in range(control.count())], [0] + presets)  # 0 = Match display
             # A matching preset autocompletes with " fps". The validator must
             # accept that text, or Qt never emits editingFinished on Enter.
             for typed, expected in [(str(v), v) for v in presets] + [

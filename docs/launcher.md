@@ -529,6 +529,17 @@ Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Market
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` entry becomes `fsr`; `fsr3` is now the temporal upscaler).
 
+**Match display (#215).** The first entry of the Frame rate list, "Match display (N Hz)", follows the refresh rate
+of the monitor the game runs on (Settings > Display > Monitor; 0 and 1 are the primary display, 2 the second,
+and so on). It is stored as `frame_rate = 0` in `launcher.json` and resolved by the launcher
+(`forza_launcher/display.py`) whenever it writes `forza.toml`: Qt's `refreshRate()` of that screen, rounded and
+clamped to 30 or 60 to 240, and never above what the PC-specs warnings accept (30 on a low CPU, 60 on a mid CPU or a
+low/mid graphics card). If the rate cannot be read it uses 60 and says so in the launcher log. The game only ever
+sees a number. Qt lists the primary screen first and the rest in the system's order; SDL may order three or more
+monitors differently, in which case the label shows the rate of the monitor Qt calls that number. The in-game
+Graphics menu saves the frame rate it was started with every time; if that is the resolved rate, Match display
+stays, and any other rate chosen in the menu replaces it. Tests: `launcher/test_match_display.py`.
+
 ### GPU choice (#52)
 
 Many glitches depend on the graphics card, so Settings > Display starts with **Graphics card**: NVIDIA, AMD, Intel,
