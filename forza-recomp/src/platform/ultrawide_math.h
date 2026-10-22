@@ -22,11 +22,15 @@ inline bool GameplayLayoutActive(double aspect, bool was_wide, uint64_t now,
   if (aspect < 1.0 || !game || (map && now-map <= 3)) return false;
   return now-game <= (was_wide ? 30u : 2u);
 }
-// Fractional vertical scales still mix active and padded resolve rows. Keep
-// native ultrawide to whole guest-height multiples until that path is supported.
+// Resolve addresses use whole guest-height multiples. For fractional window
+// heights, draw into the next whole multiple and let presentation downsample.
+// Camera framing and HUD layout must still use the physical window aspect.
+inline uint32_t DrawingHeight(uint32_t height) {
+  return ((height + 719) / 720) * 720;
+}
 inline bool NativeSizeSupported(uint32_t width, uint32_t height) {
   return width > 0 && width <= 1280 * 7 && height > 0 &&
-         height <= 720 * 7 && height % 720 == 0;
+         height <= 720 * 7;
 }
 inline uint32_t RenderScale(uint32_t extent, uint32_t guest_extent, uint32_t requested) {
   return std::clamp(std::max(requested, (extent + guest_extent - 1) / guest_extent), 1u, 7u);

@@ -49,7 +49,8 @@ def add(*a, **k):
 # --- Display ---------------------------------------------------------------------------
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
-    "physics speed.", "Frame rate")
+    "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
+    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS.", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
@@ -74,8 +75,9 @@ add("video_driver", "Video driver", "Display", "choice", "",
 add("forza_ultrawide", "Ultrawide gameplay", "Display", "bool", False,
     "Follow the window's aspect ratio with a wider horizontal view. Menus and map stay 16:9. "
     "Renders at the physical window resolution with proportional HUD. Render scale is automatic. "
-    "Requires Vulkan, the patched SDK and a physical window height divisible by 720 (720/1440/2160). "
-    "1080-line windows use ordinary 16:9 rendering. Restart after resizing to change render resolution.",
+    "Requires Vulkan and the patched SDK. Fractional heights, including 1080, render at the next "
+    "720-line multiple and downsample to the window; this costs more GPU work than native 1080p. "
+    "Restart after resizing to change render resolution.",
     "Ultrawide and HUD", restart=True)
 add("forza_hud_edges", "Expand HUD to ultrawide edges", "Display", "bool", False,
     "Anchor side HUD elements toward the full window edges while keeping gauges and text proportional. "
@@ -99,7 +101,8 @@ add("forza_hud_offset_y", "HUD vertical position %", "Display", "float", 0.0,
 add("resolution", "Resolution preset", "Display", "combo", "",
     "Guest video mode and window size in one: 720p, 1080p, 1440p, 4k or WxH. Empty keeps the "
     "defaults (1280x720 guest). The game still draws at 1280x720; Render scale sets the "
-    "drawing resolution.", "Picture",
+    "drawing resolution. With Ultrawide gameplay, the physical window size controls drawing; "
+    "changing this preset does not change a borderless monitor's resolution.", "Picture",
     choices=[("", "Default"), ("720p", "720p"), ("1080p", "1080p"), ("1440p", "1440p"),
              ("4k", "4K")])
 add("resolution_scale", "Render scale", "Display", "int", 1,
@@ -160,6 +163,10 @@ add("present_dither", "Output dithering", "Display", "bool", False,
     "Dither the final image to hide banding.", "Picture", restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
+add("cockpit_gauges_lit", "Cockpit gauges always lit", "Display", "bool", False,
+    "Keep your car's instrument backlight on by day too, as the game shows it at night, so the "
+    "gauges are easy to read in cockpit view. The headlights stay as they are, and other "
+    "players' cars are not changed.", "Picture")
 if IS_WINDOWS:
     add("gpu_backend", "Graphics API", "Display", "choice", "vulkan",
         "Vulkan includes this project's fixes and is recommended; Direct3D 12 is the SDK's own and "
@@ -234,11 +241,14 @@ add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
 add("wheel_deadzone", "Steering deadzone", "Controls", "float", 0.0,
     "Fraction of the wheel's range, 0 to 0.5.", "Racing wheel", lo=0, hi=0.5, step=0.01)
 add("wheel_steer_offset", "Steering deadzone compensation", "Controls", "float", 0.05,
-    "The game has its own inner steering deadzone for wheels; this makes any wheel movement beyond a "
-    "hair already give this fraction of the full steering (0 to 0.3). Lower it if the car twitches "
-    "straight ahead, raise it if the first degrees still do nothing.", "Racing wheel",
+    "Only with full-range wheel steering off: any wheel movement beyond a hair already gives this "
+    "fraction of the full steering (0 to 0.3), to cancel an inner steering deadzone. Full-range "
+    "steering follows the wheel from the centre without it.", "Racing wheel",
     lo=0, hi=0.3, step=0.01)
 add("wheel_invert_steering", "Invert steering", "Controls", "bool", False, "", "Racing wheel")
+add("wheel_900_steering", "Full-range wheel steering", "Controls", "bool", True,
+    "The game uses its full-range (900\u00b0) wheel steering. Off uses the Xbox 360 wheel's "
+    "270\u00b0 mode, which filters the steering like a gamepad.", "Racing wheel", restart=True)
 add("wheel_pedals", "Pedals", "Controls", "choice", "auto",
     "Combined: one axis, throttle one way and brake the other (G25 style).", "Racing wheel",
     choices=[("auto", "Separate (detected)"), ("separate", "Separate"), ("combined", "Combined")])
@@ -258,13 +268,53 @@ add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is. G29 and G923 have their own map built in.",
+    "left=14,right=15. The d-pad hat is used as is. The G29, G920 and G923 have their own maps "
+    "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
-    "Approximate: a centring spring and a vibration taken from the game's rumble motors. "
-    "Untested on real wheels.", "Racing wheel", restart=True)
+    "The game's own wheel forces: the car's steering force, a centring spring that grows with "
+    "speed, a light damper, and its rumble as a vibration. They fade out while you are not "
+    "driving (pause menu, rewind, replays).",
+    "Racing wheel", restart=True)
+add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
+    "Turn on if the wheel pulls away from the centre in corners instead of towards it (wheel "
+    "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100,
+    "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
+    "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
+    "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 100,
+    "The vibration from the game's engine motor (its right motor), 0 to 100 percent of the force "
+    "feedback strength. Lower it if the engine near the redline drowns out the road.",
+    "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 100,
+    "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
+    "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
+# Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
+add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
+    "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",
+    "Shifter and clutch")
+add("wheel_invert_clutch", "Invert clutch", "Controls", "bool", False,
+    "Turn on when the clutch works backwards.", "Shifter and clutch")
+add("wheel_shifter", "Shifter", "Controls", "choice", "off",
+    "H-pattern: the shifter's gear selects the gear (the game's manual transmission; no gear "
+    "is neutral). Sequential: its up and down buttons shift like the paddles.",
+    "Shifter and clutch",
+    choices=[("off", "None"), ("h", "H-pattern"), ("sequential", "Sequential")], restart=True)
+add("wheel_shifter_buttons", "Shifter buttons", "Controls", "str", "",
+    "e.g. 1=12,2=13,3=14,4=15,5=16,6=17,r=18 (gears 1 to 7 and reverse) or up=..,down=.. "
+    "(sequential). Empty uses the Logitech Driving Force Shifter on a G29, G920 or G923: gears "
+    "on 12 to 17, reverse on 18 (G29, PlayStation G923) or 11 (G920, Xbox G923). These buttons "
+    "press nothing else.",
+    "Shifter and clutch", restart=True)
+add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
+    "H-pattern: a gear engages only with the clutch pressed; without it the car stays in neutral.",
+    "Shifter and clutch")
+add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
+    "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
+    lo=0.1, hi=1, step=0.05)
 
 KEYBINDS = [
     ("a", "A", "Semicolon,Space"), ("b", "B", "Quote,Backspace"), ("x", "X", "L"),
@@ -301,7 +351,11 @@ add("live_accept_invites", "Show game invites", "Online", "bool", True,
     "Another player's invite asks you: hold Back + A (or Enter) to join. Off ignores them.",
     "Forza Live")
 add("live_friends_key", "Friends screen key", "Online", "str", "F8",
-    "Opens the friends screen (a controller: hold the left stick press).", "Forza Live")
+    "Opens the friends screen (a controller: hold the left stick press, unless the "
+    "controller shortcut below is off).", "Forza Live")
+add("live_friends_pad_shortcut", "Controller friends shortcut", "Online", "bool", True,
+    "Holding the left stick press opens the friends screen. Turn off if you hold the left stick "
+    "while driving; the friends and chat keys still work.", "Forza Live")
 add("live_chat_key", "Chat key", "Online", "str", "F9",
     "Opens the chat (a controller: the friends screen's Chat tab).", "Forza Live")
 add("world_drop_in", "Horizon World drop-in", "Online", "bool", True,
@@ -348,6 +402,9 @@ add("vulkan_device", "Vulkan device", "Advanced", "int", -1,
     restart=True)
 add("vulkan_allow_present_mode_immediate", "Allow tearing present mode", "Advanced", "bool",
     False, "No vsync wait. Spins the GPU; leave off.", "GPU")
+add("d3d12_allow_variable_refresh_rate_and_tearing", "Allow tearing (Direct3D 12)", "Advanced", "bool",
+    False, "Variable refresh rate (G-Sync / FreeSync) on Direct3D 12. Tears on a fixed-refresh "
+    "display; leave off unless yours has VRR.", "GPU", platform="windows")
 add("vulkan_allow_present_mode_mailbox", "Allow mailbox present mode", "Advanced", "bool",
     False, "Triple buffering.", "GPU")
 add("vulkan_allow_present_mode_fifo_relaxed", "Allow relaxed FIFO", "Advanced", "bool", False,
@@ -371,6 +428,17 @@ add("video_mode_width", "Guest video width", "Advanced", "int", 1280,
 add("video_mode_height", "Guest video height", "Advanced", "int", 720,
     "Overridden by the resolution preset.", "GPU", lo=480, hi=4095, restart=True)
 
+# Discord status display is opt-in. The application ID is public maintainer setup,
+# separated from the ordinary sharing switch. Never request a token or secret.
+add("discord_presence", "Share activity on Discord", "Online", "bool", False,
+    "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
+    "Requires a Discord application ID in Advanced. Applies on the next game launch.", "Discord",
+    restart=True)
+add("discord_application_id", "Discord application ID", "Advanced", "str", "",
+    "One-time Rich Presence setup: the public numeric Application ID from the Discord Developer Portal. "
+    "Leave empty to disable the connection. Never enter a bot token or client secret.", "Discord setup",
+    restart=True)
+
 BY_KEY = {s.key: s for s in S}
 
 
@@ -389,8 +457,8 @@ def coerce(setting, value):
             return bool(value)
         if setting.kind in ("int", "fps"):
             v = int(float(value))
-            if setting.kind == "fps":
-                return 30 if v < 60 else min(v, 240)
+            if setting.kind == "fps":    # 0 = Match display, resolved by the launcher at launch
+                return 0 if v == 0 else 30 if v < 60 else min(v, 240)
             lo = -(10 ** 9) if setting.lo is None else int(setting.lo)
             hi = 10 ** 9 if setting.hi is None else int(setting.hi)
             return max(lo, min(hi, v))

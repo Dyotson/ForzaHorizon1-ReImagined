@@ -22,10 +22,22 @@ def field(name, kind, value):
     return struct.pack('>I', len(name))+name+struct.pack('>IIB', 0x20, 0, kind)+data
 
 
-def body():
+def body(tail=b'opaque class state\0\xff\xbb'):
     main = struct.pack('>I', 6) + field('Credits', 3, 500) + field('XP', 7, 100) + field('Level', 3, 2)
     main += field('WristbandLevel', 7, 1)+field('UnrelatedFlag', 0, True)+field('UnknownCounter', 4, 2**40)
-    return struct.pack('>I', 1)+field('Main', 15, main)+b'opaque class state\0\xff\xbb'
+    return struct.pack('>I', 1)+field('Main', 15, main)+tail
+
+
+def car_challenges(flags=b'\0\0\0\0', cars=((309, ((0x1001, 0, b''), (0x1002, 0, b'\0'*8))),
+                                               (404, ((0x1003, 3, b''),)))):
+    """The 1000 CLUB entry of the class state: per car its challenges, then the tutorial flags."""
+    payload = struct.pack('>I', len(cars))
+    for car, challenges in cars:
+        payload += struct.pack('>II', car, len(challenges))
+        for challenge, value, extra in challenges:
+            payload += struct.pack('>IIH', challenge, value, len(extra))+extra
+    name = struct.pack('>I', 18)+b'CCarChallengeState'
+    return b'class state '+name*2+struct.pack('>II', 4, len(payload)+len(flags))+payload+flags+b' more state'
 
 
 def profile_bytes(data=None):
@@ -117,6 +129,34 @@ class EditorTests(unittest.TestCase):
         document = editor.decode(self.profile, profile_bytes(bytes(data)), (KEYS,))
         changed = editor.decode(self.profile, editor.encode(document, {'Main/Credits': 1000}), (KEYS,))
         self.assertEqual(changed.values['Main/WristbandLevel'].value, 8)
+
+    def test_unfinished_car_challenge_tutorial_is_found_and_only_its_flags_change(self):
+        document = editor.decode(self.profile, profile_bytes(body(car_challenges())), (KEYS,))
+        tutorial = document.values[editor.CAR_CHALLENGE_TUTORIAL]
+        self.assertFalse(tutorial.value)
+        self.assertEqual(document.body[tutorial.offset:tutorial.offset+4], b'\0\0\0\0')
+        changed = editor.encode(document, {editor.CAR_CHALLENGE_TUTORIAL: True})
+        after = editor.decode(self.profile, changed, (KEYS,))
+        self.assertTrue(after.values[editor.CAR_CHALLENGE_TUTORIAL].value)
+        self.assertEqual([i for i, (a, b) in enumerate(zip(document.body, after.body)) if a != b],
+                         list(range(tutorial.offset, tutorial.offset+4)))
+        self.assertEqual(len(changed), len(document.original))
+        partly = editor.decode(self.profile, profile_bytes(body(car_challenges(b'\1\0\0\0'))), (KEYS,))
+        self.assertFalse(partly.values[editor.CAR_CHALLENGE_TUTORIAL].value)
+
+    def test_finished_missing_or_unfamiliar_car_challenge_state_is_left_alone(self):
+        finished = editor.decode(self.profile, profile_bytes(body(car_challenges(b'\1\1\1\1'))), (KEYS,))
+        self.assertTrue(finished.values[editor.CAR_CHALLENGE_TUTORIAL].value)
+        self.assertNotIn(editor.CAR_CHALLENGE_TUTORIAL, self.doc.values)
+        with self.assertRaises(saves.SaveError): editor.encode(self.doc, {editor.CAR_CHALLENGE_TUTORIAL: True})
+        name = struct.pack('>I', 18)+b'CCarChallengeState'
+        for tail in (car_challenges(b'\2\0\0\0'), car_challenges(b'\0\0\0'), car_challenges(b'\0'*5),
+                     car_challenges()+car_challenges(), car_challenges()[:-20],
+                     car_challenges().replace(struct.pack('>IIH', 0x1002, 0, 8), struct.pack('>IIH', 0x1002, 0, 9)),
+                     name*2+b'\0\0'):
+            with self.subTest(tail=tail[-24:]):
+                document = editor.decode(self.profile, profile_bytes(body(tail)), (KEYS,))
+                self.assertNotIn(editor.CAR_CHALLENGE_TUTORIAL, document.values)
 
     def test_stale_document_cannot_overwrite_newer_save(self):
         self.file.write_bytes(b'newer save')

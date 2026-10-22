@@ -66,5 +66,18 @@ exercise missing hooks, incompatible instructions/registers/resume addresses,
 duplicate/extra hints, and unsupported images in CI. The ownership regression
 also runs in Linux CI; no private game files are needed there.
 
-Actual racing reproduction and a runtime soak of the revised hooks remain
-unvalidated. Keep the fix in draft until those checks can be completed.
+On 21 October, a private development TU4 host combined these hooks with #184,
+including all 20 generated load/unload hook sites. A copied Golf R save with
+official DLC completed native FR26 entry (VW Dub Club), race start, normal
+retirement and return to free roam. All 185 streamed reads completed and their
+queued headers matched relocation. This was offline Windows/NVIDIA testing;
+native event entry bypassed career progression and the executable reused
+private generated objects rather than rebuilding every current source file.
+It did not reproduce the public online AMD report or establish #232 coverage.
+
+The 22 October integration retains #184's atomic destination publication and
+cache pin gate alongside these atomic load/unload takes. Both ownership
+regressions and the synthetic hook audit remain enabled in release CI.
+No new game test or runtime soak was performed for this integration. Keep the
+fix in draft pending reporter-specific reproduction and sustained validation;
+#182 and the later `82DDA118` streamed-block failure remain unconfirmed.

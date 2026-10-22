@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from forza_launcher.haptics.settings import normalize, DEFAULTS
 from forza_launcher.haptics.telemetry import WIRE, Decoder
-from forza_launcher.haptics.service import HapticsService, effects, supported
+from forza_launcher.haptics.service import HapticsService, Pedal, effects, supported
 from forza_launcher.haptics.vendor.dualsense.triggers import off
 
 
@@ -67,6 +67,43 @@ class PacketTests(unittest.TestCase):
         self.assertEqual(effects(frame, {**prefs, 'intensity': 0}), (off(), off()))
         self.assertEqual(effects(None, prefs), (off(), off()))
 
+    def test_held_half_press_does_not_flicker(self):
+        decoder = Decoder(1)
+        prefs = {**DEFAULTS, 'enabled': True, 'intensity': 100}
+        pedals = (Pedal(), Pedal())
+        def run(values, **kw):
+            out = []
+            for i, v in enumerate(values):
+                frame = decoder.decode(packet(seq=run.seq, stamp=run.seq+1, throttle=v, brake=0, **kw))
+                run.seq += 1
+                out.append(effects(frame, prefs, pedals)[1])
+            return out
+        run.seq = 0
+        # Jitter of a few counts around a rounding step (force 4 -> 5 at raw 120) and around the
+        # engage point: stays on, one steady effect.
+        shaken = run([20] + [127, 129, 126, 130, 128, 131, 125]*4)
+        self.assertEqual({e[0] for e in shaken[1:]}, {0x21})
+        self.assertEqual(len(set(shaken[1:])), 1)
+        # A real change in the trigger still follows, and a clear release turns it off.
+        self.assertNotEqual(run([200])[0], shaken[-1])
+        self.assertEqual(run([2, 6, 5])[0], off())
+        # Hovering at the engage point does not toggle either.
+        hover = run([90, 14, 11, 13, 10, 12, 9, 11])
+        self.assertEqual(len(set(hover[1:])), 1)
+        self.assertEqual(run([0])[0], off())
+
+    def test_menus_release_the_triggers_and_driving_brings_them_back(self):
+        decoder = Decoder(1)
+        prefs = {**DEFAULTS, 'enabled': True, 'intensity': 100}
+        pedals = (Pedal(), Pedal())
+        driving = decoder.decode(packet(seq=0, stamp=1, active=1))
+        menu = decoder.decode(packet(seq=1, stamp=2, active=0, flags=0))
+        again = decoder.decode(packet(seq=2, stamp=3, active=1))
+        on = effects(driving, prefs, pedals)
+        self.assertEqual(on[0][0], 0x21)
+        self.assertEqual(effects(menu, prefs, pedals), (off(), off()))
+        self.assertEqual(effects(again, prefs, pedals), on)
+
     def test_settings_normalize_and_capability_detection(self):
         self.assertEqual(normalize(None), DEFAULTS)
         self.assertEqual(normalize({'enabled': 'true', 'intensity': float('nan'), 'brake_strength': 100}),
@@ -120,6 +157,7 @@ class ServiceTests(unittest.TestCase):
             root = Path(d)
             (root/'forza-telemetry.json').write_text('{"protocol":"FH1T","version":1}')
             plan = LaunchPlan(None, root, ['missing-game'], {}, [], root/'forza.toml', '')
+            plan.haptics_settings = {**DEFAULTS, 'enabled': True}
             session = Session(plan)
             with patch('forza_launcher.game.subprocess.Popen', side_effect=OSError('missing')):
                 with self.assertRaises(OSError): session.start()
@@ -142,6 +180,32 @@ class ServiceTests(unittest.TestCase):
 
 
 class SettingsUiTests(unittest.TestCase):
+    def test_enabling_during_a_session_without_telemetry_requests_restart(self):
+        from types import SimpleNamespace
+        from PySide6.QtWidgets import QApplication
+        from forza_launcher.config import Config
+        from forza_launcher.ui.controls_page import ControlsPage
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            metadata = root/'forza-telemetry.json'
+            metadata.write_text('{"protocol":"FH1T","version":1,"xbox_trigger_rumble":1}')
+            session = SimpleNamespace(haptics=None, plan=SimpleNamespace(cwd=root))
+            page = ControlsPage(Config(root/'launcher.json'), SimpleNamespace(session=session))
+            try:
+                page.haptics_enabled.setChecked(True)
+                page.xbox_enabled.setChecked(True)
+                self.assertIn('restart the game', page.haptics_status.text())
+                self.assertIn('restart the game', page.xbox_status.text())
+                metadata.unlink()
+                page.refresh_haptics()
+                self.assertIn('Rebuild', page.haptics_status.text())
+                self.assertIn('Rebuild', page.xbox_status.text())
+            finally:
+                page.close()
+                page.deleteLater()
+                app.processEvents()
+
     def test_controls_preferences_persist_without_changing_game_settings(self):
         from PySide6.QtWidgets import QApplication
         from forza_launcher.config import Config

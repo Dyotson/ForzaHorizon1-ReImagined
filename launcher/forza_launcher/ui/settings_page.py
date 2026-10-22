@@ -1,14 +1,14 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
-from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, Signal
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, dlss, fsr3, game, gpu, schema
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -78,7 +78,7 @@ class HudSlider(QWidget):
         self.slider.setValue(int(value))
 
 
-def make_control(s: schema.Setting, value, on_change, note=None):
+def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
     """A widget for the setting, calling on_change(value) when the player changes it. note(value)
     may return a reason that is appended to a choice's label (a GPU's known problem, #52)."""
     if s.kind == "float" and s.key.startswith("forza_hud_"):
@@ -138,9 +138,11 @@ def make_control(s: schema.Setting, value, on_change, note=None):
     if s.kind == "fps":
         w = Combo()
         w.setEditable(True)
-        for v in (30, 60, 90, 120, 144, 165, 240):
+        w.addItem(display.label(monitor), 0)
+        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
-        w.lineEdit().setValidator(QIntValidator(1, 999))
+        w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
+        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
@@ -149,9 +151,14 @@ def make_control(s: schema.Setting, value, on_change, note=None):
         w.setMinimumWidth(130)
 
         def changed(_=None, w=w):
+            if w.currentIndex() == 0 and w.currentText() == w.itemText(0):
+                on_change(0)    # Match display
+                return
             digits = "".join(c for c in w.currentText() if c.isdigit())
             if digits:
-                on_change(schema.coerce(s, int(digits)))
+                rate = schema.coerce(s, int(digits))
+                w.setEditText(f"{rate} fps")
+                on_change(rate)
         w.currentIndexChanged.connect(changed)
         w.lineEdit().editingFinished.connect(changed)
         return w
@@ -190,7 +197,8 @@ class SettingRow(QWidget):
         vendor = cfg.gpu_vendor()
         self.control = make_control(s, cfg.settings.get(s.key, s.default),
                                     lambda v, s=s: changed(s.key, v),
-                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v))
+                                    note=lambda v, s=s: gpu.choice_note(vendor, s.key, v),
+                                    monitor=cfg.settings.get("monitor", 0))
         tip = f"{s.key}" + (f" (default {s.default!r})" if s.default != "" else "")
         self.control.setToolTip(tip)
         self.control.setAccessibleName(s.label)
@@ -244,6 +252,7 @@ class SettingsPage(QWidget):
         self.search = SettingsSearch(self)
         self.search.chosen.connect(self._show_search_result)
         root.addWidget(self.search)
+        self._specs_banner(root)
         self.tabs = QTabBar()
         self.tabs.setExpanding(False)
         self.tabs.setDrawBase(False)
@@ -314,6 +323,13 @@ class SettingsPage(QWidget):
                 row.control.blockSignals(True)
                 row.control.setCurrentIndex(row.control.findData("none"))
                 row.control.blockSignals(False)
+        if key == "monitor" and "frame_rate" in self.rows:    # Match display names the new monitor's rate
+            control = self.rows["frame_rate"].control
+            selected = control.currentIndex() == 0
+            control.setItemText(0, display.label(value))
+            if selected:
+                control.setCurrentIndex(0)
+                control.setEditText(control.itemText(0))
         self._apply_dependencies()
         self.touched()
 
@@ -332,6 +348,14 @@ class SettingsPage(QWidget):
         self.changed.emit()
 
     def _apply_dependencies(self):
+        discord = self.rows.get("discord_presence")
+        if discord:
+            identifier = str(self.cfg.settings.get("discord_application_id", ""))
+            valid = (17 <= len(identifier) <= 20 and identifier.isascii() and identifier.isdigit()
+                     and not identifier.startswith("0") and int(identifier) <= 2 ** 64 - 1)
+            discord.warning.setText("Discord sharing needs a valid public Application ID. "
+                                    "Add it under Advanced > Discord setup.")
+            discord.warning.setVisible(bool(self.cfg.settings.get("discord_presence")) and not valid)
         active = dlss.enabled(self.cfg)
         temporal = fsr3.enabled(self.cfg)
         ultrawide = bool(self.cfg.settings.get("forza_ultrawide"))
@@ -354,6 +378,14 @@ class SettingsPage(QWidget):
                 states[key] = (False, "Controlled by Ultrawide gameplay. Turn it off to change this setting.")
         for key in ("forza_hud_safe_width", "forza_hud_safe_height", "forza_hud_offset_x", "forza_hud_offset_y"):
             states[key] = (bool(self.cfg.settings.get("forza_hud_layout")), "Enable Customize HUD layout to adjust this setting.")
+        shifter = self.cfg.settings.get("wheel_shifter", "off")
+        states["wheel_invert_clutch"] = (bool(self.cfg.settings.get("wheel_clutch", True)),
+                                         "Turn on Clutch pedal to adjust this setting.")
+        states["wheel_shifter_buttons"] = (shifter != "off", "Choose a shifter to set its buttons.")
+        states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_clutch_threshold"] = (
+            shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
+            "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")
 
         hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
@@ -504,10 +536,15 @@ class SettingsPage(QWidget):
         lay.addWidget(w)
         self.gpu_notes = label("", "help")
         lay.addWidget(self.gpu_notes)
+        self.specs_line = label("", "help")
+        lay.addWidget(self.specs_line)
         self.gpu_apply = QPushButton("Use the recommended settings for this card")
         self.gpu_apply.clicked.connect(lambda: self._gpu_chosen(self.gpu_combo.currentData(), True))
         lay.addWidget(self.gpu_apply, 0, Qt.AlignLeft)
         self.gpu_combo.activated.connect(lambda _i: self._gpu_chosen(self.gpu_combo.currentData(), False))
+        recheck = QPushButton("Check this PC again")
+        recheck.clicked.connect(self._recheck_specs)
+        lay.addWidget(recheck, 0, Qt.AlignLeft)
         self._gpu_texts()
         self.search.add("Your graphics card", "Display", "Graphics card", w, self.gpu_combo,
                         "GPU vendor NVIDIA AMD Intel recommended settings")
@@ -523,6 +560,9 @@ class SettingsPage(QWidget):
                  ["No recommendation for this card: the launcher's general defaults apply."])
         for text, issue in (p.notes if p else []):
             lines.append(f"{text}{gpu.issue_text(issue)}")
+        pc = self.cfg.pc_specs()
+        self.specs_line.setText(specs.describe(pc))
+        lines += [w.text for w in specs.warnings(pc, {}) if not w.key]    # about the PC, not a setting
         self.gpu_notes.setText("\n".join(lines))
         self.gpu_apply.setEnabled(p is not None)
 
@@ -545,7 +585,7 @@ class SettingsPage(QWidget):
     def _refresh_gpu_warnings(self):
         vendor = self.cfg.gpu_vendor()
         found = {}
-        warning_settings = dict(self.cfg.settings)
+        warning_settings = self.cfg.effective_settings()
         if (dlss.enabled(self.cfg) and warning_settings.get("fh1_upscaler", "off") in ("quality", "balanced", "dlss") and
                 warning_settings.get("fh1_output_resolution") == "4k"):
             # The 3x allocation belongs to the native UI; these modes render
@@ -553,8 +593,55 @@ class SettingsPage(QWidget):
             warning_settings["resolution_scale"] = 2
         for key, text, issue in gpu.warnings(vendor, warning_settings):
             found.setdefault(key, []).append(text + gpu.issue_text(issue))
+        vendor_keys = set(found)    # the vendor's own warning on a setting says it already
+        for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
+            if w.key and w.key not in vendor_keys:
+                found.setdefault(w.key, []).append(w.text)
         for key, row in self.rows.items():
+            if key == "discord_presence":
+                continue  # its setup warning is managed by _apply_dependencies
             row.set_warning(" ".join(found.get(key, [])))
+        self._refresh_banner()
+
+    # --- settings heavy for this PC (#206) --------------------------------------------
+    def _specs_banner(self, root):
+        self.banner = QFrame()
+        self.banner.setObjectName("specsBanner")
+        self.banner.setStyleSheet(f"#specsBanner {{ border: 1px solid {theme.ORANGE}; border-radius: 8px; }}")
+        row = QHBoxLayout(self.banner)
+        row.setContentsMargins(16, 10, 16, 10)
+        row.setSpacing(12)
+        self.banner_text = label("Some settings are heavy for this PC.", "")
+        row.addWidget(self.banner_text, 1)
+        use = QPushButton("Use recommended")
+        use.clicked.connect(self._use_recommended)
+        keep = QPushButton("Keep mine")
+        keep.clicked.connect(self._keep_mine)
+        row.addWidget(use)
+        row.addWidget(keep)
+        self.banner.hide()
+        root.addWidget(self.banner)
+
+    def _refresh_banner(self):
+        self.banner.setVisible(self.cfg.specs_banner_due())
+
+    def _use_recommended(self):
+        changed = self.cfg.use_recommended()
+        self.touched()
+        self.rebuild()
+        self.window.status("Recommended settings applied: " + ", ".join(
+            schema.BY_KEY[k].label for k in changed) if changed else "Nothing to change", False)
+
+    def _keep_mine(self):
+        self.cfg.dismiss_specs_banner()
+        self.touched()
+        self._refresh_banner()
+
+    def _recheck_specs(self):
+        self.cfg.detect_specs(force=True)
+        self.touched()
+        self.rebuild()
+        self.window.status("Checked this PC again", False)
 
     def _pad_block(self, lay):
         lay = section_card(lay, "Players", 2)

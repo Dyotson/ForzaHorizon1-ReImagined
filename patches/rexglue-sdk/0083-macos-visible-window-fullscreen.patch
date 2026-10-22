@@ -1,0 +1,47 @@
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 6782cce..a8e7591 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -96,6 +96,11 @@ WindowSDL::~WindowSDL() {
+ }
+ 
+ bool WindowSDL::OpenImpl() {
++#if REX_PLATFORM_MAC
++  // Showing Cocoa's initial window can synchronously publish windowed state.
++  // Preserve the caller's request before those visibility notifications.
++  const bool requested_fullscreen = IsFullscreen();
++#endif
+   // SDL window coordinates are physical pixels on Windows and X11. Cocoa
+   // uses logical points and applies the backing scale itself.
+   SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+@@ -116,10 +121,12 @@ bool WindowSDL::OpenImpl() {
+ 
+   CenterOnConfiguredDisplay();
+ 
++#if !REX_PLATFORM_MAC
+   if (IsFullscreen()) {
+     ApplyFullscreenModeNow();
+     SDL_SetWindowFullscreen(sdl_window_, true);
+   }
++#endif
+ #if REX_PLATFORM_MAC
+   CFPreferencesSetAppValue(CFSTR("ApplePressAndHoldEnabled"), kCFBooleanFalse,
+                            kCFPreferencesCurrentApplication);
+@@ -130,6 +137,17 @@ bool WindowSDL::OpenImpl() {
+   ApplyTextInputActiveNow();
+   ApplyCursorVisibilityNow();
+   SDL_ShowWindow(sdl_window_);
++#if REX_PLATFORM_MAC
++  // Enter a Cocoa fullscreen Space only once the NSWindow is visible. A
++  // request on the hidden window may remain windowed, preventing Game Mode.
++  if (requested_fullscreen) {
++    SDL_RaiseWindow(sdl_window_);
++    ApplyFullscreenModeNow();
++    if (!SDL_SetWindowFullscreen(sdl_window_, true)) {
++      REXLOG_WARN("SDL_SetWindowFullscreen failed: {}", SDL_GetError());
++    }
++  }
++#endif
+ 
+   // Actualize state for the common Window code. Listener dispatch is handled
+   // by Window::Open after OpenImpl returns; these only record initial state.

@@ -52,6 +52,10 @@ REXCVAR_DEFINE_STRING(live_friends_key, "F8", "Network/Forza Live",
                       "Key that opens the friends screen (a controller: hold the left stick "
                       "press)");
 
+REXCVAR_DEFINE_BOOL(live_friends_pad_shortcut, true, "Network/Forza Live",
+                    "Holding the left stick press opens the friends screen; off leaves the left "
+                    "stick to the game (the keys still work, #194)");
+
 REXCVAR_DEFINE_STRING(live_chat_key, "F9", "Network/Forza Live",
                       "Key that opens the chat (a controller: the friends screen's Chat tab)");
 
@@ -821,7 +825,8 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
           dirty = true;
         } else if (notices.size() < 5) {
           if (event == 1) line += "\nAnswer it on the friends screen: " +
-                                  REXCVAR_GET(live_friends_key) + " or hold the left stick";
+                                  REXCVAR_GET(live_friends_key) +
+                                  (REXCVAR_GET(live_friends_pad_shortcut) ? " or hold the left stick" : "");
           notices.push_back(line);
         }
         next_list = 0;
@@ -936,8 +941,9 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
     block_all = true;
     return 0xFFFF;
   }
-  // Closed: the left stick press held (or the key) opens it.
-  if (buttons & kLS) {
+  // Closed: the left stick press held (or the key) opens it. Players who hold the left stick
+  // while driving turn that off (live_friends_pad_shortcut, #194); the keys still work.
+  if ((buttons & kLS) && REXCVAR_GET(live_friends_pad_shortcut)) {
     if (!ls_since) ls_since = now;
   } else {
     ls_since = 0;
@@ -956,7 +962,8 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
     std::string body;
     const size_t first = chat_log.size() > 3 ? chat_log.size() - 3 : 0;
     for (size_t i = first; i < chat_log.size(); ++i) body += ChatLineText(chat_log[i]) + "\n";
-    body += "Reply: " + REXCVAR_GET(live_chat_key) + ", or hold the left stick (Chat tab)";
+    body += "Reply: " + REXCVAR_GET(live_chat_key);
+    if (REXCVAR_GET(live_friends_pad_shortcut)) body += ", or hold the left stick (Chat tab)";
     HudShow("Chat", body, kChatToastMs / 1000.0);
     notice_until = now + kChatToastMs;
   } else if (!busy && !notices.empty() && now >= notice_until) {
