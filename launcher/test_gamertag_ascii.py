@@ -58,6 +58,22 @@ class AsciiGamertagTests(unittest.TestCase):
         w.deleteLater()
         app.processEvents()
 
+    def test_widget_limits_while_typing(self):
+        from PySide6.QtWidgets import QApplication
+        from forza_launcher.ui.settings_page import make_control
+        app = QApplication.instance() or QApplication([])
+        w = make_control(schema.BY_KEY["gamertag"], "", lambda v: None)
+        self.assertEqual(w.maxLength(), 15)
+        for typed, kept in (("Jo\u2603s\u00e9 ", "Jose "), ("a\u0301\u0301\u0301b", "ab"),
+                            ("\u5343\u7fbd", ""), ("Mr X 99", "Mr X 99")):
+            with self.subTest(typed=typed):
+                w.setText(typed)
+                w.textEdited.emit(typed)
+                self.assertEqual(w.text(), kept)
+        self.assertEqual(gamertag.filter_typing("x" * 20), "x" * 15)
+        w.deleteLater()
+        app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()

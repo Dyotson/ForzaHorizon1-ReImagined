@@ -17,6 +17,15 @@ def clean_name(text) -> str:
     return " ".join(kept.split())[:MAX_LENGTH].strip()
 
 
+def filter_typing(text) -> str:
+    """What the Gamertag field keeps while the player types or pastes: accents transliterated,
+    only ASCII letters, digits and spaces, at most 15. Spaces are not trimmed yet (clean_name
+    does that when editing ends), so a space typed between two words stays."""
+    text = unicodedata.normalize("NFKD", text if isinstance(text, str) else "")
+    kept = "".join(c for c in text if c.isascii() and (c.isalnum() or c == " ") and not unicodedata.combining(c))
+    return kept[:MAX_LENGTH]
+
+
 def check_name(text) -> tuple[str, str]:
     """(the cleaned name, a message for the player, or "" when nothing had to change)."""
     text = text if isinstance(text, str) else ""

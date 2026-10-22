@@ -165,6 +165,19 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
     w = QLineEdit(str(value))  # str, keys
     w.setMinimumWidth(240)
     if s.key == "gamertag":
+        # Limits while typing too: 15 characters, and anything but ASCII letters, digits and
+        # spaces is dropped (accents transliterated) as it is typed or pasted.
+        w.setMaxLength(gamertag.MAX_LENGTH)
+
+        def gamertag_typed(text, w=w):
+            kept = gamertag.filter_typing(text)
+            if kept != text:
+                pos = w.cursorPosition() - (len(text) - len(kept))
+                w.setText(kept)
+                w.setCursorPosition(max(0, min(pos, len(kept))))
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), gamertag.RULE, w, w.rect(), 4000)
+        w.textEdited.connect(gamertag_typed)
+
         def gamertag_done(w=w):
             cleaned, message = gamertag.check_name(w.text())
             if message:
