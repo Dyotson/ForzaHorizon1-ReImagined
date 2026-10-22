@@ -66,6 +66,12 @@ void ApplyForzaCvarDefaults() {
   SetSdkCvarDefault("vulkan_allow_present_mode_immediate", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_mailbox", "false");
   SetSdkCvarDefault("vulkan_allow_present_mode_fifo_relaxed", "false");
+#if defined(_WIN32)
+  // Direct3D 12 likewise: the SDK presents without waiting for vsync and with tearing
+  // allowed, so a fixed-refresh display tore even with vsync on (#218). Without tearing the
+  // flip model shows the newest finished frame at each refresh instead.
+  SetSdkCvarDefault("d3d12_allow_variable_refresh_rate_and_tearing", "false");
+#endif
   // frame_rate above 30: the guest vblank at twice the frame rate, or at the frame rate when
   // twice is past the SDK's limit (src/hooks/frame_time.cpp). A video_mode_refresh_rate set
   // in forza.toml or on the command line wins.

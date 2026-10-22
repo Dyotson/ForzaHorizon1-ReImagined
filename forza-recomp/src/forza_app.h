@@ -8,6 +8,7 @@
 #include "debug/stall_watch.h"
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
+#include "platform/discord_presence.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
 #include "platform/vulkan_hooks.h"
@@ -50,6 +51,7 @@ std::string ForzaGpuBackend();
 class ForzaApp : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
+  ~ForzaApp() override { forza::discord::Shutdown(); }
 
   static std::unique_ptr<rex::ui::WindowedApp> Create(
       rex::ui::WindowedAppContext& ctx) {
@@ -118,6 +120,7 @@ class ForzaApp : public rex::ReXApp {
     // The SDK terminates guest threads immediately after accepting this request.
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
+    forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
     return true;
@@ -130,6 +133,8 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::discord::Initialize();
+
     if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
     if (window()) forza::ultrawide::Initialize(window()->GetActualPhysicalWidth(),
         window()->GetActualPhysicalHeight(),

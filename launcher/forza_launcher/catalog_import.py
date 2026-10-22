@@ -200,16 +200,65 @@ def _encoded_database(db, keys):
     return codec.encode_stream(struct.pack('>3I', len(data), len(packed), len(data))+packed, keys)
 
 
+def _journal(path):
+    """Validate the complete journal before recovery can remove or rename anything."""
+    try:
+        record = json.loads(_read(path, MAX_INDEX))
+        if (not isinstance(record, dict) or
+                not isinstance(record.get('token'), str) or
+                not re.fullmatch('[a-f0-9]{32}', record['token']) or
+                type(record.get('existed')) is not bool):
+            raise ValueError('invalid journal fields')
+        for key in ('originals', 'published'):
+            # Older journals only needed published hashes for first-catalog rollback.
+            hashes = record.get(key, {} if key == 'published' and record['existed'] else None)
+            if not isinstance(hashes, dict):
+                raise ValueError('invalid catalog hashes')
+            for name, digest in hashes.items():
+                ugc._safe_name(name)
+                if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+                    raise ValueError('invalid catalog hash')
+        return record
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ugc.CatalogError('Invalid import journal; restore the catalog backup manually. Nothing was removed.') from exc
+
+
+def recovery_warning(target, error):
+    """Read-only advice; never trust a journal-supplied path or an unverified backup."""
+    storage = target.home/'save-backups/catalog-imports'
+    backup = None
+    try:
+        _direct(storage)
+        for candidate in sorted(storage.iterdir(), reverse=True):
+            try:
+                manifest = json.loads(_read(candidate/'manifest.json', MAX_INDEX))
+                if (manifest['target'] != str(target.folder/'LivCatalog') or
+                        manifest['identity'] != target.identity.hex().upper() or
+                        type(manifest['existed']) is not bool or
+                        not isinstance(manifest['files'], dict)):
+                    continue
+                actual = {name: hashlib.sha256(raw).hexdigest() for name, raw in
+                          _tree(candidate/'LivCatalog', lambda: False).items()}
+                if actual == manifest['files']:
+                    backup = candidate
+                    break
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    except (OSError, ugc.CatalogError):
+        pass
+    detail = (f'Latest verified catalog backup: {backup}. Check its manifest before restoring with the game closed.'
+              if backup else f'No verified catalog backup was found. Catalog backup folder: {storage}.')
+    return f'Design catalog recovery could not complete: {error} Play can continue; further imports require recovery. {detail}'
+
+
 def recover(target):
     """Caller holds the lease. An interrupted publication rolls back before Play/import."""
     folder = _direct(target.folder)
     journal = _direct(folder/'.catalog-import.json')
     if not journal.exists():
         return
-    record = json.loads(_read(journal, MAX_INDEX))
+    record = _journal(journal)
     token = record['token']
-    if not re.fullmatch('[a-f0-9]{32}', token) or type(record['existed']) is not bool:
-        raise ugc.CatalogError('Invalid import journal; restore the catalog backup manually.')
     catalog = _direct(folder/'LivCatalog')
     stage = _direct(folder/('.catalog-stage-'+token))
     hold = _direct(folder/('.catalog-old-'+token))

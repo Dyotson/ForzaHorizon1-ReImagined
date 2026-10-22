@@ -21,6 +21,8 @@ class ImportTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+        log_patch = patch.object(paths, 'config_dir', return_value=self.root/'config')
+        log_patch.start();self.addCleanup(log_patch.stop)
         self.image = bytes((i*17+23) % 251 for i in range(0x20000))
         self.owner = bytes.fromhex('E000000000000001')
         self.target = ci.Target(self.root, self.root/'profile', bytes.fromhex(game.LOCAL_PROFILE))
@@ -220,6 +222,91 @@ class ImportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Close the game'):
                 game.Session(plan).start()
         spawn.assert_not_called()
+
+    def session_plan(self, save_manager=False):
+        return game.LaunchPlan(game=None,cwd=self.root,
+            argv=['forza',f'--user_data_root={self.target.root}'],
+            env={'FORZA_XUID':self.target.identity.hex()},unset=[],
+            toml_path=self.root/'forza.toml',toml_text='',log_dir=self.root,
+            save_profile=self.target if save_manager else None)
+
+    def test_invalid_journals_warn_once_allow_play_and_keep_lock_through_relaunch(self):
+        self.existing()
+        backup=self.run_import()
+        current=self.files()
+        journal=self.folder/'.catalog-import.json'
+        for raw in ('{broken', '[]', '{}', json.dumps(dict(token='a'*32,existed=True,originals=[]))):
+            for save_manager in (False,True):
+                with self.subTest(raw=raw,save_manager=save_manager):
+                    journal.write_text(raw)
+                    plan=self.session_plan(save_manager)
+                    messages=[];session=game.Session(plan,log=messages.append)
+                    try:
+                        with patch('subprocess.Popen') as spawn, \
+                                patch.object(ci,'recover',wraps=ci.recover) as recover, \
+                                patch.object(paths,'log_error',wraps=paths.log_error) as log:
+                            session.start()
+                            self.assertEqual(spawn.call_count,1)
+                            self.assertEqual(len(plan.notes),1)
+                            self.assertIn(str(backup),plan.notes[0])
+                            self.assertIn(str(paths.launcher_log()),plan.notes[0])
+                            self.assertIn('Play can continue',plan.notes[0])
+                            self.assertIn(plan.notes[0],messages)
+                            self.assertTrue(session.relaunch())
+                            self.assertEqual(spawn.call_count,2)
+                            recover.assert_called_once()
+                            log.assert_called_once()
+                            self.assertEqual(len(plan.notes),1)
+                            with self.assertRaisesRegex(ValueError,'Close the game'):
+                                with ci.locked(self.target):pass
+                            self.assertEqual(self.files(),current)
+                            self.assertEqual(journal.read_text(),raw)
+                    finally:session.cleanup()
+                    with ci.locked(self.target):pass
+        self.assertIn('Invalid import journal',paths.launcher_log().read_text())
+
+    def test_mismatched_recovery_and_unverified_backups_warn_without_deleting(self):
+        before=self.existing();backup=self.run_import();token='b'*32
+        current=self.files()
+        # A tampered archive is never presented as verified restoration advice.
+        (backup/'LivCatalog/existing.liv').write_bytes(b'tampered')
+        hold=self.folder/('.catalog-old-'+token);hold.mkdir();(hold/'wrong').write_bytes(b'wrong')
+        journal=self.folder/'.catalog-import.json'
+        journal.write_text(json.dumps(dict(token=token,existed=True,
+            originals={n:hashlib.sha256(d).hexdigest() for n,d in before.items()})))
+        session=game.Session(self.session_plan(True),log=lambda _:None)
+        try:
+            with patch('subprocess.Popen') as spawn:
+                session.start();spawn.assert_called_once()
+            self.assertIn('Nothing was removed',session.plan.notes[0])
+            self.assertIn('No verified catalog backup',session.plan.notes[0])
+            self.assertEqual(self.files(),current)
+            self.assertEqual((hold/'wrong').read_bytes(),b'wrong')
+            self.assertTrue(journal.exists())
+        finally:session.cleanup()
+        # Import remains fail-closed on the unresolved journal.
+        with self.assertRaisesRegex(ugc.CatalogError,'Nothing was removed'):self.run_import()
+
+    def test_held_import_lock_blocks_both_session_paths_before_recovery_or_spawn(self):
+        for save_manager in (False,True):
+            with self.subTest(save_manager=save_manager):
+                session=game.Session(self.session_plan(save_manager))
+                with ci.locked(self.target),patch.object(ci,'recover') as recover, \
+                        patch('subprocess.Popen') as spawn,patch.object(paths,'log_error') as log:
+                    with self.assertRaisesRegex((ValueError,RuntimeError),'Close the game'):session.start()
+                    recover.assert_not_called();spawn.assert_not_called();log.assert_not_called()
+                self.assertEqual(session.plan.notes,[])
+                with ci.locked(self.target):pass
+
+    def test_recovery_io_errors_still_abort_and_release_the_session_lock(self):
+        for save_manager in (False,True):
+            with self.subTest(save_manager=save_manager):
+                session=game.Session(self.session_plan(save_manager))
+                with patch.object(ci,'recover',side_effect=OSError('disk unavailable')), \
+                        patch('subprocess.Popen') as spawn:
+                    with self.assertRaisesRegex(OSError,'disk unavailable'):session.start()
+                    spawn.assert_not_called()
+                with ci.locked(self.target):pass
 
 
 if __name__=='__main__':unittest.main()

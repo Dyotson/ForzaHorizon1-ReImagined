@@ -26,7 +26,8 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO / "launcher"))
 from forza_launcher import builder  # noqa: E402
 
-TOOLS = ("xcontent_extract.py", "xiso_extract.py", "install_dlc.py", "apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py")
+TOOLS = ("xcontent_extract.py", "xiso_extract.py", "install_dlc.py", "apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py",
+         "pipeline_list.py", "fxobj_shaders.py", "xxh3.py")
 ASSETS = ("logo.svg", "logo.png", "social-preview.png")
 
 

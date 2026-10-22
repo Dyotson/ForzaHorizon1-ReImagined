@@ -697,7 +697,7 @@ class Session:
     def _acquire_save_lease(self):
         plan = self.plan
         if not self._catalog_recovered and plan.log_dir is not None:
-            from . import catalog_import
+            from . import catalog_import, ugc
             target = catalog_import.target_for_plan(plan)
             # The save manager and catalog importer use the same home-wide OS lock.
             # Reuse the session lock instead of trying to acquire it a second time.
@@ -705,7 +705,15 @@ class Session:
             if lease is not None:
                 lease.__enter__()
             try:
-                catalog_import.recover(target)
+                try:
+                    catalog_import.recover(target)
+                except ugc.CatalogError as exc:
+                    warning = catalog_import.recovery_warning(target, exc)
+                    log = paths.log_error('recover design catalog: ' + warning, exc)
+                    warning += f' Log: {log}'
+                    if warning not in plan.notes:
+                        plan.notes.append(warning)
+                        self.log(warning)
             except BaseException:
                 if lease is not None:
                     lease.__exit__(None, None, None)

@@ -65,7 +65,16 @@ copy the backup's `LivCatalog` to the manifest's destination; if `existed` is fa
 was no previous catalog. The importer stages a complete catalog, rechecks the original,
 then publishes with a rollback journal. Cancellation before publication leaves the
 original catalog untouched; publication finishes without cancellation. An interrupted
-publication is rolled back before the next launcher Play/import operation.
+publication is rolled back before the next launcher Play/import operation. If the
+journal is invalid or recovery cannot verify its backup, Play continues with one
+visible warning and a launcher-log entry. The warning names the latest backup whose
+manifest matches this destination/profile and whose archived files pass SHA-256
+verification, or says that none could be verified. Check the manifest before manual
+restoration; the latest verified backup may predate the interrupted import. Recovery
+does not discard an unverified journal or backup, and further imports remain blocked
+until recovery succeeds. An active import/save lock still blocks Play; filesystem I/O
+failures during recovery also stop launch. The lock stays held throughout the game
+session, including relaunches, even when catalog recovery only produces a warning.
 
 No ownership is unlocked and no designs are downloaded by this page.
 
