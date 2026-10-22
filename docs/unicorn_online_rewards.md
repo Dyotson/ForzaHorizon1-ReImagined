@@ -556,6 +556,23 @@ audit authenticated both garages, preserved all seven unicorns exactly once and
 verified that the source profile inventories were unchanged. No game assets,
 screenshots, raw traces or private input helpers were added to Git.
 
+### Current-main integration (2026-10-22)
+
+Merged main `3390ef0` into the event-reward branch without conflicts. The merge
+retained all native hook registrations alongside main's resource-cache, render,
+Discord and telemetry work. The tested eligibility callbacks, multiplayer mode
+boundary, borrowed-mask pool hook and server policy implementation were unchanged.
+
+Post-merge checks passed: all 152 server tests; the standalone unicorn eligibility
+and event-reward cache assertion suites; and compilation of both native hooks for
+TU4 and the disc build. Focused launcher save/editor, garage, game-exit and in-game
+graphics checks ran 88 tests, with 87 passing and one skipped.
+
+This integration did not launch a game, modify saves, rebuild the complete host,
+or change the shared SDK/build installation. The two-client results above remain
+historical runtime evidence. A full current-main native build and outstanding
+lifecycle/security acceptance checks remain release gates.
+
 ## Remaining native trace and acceptance criteria
 
 Use disposable host/joiner profiles, one ordinary model and one unicorn, with
