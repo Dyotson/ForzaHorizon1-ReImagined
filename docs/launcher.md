@@ -6,6 +6,10 @@ both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
+Discord status sharing is available under **Settings > Online > Discord** (off by
+default). See [Discord Rich Presence](discord.md) for the one-time public application
+ID setup, supported activities, privacy and local IPC tests.
+
 **HDR output (#33):** Settings > Display > HDR provides the Vulkan scRGB toggle,
 paper white, display peak, highlight strength, source gamma, comparison and
 calibration controls. It defaults off and falls back to SDR on unsupported

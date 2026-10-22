@@ -46,6 +46,7 @@
 #include "../platform/sdk_import.h"
 #include "identity.h"
 #include "live.h"
+#include "../platform/discord_presence.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -315,9 +316,23 @@ std::vector<uint8_t> PresenceExtra(const HostedSession& s) {
   return extra;
 }
 
+// Use the newest presence session, hosted or joined. This contains this session's
+// human members; the Forza Live room roster includes unrelated games as well.
+void UpdateDiscordPartyLocked() {
+  const HostedSession* best = nullptr;
+  for (const auto* sessions : {&hosted_sessions, &guest_sessions}) {
+    for (const auto& [object, s] : *sessions) {
+      if ((s.flags & kSessionUsesPresence) && (!best || s.order > best->order)) best = &s;
+    }
+  }
+  forza::discord::Party(best ? best->filled_public + best->filled_private : 0,
+                        best ? best->max_public + best->max_private : 0);
+}
+
 // Publishes the newest joinable presence session we host, or idle presence. Needs
 // sessions_mutex.
 void PublishPresenceLocked() {
+  UpdateDiscordPartyLocked();
   const HostedSession* best = nullptr;
   for (const auto& [object, s] : hosted_sessions) {
     const bool joinable = (s.flags & kSessionUsesPresence) &&
@@ -431,6 +446,7 @@ void XSessionMembers(uint8_t* base, uint32_t buffer, bool join) {
   REXLOG_INFO("FORZA_LIVE: {} session {:016X}: {} {} player(s), {}/{} public slots filled",
               hosted ? "hosted" : "joined", SessionId(s.info), join ? "joined" : "left", count,
               s.filled_public, s.max_public);
+  UpdateDiscordPartyLocked();
   if (!hosted) return;
   PublishPresenceLocked();
   PublishMatchLocked();
@@ -749,6 +765,7 @@ void PublishMatchLocked() {
 // record then goes out as op 4 (standby of the game's host), which the server advertises
 // before the others. Needs sessions_mutex.
 void PublishStandbyLocked() {
+  UpdateDiscordPartyLocked();
   const HostedSession* best = nullptr;
   for (const auto& [object, g] : guest_sessions) {
     if ((g.flags & kSessionUsesMatchmaking) && (!best || g.order > best->order)) best = &g;
@@ -1150,6 +1167,11 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
 
 // Our part of a message: kNotOurs lets the SDK answer (after any bookkeeping above).
 uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, uint32_t arg2) {
+  // Observe the game's primary-user presence before the Live sign-in gate: Discord
+  // status also works in offline play. Leave the original SDK request unchanged.
+  if (app == 0xFB && message == 0x000B0006 && arg1 && Load32(GuestPtr(base, arg1)) == 0) {
+    forza::discord::Context(Load32(GuestPtr(base, arg1 + 16)), Load32(GuestPtr(base, arg1 + 20)));
+  }
   // XamApp (0xFE) message 0x2B003: Xenia's XamApp answers success for this title ("Games
   // used in: 4D5309C9", a buffer of three u64s, unknown); the SDK fails it.
   if (app == 0xFE && message == 0x0002B003) return kSuccess;

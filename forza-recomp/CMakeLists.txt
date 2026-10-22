@@ -168,6 +168,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/discord_presence.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
     src/platform/hud_overlay.cpp
@@ -206,6 +207,8 @@ else()
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
+include(cmake/discord.cmake)
+
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
