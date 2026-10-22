@@ -23,8 +23,8 @@ else()
     message(FATAL_ERROR "FORZA_TITLE_UPDATE must be 0 or 4")
 endif()
 
-include(cmake/Fh2Pause.cmake)
-forza_validate_fh2_pause()
+include(cmake/NativePause.cmake)
+forza_validate_native_pause()
 
 # Builds handed a finished generated/ (CI building from the private copy of the codegen
 # output) have no default.xex to run codegen on.
@@ -140,7 +140,7 @@ set(FORZA_SOURCES
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
     src/hooks/pause_menu.cpp
-    src/hooks/fh2_pause_scene.cpp
+    src/hooks/native_pause_scene.cpp
     src/hooks/fh1_map_preview.cpp
     src/hooks/offline_cars.cpp
     src/hooks/festival_travel.cpp
@@ -222,7 +222,7 @@ include(cmake/discord.cmake)
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
-forza_apply_fh2_pause(forza)
+forza_apply_native_pause(forza)
 
 # The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
 include(cmake/CpuTarget.cmake)

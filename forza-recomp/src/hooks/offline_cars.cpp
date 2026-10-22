@@ -2,7 +2,7 @@
 // tu_address_map: TU4 addresses
 #include "../platform/offline_cars.h"
 
-#if FORZA_TU4 && defined(FORZA_FH2_PAUSE)
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include <rex/logging.h>
 #include <initializer_list>
 

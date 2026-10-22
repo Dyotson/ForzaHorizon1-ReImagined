@@ -53,9 +53,11 @@ hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
 # prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
-for _tool in ("apply_title_update.py", "lzx_delta.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py",
+              "native_menu_scene.py", "offline_cars_flow.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
+datas.append((str(repo / "tools" / "native_menu" / "fh1_donors.json"), "tools/native_menu"))
 # The shipped pipeline list (hashes and render state only).
 datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
 
@@ -65,7 +67,7 @@ a = Analysis(
     datas=datas,
     binaries=collect_dynamic_libs("sdl2dll"),
     hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib", "pipeline_list",
-                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update"],
+                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update", "offline_cars_flow"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],

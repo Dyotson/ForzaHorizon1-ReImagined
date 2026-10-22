@@ -3,7 +3,7 @@
 // tu_address_map: TU4 addresses
 #include "../platform/fh1_map_preview.h"
 
-#if FORZA_TU4 && defined(FORZA_FH2_PAUSE_SCENE)
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
 #include <rex/logging.h>
 #include <rex/ppc/func.h>
@@ -24,6 +24,21 @@ namespace {
 std::atomic<uint32_t> requested_hud_record{0};
 std::atomic<uint64_t> rendered_player_pixel{0};
 std::atomic<uint32_t> rendered_player_size{0};
+// Layout outlives each donor presentation, so releasing native resources does
+// not discard the renderer's requested image rectangle.
+struct Layout {
+  menu::Rect bounds{180, 222, 360, 130};
+  bool caption = true;
+} layout;
+constexpr float kCanvasCenterX = 640.f, kCanvasCenterY = 360.f;
+constexpr float kPaperExtent = 100.f;
+constexpr float kIconPadding = 8.f;  // Design pixels, converted to source pixels.
+float ImageCenterX() {
+  return float(layout.bounds.x + layout.bounds.width * .5) - kCanvasCenterX;
+}
+float ImageCenterY() {
+  return kCanvasCenterY - float(layout.bounds.y + layout.bounds.height * .5);
+}
 uint32_t Read(uint8_t* base, uint32_t address) {
   const auto* p = GuestPtr(base, address);
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
@@ -55,6 +70,13 @@ struct Preview {
   bool caption_font = false;
   unsigned frames = 0;
   bool ready = false, visible = false, positioned = false;
+  // Capture the donor's unmodified mesh projection once. Re-layout always
+  // starts here, avoiding accumulated scaling/rounding after bounds changes.
+  struct Placement {
+    int32_t x = 0, y = 0;
+    uint32_t width = 0, height = 0;
+    float scale_x = 0, scale_y = 0, position_x = 0, position_y = 0;
+  } authored;
   std::vector<uint32_t> hidden;
 } preview;
 
@@ -463,9 +485,10 @@ bool MirrorHud(Native& ui, uint32_t record) {
       width > tw - x || height > th - y) return false;
   // Fill without stretching. The HUD camera looks ahead of the player, so a
   // fixed center crop can clip its native arrow. Frame its projected position.
-  constexpr float aspect = 360.f / 130.f;
+  const float aspect = float(layout.bounds.width / layout.bounds.height);
   const float cw = std::min(float(width), float(height) * aspect);
   const float ch = std::min(float(height), float(width) / aspect);
+  if (!std::isfinite(cw) || !std::isfinite(ch) || cw <= 0.f || ch <= 0.f) return false;
   float player_x = float(x) + width * .5f, player_y = float(y) + height * .5f;
   float icon_size = 45.f;
   // The normal HUD tick briefly centers its camera, then native phase0 builds
@@ -477,7 +500,7 @@ bool MirrorHud(Native& ui, uint32_t record) {
     player_y = std::bit_cast<float>(uint32_t(pixel));
     icon_size = std::bit_cast<float>(rendered_player_size.load(std::memory_order_relaxed));
   }
-  const float padding = 8.f * ch / 130.f;
+  const float padding = kIconPadding * ch / float(layout.bounds.height);
   const float radius = icon_size * .5f;
   const float top = radius + padding;
   const float bottom = ch - radius - padding;
@@ -511,6 +534,9 @@ bool MirrorHud(Native& ui, uint32_t record) {
 }
 void Visibility(Native& ui, bool visible) {
   if (!preview.ready) return;
+  // Animation and ancestor restoration can reveal the caption again. Apply
+  // this at the final visibility boundary on every frame, even without layout.
+  ui.Show(preview.caption, visible && layout.caption);
   ui.Call(0x82FEB480, {preview.presentation, uint32_t(!visible)});
   ui.Call(0x82FEB488, {preview.presentation, uint32_t(!visible)});
   GuestPtr(ui.base, preview.render_root + 0xFC)[0] = uint8_t(visible);
@@ -525,7 +551,7 @@ void Start(Native& ui) {
   if (!preloader) return;
   ui.Call(0x82F273B0, {preloader});
   Write(ui.base, preloader + 0x50, 0);
-  constexpr char scene[] = "game:\\media\\ui\\scenes\\ui4\\FH1_PAUSE_MAP.bgf";
+  constexpr char scene[] = "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_MAP.bgf";
   ui.Call(0x8243D4D8, {preloader + 4, ui.String(scene), sizeof(scene) - 1});
   ui.Call(0x82CC2450, {preloader + 4});
   preview.preloader = preloader;
@@ -644,28 +670,39 @@ bool Place(Native& ui) {
   if (!preview.controller) return false;
   // CUIMapRenderer::Register (826E2E20) uses this exact viewport interface.
   // Its rectangle is integer x,y,width,height in the current UI pixel space.
-  const auto custom = Read(ui.base, preview.controller + 0x88);
-  const auto viewport = custom ? ui.Virtual(custom + 4, 0x48, {custom + 4}) : 0;
-  if (!viewport) return false;
-  ui.Virtual(viewport, 0, {viewport, ui.scratch + 544});
-  const auto x = int32_t(Read(ui.base, ui.scratch + 544));
-  const auto y = int32_t(Read(ui.base, ui.scratch + 548));
-  const auto width = Read(ui.base, ui.scratch + 552);
-  const auto height = Read(ui.base, ui.scratch + 556);
-  if (!width || !height || width > 8192 || height > 8192) return false;
-  const auto instance = Read(ui.base, preview.rectangle + 4);
-  if (!instance || Read(ui.base, instance + 4) != preview.rectangle) return false;
-  const auto sx = Float(ui.base, instance + 0x24);
-  const auto sy = Float(ui.base, instance + 0x28);
-  if (!std::isfinite(sx) || !std::isfinite(sy) || sx == 0 || sy == 0) return false;
+  if (!preview.authored.width) {
+    const auto custom = Read(ui.base, preview.controller + 0x88);
+    const auto viewport = custom ? ui.Virtual(custom + 4, 0x48, {custom + 4}) : 0;
+    if (!viewport) return false;
+    ui.Virtual(viewport, 0, {viewport, ui.scratch + 544});
+    const auto width = Read(ui.base, ui.scratch + 552);
+    const auto height = Read(ui.base, ui.scratch + 556);
+    if (!width || !height || width > 8192 || height > 8192) return false;
+    const auto instance = Read(ui.base, preview.rectangle + 4);
+    if (!instance || Read(ui.base, instance + 4) != preview.rectangle) return false;
+    const auto sx = Float(ui.base, instance + 0x24);
+    const auto sy = Float(ui.base, instance + 0x28);
+    const auto px = Float(ui.base, instance + 0xC);
+    const auto py = Float(ui.base, instance + 0x10);
+    if (!std::isfinite(sx) || !std::isfinite(sy) || sx == 0 || sy == 0 ||
+        !std::isfinite(px) || !std::isfinite(py)) return false;
+    preview.authored = {int32_t(Read(ui.base, ui.scratch + 544)),
+                        int32_t(Read(ui.base, ui.scratch + 548)),
+                        width, height, sx, sy, px, py};
+  }
+  const auto& original = preview.authored;
   // The donor uses the original 1280x720 orthographic UI camera. Its rectangle
   // is uniformly projected in UI pixels; retain the authored mesh and pivot.
-  ui.Scalar(preview.rectangle, "scale.x", 0x24, sx * 360.f / width);
-  ui.Scalar(preview.rectangle, "scale.y", 0x28, sy * 130.f / height);
+  ui.Scalar(preview.rectangle, "scale.x", 0x24,
+            original.scale_x * float(layout.bounds.width) / original.width);
+  ui.Scalar(preview.rectangle, "scale.y", 0x28,
+            original.scale_y * float(layout.bounds.height) / original.height);
   ui.Scalar(preview.rectangle, "position.x", 0xC,
-            Float(ui.base, instance + 0xC) + 360.f - (x + width * .5f));
+            original.position_x + float(layout.bounds.x + layout.bounds.width * .5) -
+            (original.x + original.width * .5f));
   ui.Scalar(preview.rectangle, "position.y", 0x10,
-            Float(ui.base, instance + 0x10) - 287.f + (y + height * .5f));
+            original.position_y - float(layout.bounds.y + layout.bounds.height * .5) +
+            (original.y + original.height * .5f));
   // H_MAP's original Tip/Bar ancestors are translation-only with unit scale.
   // Normalize those two groups rather than competing with their disabled stacker.
   // The original Bar mesh has authored [-50,50] bounds in both axes (FBF 0x45B).
@@ -680,15 +717,17 @@ bool Place(Native& ui) {
     }
   }
   ui.Text(preview.caption, "WORLD MAP");
-  ui.Scalar(preview.caption, "position.x", 0xC, -440.f);
-  ui.Scalar(preview.caption, "position.y", 0x10, 155.f);
-  ui.Scalar(preview.paper, "position.x", 0xC, -280.f);
-  ui.Scalar(preview.paper, "position.y", 0x10, 73.f);
-  ui.Scalar(preview.paper, "scale.x", 0x24, 3.6f);
-  ui.Scalar(preview.paper, "scale.y", 0x28, 1.3f);
+  ui.Scalar(preview.caption, "position.x", 0xC, float(layout.bounds.x) + 20.f - kCanvasCenterX);
+  ui.Scalar(preview.caption, "position.y", 0x10, kCanvasCenterY - float(layout.bounds.y) + 17.f);
+  ui.Scalar(preview.paper, "position.x", 0xC, ImageCenterX());
+  ui.Scalar(preview.paper, "position.y", 0x10, ImageCenterY());
+  ui.Scalar(preview.paper, "scale.x", 0x24, float(layout.bounds.width) / kPaperExtent);
+  ui.Scalar(preview.paper, "scale.y", 0x28, float(layout.bounds.height) / kPaperExtent);
   preview.positioned = true;
-  REXLOG_INFO("FH1 map preview: viewport {} {} {} {} -> 180 222 360 130 scale={} {}",
-              x, y, width, height, sx, sy);
+  REXLOG_INFO("FH1 map preview: viewport {} {} {} {} -> {} {} {} {} scale={} {}",
+              original.x, original.y, original.width, original.height,
+              layout.bounds.x, layout.bounds.y, layout.bounds.width, layout.bounds.height,
+              original.scale_x, original.scale_y);
   return true;
 }
 void MaintainDisplay(Native& ui) {
@@ -707,24 +746,48 @@ void MaintainDisplay(Native& ui) {
     }
   }
   // Tip.Bar.Bar references the original 100x100 paper quad. Its caption
-  // remains a sibling above the image; reserve the card's top42px so roads
-  // cannot reduce its contrast. The Tip stacker never enters dispatch.
+  // remains an optional sibling above the supplied image rectangle; the caller
+  // reserves its title area. The Tip stacker never enters dispatch.
   for (auto node : preview.display_ancestors) {
     ui.Opacity(node);
-    ui.Scalar(node, "position.x", 0xC, node == preview.display ? -280.f : 0.f);
-    ui.Scalar(node, "position.y", 0x10, node == preview.display ? 73.f : 0.f);
+    ui.Scalar(node, "position.x", 0xC, node == preview.display ? ImageCenterX() : 0.f);
+    ui.Scalar(node, "position.y", 0x10, node == preview.display ? ImageCenterY() : 0.f);
     ui.Scalar(node, "position.z", 0x14, 0.f);
-    ui.Scalar(node, "scale.x", 0x24, node == preview.display ? 3.6f : 1.f);
-    ui.Scalar(node, "scale.y", 0x28, node == preview.display ? 1.3f : 1.f);
+    ui.Scalar(node, "scale.x", 0x24,
+              node == preview.display ? float(layout.bounds.width) / kPaperExtent : 1.f);
+    ui.Scalar(node, "scale.y", 0x28,
+              node == preview.display ? float(layout.bounds.height) / kPaperExtent : 1.f);
     for (const auto property : {"pivot.x", "pivot.y", "rotation.z"}) {
       const auto hash = ui.Call(0x82F354E0, {ui.String(property)});
       ui.ctx.f1.f64 = 0.f;
       ui.Call(0x82F34DE0, {preview.presentation, node, hash});
     }
   }
-  ui.CaptionFont();
+  if (layout.caption) ui.CaptionFont();
 }
 } // namespace
+
+bool SetBounds(const menu::Rect& bounds, bool caption) {
+  if (!std::isfinite(bounds.x) || !std::isfinite(bounds.y) ||
+      !std::isfinite(bounds.width) || !std::isfinite(bounds.height) ||
+      bounds.x < 0 || bounds.y < 0 || bounds.width <= 0 || bounds.height <= 0 ||
+      bounds.width > 1280 || bounds.height > 720 ||
+      bounds.x > 1280 - bounds.width || bounds.y > 720 - bounds.height)
+    return false;
+  // Guest transforms and texture crops are floats. Reject positive doubles
+  // that would collapse to zero or produce an unrepresentable aspect ratio.
+  const float aspect = float(bounds.width / bounds.height);
+  if (float(bounds.width) / kPaperExtent <= 0.f ||
+      float(bounds.height) / kPaperExtent <= 0.f || !std::isfinite(aspect) || aspect <= 0.f)
+    return false;
+  if (layout.bounds.x != bounds.x || layout.bounds.y != bounds.y ||
+      layout.bounds.width != bounds.width || layout.bounds.height != bounds.height) {
+    layout.bounds = bounds;
+    preview.positioned = false;
+  }
+  layout.caption = caption;
+  return true;
+}
 
 bool Ready() { return preview.ready && preview.positioned && preview.mirrored && preview.visible; }
 void Update(const PPCContext& context, uint8_t* base, uint32_t screen, bool visible,

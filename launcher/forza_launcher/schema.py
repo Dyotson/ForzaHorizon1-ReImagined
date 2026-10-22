@@ -390,6 +390,10 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
+add("forza_native_pause", "Native pause menu (experimental)", "Advanced", "bool", False,
+    "Use Home, Cars and Settings pages. Requires FH1 Title Update 4 and menu resources "
+    "prepared by the launcher during a build. The original pause menu remains available "
+    "if these resources are missing. Applies on the next game launch.", "Menu", restart=True)
 add("log_level", "Log level", "Advanced", "choice", "info",
     "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
     "lower the frame rate a lot (#174).", "Log",

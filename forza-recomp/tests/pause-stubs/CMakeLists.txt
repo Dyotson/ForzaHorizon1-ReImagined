@@ -8,7 +8,7 @@ foreach(tu IN ITEMS 0 4)
     add_executable(${target}
         ../pause_stubs_test.cpp
         ../../src/hooks/pause_menu.cpp
-        ../../src/hooks/fh2_pause_scene.cpp
+        ../../src/hooks/native_pause_scene.cpp
         ../../src/hooks/fh1_map_preview.cpp)
     target_include_directories(${target} PRIVATE ../../src)
     target_compile_features(${target} PRIVATE cxx_std_23)

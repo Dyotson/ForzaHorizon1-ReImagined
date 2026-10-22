@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "scenes": [
+    {
+      "source": "ui/scenes/ui4/925_pause_menu",
+      "alias": "ui/scenes/ui4/native_menu_pause"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_header"
+    },
+    {
+      "source": "ui/scenes/ui4/h_map",
+      "alias": "ui/scenes/ui4/native_menu_map"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_0"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_1"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_2"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_3"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_4"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tile_5"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tab_0"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tab_1"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tab_2"
+    }
+  ]
+}

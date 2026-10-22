@@ -1,5 +1,10 @@
 # Original FH2 grid and button events
 
+Historical prototype: its runtime adapters and private test targets were retired
+in favor of the [original FH1 native menu](native-menu.md). The implementation
+described below is preserved at commit
+`86256a1661d4a94d183875958ba70999c1b79091` for a separate research checkout.
+
 The pause scene uses the original FH2 grid page-event and button-state routines
 through `fh2_grid_events.h`. Seven translated functions execute in a bounded
 1 KiB arena: the event hash, immediate page, page transition, focus, blur,

@@ -7,7 +7,7 @@
 #include <rex/ppc/context.h>
 
 namespace forza::fh1_car_recovery {
-#if FORZA_TU4 && defined(FORZA_FH2_PAUSE_SCENE)
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 // Call with a live guest UI-thread context. Checks USER0 and the original
 // HandOfGod blockers, including NoHandOfGodReset and remote ownership.
 bool Available(const PPCContext& context, uint8_t* base);

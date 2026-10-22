@@ -1,5 +1,13 @@
 # FH2 Xbox 360 pause menu in FH1 TU4
 
+This document describes the earlier private prototype. The current build uses
+the [original FH1 native menu](native-menu.md), with repository-authored
+navigation and FH1-only resource preparation. It does not build the translated
+FH2 adapters or load their scenes. Their runtime code and configuration were
+retired; use commit `86256a1661d4a94d183875958ba70999c1b79091` in a separate
+checkout to reproduce this historical prototype. The research/preparation tools
+remain available, but are not launcher or game-runtime dependencies.
+
 The private scene build runs the owner's original FH2 Xbox 360 pause scene in
 FH1 with Home, Cars and Settings. Extracted FH2 navigation, page-event and
 button-state functions drive the controls; authored adapters bind FH1 models,

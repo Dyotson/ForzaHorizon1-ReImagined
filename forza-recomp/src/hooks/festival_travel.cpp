@@ -3,7 +3,7 @@
 // tu_address_map: TU4 addresses
 #include "../platform/fh1_festival_travel.h"
 
-#if FORZA_TU4 && defined(FORZA_FH2_PAUSE_SCENE)
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/fh1_pause_actions.h"
 #include "../platform/guest_memory.h"
 #include <rex/logging.h>

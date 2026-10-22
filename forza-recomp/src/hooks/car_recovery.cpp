@@ -2,7 +2,7 @@
 // tu_address_map: TU4 addresses
 #include "../platform/fh1_car_recovery.h"
 
-#if FORZA_TU4 && defined(FORZA_FH2_PAUSE_SCENE)
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
 #include <rex/logging.h>
 #include <rex/ppc/func.h>

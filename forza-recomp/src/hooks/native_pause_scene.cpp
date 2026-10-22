@@ -1,0 +1,804 @@
+// FH1 TU4 pause composition: original native donor widgets, repository-owned
+// page geometry and controller. No second game's assets or translated code.
+// tu_address_map: TU4 addresses
+#include "../platform/native_pause_scene.h"
+#include "../platform/guest_addr.h"
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
+#include "../platform/fh1_menu_widgets.h"
+#include "../platform/native_pause_layout.h"
+#include "../platform/native_pause_pages.h"
+#include "../platform/native_pause_assets.h"
+#include "../platform/fh1_pause_actions.h"
+#include "../platform/fh1_current_car.h"
+#include "../platform/fh1_map_preview.h"
+#include "../platform/fh1_festival_travel.h"
+#include "../platform/fh1_car_recovery.h"
+#include "../platform/offline_cars.h"
+#include "../kernel/live.h"
+#include <rex/cvar.h>
+#include <rex/logging.h>
+#include <rex/ppc/func.h>
+#include <rex/runtime.h>
+#include <array>
+#include <bit>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <optional>
+#include <unordered_map>
+
+REXCVAR_DEFINE_BOOL(forza_native_pause, false, "Interface",
+                    "Use the experimental FH1-native tabbed pause menu");
+extern "C" REX_FUNC(__imp__sub_827DFB18);
+extern "C" REX_FUNC(__imp__sub_827DAB28);
+extern "C" REX_FUNC(__imp__sub_827DE0D0);
+extern "C" REX_FUNC(__imp__XamInputGetState);
+extern "C" REX_FUNC(__imp__XamUserGetName);
+
+namespace forza::native_pause_scene {
+namespace {
+using namespace fh1_menu_widgets;
+using Clock = std::chrono::steady_clock;
+namespace layout = native_pause_layout;
+struct Card {
+  Donor donor;
+  uint32_t title = 0, paper = 0, material = 0, caption = 0;
+  uint32_t progress_fill = 0, progress_track = 0;
+};
+struct Car {
+  uint32_t root = 0, name = 0, make = 0, image = 0, material = 0;
+  uint32_t stats = 0, controller = 0;
+  std::array<uint32_t, 5> rows{}, labels{}, values{};
+  uint32_t owned = 0, model = 0;
+  bool bound = false;
+};
+struct State {
+  uint32_t screen = 0, engine = 0, root = 0;
+  uint32_t stock_render_root = 0;
+  uint8_t stock_suppression = 0, stock_visibility = 0;
+  bool stock_captured = false;
+  bool ready = false, visible = true;
+  menu::Controller controller{};
+  std::array<Card, layout::kTileCapacity> cards;
+  std::array<Card, layout::kTabCapacity> tabs;
+  Donor header;
+  Car car;
+  uint32_t player_bar = 0, credits = 0, username = 0, username_paper = 0;
+  uint32_t status = 0, footer = 0;
+  std::array<uint32_t, 2> bumpers{};
+  std::string gamertag, connection;
+  std::optional<float> completion;
+  bool recovery = false;
+  std::unordered_map<uint32_t, std::string> text;
+  Clock::time_point started{}, previous{}, refreshed{};
+  uint16_t previous_pad = 0xffff;
+};
+State state;
+struct ReturnBookmark {
+  uint32_t context = 0;
+  std::string page, tile;
+};
+std::optional<ReturnBookmark> return_bookmark;
+
+bool Require(const char* group, const char* name, uint32_t node) {
+  if (!node) REXLOG_WARN("Native pause binding: {} missing {}", group, name);
+  return node != 0;
+}
+void DumpNodes(Native& ui, const Donor& d, const char* name) {
+  std::vector<uint32_t> pending{d.root};
+  unsigned count = 0;
+  while (!pending.empty() && count++ < 512) {
+    const auto node = pending.back(); pending.pop_back();
+    const auto wrapper = Read(ui.base, node + 4);
+    REXLOG_INFO("Native pause donor {}: node={:08X} hash={:08X} parent={:08X} kind={}",
+        name, node, Read(ui.base, node), Read(ui.base, node + 12),
+        wrapper ? unsigned(GuestPtr(ui.base, wrapper + 0xa)[0]) : 0);
+    unsigned siblings = 0;
+    for (auto child = Read(ui.base, node + 20); child && siblings++ < 1024;
+         child = Read(ui.base, child + 16)) pending.push_back(child);
+  }
+}
+
+uint32_t Named(Native& ui, uint32_t root, const char* name) {
+  const auto nodes = Descendants(ui.base, root, Hash(name));
+  return nodes.empty() ? 0u : nodes.front();
+}
+bool ActionAvailable(uint8_t* base, uint32_t action) {
+  if (!state.screen) return false;
+  const auto begin = Read(base, state.screen + 0x19c);
+  const auto end = Read(base, state.screen + 0x1a0);
+  if (!begin || end < begin || end - begin > 1024 || (end - begin) % 4)
+    return false;
+  for (auto entry = begin; entry < end; entry += 4) {
+    const auto row = Read(base, entry);
+    if (row && Read(base, row + 8) == action)
+      return GuestPtr(base, row + 0x14)[0] != 0;
+  }
+  return false;
+}
+menu::PauseCapabilities Capabilities(Native& ui) {
+  using D = fh1_festival_travel::Destination;
+  return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
+          ActionAvailable(ui.base, 12),
+          fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
+          fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow)};
+}
+void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
+  if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
+  const auto wrapper = Read(ui.base, node + 4);
+  if (wrapper && Read(ui.base, wrapper + 4) == node) {
+    Write(ui.base, wrapper + 0x14, std::bit_cast<uint32_t>(value));
+    GuestPtr(ui.base, wrapper + 0xfb)[0] |= 0x20;
+    ui.Dirty(d.presentation, node);
+  }
+}
+// Normalize retained ancestry once, preserving original native ownership and
+// sibling lists. Coordinates below then use FH1's centered, upward-positive
+// 1280x720 canvas. No node is reparented or cloned.
+void Normalize(Native& ui, const Donor& donor, uint32_t node) {
+  unsigned depth = 0;
+  for (auto parent = Read(ui.base, node + 12);
+       parent && parent != donor.root && depth++ < 100;
+       parent = Read(ui.base, parent + 12)) {
+    ui.Position(donor.presentation, parent, 0, 0);
+    Depth(ui, donor, parent, 0);
+    ui.Scale(donor.presentation, parent, 1, 1);
+    ui.RotationZ(donor.presentation, parent, 0);
+    ui.Opacity(donor.presentation, parent, 100);
+  }
+}
+void Point(Native& ui, const Donor& d, uint32_t node, double x, double y) {
+  ui.Position(d.presentation, node, float(x - 640), float(360 - y));
+}
+void Label(Native& ui, const Donor& d, uint32_t node,
+           const menu::Rect& bounds, float size, const std::string& text,
+           uint32_t color = 0xffffff, uint32_t align = 0) {
+  Normalize(ui, d, node);
+  ui.Scale(d.presentation, node, 1, 1);
+  ui.RotationZ(d.presentation, node, 0);
+  Depth(ui, d, node, -3);
+  Point(ui, d, node, align == 1 ? bounds.x + bounds.width / 2 :
+        align == 2 ? bounds.x + bounds.width : bounds.x,
+        bounds.y + bounds.height / 2);
+  ui.TextStyle(d.access, d.presentation, node, size,
+               float(bounds.width / 1200), float(bounds.height / 720), align);
+  ui.Color(d.presentation, node, color, true);
+  ui.Opacity(d.presentation, node, 100);
+  auto [cached, inserted] = state.text.try_emplace(node, text);
+  if (inserted || cached->second != text) {
+    ui.Text(d.presentation, node, text);
+    cached->second = text;
+  }
+}
+void PaperUV(Native& ui, const Donor& d, uint32_t paper) {
+  // These are the image records in the verified pristine garage papers.
+  // Their first U offsets crop narrow strips for the original tape/timer.
+  for (const uint32_t hash : {0xde7bb086u, 0xebf2ce08u, 0x2b443d36u,
+                             0x660a8466u, 0xa0110228u, 0xe0dc09b7u, 0x54741897u}) {
+    for (const auto image : Descendants(ui.base, paper, hash)) {
+      const auto wrapper = Read(ui.base, image + 4);
+      if (!wrapper || Read(ui.base, wrapper + 4) != image ||
+          GuestPtr(ui.base, wrapper + 0xa)[0] != 7) continue;
+      const auto object = Read(ui.base, wrapper);
+      if (object) {
+        const bool u = ui.Scalar(d.presentation, image, "positionu", 0);
+        const bool v = ui.Scalar(d.presentation, image, "positionv", 0);
+        if (!u) Write(ui.base, object + 0xb4, std::bit_cast<uint32_t>(0.f));
+        if (!v) Write(ui.base, object + 0xb8, std::bit_cast<uint32_t>(0.f));
+        if (!u || !v) ui.Call(0x82f1d8f0, {0, wrapper, image});
+      }
+    }
+  }
+}
+bool BindCard(Native& ui, Card& card, bool tab = false) {
+  // Resolved against the pristine garage triplet; exact names are validated
+  // before activation so format drift always returns to the stock pause.
+  const auto tape = Named(ui, card.donor.root, "TitleTape");
+  card.title = Named(ui, tape, "TitleTapeText");
+  // BGF renames these FBF meshes. Match their serialized runtime identities,
+  // scoped under the verified tape component, rather than FBF display names.
+  const auto highlight = Named(ui, Named(ui, card.donor.root, "CAR_LIST"), "HIGHLIGHT");
+  const auto papers = Descendants(ui.base, tab ? tape : highlight,
+                                  tab ? 0x43a6b655 : 0xe0dc09b7);
+  card.paper = papers.empty() ? 0u : papers.front();
+  card.caption = Named(ui, card.donor.root, "TEXT_STATUS");
+  const auto fills = Descendants(ui.base, tape, 0x747ffda5);
+  card.progress_fill = fills.empty() ? 0u : fills.front();
+  const auto button = Named(ui, card.donor.root, "HelpButton0");
+  card.progress_track = Named(ui, button, "Pill");
+  bool valid = Require("card", "TitleTape", tape);
+  valid = Require("card", "TitleTapeText", card.title) && valid;
+  valid = Require("card", tab ? "Crisp_Tape" : "HIGHLIGHT.BigPane01", card.paper) && valid;
+  if (!valid) return false;
+  card.material = Named(ui, card.paper, tab ? "Material90" : "Material866");
+  PaperUV(ui, card.donor, card.material);
+  if (card.progress_fill) PaperUV(ui, card.donor, card.progress_fill);
+  if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
+  return Require("card", tab ? "Crisp_Tape.Material90" : "BigPane01.Material866", card.material);
+}
+const char* Description(std::string_view id) {
+  if (id == "world_map") return "Explore Colorado";
+  if (id == "my_cars" || id == "change_car") return "Choose from your owned cars";
+  if (id == "garage") return "Fast travel for car upgrades";
+  if (id == "autoshow") return "Fast travel to buy cars";
+  if (id == "settings") return "Audio, graphics, controls and difficulty";
+  if (id == "photo_mode") return "Capture your Horizon";
+  if (id == "my_profile") return "Your Horizon career";
+  if (id == "difficulty") return "Driving assists and difficulty";
+  if (id == "graphics") return "Display and graphics settings";
+  if (id == "audio") return "Music, voice and sound";
+  if (id == "controls") return "Controller layout";
+  if (id == "hud") return "Driving display and notifications";
+  if (id == "video") return "Brightness and subtitles";
+  return "";
+}
+bool BindHeader(Native& ui) {
+  const auto& d = state.header;
+  state.player_bar = Named(ui, d.root, "PlayerBar");
+  if (!state.player_bar) state.player_bar = Named(ui, d.root, "PLAYER_BAR");
+  state.credits = Named(ui, state.player_bar, "BottomRow");
+  state.username = Named(ui, d.root, "TEXT_TIME");
+  const auto papers = state.username ? Descendants(ui.base,
+      Read(ui.base, state.username + 12), 0xa17e639e) : std::vector<uint32_t>{};
+  state.username_paper = papers.empty() ? 0u : papers.front();
+  if (state.username_paper) PaperUV(ui, d, state.username_paper);
+  state.status = Named(ui, d.root, "TEXT_STATUS");
+  for (unsigned i = 0; i < 3; ++i) {
+    const auto button = Named(ui, d.root, ("HelpButton" + std::to_string(i)).c_str());
+    const auto label = Named(ui, button, "Text_BUTTON");
+    if (i == 0) state.footer = label;
+    else state.bumpers[i - 1] = label;
+  }
+  bool valid = true;
+  for (const auto& [name, node] : std::initializer_list<std::pair<const char*, uint32_t>>{
+      {"PlayerBar", state.player_bar}, {"PlayerBar.BottomRow", state.credits},
+      {"TEXT_TIME", state.username}, {"Time.Pill_white", state.username_paper},
+      {"TEXT_STATUS", state.status}, {"HelpButton0.Text_BUTTON", state.footer},
+      {"HelpButton1.Text_BUTTON", state.bumpers[0]}, {"HelpButton2.Text_BUTTON", state.bumpers[1]}})
+    valid = Require("header", name, node) && valid;
+  return valid;
+}
+void RefreshData(Native& ui) {
+  ui.ctx.r3.u64 = 0; ui.ctx.r4.u64 = ui.scratch + 1800; ui.ctx.r5.u64 = 16;
+  __imp__XamUserGetName(ui.ctx, ui.base);
+  if (!ui.ctx.r3.u32) {
+    state.gamertag.clear();
+    for (unsigned i = 0; i < 15 && GuestPtr(ui.base, ui.scratch + 1800)[i]; ++i)
+      state.gamertag += char(GuestPtr(ui.base, ui.scratch + 1800)[i]);
+  }
+  state.connection = LiveConnected() ? "ONLINE" : "";
+  state.recovery = Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
+      fh1_car_recovery::Available(ui.ctx, ui.base);
+  // Same completion getter used by the original Statistics General page.
+  const auto services = Read(ui.base, 0x833caae4);
+  if (!services || !ui.Call(0x82f12410, {services}) ||
+      !Read(ui.base, services + 0x10) || !Read(ui.base, services + 0x6c)) return;
+  const auto facade = ui.Call(0x825ec700, {});
+  const auto player = ui.Virtual(facade, 0x28, {facade});
+  const auto profile = ui.Virtual(player, 0x58, {player});
+  if (!profile) return;
+  ui.Call(0x8269e150, {profile, 1});
+  const double percentage = ui.ctx.f1.f64;
+  if (std::isfinite(percentage)) state.completion = float(std::clamp(percentage / 100, 0., 1.));
+}
+void HeaderLayout(Native& ui) {
+  const auto& d = state.header;
+  // Preserve PlayerBar's native wristband/class/car bindings on the left.
+  ui.Position(d.presentation, state.credits, 647, -34);
+  Normalize(ui, d, state.username_paper);
+  Point(ui, d, state.username_paper, 1086, 51);
+  ui.Scale(d.presentation, state.username_paper, 2.6f, .36f);
+  Label(ui, d, state.username, {976, 33, 220, 36}, 18, state.gamertag, 0x302b30, 1);
+  Label(ui, d, state.status, {996, 652, 220, 32}, 14, state.connection, 0xffffff, 2);
+  const std::string footer = state.recovery ?
+      "A  SELECT     B  RESUME     LS  RESET CAR POSITION" : "A  SELECT     B  RESUME";
+  Label(ui, d, state.footer, {64, 650, 880, 36}, 17, footer);
+  Label(ui, d, state.bumpers[0], {20, 112, 40, 42}, 17, "LB", 0xffffff, 1);
+  Label(ui, d, state.bumpers[1], {652, 112, 40, 42}, 17, "RB", 0xffffff, 1);
+}
+void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
+               const std::string& title, bool selected, bool enabled,
+               bool tab = false) {
+  auto& d = card.donor;
+  Normalize(ui, d, card.paper);
+  Point(ui, d, card.paper, bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2);
+  ui.RotationZ(d.presentation, card.paper, 0);
+  Depth(ui, d, card.paper, 3);
+  // Native TitleTape paper is a fixed mesh. Text is a separate branch and
+  // never inherits the panel's nonuniform scaling.
+  ui.Scale(d.presentation, card.paper, float(bounds.width / 100),
+           float(bounds.height / 100));
+  if (card.material)
+    ui.Color(d.presentation, card.material, selected ? 0xff007a : 0x302b30);
+  ui.Opacity(d.presentation, card.paper, enabled ? 100.f : 48.f);
+  Label(ui, d, card.title,
+        {bounds.x + 20, bounds.y + (tab ? 0 : 12), bounds.width - 40,
+         tab ? bounds.height : 40}, tab ? 23.f : 27.f, title,
+        enabled ? 0xffffff : 0xaaaaaa, tab ? 1 : 0);
+}
+void Progress(Native& ui, Card& card, const menu::Rect& bounds) {
+  const auto& d = card.donor;
+  const float fraction = state.completion.value_or(0);
+  const menu::Rect track{bounds.x + 24, bounds.y + bounds.height - 24,
+                         bounds.width - 48, 8};
+  for (const auto node : {card.progress_track, card.progress_fill}) Normalize(ui, d, node);
+  Depth(ui, d, card.progress_track, -1);
+  Depth(ui, d, card.progress_fill, -2);
+  Point(ui, d, card.progress_track, track.x + track.width / 2, track.y + track.height / 2);
+  Point(ui, d, card.progress_fill, track.x + track.width * fraction / 2, track.y + track.height / 2);
+  ui.Scale(d.presentation, card.progress_track, float(track.width / 100), .08f);
+  ui.Scale(d.presentation, card.progress_fill, float(track.width * fraction / 100), .08f);
+  ui.Show(d.presentation, card.progress_track, true);
+  ui.Show(d.presentation, card.progress_fill, state.completion.has_value() && fraction > 0);
+  ui.Color(d.presentation, Named(ui, card.progress_track, "Material100"), 0x777177);
+  ui.Color(d.presentation, Named(ui, card.progress_fill, "Material90"), 0xff007a);
+  char label[48];
+  if (state.completion) std::snprintf(label, sizeof(label), "%.1f%% COMPLETE", fraction * 100);
+  else std::snprintf(label, sizeof(label), "PROGRESS UNAVAILABLE");
+  Label(ui, d, card.caption, {bounds.x + bounds.width - 228, bounds.y + 12, 204, 38},
+        20, label, 0xffffff, 2);
+  Label(ui, d, card.title, {bounds.x + 20, bounds.y + 12, bounds.width - 264, 40},
+        23, "FESTIVAL PROGRESS");
+}
+bool BindCar(Native& ui) {
+  auto& d = state.cards[0].donor;
+  auto& car = state.car;
+  car.root = Named(ui, d.root, "CAR_STATS");
+  car.name = Named(ui, car.root, "TEXT_CAR_NAME");
+  car.make = Named(ui, car.root, "TEXT_MANUFACTURER");
+  car.material = Named(ui, car.root, "Material_Car_Ima");
+  car.image = Named(ui, car.root, "Car_Thumb_");
+  car.stats = Named(ui, car.root, "STATS");
+  car.controller = d.ControllerByVtable(ui, 0x82074f4c);
+  for (size_t i = 0; i < car.rows.size(); ++i) {
+    const auto suffix = i ? std::to_string(i + 1) : std::string{};
+    car.rows[i] = Named(ui, car.stats, ("CAR_STATS_PERFORMANCE_BARS" + suffix).c_str());
+    car.labels[i] = Named(ui, car.rows[i], "TEXT_NAME");
+    car.values[i] = Named(ui, car.rows[i], "TEXT_VALUE");
+    if (!car.labels[i] || !car.values[i]) {
+      REXLOG_WARN("Native pause binding: car row {} node={:08X} name={:08X} value={:08X}",
+                  i, car.rows[i], car.labels[i], car.values[i]);
+      return false;
+    }
+  }
+  bool valid = true;
+  for (const auto& [name, node] : std::initializer_list<std::pair<const char*, uint32_t>>{
+      {"CAR_STATS", car.root}, {"TEXT_CAR_NAME", car.name}, {"TEXT_MANUFACTURER", car.make},
+      {"Car_Thumb_", car.image}, {"Material_Car_Ima", car.material}, {"STATS", car.stats},
+      {"CAR_STATS controller", car.controller}})
+    valid = Require("car", name, node) && valid;
+  return valid;
+}
+void CarData(Native& ui) {
+  auto& car = state.car;
+  auto& d = state.cards[0].donor;
+  const auto current = fh1_current_car::ReadCurrentCar(ui);
+  if (!current || (car.bound && current.owned_id == car.owned && current.model_id == car.model))
+    return;
+  const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id);
+  const bool specs = fh1_current_car::BindPerformance(ui, car.controller, current.owned_id);
+  if (!current.thumbnail.empty()) {
+    // This operation is synchronous. Retain no host-allocated binding across
+    // donor lifetime; native resource ownership stays with the presentation.
+    const auto binding = ui.scratch + 832;
+    ui.Call(0x82664a38, {binding});
+    Write(ui.base, binding + 4, car.material);
+    Write(ui.base, binding + 8, d.presentation);
+    ui.Call(0x82f38e80, {binding, ui.String(current.thumbnail), 0, 8});
+  }
+  car.owned = current.owned_id;
+  car.model = current.model_id;
+  car.bound = names && specs;
+}
+void CarLayout(Native& ui, const menu::Rect& bounds) {
+  auto& car = state.car;
+  auto& d = state.cards[0].donor;
+  const auto content = layout::Car(bounds);
+  // Native names/data are retained; only their anchors and fitting boxes move.
+  Normalize(ui, d, car.name);
+  Normalize(ui, d, car.make);
+  Point(ui, d, car.name, content.name.x, content.name.y + 12);
+  Point(ui, d, car.make, content.name.x, content.name.y + 35);
+  ui.TextStyle(d.access, d.presentation, car.name, 23,
+               float(content.name.width / 1200), .045f, 0);
+  ui.TextStyle(d.access, d.presentation, car.make, 18,
+               float(content.name.width / 1200), .035f, 0);
+  ui.Color(d.presentation, car.name, 0xffffff, true);
+  ui.Color(d.presentation, car.make, 0xe2dce2, true);
+  Normalize(ui, d, car.image);
+  Depth(ui, d, car.name, -3); Depth(ui, d, car.make, -3);
+  Depth(ui, d, car.image, -1);
+  Point(ui, d, car.image, content.photo.x + content.photo.width / 2,
+        content.photo.y + content.photo.height / 2);
+  // Keep the native thumbnail's aspect ratio, rather than stretching a car.
+  const float scale = float(std::min(content.photo.width / 608,
+                                     content.photo.height / 289));
+  ui.Scale(d.presentation, car.image, scale, scale);
+  for (size_t i = 0; i < car.rows.size(); ++i) {
+    const double y = content.specifications.y + 24 + i * 43;
+    for (auto node : {car.labels[i], car.values[i]}) Normalize(ui, d, node);
+    Depth(ui, d, car.labels[i], -3); Depth(ui, d, car.values[i], -3);
+    Point(ui, d, car.labels[i], content.specifications.x, y);
+    Point(ui, d, car.values[i], content.specifications.x + content.specifications.width, y + 18);
+    ui.TextStyle(d.access, d.presentation, car.labels[i], 17,
+                 float(content.specifications.width / 1200), .032f, 0);
+    ui.TextStyle(d.access, d.presentation, car.values[i], 18,
+                 float(content.specifications.width / 1200), .035f, 2);
+  }
+}
+void StockVisibility(Native& ui, bool restore) {
+  if (!state.stock_captured) return;
+  // +370 suppresses drawing only. The neighboring +371 flag would stop the
+  // original presentation's event/update work and must remain untouched.
+  ui.Call(0x82feb480, {state.engine, restore ? uint32_t(state.stock_suppression) : 1u});
+  GuestPtr(ui.base, state.stock_render_root + 0xfc)[0] = restore ? state.stock_visibility : 0;
+  const auto manager = ui.Virtual(state.engine, 0x54, {state.engine});
+  const auto adapter = ui.Virtual(manager, 0x3c, {manager});
+  if (adapter) GuestPtr(ui.base, adapter + 0x110)[0] = 1;
+}
+void Visibility(Native& ui, bool visible) {
+  for (auto& card : state.cards) card.donor.SetVisible(ui, visible);
+  for (auto& tab : state.tabs) tab.donor.SetVisible(ui, visible);
+  state.header.SetVisible(ui, visible);
+  if (state.ready) StockVisibility(ui, false);
+}
+void Release(Native& ui, bool restore) {
+  fh1_map_preview::Release(ui.ctx, ui.base);
+  if (restore) StockVisibility(ui, true);
+  for (auto& card : state.cards) card.donor.Release(ui);
+  for (auto& tab : state.tabs) tab.donor.Release(ui);
+  state.header.Release(ui);
+  state = {};
+}
+void Resume(Native& ui) {
+  return_bookmark.reset();
+  Page(ui.ctx, ui.base, state.screen, false);
+  if (!fh1_pause_actions::Resume(ui.ctx, ui.base, state.screen))
+    Page(ui.ctx, ui.base, state.screen, true);
+}
+void Activate(Native& ui, const std::string& id) {
+  const auto action = menu::FindPauseAction(id);
+  if (!action) return;
+  if (*action == menu::PauseAction::SettingsPage) {
+    state.controller.SelectPage("settings");
+    return;
+  }
+  // Revalidate gates immediately before transitions, not just on pause entry.
+  const auto caps = Capabilities(ui);
+  if ((*action == menu::PauseAction::WorldMap || *action == menu::PauseAction::ChangeCar ||
+       *action == menu::PauseAction::Garage || *action == menu::PauseAction::Autoshow) && !caps.world_map)
+    return;
+  const auto screen = state.screen;
+  return_bookmark = ReturnBookmark{Read(ui.base, screen + 0x10c),
+      state.controller.page_id().value_or("home"),
+      state.controller.focused_tile_id().value_or("")};
+  if (*action == menu::PauseAction::Graphics) {
+    // The native graphics adapter hides its parent only after creating the
+    // child. Failed allocation must leave this page interactive.
+    ui.Call(0x827ebee0, {screen, 2, 0, 0x7000});
+    if (state.screen == screen && state.visible) return_bookmark.reset();
+    return;
+  }
+  Page(ui.ctx, ui.base, screen, false);
+  bool requested = false;
+  using A = menu::PauseAction;
+  switch (*action) {
+    case A::WorldMap: requested = fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 2); break;
+    case A::ChangeCar: requested = offline_cars::Open(ui.ctx, ui.base, screen); break;
+    case A::Garage: case A::Autoshow:
+      requested = fh1_festival_travel::Open(ui.ctx, ui.base, screen,
+          *action == A::Garage ? fh1_festival_travel::Destination::Garage : fh1_festival_travel::Destination::Autoshow); break;
+    case A::FestivalProgress: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
+    case A::PhotoMode: requested = caps.photo_mode && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 11); break;
+    case A::MyProfile: requested = caps.my_profile && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 12); break;
+    case A::Audio: requested = fh1_pause_actions::OpenAudio(ui.ctx, ui.base, screen); break;
+    case A::Controls: requested = fh1_pause_actions::OpenControls(ui.ctx, ui.base, screen); break;
+    case A::Hud: requested = fh1_pause_actions::OpenHud(ui.ctx, ui.base, screen); break;
+    case A::Video: requested = fh1_pause_actions::OpenVideo(ui.ctx, ui.base, screen); break;
+    case A::Difficulty: {
+      const auto params = ui.Call(0x824265c8, {0x88});
+      if (params) {
+        ui.Call(0x825a5640, {params, 0});
+        Write(ui.base, params + 4, 0); // Original COptions general-assists context.
+        if (const auto title = ui.TextRef("DIFFICULTY")) {
+          ui.Call(0x82471820, {params + 0xc, title});
+          ui.Call(0x824ceab0, {title});
+        }
+        Write(ui.base, ui.scratch, params);
+        ui.Call(0x82675b00, {screen, 5, ui.scratch, 0});
+        requested = true;
+      }
+      break;
+    }
+    default: break;
+  }
+  if (!requested && state.screen == screen) {
+    return_bookmark.reset();
+    Page(ui.ctx, ui.base, screen, true);
+  }
+}
+std::optional<uint16_t> Pad(Native& ui) {
+  ui.ctx.r3.u64 = 0; ui.ctx.r4.u64 = 0; ui.ctx.r5.u64 = ui.scratch;
+  __imp__XamInputGetState(ui.ctx, ui.base);
+  if (ui.ctx.r3.u32) return std::nullopt;
+  auto held = uint16_t(Read(ui.base, ui.scratch + 4) >> 16);
+  const auto axes = Read(ui.base, ui.scratch + 8);
+  const auto x = int16_t(axes >> 16), y = int16_t(axes);
+  if (x < -16000) held |= 4;
+  if (x > 16000) held |= 8;
+  if (y > 16000) held |= 1;
+  if (y < -16000) held |= 2;
+  return held;
+}
+void PollInput(Native& ui, double elapsed) {
+  const auto pad = Pad(ui);
+  if (!pad) return;
+  const auto held = *pad;
+  menu::ButtonMask mapped = held & 15;
+  if (held & 0x100) mapped |= menu::Mask(menu::Button::PreviousPage);
+  if (held & 0x200) mapped |= menu::Mask(menu::Button::NextPage);
+  if (held & 0x1000) mapped |= menu::Mask(menu::Button::Confirm);
+  if (held & (0x2000 | 0x10)) mapped |= menu::Mask(menu::Button::Back);
+  const auto result = state.controller.Update(mapped, elapsed);
+  const bool reset = (held & 0x40) && !(state.previous_pad & 0x40);
+  state.previous_pad = held;
+  if (result.back) { Resume(ui); return; }
+  if (reset && Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
+      fh1_car_recovery::Request(ui.ctx, ui.base)) { Resume(ui); return; }
+  if (result.action) Activate(ui, *result.action);
+}
+} // namespace
+
+bool Owns(uint32_t screen) { return screen && state.screen == screen && state.ready; }
+bool Input(PPCContext& ctx, uint8_t* base) {
+  if (state.screen != ctx.r3.u32) return false;
+  if (state.ready) return true;
+  // Opening Start and its release can be delivered while donors load. Cancel
+  // only a fresh activation/resume, not these inherited or navigation events.
+  Native ui(ctx, base);
+  if (ui.scratch) {
+    const auto held = Pad(ui);
+    if (!held || (*held & ~state.previous_pad & (0x1000 | 0x2000 | 0x10)))
+      Release(ui, false);
+  }
+  return false;
+}
+bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
+  if (screen != state.screen) return false;
+  state.visible = show;
+  if (show) { state.controller.Resume(); state.previous_pad = 0xffff; }
+  else { state.controller.Suspend(); fh1_map_preview::Update(ctx, base, screen, false); }
+  Native ui(ctx, base);
+  if (ui.scratch && state.ready) Visibility(ui, show);
+  return state.ready;
+}
+void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
+  if (screen != state.screen) return;
+  Native ui(ctx, base);
+  if (ui.scratch) Release(ui, false);
+}
+void AfterBind(PPCContext& ctx, uint8_t* base, uint32_t screen) {
+  if (rex::cvar::GetFlagByName("forza_native_pause") != "true") return;
+  const auto* kernel = REX_KERNEL_STATE();
+  const auto* runtime = kernel ? kernel->emulator() : nullptr;
+  if (!runtime || runtime->update_data_root().empty() ||
+      !native_pause_assets::DonorsAvailable(runtime->update_data_root() / "media.zip")) {
+    REXLOG_WARN("Native pause: staged donor triplets unavailable; keeping stock pause");
+    return;
+  }
+  Native ui(ctx, base);
+  if (!ui.scratch || !screen) return;
+  if (state.screen) Release(ui, true);
+  state.screen = screen;
+  state.engine = Read(base, screen + 8);
+  const auto access = ui.Virtual(state.engine, 0x1c, {state.engine});
+  state.root = ui.Virtual(access, 0x48, {access});
+  if (!state.engine || !state.root) { state = {}; return; }
+  state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+  if (!layout::Supports(state.controller.pages())) { state = {}; return; }
+  state.started = state.previous = Clock::now();
+  state.previous_pad = Pad(ui).value_or(0xffff);
+  for (size_t i = 0; i < state.cards.size(); ++i)
+    state.cards[i].donor.Start(ui, "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_TILE_" + std::to_string(i) + ".bgf");
+  for (size_t i = 0; i < state.tabs.size(); ++i)
+    state.tabs[i].donor.Start(ui, "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_TAB_" + std::to_string(i) + ".bgf");
+  state.header.Start(ui, "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_HEADER.bgf");
+}
+void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
+  if (!screen || screen != state.screen) return;
+  Native ui(ctx, base);
+  if (!ui.scratch) return;
+  const auto now = Clock::now();
+  if (!state.ready) {
+    if (const auto held = Pad(ui)) state.previous_pad &= *held;
+    bool ready = true;
+    for (size_t i = 0; i < state.cards.size(); ++i) {
+      const bool loaded = state.cards[i].donor.Poll(ui, screen,
+          [i, &ui](uint32_t wrapper, uint32_t) {
+            if (i != 0 || !wrapper) return false;
+            const auto stats = Named(ui, state.cards[i].donor.root, "CAR_STATS");
+            return IsDescendant(ui.base, Read(ui.base, wrapper + 0x10), stats);
+          });
+      ready = loaded && ready;
+    }
+    for (auto& tab : state.tabs) ready = tab.donor.Poll(ui, screen) && ready;
+    ready = state.header.Poll(ui, screen, [&ui](uint32_t wrapper, uint32_t) {
+      auto bar = Named(ui, state.header.root, "PlayerBar");
+      if (!bar) bar = Named(ui, state.header.root, "PLAYER_BAR");
+      return wrapper && IsDescendant(ui.base, Read(ui.base, wrapper + 0x10), bar);
+    }) && ready;
+    if (!ready) {
+      bool failed = state.header.status == Donor::Status::Failed;
+      for (const auto& card : state.cards) failed |= card.donor.status == Donor::Status::Failed;
+      for (const auto& tab : state.tabs) failed |= tab.donor.status == Donor::Status::Failed;
+      if (failed || std::chrono::duration<double>(now - state.started).count() > 12) {
+        REXLOG_WARN("Native pause: donor setup failed or timed out; keeping stock pause");
+        Release(ui, true);
+      }
+      return;
+    }
+    bool valid = true;
+    for (auto& card : state.cards) valid = BindCard(ui, card) && valid;
+    for (auto& tab : state.tabs) valid = BindCard(ui, tab, true) && valid;
+    valid = BindCar(ui) && valid;
+    valid = BindHeader(ui) && valid;
+    const auto& progress = state.cards[4];
+    valid = progress.caption && progress.progress_fill && progress.progress_track && valid;
+    if (!valid) {
+      REXLOG_WARN("Native pause: donor capacity/type validation failed; keeping stock pause");
+      DumpNodes(ui, state.cards[0].donor, "tile0");
+      DumpNodes(ui, state.header, "header");
+      Release(ui, true); return;
+    }
+    valid = state.header.Isolate(ui, {state.player_bar, state.username, state.username_paper,
+        state.status, state.footer, state.bumpers[0], state.bumpers[1]}) && valid;
+    for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title}) && valid;
+    for (size_t i = 0; i < state.cards.size(); ++i) {
+      auto& card = state.cards[i];
+      std::vector<uint32_t> retained{card.paper, card.title};
+      if (card.caption) retained.push_back(card.caption);
+      if (i == 0) {
+        retained.insert(retained.end(), {state.car.name, state.car.make, state.car.image});
+        for (unsigned row = 0; row < 5; ++row) {
+          retained.push_back(state.car.labels[row]); retained.push_back(state.car.values[row]);
+        }
+      }
+      if (i == 4) {
+        retained.push_back(card.progress_fill); retained.push_back(card.progress_track);
+      }
+      valid = card.donor.Isolate(ui, retained) && valid;
+    }
+    if (!valid) {
+      REXLOG_WARN("Native pause: visual isolation failed; keeping stock pause");
+      Release(ui, true); return;
+    }
+    state.ready = true;
+    const auto runtime = ui.Virtual(state.engine, 8, {state.engine});
+    const auto metadata = ui.Virtual(runtime, 0x1c, {runtime});
+    state.stock_render_root = metadata ? Read(base, metadata + 4) : 0;
+    if (!state.stock_render_root) {
+      REXLOG_WARN("Native pause: stock render root missing; keeping stock pause");
+      Release(ui, true); return;
+    }
+    state.stock_suppression = GuestPtr(base, state.engine + 0x370)[0];
+    state.stock_visibility = GuestPtr(base, state.stock_render_root + 0xfc)[0];
+    state.stock_captured = true;
+    if (const auto player = state.header.ControllerByVtable(ui, 0x8207eb54))
+      ui.Call(0x82f36ab8, {player, Read(base, 0x833f44e8)});
+    ui.Call(0x82f1ec20, {state.header.owner, Hash("SHOW_PLAYER_BAR") & 0x7fffffff});
+    state.controller.Enter();
+    if (return_bookmark && return_bookmark->context == Read(base, screen + 0x10c)) {
+      state.controller.SelectPage(return_bookmark->page);
+      state.controller.FocusTile(return_bookmark->tile);
+    }
+    return_bookmark.reset();
+    state.refreshed = {};
+    Visibility(ui, state.visible);
+    REXLOG_INFO("Native pause: validated six tile slots, three tabs and FH1 header");
+  }
+  const double elapsed = std::chrono::duration<double>(now - state.previous).count();
+  state.previous = now;
+  StockVisibility(ui, false);
+  if (!state.visible) return;
+  if (std::chrono::duration<double>(now - state.refreshed).count() >= 1) {
+    state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+    CarData(ui);
+    RefreshData(ui);
+    state.refreshed = now;
+  }
+  PollInput(ui, elapsed);
+  if (state.screen != screen || !state.visible) return;
+  const auto page_id = state.controller.page_id();
+  const auto focus = state.controller.focused_tile_id();
+  const menu::Page* page = nullptr;
+  for (const auto& candidate : state.controller.pages())
+    if (page_id && candidate.id == *page_id) page = &candidate;
+  if (!page) { Release(ui, true); return; }
+  for (size_t i = 0; i < state.cards.size(); ++i) {
+    auto& card = state.cards[i];
+    const bool visible = i < page->tiles.size() && page->tiles[i].visible;
+    card.donor.SetVisible(ui, visible);
+    if (!visible) continue;
+    const auto& tile = page->tiles[i];
+    card.donor.Tick(ui, [&] {
+      StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
+      if (card.caption) {
+        ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
+        Label(ui, card.donor, card.caption,
+              {tile.bounds.x + 24, tile.bounds.y + 62, tile.bounds.width - 48, 32},
+              18, Description(tile.id), tile.enabled ? 0xe2dce2 : 0xaaaaaa);
+      }
+      if (i == 4) {
+        const bool progress = tile.id == "festival_progress";
+        ui.Show(card.donor.presentation, card.progress_track, progress);
+        ui.Show(card.donor.presentation, card.progress_fill, progress);
+        if (progress) Progress(ui, card, tile.bounds);
+      }
+      const bool car = tile.id == "current_car";
+      if (tile.id == "world_map" && fh1_map_preview::Ready()) {
+        ui.Color(card.donor.presentation, card.material, 0x302b30);
+        ui.Show(card.donor.presentation, card.caption, false);
+        ui.Color(card.donor.presentation, card.title,
+                 focus && tile.id == *focus ? 0xff007a : 0xffffff, true);
+      }
+      if (i == 0) {
+        for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats})
+          ui.Show(card.donor.presentation, node, car);
+        if (car) CarLayout(ui, tile.bounds);
+      }
+    });
+  }
+  for (size_t i = 0; i < state.tabs.size(); ++i) {
+    auto& tab = state.tabs[i];
+    if (i >= state.controller.pages().size()) {
+      tab.donor.SetVisible(ui, false);
+      continue;
+    }
+    const auto& p = state.controller.pages()[i];
+    tab.donor.SetVisible(ui, p.visible);
+    if (!p.visible) continue;
+    tab.donor.Tick(ui, [&] {
+      StyleCard(ui, tab, layout::kTabs[i], p.label, p.id == page->id, p.enabled, true);
+    });
+  }
+  state.header.Tick(ui, [&] { HeaderLayout(ui); });
+  bool map_visible = false, map_selected = false;
+  if (page->id == "home") {
+    const auto map = std::find_if(page->tiles.begin(), page->tiles.end(),
+        [](const auto& tile) { return tile.id == "world_map"; });
+    if (map != page->tiles.end() && map->visible && map->enabled &&
+        fh1_map_preview::SetBounds(layout::Map(map->bounds), false)) {
+      map_visible = true;
+      map_selected = focus && *focus == map->id;
+    }
+  }
+  fh1_map_preview::Update(ctx, base, screen, map_visible, map_selected);
+}
+} // namespace forza::native_pause_scene
+
+extern "C" REX_FUNC(sub_827DFB18) {
+  const auto screen = ctx.r3.u32;
+  __imp__sub_827DFB18(ctx, base);
+  forza::native_pause_scene::AfterBind(ctx, base, screen);
+}
+extern "C" REX_FUNC(sub_827DAB28) {
+  const auto screen = ctx.r3.u32;
+  __imp__sub_827DAB28(ctx, base);
+  forza::native_pause_scene::Page(ctx, base, screen, true);
+}
+extern "C" REX_FUNC(sub_827DE0D0) {
+  const auto screen = ctx.r3.u32;
+  __imp__sub_827DE0D0(ctx, base);
+  forza::native_pause_scene::Tick(ctx, base, screen);
+}
+#else
+namespace forza::native_pause_scene {
+bool Owns(uint32_t) { return false; }
+bool Input(PPCContext&, uint8_t*) { return false; }
+bool Page(PPCContext&, uint8_t*, uint32_t, bool) { return false; }
+void Destroy(PPCContext&, uint8_t*, uint32_t) {}
+void AfterBind(PPCContext&, uint8_t*, uint32_t) {}
+void Tick(PPCContext&, uint8_t*, uint32_t) {}
+}
+#endif
