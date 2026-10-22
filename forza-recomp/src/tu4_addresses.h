@@ -145,6 +145,7 @@
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
   switch (a) {
+    case 0x823E9288: return 0x82419338;  // code
     case 0x823EDB08: return 0x8241DBC8;  // code  // check
     case 0x82586D80: return 0x825FCDF8;  // code
     case 0x8259FB5C: return 0x82616C44;  // code

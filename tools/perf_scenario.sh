@@ -25,6 +25,10 @@
 # Above 30 fps the FRAMETIME lines (main-loop dt) are printed too.
 # PERF_CPUPROF=1 also samples the CPU during the measured scene (src/debug/cpu_profile.cpp)
 # into DIR/cpuprof.txt; summarize with tools/cpuprof_report.py.
+# PERF_CPUSET=0-3 runs the game's threads on those CPUs only (taskset; a smaller CPU, docs/perf.md
+# "Low-end CPUs"). PERF_THREADS=1 samples every thread's CPU time, run-queue wait and switches
+# and the game's GPU time each second into DIR/threads.jsonl, the scene's start and end into
+# DIR/marks.txt; summarize with tools/thread_stats.py report DIR.
 # Prints the BENCH line and the PERF lines; the log stays in DIR.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -49,9 +53,19 @@ export RECOMP_PERF=1 RECOMP_PERF_SCENE=boot RECOMP_PERF_CSV="$DIR/frames.csv"
 # read by tools/frametime_report.py DIR.
 export FORZA_FRAMETIME_LOG=1 FORZA_FRAMETIME_CSV="$DIR/frametime.csv"
 export FORZA_CPUPROF="$DIR/cpuprof.txt"
-prof() { [ "${PERF_CPUPROF:-0}" = 1 ] && say "PROF:$1"; return 0; }
+prof() {
+    [ "${PERF_CPUPROF:-0}" = 1 ] && say "PROF:$1"
+    [ "$1" = START ] && pin
+    [ "${PERF_THREADS:-0}" = 1 ] && echo "$(date +%s.%N) $([ "$1" = START ] && echo start || echo end)" >> "$DIR/marks.txt"
+    return 0
+}
 "$ROOT/tools/live_session.sh" "$DIR" 600 "${extra[@]}" "$@" > /dev/null || exit $?
 GAME_PID=$(ps -o pid= --ppid "$(cat "$DIR/pid")" | tr -d ' ')
+# Threads made later inherit the CPU set of the thread that makes them; pin again at the scene.
+pin() { [ -n "${PERF_CPUSET:-}" ] && taskset -a -p -c "$PERF_CPUSET" "$GAME_PID" > /dev/null; return 0; }
+pin
+rm -f "$DIR/marks.txt"
+[ "${PERF_THREADS:-0}" = 1 ] && python3 "$ROOT/tools/thread_stats.py" sample "$GAME_PID" "$DIR/threads.jsonl" &
 fifo="$DIR/in.fifo"
 say() { echo "$1" > "$fifo"; }
 alive() { kill -0 "$(cat "$DIR/pid")" 2>/dev/null; }
@@ -84,11 +98,12 @@ case "$SCENARIO" in
         say X; wait_s 4; say A; wait_s 5; say A; wait_s 6; say X; wait_s 16
         say SCENE:race_intro; say A; wait_s 12; say SCENE:race; prof START
         python3 "$ROOT/tools/carlog.py" "$GAME_PID" "${RACE_SECS:-26}" "$DIR/cars.txt" &
+        carlog=$!
         say "RT:${RACE_SECS:-26}"
         for i in $(seq 1 $(( ${RACE_SECS:-26} / 2 ))); do
             sleep 1.6; "$ROOT/tools/live_shot.sh" "$DIR" "race$i" > /dev/null
         done
-        wait; prof STOP ;;
+        wait "$carlog"; prof STOP ;;
     *) echo "unknown scenario $SCENARIO" >&2 ;;
 esac
 say SCENE:end; wait_s 2
