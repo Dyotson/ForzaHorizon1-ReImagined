@@ -8,7 +8,8 @@ struct PPCContext;
 namespace forza::fh1_map_preview {
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 // Call on the guest UI thread. Hide before opening a native child screen.
-// This samples the existing HUD target; it owns no gameplay camera or profile.
+// Owns a separate native fullscreen-profile record and preview camera. Shares
+// the native map target and profile resources, releasing its references on hide.
 // Bounds describe the image in the 1280x720 design canvas. Invalid or
 // unrepresentable bounds leave the existing bounds and caption setting intact.
 bool SetBounds(const menu::Rect&, bool caption = true);

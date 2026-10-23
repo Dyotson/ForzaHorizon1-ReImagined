@@ -1,5 +1,5 @@
-// Display FH1's existing HUD map target through the original H_MAP material.
-// The donor initializes its binding only: it never registers or renders a map.
+// Render FH1's fullscreen map profile at the Home card's resolution. A separate
+// native map record owns its camera; the gameplay HUD record is never modified.
 // tu_address_map: TU4 addresses
 #include "../platform/fh1_map_preview.h"
 
@@ -21,9 +21,12 @@ extern "C" REX_FUNC(__imp__sub_826E22A8);
 
 namespace forza::fh1_map_preview {
 namespace {
-std::atomic<uint32_t> requested_hud_record{0};
+std::atomic<uint32_t> requested_map_record{0};
 std::atomic<uint64_t> rendered_player_pixel{0};
 std::atomic<uint32_t> rendered_player_size{0};
+std::atomic<uint64_t> requested_extent{0},rendered_extent{0};
+constexpr uint32_t kPreviewMapId = 2;
+constexpr uint32_t kCompressedRoutes = 0x83393FF4;
 // Layout outlives each donor presentation, so releasing native resources does
 // not discard the renderer's requested image rectangle.
 struct Layout {
@@ -62,8 +65,11 @@ struct Preview {
   uint32_t group = 0, rectangle = 0, controller = 0;
   uint32_t caption = 0, paper = 0, tip = 0, bar = 0;
   uint32_t display = 0, display_material = 0;
-  uint32_t hud_profile_ref = 0;
-  bool hud_resources_owned = false;
+  uint32_t map_profile_ref = 0;
+  uint32_t map_record = 0;
+  uint32_t heap_game = 0;
+  std::array<uint32_t,6> heap_routes{};
+  bool map_resources_owned = false;
   std::vector<uint32_t> display_ancestors;
   bool mirrored = false;
   std::array<uint32_t, 7> mirror_signature{};
@@ -304,45 +310,88 @@ void DisableDispatch(Native& ui) {
   for (const auto offset : {0x28u, 0x38u})
     Write(ui.base, manager + offset + 4, Read(ui.base, manager + offset));
 }
-void ReleaseHudResources(Native& ui) {
-  requested_hud_record.store(0, std::memory_order_release);
+void ReleaseMapResources(Native& ui) {
+  requested_map_record.store(0, std::memory_order_release);
   rendered_player_pixel.store(0, std::memory_order_release);
-  if (!preview.hud_profile_ref) return;
-  const auto profile = Read(ui.base, preview.hud_profile_ref);
-  if (profile && preview.hud_resources_owned)
+  rendered_extent.store(0, std::memory_order_release);
+  if (preview.map_record) {
+    ui.Call(0x826E2D68, {Read(ui.base, 0x833F0410), kPreviewMapId});
+    preview.map_record = 0;
+  }
+  if (!preview.map_profile_ref && !preview.heap_game) return;
+  const auto profile = preview.map_profile_ref ? Read(ui.base, preview.map_profile_ref) : 0;
+  if (profile && preview.map_resources_owned)
     ui.Call(0x82D937F8, {profile});
-  ui.Call(0x824CEAB0, {preview.hud_profile_ref});
-  REX_KERNEL_MEMORY()->SystemHeapFree(preview.hud_profile_ref);
-  preview.hud_profile_ref = 0;
-  preview.hud_resources_owned = false;
+  if (preview.map_profile_ref) {
+    ui.Call(0x824CEAB0, {preview.map_profile_ref});
+    REX_KERNEL_MEMORY()->SystemHeapFree(preview.map_profile_ref);
+  }
+  preview.map_profile_ref = 0;
+  preview.map_resources_owned = false;
+  if (preview.heap_game) {
+    for (unsigned i = 0; i < 6; ++i)
+      Write(ui.base, kCompressedRoutes + i * 4, preview.heap_routes[i]);
+    ui.Call(0x824AF2E0, {preview.heap_game, 0});
+    preview.heap_game = 0;
+  }
 }
 
-bool HudResources(Native& ui, uint32_t record) {
+bool MapHeap(Native& ui) {
+  const auto game = Read(ui.base, 0x833CAAE4);
+  if (!game) return false;
+  if (!GuestPtr(ui.base, game + 0x298)[0]) {
+    if (!preview.heap_game) {
+      preview.heap_game = game;
+      for (unsigned i = 0; i < 6; ++i)
+        preview.heap_routes[i] = Read(ui.base, kCompressedRoutes + i * 4);
+    }
+    // CSetupCompressedHeap::Enter829F53B0: prepare the heap and route UI
+    // allocations to its GPU arenas. The game progresses setup asynchronously.
+    ui.Call(0x824AF2E0, {game, 1});
+    for (unsigned i = 0; i < 6; ++i)
+      Write(ui.base, kCompressedRoutes + i * 4, i ? 0x24 : 0x27);
+  }
+  return ui.Call(0x824AC1C8, {game}) != 0;
+}
+
+bool MapResources(Native& ui, uint32_t record) {
+  if (!preview.map_record) {
+    preview.map_record=record;
+  }
   const auto map = Read(ui.base, record + 0x20);
   const auto profile = Read(ui.base, map + 8);
   if (!profile) return false;
-  if (preview.hud_profile_ref && Read(ui.base, preview.hud_profile_ref) != profile)
-    ReleaseHudResources(ui);
-  if (!preview.hud_profile_ref) {
-    // Verify this is the named existing minimap profile before acquiring its
-    // resources. The native callback supplies the original allocation context.
+  if (preview.map_profile_ref && Read(ui.base, preview.map_profile_ref) != profile) {
+    ReleaseMapResources(ui);
+    return false;
+  }
+  if (!preview.map_profile_ref) {
+    // Retain the original fullscreen profile, independently of the HUD and
+    // any full-map screen that may open after this preview is hidden.
     Write(ui.base, ui.scratch + 640, 0);
-    ui.Call(0x82D93940, {ui.scratch + 640, Read(ui.base, 0x8359DDE4), ui.String("minimap")});
+    ui.Call(0x82D93940, {ui.scratch + 640, Read(ui.base, 0x8359DDE4), ui.String("fullscreen")});
     const bool matches = Read(ui.base, ui.scratch + 640) == profile;
     ui.Call(0x824CEAB0, {ui.scratch + 640});
     if (!matches) return false;
-    preview.hud_profile_ref = REX_KERNEL_MEMORY()->SystemHeapAlloc(4);
-    if (!preview.hud_profile_ref) return false;
-    Write(ui.base, preview.hud_profile_ref, 0);
-    ui.Call(0x82E55D58, {preview.hud_profile_ref, map + 8});
+    preview.map_profile_ref = REX_KERNEL_MEMORY()->SystemHeapAlloc(4);
+    if (!preview.map_profile_ref) return false;
+    Write(ui.base, preview.map_profile_ref, 0);
+    ui.Call(0x82E55D58, {preview.map_profile_ref, map + 8});
   }
-  // Pause's first tick may precede the original HUD's leave callback. Its
-  // later unload does not destroy the retained profile, but does clear its
-  // resources, so acquire when that native transition has actually completed.
+  // A departing native map screen can unload this shared profile after the
+  // first pause tick. Acquire its textures only while the preview is visible.
   if (!GuestPtr(ui.base, profile + 0x28)[0]) {
-    ui.Call(0x8276F928);
-    preview.hud_resources_owned = true;
-    REXLOG_INFO("FH1 map preview: loaded existing minimap resources profile={:08X}", profile);
+    // The world context's allocation group is trackGPU; the map flow uses
+    // the compressed UI group prepared above. Async I/O captures this group.
+    ui.Call(0x824277A0, {ui.scratch + 720, 4});
+    ui.Call(0x82D93788, {profile});
+    const auto previous = Read(ui.base, ui.scratch + 724);
+    if (previous != 8) {
+      const auto allocator = ui.Call(0x824277F8);
+      ui.Call(0x82427658, {allocator, previous});
+    }
+    preview.map_resources_owned = true;
+    REXLOG_INFO("FH1 map preview: loaded fullscreen resources profile={:08X}", profile);
   }
   if (!ui.Call(0x82D93860, {profile})) return false;
   // Null textures are valid for untextured symbolizers, so the aggregate native
@@ -365,25 +414,46 @@ bool HudResources(Native& ui, uint32_t record) {
   return player_icons >= 2;
 }
 
-uint32_t HudRecord(Native& ui) {
+uint32_t PreviewRecord(Native& ui) {
   const auto game = Read(ui.base, 0x833CAAE4);
   if (!game || !ui.Call(0x82F12410, {game})) return 0;
   const auto graphics = ui.Call(0x824ABD40, {game});
   if (!graphics || !Read(ui.base, graphics + 0x9A4)) return 0;
   const auto service = Read(ui.base, 0x833F0410);
   if (!service) return 0;
+  if (!preview.map_record) {
+    const auto begin = Read(ui.base, service + 0x74), end = Read(ui.base, service + 0x78);
+    if (!begin || end < begin || end - begin > 256 || (end - begin) % 4) return 0;
+    for (auto entry = begin; entry < end; entry += 4) {
+      const auto record = Read(ui.base, entry);
+      if (record && Read(ui.base, record) == kPreviewMapId) return 0;
+    }
+    ui.Call(0x826E34C0,{service,kPreviewMapId,ui.String("fullscreen")});
+    ui.Call(0x826E2198,{service});
+    const auto camera=ui.Call(0x826E2CD8,{service,kPreviewMapId});
+    const auto game_camera=ui.Call(0x826E2CD8,{service,0});
+    if(camera&&game_camera){std::copy_n(GuestPtr(ui.base,game_camera+0x10),0x38,GuestPtr(ui.base,camera+0x10));
+      Write(ui.base,camera+0x14,0);Write(ui.base,camera+0x1C,0);
+      Write(ui.base,camera+0x30,0);
+      Write(ui.base,camera+0x34,std::bit_cast<uint32_t>(1.5707963f));
+      Write(ui.base,camera+0x38,std::bit_cast<uint32_t>(1500.f));}
+  }
   const auto begin = Read(ui.base, service + 0x74);
   const auto end = Read(ui.base, service + 0x78);
   if (!begin || end < begin || end - begin > 256 || (end - begin) % 4) return 0;
   for (auto entry = begin; entry < end; entry += 4) {
     const auto record = Read(ui.base, entry);
-    if (!record || Read(ui.base, record) != 0) continue;
+    if (!record || Read(ui.base, record) != kPreviewMapId) continue;
+    preview.map_record = record;
+    GuestPtr(ui.base,record+0x1C)[0]=1;
+    Write(ui.base,record+12,uint32_t(std::ceil(layout.bounds.width)));
+    Write(ui.base,record+16,uint32_t(std::ceil(layout.bounds.height)));
     const auto map = Read(ui.base, record + 0x20);
     if (!map || !Read(ui.base, map + 4) || !Read(ui.base, record + 0x24) ||
         !GuestPtr(ui.base, record + 0x1C)[0])
       return 0;
-    // Exact native CUIMapRenderer record0 pixel viewport. A record may exist
-    // before the HUD has registered any drawable rectangle.
+    // This record has its own viewport and camera. Record0 remains owned by
+    // the HUD; record1 remains available to FH1's normal full-map screen.
     const auto width = Read(ui.base, record + 12);
     const auto height = Read(ui.base, record + 16);
     return width && height && width <= 8192 && height <= 8192 ? record : 0;
@@ -391,7 +461,7 @@ uint32_t HudRecord(Native& ui) {
   return 0;
 }
 bool PlayerPixel(uint8_t* base, uint32_t record, float& px, float& py,
-                 float& icon_size) {
+                 float& icon_size,float* world_x=nullptr,float* world_z=nullptr) {
   const auto map = Read(base, record + 0x20), camera = Read(base, record + 0x24);
   if (!map || !camera) return false;
   const auto begin = Read(base, map + 0x10), end = Read(base, map + 0x14);
@@ -408,9 +478,10 @@ bool PlayerPixel(uint8_t* base, uint32_t record, float& px, float& py,
       if (!entity || Read(base, entity) != 0x82024360 ||
           !GuestPtr(base, entity + 0x14)[0]) continue;
       // Original icon builder82DA76A0 explicitly flattens Y at82DA77FC.
-      // Project that same live player point through the existing HUD camera;
-      // do not move its camera or invent a fixed marker at the crop center.
+      // Project the real player entity through the preview camera. The marker
+      // remains native geometry with the player's actual heading.
       const float x = Float(base, entity + 0x20), z = Float(base, entity + 0x28);
+      if(world_x)*world_x=x;if(world_z)*world_z=z;
       const float w = x * Float(base, camera + 0x11C) +
                       z * Float(base, camera + 0x13C) + Float(base, camera + 0x14C);
       if (!std::isfinite(w) || w <= .001f) return false;
@@ -421,14 +492,14 @@ bool PlayerPixel(uint8_t* base, uint32_t record, float& px, float& py,
       if (!std::isfinite(nx) || !std::isfinite(ny)) return false;
       px = Read(base, record + 4) + (nx + 1.f) * .5f * Read(base, record + 12);
       py = Read(base, record + 8) + (1.f - ny) * .5f * Read(base, record + 16);
-      icon_size = Float(base, symbol + 0x14);
+      icon_size = Float(base, symbol + 0x14) * Read(base,record+16) / 720.f;
       return std::isfinite(icon_size) && icon_size > 0.f;
     }
   }
   return false;
 }
 
-bool MirrorHud(Native& ui, uint32_t record) {
+bool MirrorMap(Native& ui, uint32_t record) {
   if (!record || !preview.display_material) return false;
   const auto binding = ui.scratch + 576;
   const auto node = preview.display_material;
@@ -479,20 +550,21 @@ bool MirrorHud(Native& ui, uint32_t record) {
   if (!queried) return false;
   const auto tw = Read(ui.base, ui.scratch + 544);
   const auto th = Read(ui.base, ui.scratch + 548);
-  const auto x = Read(ui.base, record + 4), y = Read(ui.base, record + 8);
-  const auto width = Read(ui.base, record + 12), height = Read(ui.base, record + 16);
+  const auto extent=rendered_extent.load(std::memory_order_acquire);
+  const auto x = extent?0:Read(ui.base, record + 4), y = extent?0:Read(ui.base, record + 8);
+  const auto width = extent?uint32_t(extent>>32):Read(ui.base, record + 12);
+  const auto height = extent?uint32_t(extent):Read(ui.base, record + 16);
   if (!tw || !th || tw > 8192 || th > 8192 || x > tw || y > th ||
       width > tw - x || height > th - y) return false;
-  // Fill without stretching. The HUD camera looks ahead of the player, so a
-  // fixed center crop can clip its native arrow. Frame its projected position.
+  // Preserve aspect and keep the projected native player marker within the
+  // card's padded image bounds.
   const float aspect = float(layout.bounds.width / layout.bounds.height);
   const float cw = std::min(float(width), float(height) * aspect);
   const float ch = std::min(float(height), float(width) / aspect);
   if (!std::isfinite(cw) || !std::isfinite(ch) || cw <= 0.f || ch <= 0.f) return false;
   float player_x = float(x) + width * .5f, player_y = float(y) + height * .5f;
   float icon_size = 45.f;
-  // The normal HUD tick briefly centers its camera, then native phase0 builds
-  // the lead camera actually used to draw. Use that completed render snapshot.
+  // Use the projection from the completed native map render pass.
   const auto pixel = rendered_player_pixel.load(std::memory_order_acquire);
   const bool projected = pixel != 0;
   if (projected) {
@@ -525,7 +597,7 @@ bool MirrorHud(Native& ui, uint32_t record) {
   std::copy_n(GuestPtr(ui.base, ui.scratch + 640), 64, GuestPtr(ui.base, image + 0x70));
   const std::array<uint32_t, 7> signature{record, x, y, width, height, tw, th};
   if (!preview.mirrored || signature != preview.mirror_signature || preview.frames == 120) {
-    REXLOG_INFO("FH1 map preview: HUD mirror record={:08X} rect={} {} {} {} target={} {} crop={} {} {} {} image={:08X} player={} {} projected={} icon={}",
+    REXLOG_INFO("FH1 map preview: fullscreen preview record={:08X} rect={} {} {} {} target={} {} crop={} {} {} {} image={:08X} player={} {} projected={} icon={}",
                 record, x, y, width, height, tw, th, cx, cy, cw, ch, image,
                 player_x, player_y, projected, icon_size);
     preview.mirror_signature = signature;
@@ -786,6 +858,7 @@ bool SetBounds(const menu::Rect& bounds, bool caption) {
     preview.positioned = false;
   }
   layout.caption = caption;
+  requested_extent.store((uint64_t(uint32_t(std::ceil(bounds.width)))<<32)|uint32_t(std::ceil(bounds.height)),std::memory_order_release);
   return true;
 }
 
@@ -798,14 +871,15 @@ void Update(const PPCContext& context, uint8_t* base, uint32_t screen, bool visi
   if (!ui.scratch) return;
   preview.screen = screen;
   if (!visible) {
-    ReleaseHudResources(ui);
+    ReleaseMapResources(ui);
     Visibility(ui, false);
     return;
   }
-  const auto record = HudRecord(ui);
-  if (!record) { ReleaseHudResources(ui); preview.mirrored = false; Visibility(ui, false); return; }
-  if (!HudResources(ui, record)) {
-    requested_hud_record.store(0, std::memory_order_release);
+  if(!MapHeap(ui)){Visibility(ui,false);return;}
+  const auto record = PreviewRecord(ui);
+  if (!record) { ReleaseMapResources(ui); preview.mirrored = false; Visibility(ui, false); return; }
+  if (!MapResources(ui, record)) {
+    requested_map_record.store(0, std::memory_order_release);
     rendered_player_pixel.store(0, std::memory_order_release);
     preview.mirrored = false;
     Visibility(ui, false);
@@ -830,18 +904,19 @@ void Update(const PPCContext& context, uint8_t* base, uint32_t screen, bool visi
   if (placed) MaintainDisplay(ui);
   // No custom-render placeholder is drawn: only the existing textured quad.
   ui.Show(preview.rectangle, false);
-  preview.mirrored = placed && MirrorHud(ui, record);
-  // Publish only a native-owned record ID. The render hook validates membership
-  // again and prepares its transient icon buffers at the actual material pass.
-  requested_hud_record.store(preview.mirrored ? record : 0, std::memory_order_release);
+  preview.mirrored = placed && MirrorMap(ui, record);
+  // Publish only our native-owned record. The render hook validates service
+  // membership before preparing geometry at its actual material pass.
+  requested_map_record.store(preview.mirrored ? record : 0, std::memory_order_release);
   Visibility(ui, preview.mirrored);
 }
 void Release(const PPCContext& context, uint8_t* base) {
-  requested_hud_record.store(0, std::memory_order_release);
+  requested_map_record.store(0, std::memory_order_release);
+  rendered_extent.store(0,std::memory_order_release);
   if (!base || !preview.screen) return;
   Native ui(context, base);
   if (!ui.scratch) return;
-  ReleaseHudResources(ui);
+  ReleaseMapResources(ui);
   Visibility(ui, false);
   if (preview.owner)
     ui.Call(0x82F2F828, {Read(base, 0x833CAAC0), preview.owner, 0});
@@ -855,48 +930,49 @@ void Release(const PPCContext& context, uint8_t* base) {
 }
 // Prepare at the original phase0 boundary so transient dynamic-layer buffers
 // are rebuilt immediately before their native render pass consumes them.
-struct HudPassScope {
-  uint8_t* base = nullptr;
-  uint32_t camera = 0, fov = 0;
-  std::array<uint8_t, 256> matrices{};
-  static constexpr float span = 3.f;
-
-  bool Apply(uint8_t* memory, uint32_t camera_address) {
-    const float original_fov = Float(memory, camera_address + 0x34);
-    const float original_distance = Float(memory, camera_address + 0x38);
-    if (!std::isfinite(original_fov) || original_fov <= 0.f || original_fov >= 3.0f ||
-        !std::isfinite(original_distance) || original_distance <= 0.f) return false;
-    const float preview_fov = 2.f * std::atan(span * std::tan(original_fov * .5f));
-    if (!std::isfinite(preview_fov) || preview_fov >= 3.13f) return false;
-    base = memory;
-    camera = camera_address;
-    fov = Read(base, camera + 0x34);
-    std::copy_n(GuestPtr(base, camera + 0x50), matrices.size(), matrices.begin());
-    // Native82DA2648 builds projection cot(FOV/2). Increasing tan(FOV/2)
-    // threefold expands the visible world span while preserving camera distance
-    // and every native icon's DynamicSize, offsets and distance-dependent state.
-    // DynamicSize scales world geometry by distance (82DA7A58), not FOV, so
-    // original45px player icons become15px in the source /21px in this card.
-    Write(base, camera + 0x34, std::bit_cast<uint32_t>(preview_fov));
-    static thread_local uint32_t logged_camera = 0;
-    if (logged_camera != camera) {
-      REXLOG_INFO("FH1 map preview: scoped FOV camera={:08X} distance={} fov={} -> {} pitch={} unchanged span=3 native_icons_unchanged",
-          camera, original_distance, original_fov, preview_fov, Float(base, camera + 0x30));
-      logged_camera = camera;
-    }
+struct MapPassScope {
+  uint8_t* base=nullptr;
+  uint32_t camera=0,record=0;
+  std::array<uint8_t,48> settings{};
+  std::array<uint8_t,20> viewport{};
+  std::array<uint8_t,256> matrices{};
+  static constexpr float span=1.f;
+  bool Apply(uint8_t* memory,uint32_t record_address,uint32_t camera_address) {
+    const auto extent=requested_extent.load(std::memory_order_acquire);
+    const auto width=uint32_t(extent>>32),height=uint32_t(extent);
+    const float original_fov=Float(memory,camera_address+0x34);
+    if(!width||!height||width>1280||height>720||!std::isfinite(original_fov)||
+        original_fov<=0||original_fov>=3)return false;
+    const float preview_fov=2*std::atan(span*std::tan(original_fov*.5f));
+    if(!std::isfinite(preview_fov)||preview_fov>=3.13f)return false;
+    float px=0,py=0,size=0,world_x=0,world_z=0;
+    const bool centered=PlayerPixel(memory,record_address,px,py,size,&world_x,&world_z);
+    base=memory;camera=camera_address;record=record_address;
+    std::copy_n(GuestPtr(base,camera+0x10),settings.size(),settings.begin());
+    std::copy_n(GuestPtr(base,record+4),viewport.size(),viewport.begin());
+    std::copy_n(GuestPtr(base,camera+0x50),matrices.size(),matrices.begin());
+    Write(base,record+4,0);Write(base,record+8,0);
+    Write(base,record+12,width);Write(base,record+16,height);
+    if(centered){Write(base,camera+0x10,std::bit_cast<uint32_t>(world_x));Write(base,camera+0x18,std::bit_cast<uint32_t>(world_z));}
+    // 82DA2388 takes its focus from +10/+18 and normalizes the heading at +20.
+    Write(base,camera+0x20,0);Write(base,camera+0x24,0);
+    Write(base,camera+0x28,std::bit_cast<uint32_t>(1.f));
+    Write(base,camera+0x30,0);
+    Write(base,camera+0x34,std::bit_cast<uint32_t>(preview_fov));
+    Write(base,camera+0x3C,std::bit_cast<uint32_t>(float(width)/height));
+    rendered_extent.store(extent,std::memory_order_release);
     return true;
   }
-
-  ~HudPassScope() {
-    if (!camera) return;
-    // Native draw constants are copied during the pass; restore shared state.
-    Write(base, camera + 0x34, fov);
-    std::copy(matrices.begin(), matrices.end(), GuestPtr(base, camera + 0x50));
+  ~MapPassScope(){
+    if(!camera)return;
+    std::copy(settings.begin(),settings.end(),GuestPtr(base,camera+0x10));
+    std::copy(viewport.begin(),viewport.end(),GuestPtr(base,record+4));
+    std::copy(matrices.begin(),matrices.end(),GuestPtr(base,camera+0x50));
   }
 };
 
-void PrepareHudPass(const PPCContext& context, uint8_t* base, HudPassScope& scope) {
-  const auto record = requested_hud_record.load(std::memory_order_acquire);
+void PrepareMapPass(const PPCContext& context, uint8_t* base, MapPassScope& scope) {
+  const auto record = requested_map_record.load(std::memory_order_acquire);
   if (!record || context.r4.u32 != 0 || !base) return;
   const auto service = context.r3.u32;
   if (!service || service != Read(base, 0x833F0410)) return;
@@ -906,14 +982,14 @@ void PrepareHudPass(const PPCContext& context, uint8_t* base, HudPassScope& scop
   bool found = false;
   for (auto entry = begin; entry < end; entry += 4)
     if (Read(base, entry) == record) { found = true; break; }
-  if (!found || Read(base, record) != 0 || !GuestPtr(base, record + 0x1C)[0]) return;
+  if (!found || Read(base, record) != kPreviewMapId || !GuestPtr(base, record + 0x1C)[0]) return;
   const auto map = Read(base, record + 0x20);
   const auto camera = Read(base, record + 0x24);
   if (!map || !Read(base, map + 4) || !camera || !Read(base, record + 12) ||
       !Read(base, record + 16)) return;
-  if (!scope.Apply(base, camera)) return;
-  // Exact Register826E2E20 preparation tail with temporary preview framing.
-  // Do not register the donor or change the existing record's viewport.
+  if (!scope.Apply(base,record,camera)) return;
+  // Match Register826E2E20's native matrix/geometry preparation. Only the
+  // independent preview record is touched, never the gameplay HUD camera.
   PPCContext call = context;
   call.r3.u64 = camera;
   rex::runtime::ResolveIndirectFunction(0x82DA2388)(call, base);
@@ -921,57 +997,22 @@ void PrepareHudPass(const PPCContext& context, uint8_t* base, HudPassScope& scop
   rex::runtime::ResolveIndirectFunction(0x82DA4A80)(call, base);
   float player_x = 0.f, player_y = 0.f, icon_size = 0.f;
   if (PlayerPixel(base, record, player_x, player_y, icon_size)) {
-    icon_size /= HudPassScope::span;
+    icon_size /= MapPassScope::span;
     rendered_player_size.store(std::bit_cast<uint32_t>(icon_size), std::memory_order_relaxed);
     rendered_player_pixel.store((uint64_t(std::bit_cast<uint32_t>(player_x)) << 32) |
                                std::bit_cast<uint32_t>(player_y), std::memory_order_release);
   }
   GuestPtr(base, record + 0x1D)[0] = 1;
-  static thread_local uint32_t diagnostic_record = 0;
-  static thread_local unsigned diagnostic_frames = 0;
-  if (diagnostic_record != record) { diagnostic_record = record; diagnostic_frames = 0; }
-  if (++diagnostic_frames == 2 || diagnostic_frames == 120) {
-    const auto layers_begin = Read(base, map + 0x10);
-    const auto layers_end = Read(base, map + 0x14);
-    if (layers_begin && layers_end >= layers_begin && layers_end - layers_begin <= 4096) {
-      for (auto slot = layers_begin; slot < layers_end; slot += 4) {
-        const auto layer = Read(base, slot);
-        const auto profile = layer ? Read(base, layer + 4) : 0;
-        if (!profile || Read(base, profile + 0xCC) != 8 || Read(base, profile + 0xD0) != 8 ||
-            Read(base, profile + 0xC8) != 3 ||
-            (Read(base, profile + 0xC4) != 2 && Read(base, profile + 0xC4) != 3)) continue;
-        const auto resource = Read(base, profile + 4);
-        const auto texture = resource ? Read(base, resource + 0xC) : 0;
-        const auto entries = Read(base, layer + 0xC), entries_end = Read(base, layer + 0x10);
-        REXLOG_INFO("FH1 map player layer: layer={:08X} profile={:08X} atlas={} {} enabled={} dynamic={} size={} texture={:08X} type={}/{} entries={:08X}..{:08X}",
-            layer, profile, Read(base, profile + 0xC4), Read(base, profile + 0xC8),
-            GuestPtr(base, layer + 0x20)[0], GuestPtr(base, profile + 0x90)[0], Float(base, profile + 0x14),
-            texture, texture ? GuestPtr(base, texture + 0x28)[0] : 0,
-            texture ? GuestPtr(base, texture + 0x29)[0] : 0, entries, entries_end);
-        if (!entries || entries_end < entries || entries_end - entries > 4096) continue;
-        for (auto entry = entries; entry < entries_end; entry += 64) {
-          const auto entity = Read(base, entry + 0x14), geometry = Read(base, entry + 0x18);
-          REXLOG_INFO("FH1 map player entry: entry={:08X} entity={:08X} vtable={:08X} enabled={} xyz={} {} {} visible={} geometry={:08X} data={:08X}/{:08X}/{:08X}",
-              entry, entity, entity ? Read(base, entity) : 0,
-              entity ? GuestPtr(base, entity + 0x14)[0] : 0,
-              entity ? Float(base, entity + 0x20) : 0.f, entity ? Float(base, entity + 0x24) : 0.f,
-              entity ? Float(base, entity + 0x28) : 0.f, GuestPtr(base, entry + 0x2C)[0], geometry,
-              geometry ? Read(base, geometry) : 0, geometry ? Read(base, geometry + 4) : 0,
-              geometry ? Read(base, geometry + 8) : 0);
-        }
-      }
-    }
-  }
   static thread_local uint32_t logged_record = 0;
   if (logged_record != record) {
-    REXLOG_INFO("FH1 map preview: prepared HUD geometry at native phase0 record={:08X}", record);
+    REXLOG_INFO("FH1 map preview: prepared fullscreen map geometry at native phase0 record={:08X}", record);
     logged_record = record;
   }
 }
 } // namespace forza::fh1_map_preview
 extern "C" REX_FUNC(sub_826E22A8) {
-  forza::fh1_map_preview::HudPassScope scope;
-  forza::fh1_map_preview::PrepareHudPass(ctx, base, scope);
+  forza::fh1_map_preview::MapPassScope scope;
+  forza::fh1_map_preview::PrepareMapPass(ctx, base, scope);
   __imp__sub_826E22A8(ctx, base);
 }
 #endif
