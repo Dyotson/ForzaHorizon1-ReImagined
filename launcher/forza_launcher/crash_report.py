@@ -133,6 +133,8 @@ def collect(plan, code, context):
     except OSError:
         version = "unknown build"
     settings = "\n".join(f"{k} = {v}" for k, v in context["settings"].items()) or "Not available"
+    heap_failure = game.heap_failure_summary(tail)
+    diagnosis = f"## Internal heap allocation failure\n{heap_failure}\n\n" if heap_failure else ""
     body = (
         "## What happened\nThe game closed unexpectedly.\n\n"
         "## Steps to reproduce\nDescribe what you were doing when it crashed.\n\n"
@@ -147,6 +149,7 @@ def collect(plan, code, context):
         f"- Exit code: {code} (0x{code & 0xFFFFFFFF:08X})\n"
         f"- Report time (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n\n"
         f"## Fault\n```text\n{fault}\n```\n\n"
+        f"{diagnosis}"
         f"## Call chain\n```text\n{clean(chr(10).join(chain)) or 'Not recorded'}\n```\n\n"
         f"## Graphics device from log\n```text\n{clean(chr(10).join(device)) or 'Not recorded'}\n```\n\n"
         f"## Launch settings\n```text\n{clean(settings)}\n```\n\n"
