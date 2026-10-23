@@ -11,8 +11,8 @@ grants access only when the current car's native upgrade gates and ranges allow
 it. Copied-profile runtime checks cover representative edits across all nine
 categories on an upgraded RWD Mustang; remaining fields/drivetrains and direct
 non-pressure physics still need qualification. This implementation is not yet
-qualified for normal saves. Named setup
-files, storefronts, sharing and downloads are outside this local tuning scope.
+qualified for normal saves. Named setup files and parameter-only file sharing are described below. An online community
+browser or public publishing service is not implemented.
 
 ## Source comparison
 
@@ -182,6 +182,62 @@ native callbacks cannot mutate freed/replacement UI state.
 
 Shared integration edits are confined to `graphics_menu.cpp`, `live.h`,
 `live_xmsg.cpp` and the source list in `forza-recomp/CMakeLists.txt`.
+
+## Named setups and file sharing
+
+Press X / Setups in the native workspace. The shared tab component exposes Save,
+Load, Rename, Delete, Export and Import. Save and Rename use an original FH1
+controller character grid; directions select a character, A enters it, Y removes
+it, DONE commits the name and B cancels. Names are 1-32 bounded ASCII characters;
+letters, numbers, internal spaces, apostrophes, hyphens and underscores are
+accepted, with a letter/number at each end. Delete requires a second explicit A.
+No SDK ImGui keyboard, host settings overlay or browser is used.
+
+Documents live under the runtime's `user_data_root/tunes/library`. Export writes
+a new `.fh1tune` file in `tunes/exports`; share that parameter file yourself.
+The recipient places it, retaining its generated filename, in `tunes/inbox` and
+selects Import. The game does not publish or contact a server. The existing
+ForzaLive photo/club content services have no standalone named-tune contract;
+community search, author authentication, cloud storage and share codes remain
+outside this implementation. This route works offline and adds no opt-out
+network behavior. The containing feature remains off by default.
+
+The original `FH1TUNE 1` text format is limited to 8 KiB. It carries a display
+name, model ID, all 45 installed part IDs, a native schema compatibility ID and
+only the exposed field IDs and their raw normalized float bits, including stock
+sentinels. It carries no owned/profile identity, opaque tune words, live memory
+addresses, display-unit assumptions, game assets, livery or executable data.
+The schema ID covers the native range endpoints, stock defaults and linked-field
+semantics, independently of selected display units. Unsupported versions,
+unknown/duplicate fields, NaN/infinity, out-of-range values, illegal names and
+malformed/trailing input are rejected. LF and CRLF are accepted. Files and root
+folders that are symlinks are refused; generated IDs, rather than display names,
+form paths. Each folder exposes at most 256 valid documents, bounded reads and
+a bounded directory scan. Metadata is written completely to a temporary file
+before rename; changing a name publishes new metadata before removing the old
+file. Existing metadata is not truncated on a failed write.
+
+Loading and importing require the same model, exact installed parts, matching
+schema and exact editable-field coverage. The editor first validates the entire
+candidate, including final gear ordering, then merges only permitted fields into
+the receiver's existing draft. Its original/opaque words remain intact, and
+sport differential coupling uses the receiver's native schema. Failure leaves
+the draft unchanged. Import saves a local library document only after validation.
+No load/import calls the native garage Apply operation. Preview remains cloned;
+the player must choose Apply explicitly, through the existing identity/parts/
+payload rechecks and native profile save path.
+
+Copied-profile native checks exercised controller naming, save, changed-draft
+load, rename, export, valid import, visible rejection of a wrong-model document,
+confirmed delete, Discard and library persistence through actual process restart.
+Save/load and import/reject/delete left per-test profile hashes unchanged.
+An applied loaded pressure setup passed full garage/live/cold readback and
+persisted through restarting the same copied profile; all 29 available native
+display strings and stock flags matched. The original seed stayed unchanged.
+The SDK-independent setup test additionally covers wrong parts/schema,
+unknown/duplicate/unavailable fields, malformed/oversized files, NaN/range checks,
+unsafe names/IDs, opaque preservation, sport coupling, atomic gear rejection,
+CRLF portability and library save/rename/delete. No public upload was tested.
 
 ## Native performance preview
 
