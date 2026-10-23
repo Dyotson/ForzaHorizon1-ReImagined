@@ -61,6 +61,30 @@ class LauncherUITests(unittest.TestCase):
             time.sleep(.005)
         self.assertTrue(predicate())
 
+    def test_catalog_recovery_warning_stays_visible_after_successful_start(self):
+        from forza_launcher import game, catalog_import, ugc
+        plan = game.LaunchPlan(game.GameInstall(self.root, Path('forza.exe')), self.root,
+                              ['forza'], {}, [], self.root/'forza.toml', '', log_dir=self.root)
+        win = self.window
+        self.wait_for(lambda: not win.saves.busy() and not win._busy)
+        with patch.object(catalog_import, 'recover', side_effect=ugc.CatalogError('Invalid import journal')), \
+                patch('subprocess.Popen') as spawn:
+            spawn.return_value.poll.return_value = None
+            try:
+                win._start_plan(plan)
+                self.assertIsNotNone(win.session)
+                self.assertIn('The game is running', win.play.warn.text())
+                self.assertIn('Invalid import journal', win.play.warn.text())
+                self.assertIn('save-backups', win.play.warn.text())
+                self.assertTrue(win.play._keep_warn)
+                win.play.refresh()
+                self.assertFalse(win.play.warn.isHidden())
+            finally:
+                if win.session:
+                    win.session.cleanup()
+                win.session = None
+                win.poll.stop()
+
     def test_crashing_child_offers_review_and_preserves_report_after_log_changes(self):
         import sys
         from forza_launcher import crash_report, game

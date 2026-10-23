@@ -9,6 +9,7 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
+from . import gamertag
 from .paths import IS_WINDOWS
 
 GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
@@ -280,6 +281,16 @@ add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "The G29, G920 and G923 have their own maps "
     "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
+# Pedals on their own USB device (patch 0128, #272): read with the wheel.
+add("wheel_pedal_device", "Pedal device", "Controls", "str", "",
+    "Pedals on their own USB device, read with the wheel. Empty finds known pedals (Simagic, "
+    "Fanatec, Thrustmaster T-LCM, Heusinkveld, Moza, Logitech) or a device named like pedals; a "
+    "device name as Bindings lists it picks one; none reads the wheel's own pedals. Binding a "
+    "pedal row by pressing the pedal sets it.", "Racing wheel")
+add("wheel_pedal_axes", "Pedal device axes", "Controls", "str", "",
+    "Axis numbers on the pedal device, e.g. throttle=0,brake=1,clutch=2. Empty uses known pedals' "
+    "layout, else detects them from where each axis rests when the game starts (pedals "
+    "released).", "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "The game's own wheel forces: the car's steering force, a centring spring that grows with "
     "speed, a light damper, and its rumble as a vibration. They fade out while you are not "
@@ -294,13 +305,20 @@ add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100
     "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
     "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 50,
     "The vibration from the game's engine motor (its right motor), 0 to 100 percent of the force "
-    "feedback strength. Lower it if the engine near the redline drowns out the road.",
+    "feedback strength. The game runs it at half or more whenever the car accelerates, so it "
+    "starts at 50; lower it if the engine drowns out the road.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 80,
     "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
     "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_style", "Rumble style", "Controls", "choice", "fine",
+    "How the game's rumble plays on the wheel's motor. Fine: the engine and the road each as a "
+    "light, quick vibration (about 70 and 40 Hz). Classic: one strong, slower vibration, as the "
+    "Xbox 360 wheel's rim motors felt; it shakes a force feedback wheel hard. A wheel without "
+    "room for the fine effects plays classic.", "Racing wheel",
+    choices=[("fine", "Fine"), ("classic", "Classic")], restart=True)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
 add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
     "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",
@@ -324,6 +342,16 @@ add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
 add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
     "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
     lo=0.1, hi=1, step=0.05)
+# A shifter on its own USB device (patch 0128, #272): read with the wheel.
+add("wheel_shifter_device", "Shifter device", "Controls", "str", "",
+    "A shifter on its own USB device, read with the wheel. Empty finds known shifters (Simagic "
+    "DS-8X, Fanatec ClubSport SQ, Thrustmaster TH8 RS, Moza HGP, Heusinkveld, Logitech) or a "
+    "device named like one (a TH8A); a device name as Bindings lists it picks one; none reads "
+    "the wheel's own buttons. Binding a gear row by pressing it on the shifter sets it.",
+    "Shifter and clutch", restart=True)
+add("wheel_shifter_device_buttons", "Shifter device buttons", "Controls", "str", "",
+    "Button numbers on the shifter device, e.g. 1=0,2=1,3=2,4=3,5=4,6=5,r=6 or up=..,down=.. "
+    "Empty uses a known shifter's layout.", "Shifter and clutch", restart=True)
 
 KEYBINDS = [
     ("a", "A", "Semicolon,Space"), ("b", "B", "Quote,Backspace"), ("x", "X", "L"),
@@ -386,7 +414,7 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
-    "Up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
+    "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
     "Identity", max_length=15)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
@@ -475,6 +503,8 @@ def defaults():
 def coerce(setting, value):
     """Make a value (from JSON, TOML or a widget) fit the setting's type, or the default."""
     try:
+        if setting.key == "gamertag":
+            return gamertag.clean_name(value)
         if setting.kind == "bool":
             return bool(value)
         if setting.kind in ("int", "fps"):

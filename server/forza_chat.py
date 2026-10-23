@@ -39,6 +39,7 @@ import unicodedata
 import time
 
 import forza_friends as friends
+import forza_limits as limits
 
 log = logging.getLogger("forza-live")
 
@@ -67,7 +68,9 @@ def clean(text):
     """The text as it is relayed: no control characters, one line, at most MAX_CHARS."""
     # Control and format characters (C0/C1, bidi overrides like U+202E, zero-width) become
     # spaces, so a message can't hide or reverse text in other players' overlays.
-    text = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") else c for c in text)
+    # Combining marks (Zalgo text) are dropped.
+    text = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") else c
+                   for c in text if unicodedata.category(c) not in ("Mn", "Me"))
     return " ".join(text.split())[:MAX_CHARS]
 
 
@@ -290,7 +293,7 @@ class Chat:
             self.notice(peer, to)
             return
         delivered = [p for p in to if not self.hides(p.xuid, peer.xuid)]
-        name = peer.name.encode()[:15]
+        name = limits.clean_gamertag(peer.name, peer.xuid).encode()
         msg = struct.pack(">BBQB", R_MESSAGE, channel, peer.xuid, len(name)) + name + text16(text)
         for p in delivered:
             self.server.send(p.addr, KIND, msg)

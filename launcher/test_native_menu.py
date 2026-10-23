@@ -273,6 +273,27 @@ class NativeMenuDistribution(unittest.TestCase):
             self.assertEqual((output / "project" / "tools" / name).read_bytes(),
                              (self.project / "tools" / name).read_bytes())
 
+    def test_linux_tar_keeps_package_name_after_staging_nested_resources(self):
+        import tarfile
+        package = runpy.run_path(str(HERE / "packaging" / "make_package.py"))
+        package["main"].__globals__["REPO"] = self.project
+        (self.project / "LICENSE").write_text("synthetic license")
+        logo = self.project / "docs" / "images" / "logo.png"
+        logo.parent.mkdir(parents=True)
+        logo.write_bytes(b"synthetic image")
+        frozen = self.root / "frozen"
+        frozen.mkdir()
+        (frozen / "forza-launcher").write_text("synthetic launcher")
+        output = self.root / "dist"
+        with mock.patch.object(sys, "argv", ["make_package.py", "--platform", "linux", "--tar",
+                                            "--pyinstaller-dist", str(frozen), "--out", str(output)]):
+            package["main"]()
+        archive = output / "ForzaHorizon1-ReImagined-linux-x86_64.tar.gz"
+        with tarfile.open(archive) as tar:
+            names = set(tar.getnames())
+        for resource in builder.NATIVE_MENU_FILES:
+            self.assertIn("ForzaHorizon1-ReImagined/project/tools/" + resource, names)
+
 
 if __name__ == "__main__":
     unittest.main()

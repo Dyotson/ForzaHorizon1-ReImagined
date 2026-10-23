@@ -413,6 +413,18 @@ The step refuses to run when `--user_data_root` or `--cache_root` is given twice
 launcher's own plus one in Advanced > extra arguments): the game then ignores its path
 options and uses its default folders, so the files would be written where it does not look.
 
+### Current build required (#295)
+
+A game built by an older launcher does not know `--shader_prebuild_only` or patch 0113 and
+exits at once. The step therefore asks `builder.build_status` (the Setup page's Build test:
+complete build whose id matches the project, title update and CPU target) and, unless it says
+"built", does not start the game: the card shows "Rebuild first" and "Rebuild the game first
+(Setup > Build): Prebuild shaders needs the current build." When the game still stops early,
+the launcher quotes error lines only from a `forza.log` written during that run (modification
+time); with no fresh log it says the game stopped right away without writing a log and that
+rebuilding usually fixes it, and it reports an unknown-option message from the game's console
+output the same way.
+
 ### Measurements
 
 RX 9060 XT, RADV (Mesa driver 0x6802001), 8 cores; benchmark lock held, no other game

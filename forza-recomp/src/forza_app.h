@@ -9,8 +9,10 @@
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/discord_presence.h"
+#include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
 #include "platform/graphics_menu.h"
+#include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
@@ -80,6 +82,7 @@ class ForzaApp : public rex::ReXApp {
     }
     graphics_ = config.graphics.get();
     ApplyForzaGpuCvarDefaults();
+    forza::benchmark::PrepareRuntime();
   }
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
@@ -89,6 +92,7 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
     forza::InstallFriendsKey();
+    cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
@@ -106,6 +110,7 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    cursor_idle_.reset();
     stall_watchdog_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
@@ -133,6 +138,7 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::benchmark::Initialize(user_data_root());
     forza::discord::Initialize();
 
     if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
@@ -174,8 +180,8 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(__APPLE__) || (defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4)
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    forza::benchmark::ConfigurePaths(paths);
 #ifdef __APPLE__
     const auto exe = rex::filesystem::GetExecutableFolder();
     if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
@@ -199,7 +205,6 @@ class ForzaApp : public rex::ReXApp {
     }
 #endif
   }
-#endif
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.
@@ -214,6 +219,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;

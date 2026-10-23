@@ -44,6 +44,7 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
 #include "../platform/discord_presence.h"
@@ -193,7 +194,7 @@ uint32_t XFriendsCreateEnumerator(uint8_t* base, uint32_t args) {
     uint8_t* item = e->AppendItem();
     std::memset(item, 0, kFriendSize);
     Store64(item, f.xuid);
-    std::memcpy(item + 8, f.gamertag.data(), std::min<size_t>(f.gamertag.size(), 15));
+    forza::StoreGamertag(item + 8, 16, f.gamertag);
     Store32(item + 0x18, f.state);
     std::memcpy(item + 0x1C, f.session, 8);  // session id
     if (f.state & kFriendPlaying) Store32(item + 0x24, kTitleId);
@@ -1110,7 +1111,7 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
       if (tag.empty()) {
         if (auto t = tags.find(xuid); t != tags.end()) tag = t->second;
       }
-      std::memcpy(row + 24, tag.data(), std::min<size_t>(tag.size(), 15));
+      forza::StoreGamertag(row + 24, 16, tag);
       if (got) {
         ++from_server;
         Store32(row + 8, got->rank);
@@ -1439,7 +1440,7 @@ void LiveStatsRows(const uint8_t* p, size_t n) {
       const size_t tag = std::min<size_t>(p[pos + 20], 15);
       pos += 21;
       if (pos + tag + 1 > n) return;
-      row.gamertag.assign(reinterpret_cast<const char*>(p + pos), tag);
+      row.gamertag = forza::SanitizeGamertag(std::string_view(reinterpret_cast<const char*>(p + pos), tag));
       const uint32_t columns = p[pos + tag];
       pos += tag + 1;
       for (uint32_t c = 0; c < columns; ++c) {

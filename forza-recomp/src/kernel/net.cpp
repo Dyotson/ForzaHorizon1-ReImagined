@@ -38,6 +38,7 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
 #include "live_connection.h"
@@ -1158,7 +1159,7 @@ class VNet {
           const size_t name_size = p[pos + 12];
           pos += 13;
           if (pos + name_size + 4 + 0x3C + 1 > n) return;
-          f.gamertag.assign(reinterpret_cast<const char*>(p + pos), name_size);
+          f.gamertag = forza::SanitizeGamertag(std::string_view(reinterpret_cast<const char*>(p + pos), name_size));
           pos += name_size;
           f.state = Load32(p + pos);
           std::memcpy(f.session, p + pos + 4, 0x3C);
