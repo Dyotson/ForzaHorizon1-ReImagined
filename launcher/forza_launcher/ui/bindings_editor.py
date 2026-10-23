@@ -426,9 +426,15 @@ class BindingsEditor(QWidget):
             and self.device.instance == instance
 
     def roles(self):
-        """instance -> "pedals", "shifter" or "other" for the devices read with a wheel (#272)."""
-        pick = bindings.pick_aux(self.devices, self.settings())
+        """instance -> "pedals", "shifter", "handbrake" or "other" for the devices read with a
+        wheel (#272, #303). A pedal or shifter device that is also the handbrake device keeps its
+        role."""
+        settings = self.settings()
+        pick = bindings.pick_aux(self.devices, settings)
         out = {self.devices[i].instance: "other" for i in pick.other}
+        handbrake = bindings.pick_handbrake(self.devices, settings)
+        if handbrake is not None:
+            out[self.devices[handbrake].instance] = "handbrake"
         for role in ("pedals", "shifter"):
             i = getattr(pick, role)
             if i is not None:
@@ -448,7 +454,7 @@ class BindingsEditor(QWidget):
 
     KINDS = {"wheel": "wheel", "controller": "controller", "unused": "not used by the game",
              "pedals": "pedals, read with the wheel", "shifter": "shifter, read with the wheel",
-             "other": "not used by the game"}
+             "handbrake": "handbrake, read with the wheel", "other": "not used by the game"}
 
     def label_picker(self):
         for i, d in enumerate(self.devices):
@@ -467,17 +473,23 @@ class BindingsEditor(QWidget):
             self.backend.watch([d.instance for d in self.extras()])
 
     def aux(self):
-        """{"pedals": AuxInfo, "shifter": AuxInfo} of the connected pedal and shifter devices."""
+        """{"pedals": AuxInfo, "shifter": AuxInfo, "handbrake": AuxInfo} of the connected pedal,
+        shifter and handbrake devices (the handbrake may be the pedal or shifter device)."""
         out = {}
         if self.kind() != "wheel":
             return out
+        def info(d):
+            axes, buttons, _ = self.backend.extra_counts(d.instance) \
+                if self.backend is not None and hasattr(self.backend, "extra_counts") else (0, 0, 0)
+            return bindings.AuxInfo(d.name, d.vid, d.pid, axes, buttons)
         roles = self.roles()
         for d in self.devices:
             role = roles.get(d.instance)
             if role in ("pedals", "shifter"):
-                axes, buttons, _ = self.backend.extra_counts(d.instance) \
-                    if self.backend is not None and hasattr(self.backend, "extra_counts") else (0, 0, 0)
-                out[role] = bindings.AuxInfo(d.name, d.vid, d.pid, axes, buttons)
+                out[role] = info(d)
+        handbrake = bindings.pick_handbrake(self.devices, self.settings())
+        if handbrake is not None and self.devices[handbrake].instance != self.device.instance:
+            out["handbrake"] = info(self.devices[handbrake])
         return out
 
     def parts(self):
@@ -588,8 +600,9 @@ class BindingsEditor(QWidget):
                 + (f"A {name} has its own defaults. " if name else
                    "Rows without a binding use what the game detects when it starts (keep the "
                    "pedals released then). ")
-                + "Pedals or a shifter on their own USB device bind here too: press them when "
-                  "a pedal or gear row asks. "
+                + "Pedals, a shifter or a handbrake on their own USB device bind here too: press "
+                  "them when a pedal, gear or handbrake row asks. The handbrake row takes a button "
+                  "and an axis, both at once. "
                 + "Changes apply the next time the game starts.")
         elif kind in ("pedals", "shifter"):
             what = "These pedals are" if kind == "pedals" else "This shifter is"
@@ -603,6 +616,10 @@ class BindingsEditor(QWidget):
                 "it: a button can work a trigger (a full press) and a trigger or stick direction a "
                 "button. These bindings belong to this controller model, so another controller "
                 "keeps its own. Changes apply the next time the game starts (SDL input backend).")
+        elif kind == "handbrake":
+            self.intro.setText(
+                "This handbrake is read together with the wheel: choose the wheel above and bind "
+                "its Handbrake row by pulling it. Its inputs show below.")
         elif kind == "other":
             self.intro.setText("The game does not use this device (a handbrake): it is read neither "
                                "as a wheel nor as its pedals or shifter.")
@@ -687,6 +704,8 @@ class BindingsEditor(QWidget):
             return f"Press the button, trigger or stick direction for {action.label}"
         if action.key == "steer":
             return "Turn the wheel to the right"
+        if bindings.is_handbrake_row(action):
+            return "Pull the handbrake or press the button for it"
         if action.kind == "axis":
             return f"Press the {action.label.lower()} pedal"
         return f"Press the button for {action.label}"
@@ -703,10 +722,14 @@ class BindingsEditor(QWidget):
             return
         controller = self.kind() == "controller"
         kind = "steer" if row.action.key == "steer" and not controller else row.action.kind
+        handbrake = not controller and bindings.is_handbrake_row(row.action)
+        if handbrake:
+            kind = "any"  # a button or an axis (#303)
         parts, snaps = [], [self.snap]
         baseline = self.snap
-        if not controller and (bindings.is_pedal_row(row.action) or bindings.is_gear_row(row.action)):
-            # Pedals and gears may be on their own USB device (#272).
+        if not controller and (bindings.is_pedal_row(row.action) or bindings.is_gear_row(row.action)
+                               or handbrake):
+            # Pedals, gears and a handbrake may be on their own USB device (#272, #303).
             parts = self.parts()
             baseline, snaps = self.read_parts(parts, self.snap)
         self.binding = (row, bindings.Detector(baseline, kind, controller),
@@ -732,6 +755,12 @@ class BindingsEditor(QWidget):
             found = dataclasses.replace(found, number=number)
             if part:
                 where = parts[part].name
+        if where and found.kind == "button" and bindings.is_handbrake_row(row.action):
+            # The driver reads only the wheel's buttons; on a handbrake device, its axis.
+            self.status.setText(f"{label_}: buttons on {where} are not read. Pull the handbrake "
+                                "(an axis) or press a button on the wheel.")
+            self.refresh()
+            return
         self.apply(self.changes_for(row.action, found, where))
         what = bindings.source_text(found.source, self.names()) if found.source else found.describe()
         self.status.setText(f"{label_}: {what}{' on ' + where if where else ''}.")
@@ -745,6 +774,13 @@ class BindingsEditor(QWidget):
         settings = self.settings()
         if found.kind == "source":
             return self.remap_changes(action, found.source)
+        if bindings.is_handbrake_row(action):
+            changes = bindings.set_handbrake_binding(settings, found.kind, found.number, device)
+            if found.kind == "axis":
+                full = 32767 if found.direction > 0 else -32768
+                invert, _ = bindings.pedal_calibration(found.rest, full, False)
+                changes["wheel_invert_handbrake"] = invert
+            return changes
         if device:
             changes = bindings.set_aux_binding(settings, action, device, found.number)
         else:
@@ -769,6 +805,8 @@ class BindingsEditor(QWidget):
         settings = self.settings()
         if self.kind() == "controller":
             changes = self.remap_changes(row.action, None)
+        elif bindings.is_handbrake_row(row.action):
+            changes = bindings.clear_handbrake(settings)
         elif bindings.row_device(row.action, settings, self.aux()) is not None:
             changes = bindings.set_aux_binding(settings, row.action, None, None)
         else:

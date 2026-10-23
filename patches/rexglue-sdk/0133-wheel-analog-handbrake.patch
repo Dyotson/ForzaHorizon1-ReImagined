@@ -1,0 +1,271 @@
+diff --git a/src/input/wheel/wheel_handbrake.h b/src/input/wheel/wheel_handbrake.h
+new file mode 100644
+index 0000000..b301a95
+--- /dev/null
++++ b/src/input/wheel/wheel_handbrake.h
+@@ -0,0 +1,92 @@
++/**
++ * @file        src/input/wheel/wheel_handbrake.h
++ * @brief       An analog handbrake (#303), without SDL: which device and axis it is read from and
++ *              how it reaches the game.
++ *
++ * FH1's wheel layouts (gamedb.slt WheelLayouts, all three) bind the Handbrake to the left stick up
++ * and down (LeftThumbUp, LeftThumbDown) as well as to a face button (B in layout 0), as they bind
++ * the clutch to the right stick Y: the Xbox 360 wheel's analog handbrake (a Fanatec shifter's
++ * handbrake mode). A control is the strongest of the inputs bound to it, each 0 to 1, and a stick
++ * direction is one of them (sub_82CBC118, sub_82CBAA78), so the handbrake axis goes to thumb_ly,
++ * pulled as up, and the handbrake button still presses B: both can be bound at once.
++ *
++ * The axis is on the wheel (wheel_axes handbrake=N: a handbrake plugged into the wheel base) or on
++ * a handbrake device (wheel_handbrake_device, its axis wheel_handbrake_axis): a known handbrake
++ * (wheel_devices.h, kAuxModels) or one named like one, or the device the setting names, which may
++ * also be the pedal or shifter device (Logitech's RS Shifter and Handbrake). An axis set in
++ * wheel_axes wins; a number past the wheel's axes (the launcher's 99) reads nothing, so it also
++ * turns a handbrake device off.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++#include <map>
++#include <string>
++#include <vector>
++
++#include "wheel_devices.h"
++
++namespace rex::input::wheel {
++
++enum class HandbrakeSource { kNone, kWheel, kDevice };
++
++struct HandbrakePlan {
++  HandbrakeSource source = HandbrakeSource::kNone;
++  int axis = -1;
++};
++
++// Where the handbrake axis is read: wheel_axes' "handbrake" (0 or more) on the wheel, else the
++// handbrake device's axis while one is connected, else nowhere.
++inline HandbrakePlan PlanHandbrake(const std::map<std::string, int>& wheel_axes,
++                                   bool device_connected, int device_axis) {
++  const auto it = wheel_axes.find("handbrake");
++  if (it != wheel_axes.end() && it->second >= 0) {
++    return {HandbrakeSource::kWheel, it->second};
++  }
++  if (device_connected && device_axis >= 0) {
++    return {HandbrakeSource::kDevice, device_axis};
++  }
++  return {};
++}
++
++// The handbrake device among the joysticks (wheel_handbrake_device): a named one (PickNamed), else
++// the first known handbrake or one named like one (AuxRole::kOther); -1 for none. It is never taken
++// as a wheel.
++inline int PickHandbrakeDevice(const std::vector<JoyInfo>& joys, const std::string& setting) {
++  switch (ParseDeviceChoice(setting)) {
++    case DeviceChoice::kNone:
++      return -1;
++    case DeviceChoice::kNamed:
++      return PickNamed(joys, setting);
++    case DeviceChoice::kAuto:
++      break;
++  }
++  for (int i = 0; i < static_cast<int>(joys.size()); i++) {
++    if (DetectAuxRole(joys[i].vid, joys[i].pid, joys[i].name) == AuxRole::kOther) {
++      return i;
++    }
++  }
++  return -1;
++}
++
++// A device's resting axes with the handbrake's taken out of pedal detection (DetectPedalAxes takes
++// an axis that rests at an end for a pedal): it reads as centred.
++inline std::vector<int16_t> RestWithout(const std::vector<int16_t>& rest, int axis) {
++  std::vector<int16_t> out = rest;
++  if (axis >= 0 && axis < static_cast<int>(out.size())) {
++    out[axis] = 0;
++  }
++  return out;
++}
++
++// thumb_ly for the handbrake pulled `h` (0 released, 1 full): up, the layouts' LeftThumbUp.
++inline int16_t HandbrakeThumb(float h) {
++  return static_cast<int16_t>(std::lround(std::clamp(h, 0.0f, 1.0f) * 32767.0f));
++}
++
++}  // namespace rex::input::wheel
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 020e3d9..7741fc9 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -36,6 +36,7 @@
+ 
+ #include "wheel_devices.h"
+ #include "wheel_gear_request.h"
++#include "wheel_handbrake.h"
+ #include "wheel_min_force.h"
+ #include "wheel_rumble.h"
+ 
+@@ -79,7 +80,8 @@ REXCVAR_DEFINE_DOUBLE(wheel_brake_curve, 1.0, "Input",
+ REXCVAR_DEFINE_STRING(wheel_axes, "", "Input",
+                       "Axis overrides, e.g. steer=0,throttle=2,brake=5,clutch=1 (empty: the "
+                       "built-in profile of a known wheel, else detected from where each axis "
+-                      "rests when the wheel is plugged in)");
++                      "rests when the wheel is plugged in); handbrake=3 reads an analog handbrake "
++                      "plugged into the wheel");
+ REXCVAR_DEFINE_STRING(wheel_buttons, "", "Input",
+                       "Button overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,"
+                       "rs=10,up=12,down=13,left=14,right=15 (SDL button numbers; -1 unmaps)");
+@@ -157,6 +159,16 @@ REXCVAR_DEFINE_BOOL(wheel_shifter_follow_slot, false, "Input",
+                     "H-pattern: the game takes the lever's slot whenever it sets the gear itself "
+                     "(race and event starts), as before #303; false: a gear engages only when the "
+                     "lever moves, so the paddles keep the gear they chose");
++REXCVAR_DEFINE_STRING(wheel_handbrake_device, "", "Input",
++                      "Analog handbrake on its own USB device: empty finds a known handbrake (or "
++                      "one named like one), a device name, SDL GUID or vid:pid picks one (also the "
++                      "pedal or shifter device), none reads none. wheel_axes handbrake=N reads one "
++                      "plugged into the wheel instead");
++REXCVAR_DEFINE_INT32(wheel_handbrake_axis, 0, "Input",
++                     "Axis number of the analog handbrake on the handbrake device")
++    .range(0, 99);
++REXCVAR_DEFINE_BOOL(wheel_invert_handbrake, false, "Input",
++                    "Flip the handbrake axis detected as released/pulled");
+ 
+ namespace rex::input::wheel {
+ 
+@@ -322,7 +334,9 @@ struct AuxDevice {
+ };
+ 
+ const char* AuxWhat(AuxRole role) {
+-  return role == AuxRole::kPedals ? "pedal device" : "shifter device";
++  return role == AuxRole::kPedals    ? "pedal device"
++         : role == AuxRole::kShifter ? "shifter device"
++                                     : "handbrake device";
+ }
+ 
+ void CloseAux(AuxDevice& d, const char* why) {
+@@ -474,7 +488,9 @@ bool IsWheelDevice(SDL_JoystickID jid) {
+          (ParseDeviceChoice(REXCVAR_GET(wheel_pedal_device)) == DeviceChoice::kNamed &&
+           DeviceMatch(REXCVAR_GET(wheel_pedal_device), j)) ||
+          (ParseDeviceChoice(REXCVAR_GET(wheel_shifter_device)) == DeviceChoice::kNamed &&
+-          DeviceMatch(REXCVAR_GET(wheel_shifter_device), j));
++          DeviceMatch(REXCVAR_GET(wheel_shifter_device), j)) ||
++         (ParseDeviceChoice(REXCVAR_GET(wheel_handbrake_device)) == DeviceChoice::kNamed &&
++          DeviceMatch(REXCVAR_GET(wheel_handbrake_device), j));
+ }
+ 
+ struct WheelInputDriver::Wheel {
+@@ -492,6 +508,7 @@ struct WheelInputDriver::Wheel {
+   // Pedals and shifter on their own USB devices (the first wheel only, wheel_devices.h).
+   AuxDevice pedals{AuxRole::kPedals};
+   AuxDevice shifter_device{AuxRole::kShifter};
++  AuxDevice handbrake_device{AuxRole::kOther};  // an analog handbrake (wheel_handbrake.h)
+   // The game's effect blocks (wheel_ff.h) as SDL effects, and the self-centring used for its
+   // spring on a wheel without a spring effect.
+   int game_fx[kFfMaxBlocks];
+@@ -570,17 +587,21 @@ void WheelInputDriver::RescanLocked() {
+                                       REXCVAR_GET(wheel_shifter_device));
+   const SDL_JoystickID pedal_jid = pick.pedals >= 0 ? ids[pick.pedals] : 0;
+   const SDL_JoystickID shifter_jid = pick.shifter >= 0 ? ids[pick.shifter] : 0;
++  // An analog handbrake on its own device (#303), which may also be the pedal or shifter device.
++  const int handbrake = PickHandbrakeDevice(JoyInfos(ids, ids ? count : 0),
++                                            REXCVAR_GET(wheel_handbrake_device));
++  const SDL_JoystickID handbrake_jid = handbrake >= 0 ? ids[handbrake] : 0;
+   std::vector<SDL_JoystickID> wanted;
+   for (int i = 0; ids && i < count; i++) {
+     const SDL_JoystickID jid = ids[i];
+-    const bool take = !pick.IsAux(i) && IsWheelDevice(jid);
++    const bool take = !pick.IsAux(i) && i != handbrake && IsWheelDevice(jid);
+     if (take) {
+       wanted.push_back(jid);
+     }
+   }
+   SDL_free(ids);
+   // A device named in the settings that is not there: said once until it comes.
+-  static std::string logged_missing[2];
++  static std::string logged_missing[3];
+   auto note_missing = [](int k, const char* key, const std::string& setting, bool found) {
+     if (ParseDeviceChoice(setting) == DeviceChoice::kNamed && !found &&
+         logged_missing[k] != setting) {
+@@ -592,6 +613,8 @@ void WheelInputDriver::RescanLocked() {
+   };
+   note_missing(0, "wheel_pedal_device", REXCVAR_GET(wheel_pedal_device), pedal_jid != 0);
+   note_missing(1, "wheel_shifter_device", REXCVAR_GET(wheel_shifter_device), shifter_jid != 0);
++  note_missing(2, "wheel_handbrake_device", REXCVAR_GET(wheel_handbrake_device),
++               handbrake_jid != 0);
+   if (wheels_.empty() && wanted.empty() && !logged_none_) {
+     logged_none_ = true;
+     REXLOG_INFO("Wheel: no wheel among {} SDL joystick(s)", count);
+@@ -616,9 +639,11 @@ void WheelInputDriver::RescanLocked() {
+   // pedals and shifter buttons count again until they are back.
+   for (size_t i = 0; i < wheels_.size(); i++) {
+     Wheel& w = *wheels_[i];
+-    for (AuxDevice* d : {&w.pedals, &w.shifter_device}) {
+-      const SDL_JoystickID want =
+-          i != 0 ? 0 : d->role == AuxRole::kPedals ? pedal_jid : shifter_jid;
++    for (AuxDevice* d : {&w.pedals, &w.shifter_device, &w.handbrake_device}) {
++      const SDL_JoystickID want = i != 0                         ? 0
++                                  : d->role == AuxRole::kPedals  ? pedal_jid
++                                  : d->role == AuxRole::kShifter ? shifter_jid
++                                                                 : handbrake_jid;
+       if (d->joy && d->jid != want) {
+         CloseAux(*d, want ? "replaced" : "removed: read from the wheel until it is back");
+       }
+@@ -700,6 +725,7 @@ void WheelInputDriver::OpenLocked(SDL_JoystickID jid) {
+ void WheelInputDriver::CloseLocked(Wheel& w) {
+   CloseAux(w.pedals, "closed with the wheel");
+   CloseAux(w.shifter_device, "closed with the wheel");
++  CloseAux(w.handbrake_device, "closed with the wheel");
+   if (w.haptic) {
+     SDL_StopHapticEffects(w.haptic);
+     SDL_CloseHaptic(w.haptic);
+@@ -1102,12 +1128,20 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+     }
+   }
+   const bool combined = REXCVAR_GET(wheel_pedals) == "combined";
++  // The analog handbrake's axis is no pedal (wheel_handbrake.h).
++  const HandbrakePlan hb = PlanHandbrake(axes, w.handbrake_device.joy != nullptr,
++                                         REXCVAR_GET(wheel_handbrake_axis));
++  const bool hb_on_pedals = hb.source == HandbrakeSource::kDevice && w.pedals.joy &&
++                            w.handbrake_device.jid == w.pedals.jid;
+   if (!w.prof) {
+-    DetectPedalAxes(pedal, from_wheel, steer, w.rest, combined);
++    DetectPedalAxes(pedal, from_wheel, steer,
++                    hb.source == HandbrakeSource::kWheel ? RestWithout(w.rest, hb.axis) : w.rest,
++                    combined);
+   }
+   int aux_pedal[3] = {-1, -1, -1};
+   if (src.Any() && w.pedals.joy) {
+-    PedalDeviceAxes(aux_pedal, src.from_aux, pedal_axes, w.pedals.model, w.pedals.rest, combined);
++    PedalDeviceAxes(aux_pedal, src.from_aux, pedal_axes, w.pedals.model,
++                    hb_on_pedals ? RestWithout(w.pedals.rest, hb.axis) : w.pedals.rest, combined);
+   }
+ 
+   // A pedal's axis on the device it reads: the wheel (whose known profile's pedals rest at the
+@@ -1170,6 +1204,16 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+   // directions to Clutch, and the game applies its own clutch deadzones.
+   const float clutch =
+       REXCVAR_GET(wheel_clutch) ? pressed(pedal_axis(2), REXCVAR_GET(wheel_invert_clutch)) : 0.0f;
++  // The analog handbrake: the 360 wheel's, on the left stick Y (wheel_handbrake.h).
++  float handbrake = 0.0f;
++  if (hb.source == HandbrakeSource::kWheel) {
++    handbrake = pressed({w.joy, hb.axis, w.num_axes, w.rest, w.armed, false},
++                        REXCVAR_GET(wheel_invert_handbrake));
++  } else if (hb.source == HandbrakeSource::kDevice) {
++    AuxDevice& d = w.handbrake_device;
++    handbrake = pressed({d.joy, hb.axis, d.num_axes, d.rest, d.armed, false},
++                        REXCVAR_GET(wheel_invert_handbrake));
++  }
+ 
+   float s = 0.0f;
+   if (steer >= 0 && steer < w.num_axes) {
+@@ -1246,6 +1290,7 @@ void WheelInputDriver::ComputeStateLocked(Wheel& w, X_INPUT_GAMEPAD* out) {
+   if (w.title_caps) {
+     out->thumb_rx = static_cast<int16_t>(gear);
+     out->thumb_ry = static_cast<int16_t>(std::lround(clutch * 32767.0f));
++    out->thumb_ly = HandbrakeThumb(handbrake);
+   }
+ }
+ 

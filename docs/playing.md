@@ -318,7 +318,7 @@ and where it rested: binding the steering to the right sets *Invert steering* if
 and a pedal's invert switch follows from where it rests), **Clear** unbinds it, **Reset to default** gives back
 the profile's or the detected input. Inputs that two rows share are listed in orange (a paddle on a shifter
 gear, for example: the shifter wins). Rows: steering, throttle, brake and clutch pedal; shift up and down (RB
-and LB, the paddles), clutch button (A), handbrake (B), Activate (X), Rewind (Y), camera (Back), pause
+and LB, the paddles), clutch button (A), handbrake (B, or an axis: below), Activate (X), Rewind (Y), camera (Back), pause
 (Start), the stick presses and the d-pad (the hat by default; a button bound to a direction replaces the hat's,
 and Clear turns the direction off, SDK patch 0127); gears 1 to 7, reverse and the sequential up and down of a
 shifter. With combined pedals (*Pedals: Combined*) one axis is both: the throttle row binds and clears it for
@@ -373,6 +373,22 @@ car and the bound paddle shifted up from 1st to 3rd. Not tested with a real whee
 and whether the launcher's axis and button numbers match the game's (the log's `Wheel:` lines). The launcher
 reads devices with SDL 2 and the game with SDL 3; on Linux both gave the same numbers and GUIDs.
 
+**Analog handbrake (#303).** The game's wheel layouts bind the handbrake to the left stick up and down as well as
+to B (gamedb.slt `WheelLayouts`, as the clutch is on the right stick Y): the Xbox 360 wheel's analog handbrake.
+The game takes the stronger of the two, and a stick direction is analog (0 to 1), so the driver sends a handbrake
+axis there (SDK patch 0133) and B still works. The **Handbrake** row in Bindings takes both: **Bind**, then pull
+the handbrake (an axis) or press a button on the wheel; binding one keeps the other, **Clear** unbinds both and
+**Reset to default** gives back B and a handbrake device found by itself. The axis is read from the wheel (a
+handbrake plugged into the wheel base: `wheel_axes` `handbrake=N`) or from a handbrake on its own USB device
+(`wheel_handbrake_device`, its axis `wheel_handbrake_axis`): a Simagic TB-1 or TB-RS, a Fanatec ClubSport
+Handbrake or a Thrustmaster TSS is found by its USB id, others by a name with "handbrake" in it, and Bindings
+sets the device when you pull it there (the picker lists it as *handbrake, read with the wheel*). A pedal set or
+shifter that carries the handbrake (Logitech's RS Shifter and Handbrake) is named in `wheel_handbrake_device`
+and keeps its pedals or gears. Buttons on a handbrake device are not read: in button mode, bind its axis or a
+wheel button. Where the handbrake rests is read when the game opens it, like a pedal (keep it released then);
+one that works backwards is fixed with *Invert handbrake*. Tested with a virtual TB-RS: from about 48 km/h in 1st
+with the throttle off, a handbrake a third of the way slowed the car by about 2 m/s², two thirds by 6, fully by 8.
+
 The settings these write (Settings, Controls, Racing wheel; the keys are the `forza.toml` names) can still be
 edited by hand:
 
@@ -387,7 +403,9 @@ edited by hand:
 | `wheel_pedal_device` | found | Pedals on their own USB device: empty finds a known pedal set or one named like pedals; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one; `none` reads the wheel's own pedals |
 | `wheel_pedal_axes` | by model or detected | Axis numbers on the pedal device, e.g. `throttle=2,brake=1,clutch=0`; a pedal set here reads the pedal device, one set in `wheel_axes` the wheel |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
-| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
+| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default. `handbrake=N`: an analog handbrake on the wheel (#303; 99: none, also no handbrake device) |
+| `wheel_handbrake_device` | found | An analog handbrake on its own USB device (#303): empty finds a known one or one named like a handbrake; a name, SDL GUID or `vid:pid` picks one (also the pedal or shifter device); `none` reads none |
+| `wheel_handbrake_axis`, `wheel_invert_handbrake` | 0, off | The handbrake's axis on the handbrake device; a handbrake found backwards |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
 | `wheel_ffb_min_strength` | 0 | Minimum steering force (#303): the game's steering forces weaker than this percentage of the full force are scaled up, stronger ones stay (launcher: Minimum force; 0 is off) |

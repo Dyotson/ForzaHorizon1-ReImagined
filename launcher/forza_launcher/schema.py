@@ -273,7 +273,8 @@ add("wheel_brake_curve", "Brake curve", "Controls", "float", 1.0,
 add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty uses the built-in profile of a "
     "known Logitech wheel (G25, G27, G29, G920, G923, Driving Force GT), else detects them from "
-    "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
+    "where each axis rests when the wheel is plugged in (pedals released). handbrake=3 reads an "
+    "analog handbrake plugged into the wheel (99: none).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
     "left=14,right=15. The hat is the d-pad unless a direction is set here (-1 turns it off). "
@@ -290,6 +291,17 @@ add("wheel_pedal_axes", "Pedal device axes", "Controls", "str", "",
     "Axis numbers on the pedal device, e.g. throttle=0,brake=1,clutch=2. Empty uses known pedals' "
     "layout, else detects them from where each axis rests when the game starts (pedals "
     "released).", "Racing wheel")
+# An analog handbrake (patch 0133, #303): the game's 360 wheel handbrake axis, next to the B button.
+add("wheel_handbrake_device", "Handbrake device", "Controls", "str", "",
+    "An analog handbrake on its own USB device, read with the wheel. Empty finds known handbrakes "
+    "(Simagic TB-1 and TB-RS, Fanatec ClubSport Handbrake, Thrustmaster TSS) or a device named "
+    "like one; a device name as Bindings lists it picks one (also the pedal or shifter device); "
+    "none reads none. Binding the Handbrake row by pulling the handbrake sets it.",
+    "Racing wheel")
+add("wheel_handbrake_axis", "Handbrake device axis", "Controls", "int", 0,
+    "The handbrake's axis number on the handbrake device.", "Racing wheel", lo=0, hi=99)
+add("wheel_invert_handbrake", "Invert handbrake", "Controls", "bool", False,
+    "Turn on when the analog handbrake works backwards.", "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "The game's own wheel forces: the car's steering force, a centring spring that grows with "
     "speed, a light damper, and its rumble as a vibration. They fade out while you are not "

@@ -182,7 +182,9 @@ class Bindings(unittest.TestCase):
         ch = b.set_row_on_wheel(s, ACT["gear2"], 13, AUX)
         self.assertEqual(ch, {"wheel_shifter_buttons": "2=13", "wheel_shifter_device": "none"})
         self.assertEqual(set(b.RESET_ALL_WHEEL), {"wheel_axes", "wheel_buttons",
-                                                  "wheel_shifter_buttons", *KEYS})
+                                                  "wheel_shifter_buttons", *KEYS,
+                                                  "wheel_handbrake_device", "wheel_handbrake_axis",
+                                                  "wheel_invert_handbrake"})
 
     def test_conflicts_per_device(self):
         # Button 0 is A on the wheel and reverse on the DS-8X: no conflict, other devices; gears 1

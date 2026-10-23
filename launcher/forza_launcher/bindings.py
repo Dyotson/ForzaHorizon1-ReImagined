@@ -1,8 +1,9 @@
 """Press-to-bind controls (#279): the bindings the Controls page edits, free of Qt and SDL.
 
 Wheels keep the SDK wheel driver's settings and formats (patches 0074, 0099, 0101):
-`wheel_axes` ("steer=0,throttle=2,..."), `wheel_buttons` ("a=0,b=1,..."), `wheel_shifter_buttons`
-("1=12,...,r=18" or "up=..,down=.."), plus the rotation, deadzone and invert switches. A field the
+`wheel_axes` ("steer=0,throttle=2,...", and "handbrake=3" for an analog handbrake, patch 0133),
+`wheel_buttons` ("a=0,b=1,..."), `wheel_shifter_buttons` ("1=12,...,r=18" or "up=..,down=.."),
+plus the rotation, deadzone and invert switches. A field the
 string leaves out keeps the driver's default, which this module ports (known Logitech wheels by
 vendor:product) so the editor can show it.
 
@@ -65,7 +66,8 @@ WHEEL_ACTIONS = [
     Action("rb", "Shift up (RB, right paddle)", "button", _W, "rb", "Buttons"),
     Action("lb", "Shift down (LB, left paddle)", "button", _W, "lb", "Buttons"),
     Action("a", "Clutch button (A)", "button", _W, "a", "Buttons"),
-    Action("b", "Handbrake (B)", "button", _W, "b", "Buttons"),
+    # A button (B) and an analog axis, both at once (#303): see the handbrake section below.
+    Action("b", "Handbrake (B, or an axis)", "button", _W, "b", "Buttons"),
     Action("x", "Activate / enter event (X)", "button", _W, "x", "Buttons"),
     Action("y", "Rewind (Y)", "button", _W, "y", "Buttons"),
     Action("back", "Change camera (Back)", "button", _W, "back", "Buttons"),
@@ -107,7 +109,7 @@ CONTROLLER_ACTIONS = [
     Action("right", "D-pad right (radio)", "button", _C, "right", "Menus and camera"),
 ]
 
-AXIS_ORDER = ("steer", "throttle", "brake", "clutch")
+AXIS_ORDER = ("steer", "throttle", "brake", "clutch", "handbrake")
 BUTTON_ORDER = ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs", "up", "down", "left", "right")
 SHIFTER_ORDER = ("1", "2", "3", "4", "5", "6", "7", "r", "up", "down")
 # An axis number past every wheel's axes: the driver reads no axis for it. Negative numbers mean
@@ -237,6 +239,11 @@ def wheel_conflicts(settings, wheel, aux=None):
             sequential = action.field in ("up", "down")
             if shifter == "off" or (shifter == "h") == sequential:
                 continue
+        if is_handbrake_row(action):
+            axis, device, _ = handbrake_axis(settings, aux)
+            if axis is not None:
+                where = f" on {device.name}" if device else ""
+                used.setdefault((where, "axis", axis), []).append(wheel_action_label(action, settings))
         device = row_device(action, settings, aux)
         n, _ = aux_binding(action, settings, device) if device else \
             wheel_binding(action, settings, wheel)
@@ -469,6 +476,8 @@ def aux_binding(action, settings, device):
 
 
 def wheel_binding_text(action, settings, wheel, aux=None):
+    if is_handbrake_row(action):
+        return handbrake_text(settings, wheel, aux)
     if not wheel_action_editable(action, settings):
         return "The throttle axis's other side (combined pedals)"
     device = row_device(action, settings, aux)
@@ -537,6 +546,8 @@ def set_row_on_wheel(settings, action, number, aux=None):
 
 def reset_row(settings, action):
     """A row back to the driver's default: off the wheel's and the device's settings."""
+    if is_handbrake_row(action):
+        return reset_handbrake(settings)
     out = set_wheel_binding(settings, action, "default")
     other = {"wheel_axes": "wheel_pedal_axes",
              "wheel_shifter_buttons": "wheel_shifter_device_buttons"}.get(action.setting)
@@ -550,7 +561,109 @@ def reset_row(settings, action):
 
 RESET_ALL_WHEEL = {"wheel_axes": "", "wheel_buttons": "", "wheel_shifter_buttons": "",
                    "wheel_pedal_device": "", "wheel_pedal_axes": "", "wheel_shifter_device": "",
-                   "wheel_shifter_device_buttons": ""}
+                   "wheel_shifter_device_buttons": "", "wheel_handbrake_device": "",
+                   "wheel_handbrake_axis": 0, "wheel_invert_handbrake": False}
+
+
+# --- the handbrake: a button and an analog axis (#303, patch 0133) ----------------------------
+# FH1's wheel layouts bind the Handbrake to B and to the left stick up and down, the Xbox 360
+# wheel's analog handbrake, and the game takes the stronger of them. The driver sends an axis
+# there: one on the wheel (`wheel_axes` handbrake=N, a handbrake plugged into the wheel base) or on
+# a handbrake device (`wheel_handbrake_device`: "" finds a known handbrake or one named like one, a
+# name, GUID or vid:pid picks one, which may also be the pedal or shifter device, "none" none; its
+# axis `wheel_handbrake_axis`). One set in wheel_axes wins; 99 there is "not bound" and turns a
+# handbrake device off too. The Handbrake row binds the button and the axis: binding one keeps the
+# other. This ports src/input/wheel/wheel_handbrake.h.
+def is_handbrake_row(action):
+    return action.setting == "wheel_buttons" and action.field == "b"
+
+
+def pick_handbrake(devices, settings):
+    """The index of the handbrake device among `devices` (DeviceInfo, SDL order), as the driver
+    picks it (PickHandbrakeDevice); None for none."""
+    setting = settings.get("wheel_handbrake_device", "")
+    choice = device_choice(setting)
+    if choice == "none":
+        return None
+    if choice == "named":
+        best, score = None, 0
+        for i, d in enumerate(devices):
+            m = device_match(setting, d)
+            s = m * 2 + (0 if d.sdl_wheel else 1) if m else 0
+            if s > score:
+                best, score = i, s
+        return best
+    return next((i for i, d in enumerate(devices) if detect_aux_role(d.vid, d.pid, d.name) == _O), None)
+
+
+def handbrake_axis(settings, aux=None):
+    """(axis number or None, the device it is on (an AuxInfo) or None for the wheel, is_default)."""
+    own = parse_kv(settings.get("wheel_axes", "")).get("handbrake", -1)
+    if own >= 0:
+        return (None if own >= NO_AXIS else own), None, False
+    device = (aux or {}).get("handbrake")
+    if device is None:
+        return None, None, True
+    try:
+        axis = int(settings.get("wheel_handbrake_axis", 0) or 0)
+    except (TypeError, ValueError):
+        axis = 0
+    named = device_choice(settings.get("wheel_handbrake_device", "")) == "named"
+    return (axis if 0 <= axis < NO_AXIS else None), device, not named and axis == 0
+
+
+def handbrake_text(settings, wheel, aux=None):
+    """The Handbrake row's value: its button and its axis, e.g. "Button 1 (default) + Axis 0 on
+    SIMAGIC TB-RS Handbrake"."""
+    button, default = wheel_binding(next(a for a in WHEEL_ACTIONS if is_handbrake_row(a)),
+                                    settings, wheel)
+    out = []
+    if button is not None:
+        out.append(f"Button {button}" + (" (default)" if default else ""))
+    axis, device, axis_default = handbrake_axis(settings, aux)
+    if axis is not None:
+        out.append(f"Axis {axis}" + (f" on {device.name}" if device else "")
+                   + (" (default)" if axis_default else ""))
+    return " + ".join(out) or "Not bound"
+
+
+def set_handbrake_binding(settings, kind, number, device_name=""):
+    """The settings changes binding the Handbrake row's button (kind "button", on the wheel) or its
+    axis (kind "axis", on the wheel, or on the device `device_name`, which becomes the handbrake
+    device); the other input stays."""
+    if kind == "button":
+        return set_wheel_binding(settings, next(a for a in WHEEL_ACTIONS if is_handbrake_row(a)),
+                                 number)
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    out = {}
+    if device_name:
+        axes.pop("handbrake", None)
+        out["wheel_handbrake_device"] = device_name
+        out["wheel_handbrake_axis"] = int(number)
+    else:
+        axes["handbrake"] = int(number)
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    return out
+
+
+def clear_handbrake(settings):
+    """No handbrake input at all: no button, and the axis "not bound" (a handbrake device too)."""
+    out = set_handbrake_binding(settings, "button", None)
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    axes["handbrake"] = NO_AXIS
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    return out
+
+
+def reset_handbrake(settings):
+    """The Handbrake row back to the driver's defaults: the wheel's B button and a handbrake device
+    found by itself."""
+    out = set_handbrake_binding(settings, "button", "default")
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    axes.pop("handbrake", None)
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    out.update(wheel_handbrake_device="", wheel_handbrake_axis=0, wheel_invert_handbrake=False)
+    return out
 
 
 @dataclass(frozen=True)
@@ -862,7 +975,8 @@ def rest_text(raw):
 
 class Detector:
     """Waits for the first input that changes from where it was when binding started. kind: a
-    wheel row's kind ("axis", "button"; "steer" takes a smaller turn) or, with controller, a
+    wheel row's kind ("axis", "button"; "steer" takes a smaller turn; "any" a button or an axis,
+    the handbrake) or, with controller, a
     controller target's ("button", "trigger", "stick"; the mapped gamepad inputs).
     Inputs held at the start count only after they were released."""
     def __init__(self, baseline, kind, controller=False, threshold=None):
@@ -876,20 +990,20 @@ class Detector:
     def feed(self, snap):
         if self.controller:
             return self._pad(snap)
-        if self.kind in ("axis", "steer"):
+        if self.kind in ("button", "any"):
+            for n, down in enumerate(snap.buttons):
+                held = n < len(self.base.buttons) and self.base.buttons[n]
+                if held and not down:
+                    self.released.add(n)
+                if down and (not held or n in self.released):
+                    return Detection("button", n)
+        if self.kind in ("axis", "steer", "any"):
             for n, raw in enumerate(snap.axes):
                 if n >= len(self.base.axes):
                     break
                 delta = norm(raw) - norm(self.base.axes[n])
                 if abs(delta) >= self.threshold:
                     return Detection("axis", n, 1 if delta > 0 else -1, self.base.axes[n])
-            return None
-        for n, down in enumerate(snap.buttons):
-            held = n < len(self.base.buttons) and self.base.buttons[n]
-            if held and not down:
-                self.released.add(n)
-            if down and (not held or n in self.released):
-                return Detection("button", n)
         return None
 
     def _pad(self, snap):
