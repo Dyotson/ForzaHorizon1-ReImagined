@@ -337,7 +337,14 @@ def extract(pkg, entry, outdir):
                     # runs start on a block boundary and chunks are whole blocks (but the last)
                     for i in range(0, len(chunk), pkg.BLOCK):
                         blk = chunk[i:i + pkg.BLOCK]
-                        if len(blk) == pkg.BLOCK and hashlib.sha1(blk).digest() != pkg.block_sha1(entry.blocks[fb]):
+                        if len(blk) < pkg.BLOCK:
+                            # STFS hashes the full stored block, including padding beyond
+                            # the file's declared end. Read that padding for verification
+                            # only; it must not be appended to the extracted file.
+                            blk += f.read(pkg.BLOCK - len(blk))
+                            if len(blk) != pkg.BLOCK:
+                                raise SystemExit(f"{entry.path}: short read")
+                        if hashlib.sha1(blk).digest() != pkg.block_sha1(entry.blocks[fb]):
                             bad.append(fb)
                         fb += 1
                 take -= len(chunk)
