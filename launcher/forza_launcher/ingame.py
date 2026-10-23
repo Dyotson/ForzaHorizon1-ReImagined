@@ -63,7 +63,7 @@ def translate(document, current, pc=None):
             if not isinstance(value, str) or not value.lstrip("-").isdigit():
                 raise ValueError(f"invalid {key}")
             number = int(value)
-            valid = ((key == "frame_rate" and (number == 30 or 60 <= number <= 240)) or
+            valid = ((key == "frame_rate" and (number in schema.LOW_FRAME_RATES or 60 <= number <= 240)) or
                      (key == "resolution_scale" and 1 <= number <= 8) or
                      (key == "anisotropic_override" and -1 <= number <= 5))
             if not valid:
