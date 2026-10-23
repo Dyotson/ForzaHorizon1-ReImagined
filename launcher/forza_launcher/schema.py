@@ -241,6 +241,12 @@ add("wheel_mode", "Racing wheel", "Controls", "choice", "auto",
     "Auto: a controller SDL reports as a wheel (or named like one) is used as the 360 racing "
     "wheel. On: every controller without a gamepad mapping counts as a wheel.", "Racing wheel",
     choices=[("auto", "Auto"), ("on", "On"), ("off", "Off")], restart=True)
+# The primary wheel (patch 0134, #306).
+add("wheel_device", "Wheel device", "Controls", "str", "",
+    "The wheel the first player drives with, and the one pedals, a shifter or a handbrake on their "
+    "own USB device are read with. Empty picks one with force feedback first (a wheel base before "
+    "a vJoy or button box); a device name as Bindings lists it (Use as the wheel), SDL GUID or "
+    "vid:pid picks that one, and makes it a wheel.", "Racing wheel", restart=True)
 add("wheel_rotation", "Wheel rotation (degrees)", "Controls", "int", 900,
     "Lock to lock, as set in the wheel's own driver.", "Racing wheel", lo=90, hi=2520, step=10)
 add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,

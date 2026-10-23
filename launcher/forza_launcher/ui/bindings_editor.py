@@ -347,6 +347,11 @@ class BindingsEditor(QWidget):
         self.picker.setMinimumWidth(260)
         self.picker.currentIndexChanged.connect(self.device_chosen)
         head.addWidget(self.picker)
+        # #306: which device is the wheel (the first player's; wheel_device).
+        self.use_wheel = QPushButton("Use as the wheel")
+        self.use_wheel.clicked.connect(self.toggle_wheel_device)
+        self.use_wheel.hide()
+        head.addWidget(self.use_wheel)
         lay.addLayout(head)
         self.intro = label("", "help")
         lay.addWidget(self.intro)
@@ -444,6 +449,8 @@ class BindingsEditor(QWidget):
     def kind_of(self, device):
         mode = self.settings().get("wheel_mode", "auto")
         if mode != "off":
+            if bindings.wheel_device_match(self.settings(), device):
+                return "wheel"  # wheel_device makes it the wheel (#306)
             role = self.roles().get(device.instance)
             if role:
                 return role
@@ -454,12 +461,50 @@ class BindingsEditor(QWidget):
 
     KINDS = {"wheel": "wheel", "controller": "controller", "unused": "not used by the game",
              "pedals": "pedals, read with the wheel", "shifter": "shifter, read with the wheel",
-             "handbrake": "handbrake, read with the wheel", "other": "not used by the game"}
+             "handbrake": "handbrake, read with the wheel", "other": "not used by the game",
+             "wheel2": "wheel, a second controller"}
+
+    def primary(self):
+        """The instance of the wheel the first player drives with (bindings.primary_wheel)."""
+        i = bindings.primary_wheel(self.devices, self.settings())
+        return self.devices[i].instance if i is not None else None
+
+    def kind_label(self, device, primary):
+        kind = self.kind_of(device)
+        if kind == "wheel" and device.instance != primary:
+            kind = "wheel2"
+        return f"{device.name} ({self.KINDS[kind]})"
 
     def label_picker(self):
+        primary = self.primary()
         for i, d in enumerate(self.devices):
             if i < self.picker.count():
-                self.picker.setItemText(i, f"{d.name} ({self.KINDS[self.kind_of(d)]})")
+                self.picker.setItemText(i, self.kind_label(d, primary))
+        self.update_wheel_choice(primary)
+
+    def update_wheel_choice(self, primary):
+        """"Use as the wheel" for a device that is not the wheel; on the one wheel_device names,
+        "Choose the wheel automatically" (#306)."""
+        d = self.device
+        named = d is not None and bindings.wheel_device_match(self.settings(), d) > 0
+        if named:
+            self.use_wheel.setText("Choose the wheel automatically")
+        else:
+            self.use_wheel.setText("Use as the wheel")
+        self.use_wheel.setVisible(d is not None and self.binding is None and not self.capture and (
+            named or (d.instance != primary and self.kind_of(d) != "controller")))
+
+    def toggle_wheel_device(self):
+        d = self.device
+        if d is None:
+            return
+        named = bindings.wheel_device_match(self.settings(), d) > 0
+        self.apply({"wheel_device": "" if named else d.name})
+        self.status.setText("The wheel is chosen automatically again." if named else
+                            f"{d.name} is the wheel: the first player drives with it, and pedals, "
+                            "a shifter or a handbrake on their own USB device are read with it. "
+                            "This applies the next time the game starts.")
+        self.show_device()
 
     def extras(self):
         """The other devices a wheel's pedal and gear rows can be bound on: every connected
@@ -526,13 +571,16 @@ class BindingsEditor(QWidget):
         self.devices = devices
         self.picker.blockSignals(True)
         self.picker.clear()
+        primary = self.primary()
         for d in devices:
-            self.picker.addItem(f"{d.name} ({self.KINDS[self.kind_of(d)]})", d.instance)
+            self.picker.addItem(self.kind_label(d, primary), d.instance)
         if not devices:
             self.picker.addItem("No controller or wheel connected", None)
         index = self.picker.findData(current) if current is not None else -1
-        if index < 0 and devices:  # a wheel first: it is what most people bind
-            index = next((i for i, d in enumerate(devices) if self.kind_of(d) == "wheel"), 0)
+        if index < 0 and devices:  # the wheel first: it is what most people bind
+            index = bindings.primary_wheel(devices, self.settings())
+            if index is None:
+                index = next((i for i, d in enumerate(devices) if self.kind_of(d) == "wheel"), 0)
         self.picker.setCurrentIndex(max(0, index))
         self.picker.blockSignals(False)
         self.device_chosen()

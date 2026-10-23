@@ -408,6 +408,51 @@ def pick_aux(devices, settings):
     return AuxPick(pedals, shifter, tuple(other))
 
 
+# --- which device is the wheel (#306, patch 0134) -------------------------------------------
+# Every wheel the driver takes is a controller of its own; the first is the first player's and the
+# one pedal, shifter and handbrake devices are read with. `wheel_device` names it (a name, GUID or
+# vid:pid; it then is a wheel even when it does not look like one); otherwise the driver puts wheels
+# with force feedback first, then those SDL lists as wheels, then SDL's order. A pedal, shifter or
+# handbrake device is no wheel unless wheel_device names it. This ports
+# src/input/wheel/wheel_primary.h; the launcher does not see force feedback without opening every
+# device, so `ffb` is optional (the game's log names the wheel it took: "Wheel: ... is the wheel").
+def wheel_device_match(settings, device):
+    setting = settings.get("wheel_device", "")
+    return device_match(setting, device) if device_choice(setting) == "named" else 0
+
+
+def wheel_like(device, settings):
+    """The driver's IsWheelDevice for one device, without the pedal and shifter settings."""
+    mode = settings.get("wheel_mode", "auto")
+    if mode == "off":
+        return False
+    return looks_like_wheel(device.name, device.vid, device.sdl_wheel) or \
+        (mode == "on" and not device.gamepad) or wheel_device_match(settings, device) > 0
+
+
+def wheel_order(devices, settings, ffb=None):
+    """Indices of the devices the driver takes as wheels, the wheel first (WheelOrder)."""
+    if settings.get("wheel_mode", "auto") == "off":
+        return []
+    pick = pick_aux(devices, settings)
+    handbrake = pick_handbrake(devices, settings)
+    ffb = ffb or {}
+    out = [i for i, d in enumerate(devices)
+           if wheel_device_match(settings, d) or
+           (wheel_like(d, settings) and not pick.is_aux(i) and i != handbrake)]
+    def key(i):
+        d = devices[i]
+        return (wheel_device_match(settings, d) * 4 + (2 if ffb.get(d.instance) else 0)
+                + (1 if d.sdl_wheel else 0))
+    return sorted(out, key=lambda i: -key(i))
+
+
+def primary_wheel(devices, settings, ffb=None):
+    """The index of the wheel the first player drives with, or None."""
+    order = wheel_order(devices, settings, ffb)
+    return order[0] if order else None
+
+
 @dataclass(frozen=True)
 class AuxInfo:
     """A connected pedal or shifter device as the bindings show it."""

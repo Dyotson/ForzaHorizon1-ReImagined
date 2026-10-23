@@ -373,6 +373,18 @@ car and the bound paddle shifted up from 1st to 3rd. Not tested with a real whee
 and whether the launcher's axis and button numbers match the game's (the log's `Wheel:` lines). The launcher
 reads devices with SDL 2 and the game with SDL 3; on Linux both gave the same numbers and GUIDs.
 
+**Which device is the wheel (#306).** Each wheel the driver takes is a controller of its own, and the first one
+is the first player's and the one pedals, a shifter or a handbrake on their own USB device are read with. With
+*Racing wheel: On* a virtual joystick (vJoy, which SimHub feeds with pedals, a handbrake and a shifter) or a button
+box that came before the wheel base in the system's order became the wheel. Now the wheel base comes first by
+itself: a device with force feedback, then one SDL lists as a wheel, then the system's order (SDK patch 0134); a
+pedal, shifter or handbrake device is never a wheel. To choose, pick the device under **Bindings** and press **Use
+as the wheel** (it sets `wheel_device`; on that device **Choose the wheel automatically** clears it): the picker
+calls it *wheel* and any other *wheel, a second controller*. The game's log names its choice: `Wheel: "..." is the
+wheel (the first player's; ...)`. Tested with a virtual vJoy (1234:bead, listed first) and a wheel base with force
+feedback: the base is the wheel; `wheel_device` set to the vJoy makes it the wheel, and as the pedal device it is
+no wheel at all.
+
 **Analog handbrake (#303).** The game's wheel layouts bind the handbrake to the left stick up and down as well as
 to B (gamedb.slt `WheelLayouts`, as the clutch is on the right stick Y): the Xbox 360 wheel's analog handbrake.
 The game takes the stronger of the two, and a stick direction is analog (0 to 1), so the driver sends a handbrake
@@ -395,6 +407,7 @@ edited by hand:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
+| `wheel_device` | found | The wheel (#306): the first player's, which pedal, shifter and handbrake devices are read with. Empty: one with force feedback first, then one SDL lists as a wheel, then the first; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one and makes it a wheel (launcher: Use as the wheel) |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
 | `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
