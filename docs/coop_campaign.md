@@ -464,7 +464,136 @@ About 8-12 days.
 - **M4:** the event prompt at its world marker instead of the chat command; the named CPU
   field if `AIFieldId` or a hook makes it possible.
 
+## Milestone 1 progress
+
+### Phase A (2026-10-23): the measurements and the race
+
+Measured with TU4 games against a local Forza Live server: two games (DriverA, DriverB:
+copies of one Xenia career save, each with its own `XDG_DATA_HOME`, headless gamescope at
+960x540 and 30 fps, `tools/autodrive.py` at the wheel), and a single-player game on scratch
+copies of a granted save. Addresses are TU4's.
+
+**Question 1, a launcher-granted save: it loads cleanly, and the game reads the result; the
+unlocks are the grant's job.** A copy of the TU4-converted save was given a result with the
+launcher's codecs (the study's offline grant): FR60 at 3rd (+160 XP at level 6, +18,000
+credits), and two of its `CareerEventUnlocks` rows were deleted. The game loaded it without a
+complaint, showed the credits (655,181) and wrote its profile again with the granted XP and
+credits intact (decoded after the game's own save). The same grant at 1st turned STATS > RACES
+"Festival events won" from 65 into 66 of 70
+(`screenshots/2026-10-23_coop_granted_save_festival_events_won.jpg`), so the game counts a
+`Career_EventResults` row it never wrote. The two deleted unlocks were still missing after
+loading the single-player world and the game's save: nothing re-runs the unlock checks at load.
+The flows unlock events after a race (`CTriggerEventUnlocks trigger_type="race_completion"`:
+`Rewards_EventUnlock` for the event, `sub_8253B988`, then the XP unlocks, `sub_82546080`: events
+with `0 < UnlockPointsReq <= XP` of styles 1, 2, 5 and 6 up to the wristband level, a street race
+only once its hub is unlocked, and the hubs with `EventHubs.UnlockPointsReq <= XP`, which add
+their `EventHubInitialEvents`), on popularity, and with the wristband upgrade. The wristband
+level is not the grant's job: the free roam reminds the player when the XP is past the next
+threshold and Race Central awards it (`race_central.xml`: `is_new_wristband_available` ->
+`CIsWristbandUpgradeAvailable`, then `CTriggerWristbandUpgrade`, which runs the level's unlocks
+and its reward). So a grant writes the result, the XP improvement, the payout and the race
+completion's unlocks, and leaves `Main/WristbandLevel` to the game.
+
+**Question 2, `X_PROPERTY_RELATIVE_SCORE`: the place among all cars.** The host's
+`XSessionWriteStats` gives each human `cars - place`: 7th of 8 wrote 1, 8th 0, 4th 4 (and in
+#12's four-human event 5th to 8th wrote 3, 2, 1, 0). So the server has every human's place
+among all cars from one write, without client code; each player's own `WriteRaceStatsEx`
+(`userFinishPosition`/`maxPlaces`) says the same, and the two cross-check. Its finished flag is
+not a finish: a player still at 3% of the route when the race ended was reported "place 8/8
+finished 1". `X_PROPERTY_SESSION_TEAM` was 6 and 7 for the two humans in every campaign round
+(they started 7th and 8th; in #12's random grid it was 3, 0, 6, 7): probably the starting slot.
+
+**Question 3, `AIFieldId`: no.** A round of FR50 sent with `AIFieldId="231"` (server test knob
+`--coop-ai-field`) had the usual CPU drivers, Terry Adams, James Alvord, Thomas Binder, Jed
+Brown, Adam Barr and Chris Ashton (`AIPlayers` 1, 3, 13, 20, 10, 6), all in Ford GT40s, not
+event 231's field (Hailey Harper in a GT40 MkII, Jon Orton in a 1965 Cooper S, Cliff Didcock in
+a 250 GTO, ...). In the code only the career event setup (`sub_825C54B0`) and an event preview
+screen (`sub_8285E898`) load `EventParticipants`; the online fill names low `AIPlayers` ids and
+picks cars with the bucket's filter. The named field would need a hook.
+
+**Question 4, the race settings online with two humans:**
+
+| Setting | Online | Evidence |
+| --- | --- | --- |
+| `GridOrderingType="PIWithPlayerLast"` | works | the two humans started 7th and 8th (`PLACE 7/8` and `8/8` at 00:00.000) although their cars had the highest PI (600 against 507-541) (`screenshots/2026-10-23_coop_street_race_start_players_7th_8th.jpg`) |
+| Time of day | works, as one of four | the online options name a time with `HorizonTimeOfDay` only: Dawn 07:47, Midday 12:00, Sunset 17:30, Midnight (`sub_82696DB8`); an event's `TimeOfDayStart` (seconds) goes to the nearest: FR05 (17:39) raced at sunset, FR50 (09:17) at dawn. The exact time would need the options' float written by a hook (TU4 options `+716`) |
+| `Checkpoint` (street race, preset 198) | runs | Plains Run loaded on both consoles with the PROGRESS HUD and the GPS route; not driven to its end (the test drivers left the road) |
+| Traffic (`UseTraffic="true"`) | not seen | no civilian car on the route's first stretch, and the race's car list held only the 8 racers. Street races are therefore off by default (`--coop-street` offers them) |
+
+Two side findings. The peer's race clock started about 12 s after the host's in all three
+rounds (its intro ran longer). With the event's own CPU skill the CPU drivers also get the
+event's rubberband: an `AISkills` row's `Rubberbands_id` (1 for the online rows 20/16/6, 4 to 10
+for events' 40-76) cuts their torque from 120-400 m ahead, so when both test drivers were stuck
+off the road the six CPU cars stopped about 770 m ahead and waited, as in single player.
+
+**Question 5, `EventRestrictions`: decoded.** `sub_826AE848` is the restriction list's
+`push_back`; the decoder is `sub_826A33B8` (called by `sub_826AEFF8` for each row of
+`SELECT * FROM EventRestrictions WHERE EventId=%d`), and it fills the same 76-byte restriction
+as the bucket XML's `CarRestrictions` (`sub_826A8E88`). `Value` is hex: a 40-bit mask in 5 bytes
+(byte k holds bits 8k-8k+7), then a big-endian value per set bit in bit order. Bits 0
+`CarClassId` (u8), 2/3 `PIMin`/`PIMax` (u16), 4/5 power, 6/7 weight (floats), 8/9
+`YearMin`/`YearMax` (u32), then pairs of a comparator (u8: 0 `Equals`, 1 `DoesNotEqual`) and an
+id: 10/11 body family, 12/13 car type, 14/15 region, 16/17 country, 18/19 make (u16 id), 20/21
+model family (u16), 22/23 model (u16), 24/25 drive type, 26/27 engine configuration, 28/29 engine
+placement, 30/31 cylinders, 32/33 aspiration, 35/36 family special; 37/38 `BaseCostMin`/`Max`
+(u32); bits 34 `AllowUpgrades` and 39 `RallyOnly` are flags without a value. A mask of 0 leaves
+the defaults (no restriction, upgrades allowed). The game's decoder stores bit 4 (PowerMin) in
+PowerMax's place; no event uses either. The masks in use set years, make, model family, body
+family, region, country, drive type and base cost (`server/forza_campaign.py`
+`decode_restrictions`, tested on them). The lobby matched the tickets: FR05 "Oakley Blitz",
+ticket "AWD ONLY", gave a lobby of B class AWD cars only (the players' S-class cars became
+GT-R R34s; CPU Delta S4, Impreza 22B, ML 63, Lancer Evo VI) and a garage of "3 available"; FR50
+"MUST BE 1960 - 1969" gave Shelby Daytonas and GT40s; FR24 "CAR VALUE < 15,000 Cr" decodes to
+`BaseCostMax="15000"`, FR38 "MUST BE ASTON" to `MakeId="2"`.
+
+**The Co-op Festival** (`server/forza_campaign.py`, `forza_live_server.py`, `forza_world.py`):
+
+- A playlist (hopper 4, after Playground Games) with the Horizon World's code: the same search
+  settings, drop-in, standby hosts and world events. The client runs it as a world
+  (`LiveIsWorldPlaylist`), and the server lists it only to games whose HELLO has feature 0x08,
+  so an older build never sees a playlist it would run as a plain free roam.
+- **Placement: friends only.** A search for it gets only the worlds whose host (or, after the
+  host left, its standby lead) is on the searcher's friends list (`forza_friends.py`, accepted
+  both ways); without one the searcher's game opens a world of its own, and its friends are
+  placed into that. The server knows nothing of parties; the friends list is the one
+  relationship it keeps, both players chose it, and a block already removes it.
+- **`/event <code or id>`** in World chat (`FR05` or `4`), from the world's host only and only
+  in a Co-op Festival world, starts the event through the world event path; everyone in the
+  world gets a notice like "DriverA starts FR05: B class, AWD, 7 CPU drivers, 2 laps, Sunset".
+  `/events [level|street]` lists the codes; any other "/" line is chat. The scheduled world
+  events (`--world-event-minutes`) leave co-op worlds alone.
+- **The round** (`campaign_xml`): the event's track, laps, preset (1 circuit, 2 point to point,
+  198 street with `--coop-street`), `TargetClass` and decoded restrictions in the bucket,
+  `NumberOfDrivers` CPU drivers (`MaxAIPlayers`, `MaxPlayers` one more), `PIWithPlayerLast`,
+  the nearest `HorizonTimeOfDay`, the crowd, `AIDifficulty="Medium"`.
+- **CPU skill** (client, `world_events.cpp`): the server sends every console of the world the
+  event's `AISkillMed`/`AITemperamentMed` rows (WORLD_EVENT op 2) until the round starts; in a
+  round on that event's track the host's AI difficulty is Medium and every CPU driver gets the
+  event's rows, through a hook on the level's lookup (`sub_82568BD8`, TU4 `sub_825DEDD8`) and on
+  every console at the round start and when its player goes in game. Seen on both consoles:
+  all six at `00000038 00000006` (FR05's 56/6, instead of Easy's 20/8) at the round start and in
+  game. The career adds each named driver's `AIPlayers` modifiers (nearly all 0); the online
+  fill's drivers get the event's rows as they are.
+- Tests: `server/test_forza_campaign.py` (the masks of the game's database, comparators, the
+  PowerMin quirk, the time of day, the round's XML, the listing, the playlist only for games
+  that have it, friends-only placement also after the host left, `/event` from the host and its
+  refusals, the CPU skill to every member, results named with the round, no scheduled events in
+  co-op worlds).
+
+**Demo** (two games, local server): A picked Co-op Festival and drove alone at once; B picked it
+and was placed into A's world (friends), JUMP IN. B's `/event FR05` was refused ("Only the
+world's host (DriverA) can start an event"); A's started it. The lobby (both games): CO-OP
+FESTIVAL CIRCUIT RACE, Gladstone Dirt Sprint, 2 laps, DriverA and DriverB in GT-R R34s, six CPU
+drivers in B class AWD cars, the 30 s wait
+(`screenshots/2026-10-23_coop_fr05_lobby_A_left_B_right.jpg`). Both raced to the end
+(`screenshots/2026-10-23_coop_fr05_both_finished.jpg`: "FINISHED 7TH", "FINISHED 8TH"), and the
+server logged `co-op: world 88f17d51eb63d38e campaign event 4 (FR05, asked by DriverA): DriverA
+place 7/8 finished 1` and the same for DriverB; then both were back in the world. FR50 (point to
+point, the 1960s, dawn) and the street race followed in the same world.
+
 ## Open questions (measure first)
+
+Questions 1-5 are answered under "Milestone 1 progress".
 
 1. Does the game load a launcher-granted save cleanly and show the event done? Does it re-run
    its unlock and wristband checks at load, or does the grant have to write them? (A
@@ -516,3 +645,9 @@ About 8-12 days.
 | XP / wristband tracker setup | | `sub_824BEF10` |
 | Online game object | `0x83305CC4` | `0x833F4A80` |
 | Online AI car pick (bucket filter) | `sub_828920F8` | |
+| `EventRestrictions.Value` decoder (hex -> restriction) | | `sub_826A33B8` (rows: `sub_826AEFF8`) |
+| `HorizonTimeOfDay` -> seconds after midnight | | `sub_82696DB8` |
+| A CPU driver's level and its `MPAIDifficultyMap` rows | `sub_82568BD8` | `sub_825DEDD8` |
+| Career CPU skill: `AISkill<level>` + `AIPlayers` modifiers | | `sub_826B0170` |
+| Race completion unlocks (`CTriggerEventUnlocks`) | | `sub_82A35AC8`: `sub_8253B988` (`Rewards_EventUnlock`), `sub_82546080` (by XP), `sub_82542D30` (hubs) |
+| Winnings split by `WinningsDistribution`, rounding | | `sub_8269BA50`, `sub_826984E8` |

@@ -78,13 +78,17 @@ void LiveMatchResults(const uint8_t* body, size_t size);
 // The playlist our last matchmaking search was for (Find Game: the hopper id; 0 before the
 // first search). Hooks use it to tell the Horizon World from other playlists.
 uint32_t LiveMatchPlaylist();
+// The playlists that run as a Horizon World (server/forza_live_lsp.py WORLD_HOPPERS): the
+// Horizon World (3) and the Co-op Festival (4, #309: the same world among friends, whose
+// host starts festival events with /event in World chat).
+inline bool LiveIsWorldPlaylist(uint32_t playlist) { return playlist == 3 || playlist == 4; }
 
 // Called about every second by the network thread: reports host changes of the
 // matchmaking session we joined (live_xmsg.cpp).
 void LiveMatchTick();
 
 // WORLD_EVENT from the server (net.cpp): an event waits for the Horizon World we host
-// (hooks/world_events.cpp takes it).
+// (hooks/world_events.cpp takes it), or a campaign round's CPU skill for our world.
 void LiveWorldEvent(const uint8_t* body, size_t size);
 
 // Head-to-head challenges (hooks/world_challenge.cpp, server/forza_challenge.py): send a
@@ -157,6 +161,9 @@ bool LiveInviteBusy();
 // --- Text chat (live_friends.cpp's Chat tab, server/forza_chat.py, #92) ---
 // A CHAT message to the server, and the server's (network thread).
 bool LiveSendChat(const std::vector<uint8_t>& body);
+// Sends a chat line as the Chat tab would (channel 1 session, 2 world) and shows it in the
+// tab: scripted tests (FORZA_AUTOPRESS_FIFO "SAY:<text>" says it in World chat).
+void LiveChatSay(uint8_t channel, const std::string& text);
 void LiveChatMessage(const uint8_t* body, size_t size);
 // The ids of the sessions we host or joined (live_xmsg.cpp): the "session" chat channel
 // reaches the players in one of them.

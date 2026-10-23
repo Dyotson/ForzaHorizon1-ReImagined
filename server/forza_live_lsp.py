@@ -70,7 +70,17 @@ WORLD_ROUND_MINUTES = 0.0
 # Find Game lists the first category's hoppers; "Horizon World" is its first row.
 WORLD_HOPPER = 3
 PLAYGROUND_HOPPER_ID = 2
-# Find Game lists the first category's hoppers only, so all three are in it.
+# The Co-op Festival (#309, forza_campaign.py): a Horizon World whose placement only finds
+# worlds led by a friend, where the host starts festival events with /event in WORLD chat.
+# Listed only to games that run it as a world (HELLO feature COOP_FEATURE: drop-in, events,
+# the campaign CPU drivers' skill); older games would run it as a plain free roam.
+COOP_HOPPER = 4
+COOP_FEATURE = 0x08
+WORLD_HOPPERS = (WORLD_HOPPER, COOP_HOPPER)
+# The features byte of the HELLO of the game signed in with a XUID (forza_live_server sets
+# it; None: unknown, as in tests without a server).
+client_features = None
+# Find Game lists the first category's hoppers only, so all of them are in it.
 HOPPER_CATEGORIES = [
     {"name": "Online", "description": "The shared world, races and playground games.",
      "hopperStartIndex": 0},
@@ -90,6 +100,12 @@ HOPPERS = [
      "playerCount": 8},
     {"id": PLAYGROUND_HOPPER_ID, "name": "Playground Games",
      "description": "Infected, Cat & Mouse and King, in turn.", "playerCount": 8},
+    # last, so the other rows keep their places
+    {"id": COOP_HOPPER, "name": "Co-op Festival",
+     "description": "A Horizon World with your friends only. Its host starts festival events "
+                    "for everyone in it: type /event FR05 in World chat (/events lists them).",
+     "playerCount": 8, "allowVoteToSkip": False, "allowVoteToKick": False,
+     "shouldVoteCarClassBeforeLaunch": False, "intermissionTimeMs": 5000},
 ]
 HOPPER_DEFAULTS = {"allowVoteToSkip": True, "allowVoteToKick": True,
                    "allowVoteToRebalance": False, "payoutModifier": 1.0, "hideTrueSkill": True,
@@ -120,7 +136,7 @@ WORLD_SEARCH_SETTINGS = dict(SEARCH_SETTINGS, minPlayersToLaunch=1, intermission
 
 def hopper_get_search_settings(xuid, body):
     params, _ = x.decode(x.HopperGetSearchSettings_Params, body)
-    settings = WORLD_SEARCH_SETTINGS if params["hopperId"] == WORLD_HOPPER else SEARCH_SETTINGS
+    settings = WORLD_SEARCH_SETTINGS if params["hopperId"] in WORLD_HOPPERS else SEARCH_SETTINGS
     return x.reply(x.HopperGetSearchSettings_Results, {"settings": settings})
 
 
@@ -282,6 +298,9 @@ def user_write_race_stats(xuid, body):
              "XP %d credits %d", xuid, stats["eventId"], stats["hopperId"],
              stats["userFinishPosition"], stats["maxPlaces"], stats["finished"],
              stats["userLevel"], stats["userXP"], stats["currentCredits"])
+    if stats["hopperId"] in WORLD_HOPPERS:
+        world.WORLDS.result(xuid, stats["userFinishPosition"], stats["maxPlaces"],
+                            stats["finished"])
     return x.reply()
 
 
@@ -322,9 +341,16 @@ def online_profile_update_all(xuid, body):
     return x.reply()
 
 
+def hoppers_for(xuid):
+    """The playlists offered to a player: the Co-op Festival only to games that have it."""
+    features = client_features(xuid) if client_features else None
+    coop = features is not None and features & COOP_FEATURE
+    return [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS if coop or h["id"] != COOP_HOPPER]
+
+
 def hopper_get_list(xuid, body):
     params, _ = x.decode(x.HopperGetList_Params, body)
-    hoppers = [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS]
+    hoppers = hoppers_for(xuid)
     return x.reply(x.HopperGetList_Results, {
         "hopperCategories": HOPPER_CATEGORIES[:params["maxCategoryResults"]],
         "hoppers": hoppers[:params["maxHopperResults"]]})
@@ -333,7 +359,7 @@ def hopper_get_list(xuid, body):
 def hopper_get_list_ex(xuid, body):
     """Title Update 4's GetList: the same playlists, none of them needing a DLC offer."""
     params, _ = x.decode(x.HopperGetList_Params, body)
-    hoppers = [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS]
+    hoppers = hoppers_for(xuid)
     return x.reply(x.HopperGetListEx_Results, {
         "hopperCategories": HOPPER_CATEGORIES[:params["maxCategoryResults"]],
         "hoppers": hoppers[:params["maxHopperResults"]]})
@@ -357,6 +383,7 @@ HOPPER_ROUNDS = {
     # Free roam (GameOptionPresets.xml's IDS_PresetFreeRoam) from the festival (track 1101,
     # the custom game's default starting location), no end condition.
     WORLD_HOPPER: [(7, 1101, 0)],
+    COOP_HOPPER: [(7, 1101, 0)],
 }
 
 # The car class of a round without one of its own: the Horizon World takes any class (-1,
@@ -427,11 +454,11 @@ def default_round_xml(hopper, round_num):
     players = next((h["playerCount"] for h in HOPPERS if h["id"] == hopper), 8)
     # A free roam (laps 0) has no end, or a timed one (Type "Time", seconds) in the world.
     end, time_attr = ("NumLaps", "") if laps else ("None", "")
-    if hopper == WORLD_HOPPER and WORLD_ROUND_MINUTES > 0:
+    if hopper in WORLD_HOPPERS and WORLD_ROUND_MINUTES > 0:
         end, time_attr = "Time", ' Time="%d"' % round(WORLD_ROUND_MINUTES * 60)
     return GAME_OPTIONS_XML.format(
         preset=preset, track=track, laps=max(laps, 1), players=players,
-        car_class=ANY_CAR_CLASS if hopper == WORLD_HOPPER else RACES_CAR_CLASS,
+        car_class=ANY_CAR_CLASS if hopper in WORLD_HOPPERS else RACES_CAR_CLASS,
         # the custom game's Free Roam preset sets it (GameOptionPresets.xml)
         filter=' GameTypeFilterType="FreeRoam"' if preset == 7 else "",
         end=end, time=time_attr).encode()
@@ -446,7 +473,7 @@ def hopper_get_game_options(server, xuid, body):
     params, _ = x.decode(x.HopperGetGameOptions_Params, body)
     hopper, round_num = params["hopperId"], params["roundNum"]
     path = os.path.join(DATA_DIR, "hoppers", "%d.xml" % hopper)
-    found = server.world_of(xuid) if hopper == WORLD_HOPPER and server else None
+    found = server.world_of(xuid) if hopper in WORLD_HOPPERS and server else None
     event_xml = world.WORLDS.next_round(*found) if found else None
     if event_xml:
         xml = event_xml
