@@ -989,12 +989,12 @@ on 4-7. Three configurations:
   thread gets about half a core: a "2x slower core". Unlike a slower clock it also delays every wakeup (the
   threads wait 3-50% of the time in the run queue), which a Deck does not.
 
-The Deck's GPU is not approximated: this RX 9060 XT spends 5.7-8.1 ms per benchmark frame (`drm-engine-gfx`,
-the lower figure at its higher clocks uncapped); the Deck's (8 RDNA 2 compute units at 1.6 GHz, 88 GB/s shared
-with the CPU) has an eighth to a sixteenth of its compute and under a third of its bandwidth, which puts a frame at
-roughly 20-90 ms of GPU time; the Deck's 50 ms frames sit inside that range. So the Deck is most likely bound by
-its GPU in the benchmark; the CPU time below matters there through the shared power budget (a busy CPU takes clock from the
-GPU) and in frames where the command processor runs long, and it is the bound on the laptops.
+The Deck's GPU is not approximated (this RX 9060 XT spends 5.7-8.1 ms per benchmark frame, `drm-engine-gfx`), and
+it is not what limits the Deck: Steam's performance overlay in the player's free-roam video (0.1.28) shows the GPU
+50-74% busy at 700-950 MHz, not boosting, while all eight CPU threads run at 35-45% at 3.35-3.5 GHz, also at 15-18
+fps. No single CPU thread is shown full either: the frame waits on the chain of a few busy threads (the command
+processor and the threads waiting for it), spread by the scheduler over the eight logical CPUs. So the command
+processor's time per frame, below, is the number that matters for the Deck and the 4-core laptops.
 
 Method: TU4 build with `-DFORZA_CPU_TARGET=x86-64-v3` (as the launcher builds it for these CPUs), the patched
 SDK of main plus the change below, the benchmark started directly (`benchmark-request.txt` in a scratch
@@ -1093,7 +1093,8 @@ another job on CPUs 0-3.)
   (`simde_mm_load_si128`, `simde_mm_shuffle_epi8`, `simde_mm_store_si128`) 12%, and the MXCSR flush-mode switches
   between VMX and FPU code (`enableFlushMode`/`disableFlushMode`, an `ldmxcsr` each) 0.5% of all samples and 1.3-1.4%
   of two worker threads.
-- A Deck log with Steam's performance overlay (GPU load and clocks) is still what tells GPU from CPU.
+- On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
+  with the performance overlay, would show how much of the gap they close.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
