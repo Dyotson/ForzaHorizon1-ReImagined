@@ -157,9 +157,17 @@ and isolates original controllers. `fh1_menu_components.h` supplies reusable sta
 activation, wrapping bumper selection, locked explanations and a variable-count
 viewport, plus a shared header layout. The workspace owns directional field
 selection and value stepping with release arming and bounded repeat; bumpers
-select tabs. Hidden native spinners are lifetime-owned data, not input authority. The header binds FH1's localized car
-manufacturer/model fields. A full-screen FH1 paper lies below the original
-native blur/footer layer; the single metric paper and foreground lie above it.
+select tabs. Hidden native spinners are lifetime-owned data, not input authority.
+The header binds FH1's localized manufacturer/model fields. Both the workspace
+and named library also retain the
+native `CLASS_SM` badge/`TEXT_PI` binding in the shared header, beside a CURRENT
+CLASS label. This reads the current loaded car through the PlayerBar's native
+`825E6518` / `825E6620` class/PI getters and the original class-badge renderer;
+it is refreshed once per second and rebound on reopen. FH1 supplies the class
+image/color and numeric display-PI conversion. No draft PI is invented, and
+these values are not compatibility gates or serialized into shared setup files.
+A missing/mismatched current-car readout is shown as unavailable. The full-screen
+paper lies below the original native blur/footer layer; the single metric paper and foreground lie above it.
 The original footer controller renders the actual controller atlas icons and
 owns label spacing. Native context/layer sorting (`82F1F2B0`) establishes draw
 order; changing presentation-registry order is insufficient. No missing `COMPONENT_TUNING_MENU` resource,

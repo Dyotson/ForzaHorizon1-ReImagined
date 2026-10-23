@@ -27,6 +27,9 @@ class Workspace {
   };
   std::array<Piece,22> pieces;
   Donor footer;uint32_t named_model=0;
+  uint32_t class_badge=0,class_controller=0;
+  bool class_ready=false;
+  std::chrono::steady_clock::time_point class_refresh{};
   uint32_t screen=0,engine=0,stock_root=0; uint8_t suppression=0,visibility=0;
   bool ready=false,failed=false;
   uint32_t parent_engine=0,parent_root=0; uint8_t parent_suppression=0,parent_visibility=0;
@@ -93,9 +96,20 @@ class Workspace {
     auto thumbs=Descendants(ui.base,tape,0x747ffda5);p.thumb=thumbs.empty()?0:thumbs.front();
     if(!p.paper||!p.ink||!p.track||!p.fill||!p.tick||!p.thumb || std::any_of(p.text.begin(),p.text.end(),[](auto n){return !n;}))return false;
     // Header uses the same native localized car-name fields as the pause car card.
-    if(&p==&pieces[20]){p.text[9]=Named(ui,Named(ui,d.root,"CAR_STATS"),"TEXT_MANUFACTURER");p.text[10]=Named(ui,Named(ui,d.root,"CAR_STATS"),"TEXT_CAR_NAME");}
+    if(&p==&pieces[20]){
+      const auto stats_root=Named(ui,d.root,"CAR_STATS");
+      p.text[9]=Named(ui,stats_root,"TEXT_MANUFACTURER");p.text[10]=Named(ui,stats_root,"TEXT_CAR_NAME");
+      class_controller=0;
+      class_badge=Named(ui,stats_root,"CLASS_SM");const auto pi=Named(ui,class_badge,"TEXT_PI");
+      const auto manager=d.Components(ui);const auto begin=manager?Read(ui.base,manager+0x28):0,end=manager?Read(ui.base,manager+0x2c):0;
+      if(begin&&end>=begin&&end-begin<=8192&&(end-begin)%8==0)
+        for(auto item=begin;item<end;item+=8){auto controller=Read(ui.base,item+4);
+          if(controller&&Read(ui.base,controller)==0x8207513C&&Read(ui.base,controller+0xA8)==pi)class_controller=controller;}
+      if(!class_badge||!pi||!class_controller)return false;
+    }
     Uncrop(ui,d,p.ink);Uncrop(ui,d,p.track);Uncrop(ui,d,p.fill);Uncrop(ui,d,p.tick);Uncrop(ui,d,p.thumb);
     auto retain=p.text;retain.insert(retain.end(),{p.paper,p.track,p.fill,p.tick,p.thumb});
+    if(&p==&pieces[20])retain.push_back(class_badge);
     return d.Isolate(ui,retain);
   }
   void Restore(Native& ui) {
@@ -119,6 +133,7 @@ public:
     if(parent_root){ui.Call(0x82FEB480,{parent_engine,parent_suppression});GuestPtr(ui.base,parent_root+0xfc)[0]=parent_visibility;parent_root=parent_engine=0;}
     for(auto& p:pieces){p.donor.Release(ui);p.text.clear();p.paper=p.ink=p.track=p.fill=p.tick=p.thumb=0;}
     screen=engine=0;ready=failed=false;cache.clear();footer=Donor{};named_model=0;
+    class_badge=class_controller=0;class_ready=false;class_refresh={};
   }
   void Tick(Native& ui,const View& view) {
     if(!screen||failed)return;
@@ -164,6 +179,16 @@ public:
       [&](unsigned i,Rect r,float z,const std::string& text,uint32_t color,unsigned align){label(header,i,r,z,text,color,align);},
       [&](Rect make,Rect name,float size){native_name(9,make,size);native_name(10,name,size);
         if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id);named_model=view.model_id;}});
+    const auto class_bounds=heading.CurrentClassBounds();
+    if(std::chrono::steady_clock::now()>=class_refresh){
+      class_ready=fh1_current_car::BindCurrentClass(ui,class_controller,view.model_id);
+      class_refresh=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+    }
+    label(header,11,{class_bounds.x,class_bounds.y,126,class_bounds.h},12,class_ready?"CURRENT CLASS":"CLASS UNAVAILABLE",0xc9c2c9);
+    ui.Show(header.donor.presentation,class_badge,class_ready);
+    if(class_ready){Normalize(ui,header.donor,class_badge);Depth(ui,header.donor,class_badge,-5);
+      Point(ui,header.donor,class_badge,class_bounds.x+176,class_bounds.y+class_bounds.h/2);
+      ui.Scale(header.donor.presentation,class_badge,.8f,.8f);ui.RotationZ(header.donor.presentation,class_badge,0);}
     view.tabs.Paint({44,120,1192,48},9,
       [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);},
       [&](size_t slot,unsigned index,Rect r,float size,const std::string& text,uint32_t color){label(pieces[slot],index,r,size,text,color,1);});

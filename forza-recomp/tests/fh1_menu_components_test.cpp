@@ -35,4 +35,8 @@ int main(){
   community.Paint({0,0,220,48},9,[](size_t,Rect,uint32_t){},
     [&](size_t,unsigned anchor,Rect,float,const std::string& text,uint32_t){if(anchor==1)unavailable=text;});
   Check(unavailable=="Coming soon","Unavailable tabs must expose their explicit availability label");
+  Header header;const auto badge=header.CurrentClassBounds();
+  header.Paint([](Rect,uint32_t){},[](unsigned,Rect,float,const std::string&,uint32_t,unsigned){},
+    [&](Rect make,Rect model,float){Check(make.x+make.w<=model.x&&model.x+model.w<badge.x,"Car class must not overlap manufacturer/model");});
+  Check(badge.x+badge.w<=header.bounds.x+header.bounds.w&&badge.y+badge.h<=header.bounds.y+header.bounds.h,"Class badge must remain inside header");
 }

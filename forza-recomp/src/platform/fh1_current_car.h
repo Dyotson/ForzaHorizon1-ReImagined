@@ -6,6 +6,7 @@
 #include "guest_memory.h"
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <string>
 
 namespace forza::fh1_current_car {
@@ -28,6 +29,34 @@ inline void WriteWord(uint8_t* base, uint32_t address, uint32_t value) {
   auto* p = GuestPtr(base, address);
   for (unsigned i = 0; i < 4; ++i)
     p[i] = uint8_t(value >> (24 - i * 8));
+}
+
+// PlayerBar's current-car class/PI path (828C7114..828C71A4). Preserve
+// CClassBadge's native image lookup, class color and display-PI conversion.
+// This reads the loaded car; it does not estimate an unsaved tune's PI.
+template <typename UI>
+bool BindCurrentClass(UI& ui,uint32_t controller,uint32_t expected_model) {
+#if FORZA_TU4
+  if(!controller||ReadWord(ui.base,controller)!=0x8207513C||!expected_model)return false;
+  const auto player=ui.Call(0x82915BE0,{});if(!player)return false;
+  const auto table=ReadWord(ui.base,player);
+  const auto getter=table?ReadWord(ui.base,table+0x78):0;
+  const auto car=getter?ui.Call(getter,{player}):0;
+  if(!car)return false;
+  const auto model=ui.Call(0x826BDCB0,{car});
+  if(!model||ReadWord(ui.base,model)!=expected_model)return false;
+  const auto car_class=ui.Call(0x825E6518,{car});
+  ui.Call(0x825E6620,{car});const double pi=ui.ctx.f1.f64;
+  if(!std::isfinite(pi)||pi<=0)return false;
+  // A donor has no owning garage datasource. Detach its borrowed pointer via
+  // the native setter before explicitly supplying current-car values.
+  ui.Call(ReadWord(ui.base,ReadWord(ui.base,controller)+0x64),{controller,0});
+  ui.ctx.f1.f64=pi;ui.Call(0x8288F2B0,{controller,0,car_class});
+  ui.Call(0x82891220,{controller});
+  return true;
+#else
+  return false;
+#endif
 }
 
 // The native PlayerBar's localized Data_Car / List_CarMake query (828C71A8).

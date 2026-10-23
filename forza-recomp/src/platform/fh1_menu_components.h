@@ -105,7 +105,8 @@ struct Header {
     paper(bounds,0x302b30u);
     label(0,{bounds.x+22,bounds.y+3,735,45},31.f,title,0xffffffu,0u);
     label(1,{bounds.x+bounds.w-420,bounds.y+10,396,33},18.f,status,changed?0xff83bfu:0xffffffu,2u);
-    identity({bounds.x+24,bounds.y+51,220,26},{bounds.x+244,bounds.y+51,bounds.w-520,26},15.f);
+    identity({bounds.x+24,bounds.y+51,220,26},{bounds.x+244,bounds.y+51,bounds.w-580,26},15.f);
   }
+  Rect CurrentClassBounds()const{return {bounds.x+bounds.w-260,bounds.y+51,236,26};}
 };
 }
