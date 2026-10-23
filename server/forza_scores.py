@@ -112,7 +112,11 @@ class Store:
             self.club = data.get("club1000", {})
             self.next_file = data.get("nextFileId", 1)
         except (OSError, ValueError):
-            pass
+            return
+        # Speeds kept before the limits (or by --no-trap-limits) would otherwise stay the
+        # players' bests and block their real ones (#349).
+        if drop_impossible_speeds(self.boards):
+            self.save()
 
     def save(self):
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -170,30 +174,68 @@ def better(new, old, bigger):
     return new > old if bigger else new < old
 
 
-def implausible_speed(xuid, kind, sbid, score):
-    """True when a speed on a trap or zone board is not to be kept: above SPEED_CEILING_KMH,
-    or above the trap's SPEED_TRAP_LIMIT_KMH with ENFORCE_TRAP_LIMITS. Both are logged."""
+def speed_over_limit(kind, sbid, score):
+    """(limit in km/h, enforced) when a speed on a trap or zone board is above a limit: the
+    trap's record (enforced with ENFORCE_TRAP_LIMITS) or SPEED_CEILING_KMH (always); else None."""
     if kind not in (SPEED_TRAP, SPEED_ZONE):
-        return False
+        return None
     kmh = score * 3.6
     if kmh > SPEED_CEILING_KMH:
-        log.warning("title: score %s: board %d type %d: %.1f km/h is more than any car "
-                    "reaches (%.0f km/h); not kept", public_id(xuid), sbid, kind, kmh,
-                    SPEED_CEILING_KMH)
-        return True
+        return SPEED_CEILING_KMH, True
     limit = SPEED_TRAP_LIMIT_KMH.get(sbid) if kind == SPEED_TRAP else None
     if limit is not None and round(kmh, 1) > limit:   # at the records' precision, 0.1 km/h
+        return limit, ENFORCE_TRAP_LIMITS
+    return None
+
+
+def implausible_speed(xuid, kind, sbid, score):
+    """True when a speed on a trap or zone board is not to be kept (logged either way)."""
+    over = speed_over_limit(kind, sbid, score)
+    if over is None:
+        return False
+    limit, enforced = over
+    if limit == SPEED_CEILING_KMH:
+        log.warning("title: score %s: board %d type %d: %.1f km/h is more than any car "
+                    "reaches (%.0f km/h); not kept", public_id(xuid), sbid, kind, score * 3.6,
+                    limit)
+    else:
         log.warning("title: score %s: speed trap %d: %.1f km/h is above the trap's record "
-                    "(%.1f km/h)%s", public_id(xuid), sbid, kmh, limit,
-                    "; not kept" if ENFORCE_TRAP_LIMITS else "")
-        return ENFORCE_TRAP_LIMITS
-    return False
+                    "(%.1f km/h)%s", public_id(xuid), sbid, score * 3.6, limit,
+                    "; not kept" if enforced else "")
+    return enforced
+
+
+def drop_impossible_speeds(boards):
+    """Removes the kept speeds a submission would not be kept with now (speed_over_limit,
+    enforced): the store's scores from before the limits, or kept with --no-trap-limits.
+    Logs each one; returns how many went."""
+    removed = 0
+    for key in list(boards):
+        try:
+            kind, sbid = (int(p) for p in key.split(":")[:2])
+        except ValueError:
+            continue
+        board = boards[key]
+        for xuid_hex, e in list(board.items()):
+            score = e.get("score", 0) if isinstance(e, dict) else 0
+            over = speed_over_limit(kind, sbid, score)
+            if over is None or not over[1]:
+                continue
+            del board[xuid_hex]
+            removed += 1
+            log.warning("title: scoreboards: removed %s's %.1f km/h from board %d type %d, above "
+                        "%.1f km/h", public_id(xuid_hex), score * 3.6, sbid, kind,
+                        over[0])
+        if not board:
+            del boards[key]
+    return removed
 
 
 def public_id(xuid):
-    """The player as the public leaderboards name them (forza_leaderboards.player_id)."""
+    """The player (an XUID, or a board's key for one) as the public leaderboards name them
+    (forza_leaderboards.player_id)."""
     import forza_leaderboards  # it imports this module
-    return forza_leaderboards.player_id("%016X" % xuid)
+    return forza_leaderboards.player_id(xuid if isinstance(xuid, str) else "%016X" % xuid)
 
 
 def submit(xuid, gamertag, kind, data, extra=None):

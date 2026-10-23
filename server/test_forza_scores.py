@@ -249,6 +249,63 @@ class BoardsTest(unittest.TestCase):
         self.submit(A_XUID, scores.SPEED_TRAP, 230, 44.0)
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 230)[0], [("DriverA", 44.0)])
 
+    def legacy_store(self, entries):
+        """Writes a scoreboards.json kept before the limits: {board key: {xuid: score}}."""
+        boards = {}
+        for key, rows in entries.items():
+            boards[key] = {}
+            for xuid, score in rows.items():
+                boards[key]["%016X" % xuid] = {
+                    "xuid": "%016X" % xuid, "gamertag": TAGS[xuid], "type": int(key[0]),
+                    "score": score, "submitted": 1, "scoreId": "00", "carId": AVENTADOR,
+                    "carClassId": 7, "carPerformanceIndex": 0.864, "ghostFileId": -1,
+                    "usedSTM": 0, "usedTCS": 0, "usedABS": 0, "usedAutoBrake": 0,
+                    "usedAutoShifting": 0, "usedClutch": 0}
+        with open(os.path.join(self.dir.name, "scoreboards.json"), "w") as f:
+            json.dump({"boards": boards}, f)
+
+    def test_impossible_speeds_dropped_at_restart(self):
+        # #349: A's fast-travel 439.9 km/h on Red Rock (board 206, record 233.0) was kept
+        # before the limits and, as A's best, blocked every real result of A's there.
+        self.legacy_store({"1:206:0": {A_XUID: 122.2, B_XUID: 55.0},   # 439.9 / 198 km/h
+                           "1:218:0": {A_XUID: 121.0},                 # I-70 435.6: a real one
+                           "2:101:0": {C_XUID: 140.0}})                # zone, 504 km/h
+        import forza_leaderboards
+        scores.configure(self.dir.name)
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            got = self.rows(C_XUID, scores.SPEED_TRAP, 206)[0]
+        self.assertEqual(got, [("DriverB", 55.0)])
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("removed %s's 439.9 km/h from board 206 type 1, above 233.0 km/h"
+                      % forza_leaderboards.player_id("%016X" % A_XUID), logs.output[0])
+        self.assertIn("from board 101 type 2, above 470.0 km/h", logs.output[1])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverA", 121.0)])
+        self.assertEqual(self.rows(A_XUID, scores.SPEED_ZONE, 101)[0], [])
+        # The cleaned store was saved: another restart removes (and logs) nothing.
+        with open(os.path.join(self.dir.name, "scoreboards.json")) as f:
+            kept = json.load(f)["boards"]
+        self.assertEqual(sorted(kept), ["1:206:0", "1:218:0"])
+        self.assertNotIn("%016X" % A_XUID, kept["1:206:0"])
+        scores.configure(self.dir.name)
+        with self.assertNoLogs("forza-live", "WARNING"):
+            scores.STORE.load()
+        # A's real 216 km/h is now A's best and shows.
+        self.submit(A_XUID, scores.SPEED_TRAP, 206, 60.0)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0],
+                         [("DriverA", 60.0), ("DriverB", 55.0)])
+
+    def test_no_cleanup_with_trap_limits_off(self):
+        # --no-trap-limits: speeds above a trap's record stay; the 470 km/h ceiling still goes.
+        self.legacy_store({"1:206:0": {A_XUID: 122.2}, "1:299:0": {B_XUID: 140.0}})
+        scores.ENFORCE_TRAP_LIMITS = False
+        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", True)
+        scores.configure(self.dir.name)
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            scores.STORE.load()
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("from board 299 type 1, above 470.0 km/h", logs.output[0])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
+
     def test_board_limit(self):
         old = scores.MAX_BOARDS
         scores.MAX_BOARDS = 3

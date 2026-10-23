@@ -392,7 +392,11 @@ charts on cyberscore.me.uk (charts 230405-230426), with no margin, compared at 0
 Such a score is logged with the player's public leaderboard id ("speed trap N: ... km/h is
 above the trap's record (... km/h); not kept"). `--no-trap-limits` (tests, local servers)
 only logs them. Speed zones and any other trap board keep at most 470 km/h, always
-enforced ("... is more than any car reaches (470 km/h); not kept"). A road-layout model of
+enforced ("... is more than any car reaches (470 km/h); not kept"). Scores kept before
+(a player's impossible best would block every slower real one) go when the server loads
+`scoreboards.json`: entries above their trap's record (not with `--no-trap-limits`) or
+above 470 km/h are removed, each logged once ("scoreboards: removed <public id>'s ... km/h
+from board N type T, above ... km/h"), and the cleaned file is saved. A road-layout model of
 each trap's reachable speed (corners, straights, grades, generous grip) was tried first and
 dropped: it was not validated in the game and ordinary players beat it on corner-limited
 traps (175-200 km/h on Sth Rt. 38, board 210, where it said 132).
