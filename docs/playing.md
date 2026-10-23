@@ -228,7 +228,7 @@ the physical pad or wheel last used, including when keyboard emulation keeps pla
 Keyboard-only play and unplugging an idle spare controller do not trigger it. Menus, loading,
 rewind, text/invite/friends dialogs and benchmark input do not request another pause.
 Online sessions keep the game's usual pause behavior: opening the menu does not stop other players.
-Controller detection requires SDK patch 0138; an older runtime logs a warning once and still supports
+Controller detection requires SDK patch 0148; an older runtime logs a warning once and still supports
 focus auto-pause.
 
 Validation (Windows x64, 2026-10-23): `tools/tests/auto-pause` runs the event policy,

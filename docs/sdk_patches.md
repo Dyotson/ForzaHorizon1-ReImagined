@@ -49,7 +49,8 @@ project's alone):
 | 0135 | Racing wheels: Thrustmaster wheels by id, and axes that read 0 at start (#308) | Built-in axes and buttons for the Thrustmaster TMX (044f:b67f), TX (b669), TS-XW (b692), TS-PC Racer (b689), T300 RS (b66e), T150 (b677) and T-GT (b684) (`src/input/wheel/wheel_thrustmaster.h`, `kThrustmasterModels`, no SDL), from Project Motor Racing's device maps ([Pitwall](https://github.com/Apkallu-Industries/Pitwall) `PMR/shared/inputDevices/Thrustmaster_*.xml`, commit 01acf41: the product ids, the HID usage of steering X, brake Y, throttle Rz and clutch Slider, and 0-based HID buttons). SDL numbers axes in HID usage order (Windows DirectInput and Linux evdev alike), so these are SDL axes 0 to 3 (the T-GT, with eight axes: 0, 1, 5, 6); the map applies only with that axis count. The paddles (buttons 0 and 1) are LB and RB; A B X Y, Back, Start and the stick presses by model (`wheel_buttons` over them). Where the pedals rest is read, not assumed. A known Thrustmaster is a wheel whatever its name. Any wheel whose axes all read exactly 0 when opened (no report yet) has its rest read from its first report (`RestPending`, `RestArrived`; the log says so). The T248 is left out: hid-tmff2's report descriptor (commit d890a93) marks its axes as guesses. Tests: `forza-recomp/tests/wheel_thrustmaster_test.cpp` (also in CI), `wheel_tmx_probe.cpp` (a uinput "44F B67F" with every axis at 0 until its first report: rest read then, steering X, throttle Rz, brake Y, clutch slider, paddles LB/RB, A 4, B 8), `launcher/test_wheel_thrustmaster.py` (the launcher's table matches). No public header changes | #308: a TMX on Windows (no name, "44F B67F") read 0 on all four axes when the game opened it, so detection found no pedal and the steering needed about 90 degrees before anything happened. [Playing](playing.md#racing-wheels-issue-4) |
 | 0136 | Racing wheels: effects the wheel refuses (#308) | The game's effects are created on SDL's steering axis, else as Cartesian X, else polar east (all a force from the east, pulling left when positive); the first that works is used for the wheel's later effects. A type refused in every direction (`FfRejections`) is logged once with SDL's reason and not created again until the game resets its force feedback (no effect block defined, `FfNothingDefined`) or the wheel is reopened; a refused spring falls back to the wheel's autocentre where it has one. `src/input/wheel/wheel_ff_reject.h` (no SDL; `forza-recomp/tests/wheel_ff_reject_test.cpp`, also in CI); `wheel_tmx_probe.cpp`: a uinput wheel refusing constant forces gets three tries (one per direction) and one warning over 300 updates, the spring still plays, and after a reset three more tries. No public header changes | #308: a TMX on Windows refused the constant force ("Haptic error Unable to create effect") and the driver created it again every frame: 82,000 warnings for it in one log, 4,000 for the spring and 400 for the damper. [Playing](playing.md#racing-wheels-issue-4) |
 | 0137 | Racing wheels: saved vJoy device names across SDL backends (#306) | The saved `vJoy Device` selector also matches USB id `1234:bead`, whose SDL3 Windows name in the report is `Shaul Eizikovich vJoy - Virtual Joystick`. This preserves auxiliary pedal, shifter and handbrake selections made with the launcher's SDL2 name. Other names, GUIDs, USB ids and unknown devices keep their matching rules. The launcher uses the same alias. Native and launcher regression tests cover selection and unrelated-device rejection | #306 follow-up: the log marks all three `vJoy Device` selectors disconnected while enumerating the virtual joystick under its longer product name. This fixes that demonstrated mismatch; physical SimHub input and the input graph still need the reporter's confirmation |
-| 0138 | Active controller disconnect sequence (#328) | Adds an optional C export `ForzaInputDisconnectSequence(user_mask)` counting removal of the last active physical device for each selected guest user. Synthetic keyboard/NOP devices and idle spare devices do not count; the existing active-device tracker determines which device was in use. Atomic counters require no public header or class layout change. `controller_disconnect_probe.cpp` exercises real SDK enumeration and assignment with a fixture driver | Keyboard emulation keeps the merged user connected after a pad or wheel is unplugged, so merged connection status cannot drive the optional auto-pause setting. Older SDKs keep focus auto-pause and warn once if disconnect detection is requested |
+| 0138 | Vulkan memory on integrated GPUs (#268) | The log names the memory heaps (size, budget) at start. On an integrated GPU with a small carve-out (not discrete, device-local heaps at most half the size of the system memory heap; RADV's APUs, which report two thirds of the shared memory as device-local, are left out) new memory goes to the system heap instead of overfilling a device-local heap. Each device-local heap is checked against its own budget (`VK_EXT_memory_budget`, read at every frame end and after a trim, plus what was allocated since), plain device-local types first, then host-visible device-local ones (AMD's Windows driver splits a Vega APU's 512 MB into two 256 MB heaps): textures go to a heap while its use stays under 80 % of its budget, counting the texture allocator's next block (an eighth of a heap of up to 1 GB) and taking free room in its existing blocks first; render target images and sparse guest memory and scaled-resolve pages under 95 %. Past that, a write-combined type of the system heap the resource accepts, then a cached one, then the full device-local heaps. 0112 then trims render targets there when a device-local heap passes its whole budget, the system heap reaches `vulkan_render_target_trim_percent`, or render targets in system memory pass 512 MB or an eighth of the system budget (the #241 growth); elsewhere 0112's rule is unchanged. A texture, render target or sparse page that no memory type takes is logged once per kind with its size, the types it accepts and both heaps' use; later ones are counted in a summary (at most every 60 s), which on integrated GPUs also lists the use per device-local heap and what is in system memory. `vulkan_integrated_memory_spill` (default on) switches the placement off; the hidden test setting `vulkan_device_local_budget_mb` caps the budget the code sees (0112's too, scaled per heap) and applies the placement on any GPU. Discrete GPUs place memory as before. Policy in `src/graphics/vulkan/fh1_memory_placement.h`, `tools/test_vulkan_memory_placement.cpp` and `tools/test_render_target_trim.cpp` (Linux SDK CI job) | A Ryzen 7 7730U laptop (Vega, Windows) has a 486 MB device-local budget (a 512 MB BIOS carve-out it cannot change) and the game used about 1 GB of device-local memory in free roam: black world, cutscene, menu and map textures, one driver timeout (device lost), and 0112 freeing render targets every 15 s without getting under the budget |
+| 0148 | Active controller disconnect sequence (#328) | Adds an optional C export `ForzaInputDisconnectSequence(user_mask)` counting removal of the last active physical device for each selected guest user. Synthetic keyboard/NOP devices and idle spare devices do not count; the existing active-device tracker determines which device was in use. Atomic counters require no public header or class layout change. `controller_disconnect_probe.cpp` exercises real SDK enumeration and assignment with a fixture driver | Keyboard emulation keeps the merged user connected after a pad or wheel is unplugged, so merged connection status cannot drive the optional auto-pause setting. Older SDKs keep focus auto-pause and warn once if disconnect detection is requested |
 
 0037 is in `librexruntime.so`, so the overlay carries a patched runtime (as for 0028).
 Without it the game falls back on its own: `src/hooks/frame_time.cpp` reads the setting's
@@ -427,6 +428,52 @@ Runs with the patch on the same save (scratch profiles):
   editor; loading the WRX STI from Car Select reached 15.0 of 15.4 GB and trimmed 100 -> 12
   render targets (12.7 GB -> 1.4 GB), 5.1 GB after. A decal saved on the WRX then wrote a
   correct picture over the broken one from the player's save.
+
+0138 places Vulkan memory on integrated GPUs (#268). An APU's device-local heap is a carve-out
+of system RAM and its other heap the rest of RAM, which the GPU reads about as fast (write-combined,
+not snooped), so moving memory there costs little; overfilling the carve-out makes a Windows driver
+page device-local memory in and out. The player's log (Ryzen 7 7730U, Windows, 1080p, scale 1, 20 fps)
+had no failed allocation, only 0112's trims: 18 -> 4 render targets at the title with 440 of 486 MB used,
+then 1017-1192 of 486 MB in free roam with a trim every 15 s. A failed texture allocation used to be
+logged at trace level only, so a black texture left no trace.
+
+Reproduced on the RX 9060 XT (RADV, 16 GB) with `--vulkan_device_local_budget_mb=486`, TU4, a copy of
+the Xenia save, headless gamescope 1920x1080, `--resolution=1080p`, scale 1, 30 fps, free roam for
+2.5 minutes with `tools/autodrive.py` following the traffic, then the map:
+- Placement off (`--vulkan_integrated_memory_spill=false`, the old behaviour against the capped
+  budget): 18 -> 4 render targets (270 -> 48 MB) at the title with 459 of 486 MB used, then 1055 of
+  486 MB on reaching free roam and 820-951 MB while driving: 10 trims in 4 minutes, each 23-38 -> 7-8
+  render targets, the pattern of the player's log.
+- Placement on (two runs): the first texture, render target and guest memory page went to system
+  memory at 452-460 MB; device-local use stayed at 467-468 of 486 MB for the rest of the run (render
+  targets 271 MB, guest memory 72 MB, textures 32 MB of it), no trim, no failed allocation. In system
+  memory at the end: 1600-2000 textures (150-175 MB), 20 render targets (269 MB), 41-43 guest memory
+  ranges (170 MB). The frames and the map are the same as with placement off.
+
+This GPU's 16 GB never page, so the black textures themselves do not appear here; only a real APU on
+Windows shows whether they and the driver timeout are gone.
+
+Review follow-up (unit tests only, no game runs). Windows reports for Vega APUs on the 1.3.260
+driver (vulkan.gpuinfo.org, devices 0x1638 and 0x164C) show the carve-out as two heaps: 256 MB
+device-local (type DL) and 256 MB device-local and host-visible (type DL|HV|HC), each with a budget
+of 95 % of its size, 486 MB in all as in #268's log. Pooled figures could let the first heap fill to
+about 156 % while the sum read 80 %, so each heap is now checked on its own and the host-visible
+heap is the second device-local tier. RADV's APUs (Steam Deck, BC-250) report two thirds of the
+shared memory as device-local with budgets drawn from one pool, so moving memory frees nothing
+there and the relaxed trim rule would have trimmed later than before; the small carve-out
+condition leaves them as on main. Render targets that went to system memory are trimmed past
+512 MB or an eighth of the system budget, so the #241 growth cannot fill RAM on an APU. The budget
+is read again after a trim (render targets made again in the next frame saw the old use and
+stayed in system memory), and freed sparse pages and render targets that failed after their
+allocation are taken off the counters.
+
+Discrete GPUs, no cap (RX 9060 XT, same setup, `--frame_rate=144`, a 144 Hz headless gamescope, a warm
+shader cache, alternating runs under the benchmark lock): idle in free roam for 90 s, 143.5 / 143.2 /
+143.5 fps without the patch and 142.5 / 141.0 / 143.2 with it; the lower ones lost frames in single
+10 s windows when traffic passed. In the pair sampled with `tools/thread_stats.py`: GPU 793 ms/s
+in both, the GPU command processor thread 77.9 % of a core without and 79.3 % with (total 216 % and
+218 %). Driving with the throttle held depends on where the car ends up (a run whose car got stuck at
+the spawn holds 143.7); on the same route, 141.7 without and 141.4 / 141.2 with.
 
 0116 lets a controller be remapped (#279): `controller_remap` holds a profile per controller model
 (`GUID:target=source,...`), written by the launcher's Controls page, Bindings. Rules and matching are in
