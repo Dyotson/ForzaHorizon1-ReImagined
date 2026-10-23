@@ -149,8 +149,16 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   or a new paint job in the garage renders it again. Deleting the files only makes them
   black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
   `some`, broken pictures again).
+- **Typing a name** (a photo, a tune, a livery; #294): the game's text prompt is an
+  on-screen keyboard over the game, as on the 360. Controller: D-pad or left stick moves,
+  A types the key, B deletes (on an empty name it cancels), X types a space, Y switches
+  abc, ABC and symbols, LB/RB move the cursor in the name, Start or **Done** confirms,
+  **Cancel** cancels. The keyboard works too (Enter confirms, Escape cancels). Names take
+  letters, digits, space and `! @ # $ % & ' ( ) + = - _ . , ; ~ [ ] ^` (what the server
+  and a Windows folder name keep), up to the game's length; the game gets no controller
+  input while the keyboard shows.
 - **Photos:** photo mode saves the picture in the profile (`photo/<name>/`); SAVE asks for
-  a name in a small window over the game (Enter or OK). Builds before SDK patch 0048 saved
+  a name (above). Builds before SDK patch 0048 saved
   a garbled picture (#54); photos saved by them stay garbled, take them again.
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
