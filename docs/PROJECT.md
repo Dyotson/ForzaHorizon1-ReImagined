@@ -884,6 +884,19 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   2 on Title Update 4 (151) played right, every block of a finished movie went back, no
   fault. `=0` switches the hook off. Unit test: `forza-recomp/tests/game_heap_test.cpp`.
 
+- 2026-10-22: **Typing a name with a controller (#294).** `XamShowKeyboardUI` (photo, tune
+  and livery names) is answered by `src/kernel/xam_keyboard.cpp` instead of the SDK's text
+  window, which needed a keyboard: an on-screen keyboard in the HUD overlay, 360 style
+  (`live_osk.h`, layout `kPrompt`; the friends screen's `kFriends` layout is unchanged). It
+  runs on the kernel's deferred-completion thread like the SDK's dialogs (XN_SYS_UI, and
+  `XamIsUIActive` is overridden too); the input hook hands player 1's pad to it and the game
+  reads a neutral pad. Names take letters, digits, space and ASCII punctuation a Windows folder
+  name keeps. Every keystroke is logged (`Keyboard UI: ...`). Checked on Linux (TU4, the test
+  save, scripted pad): photo mode, SAVE, the prompt "NAME SAVE FILE" (default `PHOTO1`, at
+  most 15): deleted the default, typed `Max! 7` with the pad (case and symbol pages, LB/RB),
+  Start: **SAVE SUCCESSFUL** and `photo/Max! 7/` in the save; a second prompt cancelled with B
+  on the empty name returned to the slot picker. Unit test: `forza-recomp/tests/osk_test.cpp`.
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

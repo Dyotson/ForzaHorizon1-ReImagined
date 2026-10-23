@@ -149,8 +149,16 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   or a new paint job in the garage renders it again. Deleting the files only makes them
   black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
   `some`, broken pictures again).
+- **Typing a name** (a photo, a tune, a livery; #294): the game's text prompt is an
+  on-screen keyboard over the game, as on the 360. Controller: D-pad or left stick moves,
+  A types the key, B deletes (on an empty name it cancels), X types a space, Y switches
+  abc, ABC and symbols, LB/RB move the cursor in the name, Start or **Done** confirms,
+  **Cancel** cancels. The keyboard works too (Enter confirms, Escape cancels). Names take
+  letters, digits, space and `! @ # $ % & ' ( ) + = - _ . , ; ~ [ ] ^` (what the server
+  and a Windows folder name keep), up to the game's length; the game gets no controller
+  input while the keyboard shows.
 - **Photos:** photo mode saves the picture in the profile (`photo/<name>/`); SAVE asks for
-  a name in a small window over the game (Enter or OK). Builds before SDK patch 0048 saved
+  a name (above). Builds before SDK patch 0048 saved
   a garbled picture (#54); photos saved by them stay garbled, take them again.
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
@@ -318,7 +326,7 @@ and where it rested: binding the steering to the right sets *Invert steering* if
 and a pedal's invert switch follows from where it rests), **Clear** unbinds it, **Reset to default** gives back
 the profile's or the detected input. Inputs that two rows share are listed in orange (a paddle on a shifter
 gear, for example: the shifter wins). Rows: steering, throttle, brake and clutch pedal; shift up and down (RB
-and LB, the paddles), clutch button (A), handbrake (B), Activate (X), Rewind (Y), camera (Back), pause
+and LB, the paddles), clutch button (A), handbrake (B, or an axis: below), Activate (X), Rewind (Y), camera (Back), pause
 (Start), the stick presses and the d-pad (the hat by default; a button bound to a direction replaces the hat's,
 and Clear turns the direction off, SDK patch 0127); gears 1 to 7, reverse and the sequential up and down of a
 shifter. With combined pedals (*Pedals: Combined*) one axis is both: the throttle row binds and clears it for
@@ -373,12 +381,41 @@ car and the bound paddle shifted up from 1st to 3rd. Not tested with a real whee
 and whether the launcher's axis and button numbers match the game's (the log's `Wheel:` lines). The launcher
 reads devices with SDL 2 and the game with SDL 3; on Linux both gave the same numbers and GUIDs.
 
+**Which device is the wheel (#306).** Each wheel the driver takes is a controller of its own, and the first one
+is the first player's and the one pedals, a shifter or a handbrake on their own USB device are read with. With
+*Racing wheel: On* a virtual joystick (vJoy, which SimHub feeds with pedals, a handbrake and a shifter) or a button
+box that came before the wheel base in the system's order became the wheel. Now the wheel base comes first by
+itself: a device with force feedback, then one SDL lists as a wheel, then the system's order (SDK patch 0134); a
+pedal, shifter or handbrake device is never a wheel. To choose, pick the device under **Bindings** and press **Use
+as the wheel** (it sets `wheel_device`; on that device **Choose the wheel automatically** clears it): the picker
+calls it *wheel* and any other *wheel, a second controller*. The game's log names its choice: `Wheel: "..." is the
+wheel (the first player's; ...)`. Tested with a virtual vJoy (1234:bead, listed first) and a wheel base with force
+feedback: the base is the wheel; `wheel_device` set to the vJoy makes it the wheel, and as the pedal device it is
+no wheel at all.
+
+**Analog handbrake (#303).** The game's wheel layouts bind the handbrake to the left stick up and down as well as
+to B (gamedb.slt `WheelLayouts`, as the clutch is on the right stick Y): the Xbox 360 wheel's analog handbrake.
+The game takes the stronger of the two, and a stick direction is analog (0 to 1), so the driver sends a handbrake
+axis there (SDK patch 0133) and B still works. The **Handbrake** row in Bindings takes both: **Bind**, then pull
+the handbrake (an axis) or press a button on the wheel; binding one keeps the other, **Clear** unbinds both and
+**Reset to default** gives back B and a handbrake device found by itself. The axis is read from the wheel (a
+handbrake plugged into the wheel base: `wheel_axes` `handbrake=N`) or from a handbrake on its own USB device
+(`wheel_handbrake_device`, its axis `wheel_handbrake_axis`): a Simagic TB-1 or TB-RS, a Fanatec ClubSport
+Handbrake or a Thrustmaster TSS is found by its USB id, others by a name with "handbrake" in it, and Bindings
+sets the device when you pull it there (the picker lists it as *handbrake, read with the wheel*). A pedal set or
+shifter that carries the handbrake (Logitech's RS Shifter and Handbrake) is named in `wheel_handbrake_device`
+and keeps its pedals or gears. Buttons on a handbrake device are not read: in button mode, bind its axis or a
+wheel button. Where the handbrake rests is read when the game opens it, like a pedal (keep it released then);
+one that works backwards is fixed with *Invert handbrake*. Tested with a virtual TB-RS: from about 48 km/h in 1st
+with the throttle off, a handbrake a third of the way slowed the car by about 2 m/s², two thirds by 6, fully by 8.
+
 The settings these write (Settings, Controls, Racing wheel; the keys are the `forza.toml` names) can still be
 edited by hand:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
+| `wheel_device` | found | The wheel (#306): the first player's, which pedal, shifter and handbrake devices are read with. Empty: one with force feedback first, then one SDL lists as a wheel, then the first; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one and makes it a wheel (launcher: Use as the wheel) |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
 | `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
@@ -387,9 +424,12 @@ edited by hand:
 | `wheel_pedal_device` | found | Pedals on their own USB device: empty finds a known pedal set or one named like pedals; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one; `none` reads the wheel's own pedals |
 | `wheel_pedal_axes` | by model or detected | Axis numbers on the pedal device, e.g. `throttle=2,brake=1,clutch=0`; a pedal set here reads the pedal device, one set in `wheel_axes` the wheel |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
-| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
+| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default. `handbrake=N`: an analog handbrake on the wheel (#303; 99: none, also no handbrake device) |
+| `wheel_handbrake_device` | found | An analog handbrake on its own USB device (#303): empty finds a known one or one named like a handbrake; a name, SDL GUID or `vid:pid` picks one (also the pedal or shifter device); `none` reads none |
+| `wheel_handbrake_axis`, `wheel_invert_handbrake` | 0, off | The handbrake's axis on the handbrake device; a handbrake found backwards |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_ffb_min_strength` | 0 | Minimum steering force (#303): the game's steering forces weaker than this percentage of the full force are scaled up, stronger ones stay (launcher: Minimum force; 0 is off) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
 | `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
@@ -398,6 +438,7 @@ edited by hand:
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
+| `wheel_shifter_follow_slot` | on | H-pattern: on, the game takes the lever's gear whenever it sets the gear itself (race and event starts and finishes), as on the Xbox; off, a gear engages only when the lever moves, for switching to the paddles (#303; launcher: Gear follows the lever's slot) |
 | `wheel_shifter_device` | found | A shifter on its own USB device: empty finds a known one or one named like a shifter; a name, SDL GUID or `vid:pid` picks one; `none` reads the wheel's own buttons |
 | `wheel_shifter_device_buttons` | by model | Its gears, e.g. `1=0,2=1,3=2,4=3,5=4,6=5,r=6`, or `up=..,down=..`; while a shifter device is connected every gear comes from it |
 
@@ -442,6 +483,16 @@ button.
   and down with `sequential`) is taken out of the wheel's pad buttons, whatever the defaults or `wheel_buttons`
   say: on a G923 for Xbox reverse is button 11, which the generic map had as the left stick press, so engaging
   reverse also opened the friends screen (#256).
+- **The lever's slot, or gears on lever moves (#303).** The game turns the lever's gear into a gear request
+  every frame, shifts when the request changes, and takes it again whenever it sets the gear itself: at race and
+  event starts and finishes the car goes into the gear the lever sits in, or into neutral with the lever out.
+  That is what the Xbox does with a 360 wheel's shifter, so it stays the default (*Gear follows the lever's
+  slot*, `wheel_shifter_follow_slot`). If you switch to the paddles or a sequential shifter mid-session, turn it
+  off (SDK patch 0132): the driver then asks for a gear only for a moment after the lever moves into a slot or
+  out to neutral, and for nothing otherwise, so the paddles keep their gear and a start keeps the game's until
+  you move the lever (where the lever sits when the game starts is not a move). Tested with it off, a virtual
+  wheel and DS-8X, the lever left in 3rd: the paddles shifted freely, a race started in 1st, and moving the
+  lever to 4th engaged 4th.
 - **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
   least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
   neutral until you press it. Off by default (the lever's gear engages at once).
@@ -512,6 +563,15 @@ road at most 0.12 and the engine 0.075 of the motor's force, where classic at th
 style is read when the game opens the wheel: restart after changing it. Please tell us which values feel right
 on your wheel (#4).
 
+**Minimum force (#303).** The game's steering force follows the car: light cars give a light wheel, and a heavy
+one (a WRX STI on a Simagic EVO Pro in #4) several times more. `wheel_ffb_min_strength` (launcher: Minimum force,
+0 by default) lifts the weak end, SDK patch 0131: a steering force weaker than this percentage of the full force
+is scaled up, at most 4 times near the centre and less the closer it is to the minimum, and from the minimum up
+it plays as the game sends it. The curve is smooth and starts at 0, so there is no step when the force changes
+sides in the middle and no floor that flattens the road feel; it applies to the game's force before
+`wheel_ffb_strength`, and the centring spring, the damper and the rumble are not changed. With a minimum of 30, a
+force of 10 percent plays at about 23, one of 20 at 27 and one of 30 or more as it is. Try 10 to 30.
+
 The
 wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
 the G25, G27 and G29 has only constant force and autocentre) the game's spring sets the autocentre strength
@@ -545,6 +605,15 @@ are back at full strength`. Back at full strength the driver also starts every e
 again, in case the wheel dropped one meanwhile (DirectInput stops a device's effects when it has to acquire it
 again), and a failed update or start of the game's effects is logged as a warning.
 `FORZA_WHEEL_DRIVING_GATE=0` switches the fade off.
+
+Windows source-validation follow-up (2026-10-22): integrated main `7f9a716`,
+retaining both the #304 fade/restart fix and patches 0131-0134. All 608 launcher
+tests passed (37 skips), as did six standalone C++ wheel tests covering minimum
+force, gear requests, analog handbrake, primary selection, shifter mapping and
+force feedback. The actual combined wheel adapter compiles against Windows
+SDK/SDL3 headers. No physical force-feedback device or game/GPU session was used;
+DirectInput acquisition, force feel and real Fanatec/vJoy ordering remain hardware
+validation gates.
 
 Tested with a virtual wheel (uinput) that logs what it receives, and by a G29 and a G923 owner. Wheel drivers disagree about
 which way a positive force turns the wheel: if yours pulls further into a corner instead of back to the centre,

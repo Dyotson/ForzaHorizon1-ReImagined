@@ -5,12 +5,21 @@
 //    buttons the gear, and the base's own pedal-like axis does nothing while the pedals are there;
 //  - the pedals unplugged at run time: nothing from them, the wheel's own axes count again;
 //    plugged back in, they work again; wheel_pedal_device = none leaves them alone.
+// #303 (patches 0132, 0133):
+//  - with wheel_shifter_follow_slot off, the H-pattern gear is asked of the game when the lever
+//    moves: a lever already in 3rd when the driver starts asks for nothing (thumb_rx 10, the game's
+//    "no request"), a move asks for the new gear for a moment, then nothing; on (the default) it
+//    reports the slot all the time;
+//  - an analog handbrake on its own USB device (a Simagic TB-RS, 3670:0a04) is read with the wheel
+//    as the left stick Y (the 360 wheel's analog handbrake) next to the B button, and is no wheel;
+//    wheel_axes handbrake=1 reads the base's axis instead, 99 nothing, and
+//    wheel_handbrake_device = none leaves the device alone.
 //
 // Linux only (needs write access to /dev/uinput). Build against the patched SDK source and link
 // the patched runtime, from the repository root:
 //   SDK=~/rexglue-sdk-src-forza/sdk; clang++ -std=c++23 -msse4.1 -I$SDK/include
 //       -I$SDK/thirdparty/sdl3/include -I$SDK/thirdparty/fmt/include -I$SDK/thirdparty/spdlog/include
-//       -I$SDK/thirdparty/simde
+//       -I$SDK/thirdparty/simde -I$SDK/src/input/wheel
 //       -DSPDLOG_COMPILED_LIB -DSPDLOG_FMT_EXTERNAL forza-recomp/tests/wheel_devices_probe.cpp
 //       -L ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -lrexruntime -pthread
 //       -Wl,-rpath,$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -o wheel-devices-probe
@@ -18,6 +27,7 @@
 #include <rex/cvar.h>
 #include <rex/input/wheel/wheel_ff.h>
 #include <rex/input/wheel/wheel_input_driver.h>
+#include <wheel_gear_request.h>
 
 #include <fcntl.h>
 #include <linux/uinput.h>
@@ -182,7 +192,8 @@ bool CreatePedals(Device& pedals) {
 
 int main() {
   // Only the virtual devices: SDL3 leaves out every other joystick with this hint.
-  setenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT", "0x3670/0x0502,0x0483/0x0525,0x0483/0x0531", 1);
+  setenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT",
+         "0x3670/0x0502,0x0483/0x0525,0x0483/0x0531,0x3670/0x0a04", 1);
   // SDL finds a plugged-in device by watching /dev/input, so the replug below also works where no
   // udev monitor reaches the process (a sandbox, a container).
   setenv("SDL_JOYSTICK_DISABLE_UDEV", "1", 1);
@@ -193,6 +204,12 @@ int main() {
   Check(CreatePedals(*pedals), "create the pedals");
   Check(shifter.Create("SIMAGIC DS-8X", 0x0483, 0x0531, {{ABS_X, -32768, 32767, 0}}, 11),
         "create the shifter");
+  // The handbrake on X. udev tags a device as a joystick (and gives the user access to it) only
+  // with X and Y and at least two joystick buttons.
+  Device handbrake;
+  Check(handbrake.Create("SIMAGIC TB-RS Handbrake", 0x3670, 0x0A04,
+                         {{ABS_X, 0, 65535, 0}, {ABS_Y, -32768, 32767, 0}}, 2),
+        "create the handbrake");
   Sleep(500);  // udev
 
   std::printf("pedals and shifter on their own USB devices:\n");
@@ -281,6 +298,118 @@ int main() {
     pedals->SetAxis(ABS_RZ, 0);
     SetCvar("wheel_pedal_device", "");
     std::printf("  wheel_pedal_device = none: the pedal device is not read\n");
+  }
+
+  {
+    // #303: the H-pattern gear on lever moves (the setting off). The lever is in 3rd when the
+    // driver starts.
+    SetCvar("wheel_shifter_follow_slot", "false");
+    shifter.SetButton(2, true);
+    Sleep(100);
+    WheelInputDriver driver(nullptr, 0);
+    Check(driver.Setup() == X_STATUS_SUCCESS, "driver setup (gear requests)");
+    auto found = Wheels(driver, 1);
+    Check(found.size() == 1, "gear requests: one wheel");
+    const auto id = found[0].id;
+    rex::input::X_INPUT_CAPABILITIES caps{};
+    Check(driver.GetDeviceCapabilities(id, 1, &caps) == 0, "caps");
+    Poll(driver, id, 800);  // the shifter device attached and read
+    bool asked = false;
+    for (int t = 0; t < 1500; t += 20) {
+      asked = asked || State(driver, id).thumb_rx != kGearNoRequest;
+      Sleep(20);
+    }
+    Check(!asked, "a lever left in 3rd asks for nothing (the game keeps its own gear at a start)");
+    shifter.SetButton(2, false);
+    shifter.SetButton(3, true);
+    int reads_4 = 0;
+    auto t0 = std::chrono::steady_clock::now();
+    while (State(driver, id).thumb_rx != 4 &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) {
+      Sleep(10);
+    }
+    t0 = std::chrono::steady_clock::now();
+    while (State(driver, id).thumb_rx == 4) {
+      reads_4++;
+      Sleep(10);
+    }
+    const auto held = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+    Check(reads_4 > 3 && held >= 200 && held < 1000,
+          "the lever moved into 4th: 4th asked for a moment");
+    Check(State(driver, id).thumb_rx == kGearNoRequest, "then nothing: the paddles keep their gear");
+    std::printf("  lever left in 3rd: no request; moved into 4th: 4th asked for %lld ms, then none\n",
+                static_cast<long long>(held));
+    // wheel_shifter_follow_slot (the default): the slot all the time.
+    SetCvar("wheel_shifter_follow_slot", "true");
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 4; }), "follow: 4th");
+    Poll(driver, id, 600);
+    Check(State(driver, id).thumb_rx == 4, "follow: still 4th");
+    SetCvar("wheel_shifter_follow_slot", "false");
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == kGearNoRequest; }),
+          "back to lever moves: nothing until the lever moves");
+    shifter.SetButton(3, false);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 0; }), "out to neutral: asked");
+    SetCvar("wheel_shifter_follow_slot", "true");
+    std::printf("  wheel_shifter_follow_slot: the slot all the time\n");
+  }
+  {
+    // #303: an analog handbrake on its own device, next to the B button.
+    WheelInputDriver driver(nullptr, 0);
+    Check(driver.Setup() == X_STATUS_SUCCESS, "driver setup (handbrake)");
+    auto found = Wheels(driver, 1);
+    Check(found.size() == 1 && found[0].name == "SIMAGIC EVO PRO", "the handbrake is no wheel");
+    const auto id = found[0].id;
+    rex::input::X_INPUT_CAPABILITIES caps{};
+    Check(driver.GetDeviceCapabilities(id, 1, &caps) == 0, "caps");
+    Poll(driver, id, 800);
+    handbrake.SetAxis(ABS_X, 65535);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_ly > 32000; }),
+          "the handbrake pulled: the left stick Y up");
+    handbrake.SetAxis(ABS_X, 32768);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_ly > 15000 && g.thumb_ly < 17500; }),
+          "half way: analog");
+    base.SetButton(1, true);
+    Check(Until(driver, id, [](const auto& g) { return (g.buttons & 0x2000) && g.thumb_ly > 15000; }),
+          "the B button with it");
+    base.SetButton(1, false);
+    handbrake.SetAxis(ABS_X, 0);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_ly == 0 && g.buttons == 0; }),
+          "released");
+    std::printf("  handbrake device: the left stick Y, analog, next to B\n");
+    // On the base (an axis resting at an end, like a handbrake plugged into the wheel).
+    SetCvar("wheel_axes", "handbrake=1");
+    base.SetAxis(ABS_Y, 65535);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_ly > 32000 && g.right_trigger == 0; }),
+          "wheel_axes handbrake=1: the base's axis, not a pedal");
+    base.SetAxis(ABS_Y, 0);
+    handbrake.SetAxis(ABS_X, 65535);
+    Poll(driver, id, 200);
+    Check(State(driver, id).thumb_ly == 0, "the base's axis wins over the device");
+    SetCvar("wheel_axes", "handbrake=99");
+    Poll(driver, id, 200);
+    Check(State(driver, id).thumb_ly == 0, "handbrake=99: not bound");
+    SetCvar("wheel_axes", "");
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_ly > 32000; }), "the device again");
+    handbrake.SetAxis(ABS_X, 0);
+    std::printf("  wheel_axes handbrake=1: the base's axis; 99: none\n");
+  }
+  {
+    SetCvar("wheel_handbrake_device", "none");
+    WheelInputDriver driver(nullptr, 0);
+    Check(driver.Setup() == X_STATUS_SUCCESS, "driver setup (handbrake none)");
+    auto found = Wheels(driver, 1);
+    Check(found.size() == 1, "none: still one wheel");
+    const auto id = found[0].id;
+    rex::input::X_INPUT_CAPABILITIES caps{};
+    Check(driver.GetDeviceCapabilities(id, 1, &caps) == 0, "caps");
+    Poll(driver, id, 800);
+    handbrake.SetAxis(ABS_X, 65535);
+    Poll(driver, id, 200);
+    Check(State(driver, id).thumb_ly == 0, "none: the handbrake device is not read");
+    handbrake.SetAxis(ABS_X, 0);
+    SetCvar("wheel_handbrake_device", "");
+    std::printf("  wheel_handbrake_device = none: the handbrake is not read\n");
   }
 
   std::printf("wheel devices probe: all checks passed\n");
