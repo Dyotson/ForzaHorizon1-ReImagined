@@ -205,8 +205,8 @@ on the map (monthly Rivals, events off the Colorado map) and the cars need the s
 
 The website (https) cannot fetch a plain-http tunnel (mixed content), so the `pages` workflow
 (`.github/workflows/pages.yml`) copies `/leaderboards/snapshot` from
-`http://forza-reimagined.playit.plus:56678` into the site as `data/leaderboards.json` every 30
-minutes, and `site/leaderboards.html` reads that file. A scheduled run that cannot reach the
+`http://forza-reimagined.playit.plus:56678` into the site as `data/leaderboards.json` once a
+day (06:23 UTC; run the workflow by hand for a fresh copy sooner), and `site/leaderboards.html` reads that file. A scheduled run that cannot reach the
 server fails and leaves the published site as it was. Nothing else is needed at deploy but the
 tunnel publishing the HTTP port. To try the page against a local server:
 `leaderboards.html?api=http://127.0.0.1:21201`.
