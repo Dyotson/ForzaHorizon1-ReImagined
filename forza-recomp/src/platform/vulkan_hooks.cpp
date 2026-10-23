@@ -7,6 +7,7 @@
 #include "vulkan_hooks.h"
 
 #include "../debug/frame_stats.h"
+#include "../hooks/frame_time.h"
 
 #include <rex/logging.h>
 #include <rex/system/interfaces/graphics.h>
@@ -14,13 +15,18 @@
 
 #include <cstring>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <typeinfo>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 #else
 #include <dlfcn.h>
 #endif
@@ -105,7 +111,26 @@ bool FromGpuPlugin(void* return_address) {
 #endif
 }
 
+// Waits at least `ns` nanoseconds, subject to scheduler latency: nanosleep on POSIX, a high-resolution
+// waitable timer on Windows (10 1803 and later; without one it does not wait).
+void PreciseWait(int64_t ns) {
+  if (ns <= 0) return;
+#ifdef _WIN32
+  static thread_local HANDLE timer = CreateWaitableTimerExW(
+      nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+  if (!timer) return;
+  LARGE_INTEGER due;
+  due.QuadPart = -(ns / 100);  // relative, in 100 ns units
+  if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+    WaitForSingleObject(timer, INFINITE);
+  }
+#else
+  std::this_thread::sleep_for(std::chrono::nanoseconds(ns));
+#endif
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL QueuePresent(VkQueue queue, const VkPresentInfoKHR* present_info) {
+  PreciseWait(frame_time::PresentDelayNs());  // 20 and 40 fps: evenly spaced frames
   perf::OnHostPresent();
   return g_queue_present(queue, present_info);
 }
@@ -152,11 +177,11 @@ bool InstallVulkanHooks(rex::system::IGraphicsSystem* graphics) {
   g_device = device;
   g_create_swapchain = dfn.vkCreateSwapchainKHR;
   dfn.vkCreateSwapchainKHR = CreateSwapchain;
+  g_queue_present = dfn.vkQueuePresentKHR;
+  dfn.vkQueuePresentKHR = QueuePresent;  // frame statistics and the present pacing
   if (perf::Enabled()) {
-    g_queue_present = dfn.vkQueuePresentKHR;
     g_create_graphics_pipelines = dfn.vkCreateGraphicsPipelines;
     g_create_compute_pipelines = dfn.vkCreateComputePipelines;
-    dfn.vkQueuePresentKHR = QueuePresent;
     dfn.vkCreateGraphicsPipelines = CreateGraphicsPipelines;
     dfn.vkCreateComputePipelines = CreateComputePipelines;
   }
