@@ -184,6 +184,44 @@ int main() {
     }
   }
   Check(longest < 5.0 + 1.5 / 60, "restarted within 5 s all along");
+
+  // The status check every 10 s, with the default setting (0): a wheel that says an effect it was
+  // told to play has stopped gets it started again once, counted as a restart in the summary; a
+  // restart that fails is counted as a failure (and the driver logs it: NoteFfFailure, the warning).
+  FfLog chk;
+  FfState cs;
+  double tc = 0.0;
+  chk.SummaryDue(tc);
+  cs.Define(Block(5, kFfConstant, 255, 10));
+  cs.Operate(5, 2);
+  chk.Defined(Block(5, kFfConstant, 255, 10), tc);
+  int starts = 0;
+  auto works = [&] { return ++starts > 0; };
+  auto fails = [&] { return ++starts < 0; };
+  FfStoppedCheck c = FfCheckStopped(0, 0, works);
+  Check(c.stopped && c.restarted && !c.failed && starts == 1, "stopped: started again, once");
+  FfNoteCheck(chk, 5, c);
+  c = FfCheckStopped(1, 0, works);
+  Check(!c.stopped && !c.restarted && !c.failed && starts == 1, "still playing: nothing");
+  c = FfCheckStopped(-1, 0, works);
+  Check(!c.stopped && !c.restarted && starts == 1, "the wheel cannot tell: nothing");
+  c = FfCheckStopped(0, -1, works);
+  Check(c.stopped && !c.restarted && !c.failed && starts == 1, "-1: logged, not started again");
+  c = FfCheckStopped(0, 5, works);
+  Check(c.restarted && starts == 2, "with periodic restarts too");
+  c = FfCheckStopped(0, 0, fails);
+  Check(c.stopped && !c.restarted && c.failed && starts == 3, "a restart that fails");
+  FfNoteCheck(chk, 5, c);
+  Check(FfLogThisCount(1) && !FfLogThisCount(2) && FfLogThisCount(10) && !FfLogThisCount(11) &&
+            FfLogThisCount(100) && FfLogThisCount(1000000000),
+        "warnings the 1st, 10th, 100th... time");
+  tc = 10.0;
+  const std::string d = chk.Summary(cs, 1u << 4, 1u << 4, 1.0f, tc);
+  std::printf("%s\n", d.c_str());
+  Check(Has(d, "block 5 constant: game 1 updates, gain 255, force 10, playing; wheel 0 updates, "
+               "1 restart, 1 failure, running (the wheel says it is not playing)"),
+        "the summary counts the restart and the failure");
+
   std::printf("wheel_ff_log_test: ok\n");
   return 0;
 }

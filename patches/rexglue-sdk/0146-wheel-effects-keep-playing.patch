@@ -1,9 +1,9 @@
 diff --git a/src/input/wheel/wheel_ff_keep_playing.h b/src/input/wheel/wheel_ff_keep_playing.h
 new file mode 100644
-index 0000000..cfe8554
+index 0000000..422ed4d
 --- /dev/null
 +++ b/src/input/wheel/wheel_ff_keep_playing.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,83 @@
 +/**
 + * @file        src/input/wheel/wheel_ff_keep_playing.h
 + * @brief       Starting the wheel's effects again for a wheel that ends them by itself (#304),
@@ -17,7 +17,7 @@ index 0000000..cfe8554
 + * each start, until a pause started them again. SDL patch 0147 (patches/rexglue-sdk/sdl3) sends
 + * the endless value there. For a wheel that still ends effects by itself:
 + *  - every 10 s the driver asks the wheel whether the game's effects still play (where SDL can ask:
-+ *    DirectInput) and starts one that stopped again;
++ *    DirectInput, macOS, SDL's HIDAPI Logitech driver) and starts one that stopped again;
 + *  - wheel_ffb_keep_playing N starts every effect that plays again every N seconds (starting a
 + *    playing effect restarts it unchanged, which some wheels may feel as a bump: 0, the default,
 + *    never); -1 starts nothing again, not even an effect the wheel says has stopped.
@@ -26,6 +26,10 @@ index 0000000..cfe8554
 + *              See LICENSE file in the project root for full license text.
 + */
 +#pragma once
++
++#include <cstdint>
++
++#include "wheel_ff_log.h"
 +
 +namespace rex::input::wheel {
 +
@@ -39,6 +43,43 @@ index 0000000..cfe8554
 +  return setting >= 0;
 +}
 +
++// The status check of one effect the driver started: `playing` is what the wheel says (1 playing,
++// 0 stopped by itself, -1 it could not tell); `start` starts it again (true when it worked).
++struct FfStoppedCheck {
++  bool stopped = false;    // the wheel says it has stopped
++  bool restarted = false;  // started again
++  bool failed = false;     // starting it again failed
++};
++template <typename Start>
++FfStoppedCheck FfCheckStopped(int playing, int setting, Start&& start) {
++  FfStoppedCheck c;
++  c.stopped = playing == 0;
++  if (c.stopped && FfRestartStopped(setting)) {
++    c.restarted = start();
++    c.failed = !c.restarted;
++  }
++  return c;
++}
++
++// The check in the log's summary: a restart, or a failure.
++inline void FfNoteCheck(FfLog& log, uint32_t block, const FfStoppedCheck& c) {
++  if (c.restarted) {
++    log.Sdl(block, FfSdlCall::kKeepPlaying);
++  } else if (c.failed) {
++    log.Sdl(block, FfSdlCall::kFailure);
++  }
++}
++
++// A warning repeated many times is logged the 1st, 10th, 100th... time.
++constexpr bool FfLogThisCount(int n) {
++  for (long long k = 1; k <= n; k *= 10) {
++    if (k == n) {
++      return true;
++    }
++  }
++  return false;
++}
++
 +// When the effects are next started again: `last` is when they last were (or when the wheel was
 +// opened), all in seconds.
 +constexpr bool FfKeepPlayingDue(double last, double now, int seconds) {
@@ -47,7 +88,7 @@ index 0000000..cfe8554
 +
 +}  // namespace rex::input::wheel
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 4996552..bba6f3c 100644
+index 30d7eeb..cf7bbfd 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -35,6 +35,7 @@
@@ -134,27 +175,48 @@ index 4996552..bba6f3c 100644
 +  }
    if (game_ff_active_ && g_ff_log.SummaryDue(FfNow())) {
      // Every 10 s, what the game sent and what the wheel got (wheel_ff_log.h, #304), and whether the
-     // wheel still plays what it was told to (SDL's DirectInput backend can ask it).
-@@ -1601,13 +1651,20 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
-       if (status && !SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) &&
-           !*SDL_GetError()) {
+     // wheel still plays what it was told to (where SDL can ask: DirectInput, macOS, SDL's HIDAPI
+@@ -1598,18 +1648,34 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+         continue;
+       }
+       running |= 1u << i;
++      if (!status) {
++        continue;
++      }
++      // 1 playing, 0 stopped by itself, -1 the wheel could not tell (SDL sets an error).
+       SDL_ClearError();
+-      if (status && !SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) &&
+-          !*SDL_GetError()) {
++      const int playing = SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) ? 1
++                          : *SDL_GetError()                                          ? -1
++                                                                                     : 0;
++      // A stopped effect plays again unless wheel_ffb_keep_playing is -1 (wheel_ff_keep_playing.h).
++      const FfStoppedCheck check =
++          FfCheckStopped(playing, REXCVAR_GET(wheel_ffb_keep_playing), [&] {
++            return SDL_RunHapticEffect(first.haptic, first.game_fx[i], SDL_HAPTIC_INFINITY);
++          });
++      FfNoteCheck(g_ff_log, i + 1, check);
++      if (check.failed) {
++        NoteFfFailure(first.ff_failures, "starting again", i + 1);
++      }
++      if (check.stopped) {
          ended |= 1u << i;
-+        // It plays again, unless wheel_ffb_keep_playing is -1 (wheel_ff_keep_playing.h).
-+        const bool again = FfRestartStopped(REXCVAR_GET(wheel_ffb_keep_playing)) &&
-+                           SDL_RunHapticEffect(first.haptic, first.game_fx[i], SDL_HAPTIC_INFINITY);
-+        if (again) {
-+          g_ff_log.Sdl(i + 1, FfSdlCall::kKeepPlaying);
-+        }
          // The 1st, 10th, 100th... time: a wheel that ends effects by itself (#304).
-         const int n = ++first.ff_ended;
-         for (int k = 1; k <= n; k *= 10) {
-           if (k == n) {
-             REXLOG_WARN("Wheel: \"{}\" says the game's effect block {} ({}) has stopped, though it "
+-        const int n = ++first.ff_ended;
+-        for (int k = 1; k <= n; k *= 10) {
+-          if (k == n) {
+-            REXLOG_WARN("Wheel: \"{}\" says the game's effect block {} ({}) has stopped, though it "
 -                        "was started and not stopped ({} so far)",
 -                        first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type), n);
-+                        "was started and not stopped ({} so far){}",
-+                        first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type), n,
-+                        again ? "; started again" : "");
-           }
+-          }
++        if (FfLogThisCount(++first.ff_ended)) {
++          REXLOG_WARN("Wheel: \"{}\" says the game's effect block {} ({}) has stopped, though it "
++                      "was started and not stopped ({} so far){}",
++                      first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type),
++                      first.ff_ended,
++                      check.restarted ? "; started again"
++                      : check.failed  ? "; starting it again failed"
++                                      : "");
          }
        }
+     }

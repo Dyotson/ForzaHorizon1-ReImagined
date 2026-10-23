@@ -52,6 +52,21 @@ index 4034320..79f3bdc 100644
          dest->dwTriggerButton = FFGetTriggerButton(hap_custom->button);
          dest->dwTriggerRepeatInterval = hap_custom->interval;
          dest->dwStartDelay = hap_custom->delay * 1000; // In microseconds.
+diff --git a/src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c b/src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c
+index 7e6b3dc..6843ce1 100644
+--- a/src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c
++++ b/src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c
+@@ -1072,7 +1072,9 @@ static bool SDL_HIDAPI_HapticDriverLg4ff_RunEffect(SDL_HIDAPI_HapticDevice *devi
+         return false;
+     }
+ 
+-    ret = lg4ff_play_effect(ctx, id, iterations);
++    // The play count is an int: SDL_HAPTIC_INFINITY (and anything past INT_MAX) would turn negative
++    // and stop the effect. INT_MAX is as good as endless, as in the Linux backend.
++    ret = lg4ff_play_effect(ctx, id, iterations > (Uint32)SDL_MAX_SINT32 ? SDL_MAX_SINT32 : (int)iterations);
+     SDL_UnlockMutex(ctx->mutex);
+ 
+     return ret == 0;
 diff --git a/src/haptic/windows/SDL_dinputhaptic.c b/src/haptic/windows/SDL_dinputhaptic.c
 index fa374e4..1c97286 100644
 --- a/src/haptic/windows/SDL_dinputhaptic.c

@@ -662,7 +662,7 @@ starts its centring spring whenever the spring's gain passes 0 with the speed, e
 ends effects after about half a minute keeps only the spring, which is what the report describes (not yet
 confirmed on the wheel itself). SDL patch 0147 now sends endless effects as endless on Windows and macOS. For a
 wheel that still ends effects by itself, every 10 seconds the driver asks the wheel whether the game's effects
-still play (DirectInput can tell): one that stopped is logged (`Wheel: "..." says the game's effect block 5
+still play (where SDL can ask: DirectInput, macOS, SDL's own Logitech driver): one that stopped is logged (`Wheel: "..." says the game's effect block 5
 (constant) has stopped ...; started again`) and started again, and `wheel_ffb_keep_playing` (0 by default)
 starts every effect again every so many seconds (5 is a good start; some wheels may feel each restart as a
 slight bump). Reproduced in free roam with a virtual Simagic (uinput) that ends each effect 32.767 s after its
