@@ -270,7 +270,7 @@ void ChildOwnershipAndInputPolicy() {
 }
 
 void DefaultPausePages() {
-  const PauseCapabilities all{true, true, true, true, true, true, true, true, true};
+  const PauseCapabilities all{true,true,true,true,true,true,true,true,true,true,true,true,false,true};
   const auto pages = MakePausePages(all);
   Controller menu;
   menu.SetPages(pages);
@@ -289,6 +289,7 @@ void DefaultPausePages() {
   assert(social.FocusTile("create_game") && social.Activate()=="create_game");
   auto disconnected=all;
   disconnected.friends=disconnected.free_roam=disconnected.create_game=false;
+  disconnected.invite_friends=disconnected.leave_session=false;
   social.SetPages(MakePausePages(disconnected));
   assert(social.page_id()=="social");
   for(const auto* id:{"free_roam","create_game"})
@@ -296,12 +297,25 @@ void DefaultPausePages() {
   for(const auto* id:{"friends","chat","friend_requests","social_connection"}){
     social.FocusTile(id);assert(social.focused_tile_id()==id);
   }
-  assert(social.Activate()=="social_connection");
+  assert(social.Activate()=="social_session");
+  const auto session_pages=MakePausePages(all,false,true);
+  assert(session_pages[2].tiles[3].label=="LEAVE SESSION");
+  auto world_host=all;world_host.end_free_roam=true;
+  assert(MakePausePages(world_host,false,true)[2].tiles[3].label=="END FREE ROAM");
+  assert(forza::native_pause_layout::Supports(session_pages));
+  social.SetPages(session_pages);
+  social.FocusTile("social_back");assert(social.Activate()=="social_back");
+  social.FocusTile("session_invite");assert(social.Activate()=="session_invite");
+  social.FocusTile("session_leave");assert(social.Activate()=="session_leave");
+  social.SetPages(MakePausePages(disconnected,false,true));
+  assert(!social.FocusTile("session_invite")&&!social.FocusTile("session_leave"));
+  for(const auto& tile:session_pages[2].tiles)
+    if(!tile.action.empty())used_actions.insert(tile.action);
   const auto help_pages=MakePausePages(disconnected,true);
   assert(forza::native_pause_layout::Supports(help_pages));
   social.SetPages(help_pages);
   assert(social.page_id()=="social");
-  assert(social.FocusTile("social_back")&&social.Activate()=="social_back");
+  social.FocusTile("social_back");assert(social.Activate()=="social_back");
   assert(social.FocusTile("social_stats")&&social.Activate()=="social_stats");
   assert(!social.FocusTile("social_account")&&!social.FocusTile("social_help"));
   for(const auto& tile:help_pages[2].tiles)

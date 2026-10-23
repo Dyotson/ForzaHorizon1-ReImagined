@@ -48,6 +48,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <utility>
 
 REXCVAR_DEFINE_STRING(live_friends_key, "F8", "Network/Forza Live",
                       "Key that opens the friends screen (a controller: hold the left stick "
@@ -158,7 +159,7 @@ int64_t next_sessions = 0;
 // --- the screen (game thread) ---
 enum Tab { kFriends, kRequests, kAdd, kBlocked, kChat, kTabs };
 enum Action { kDoAccept, kDoDecline, kDoRemove, kDoBlock, kDoUnblock, kDoRequest, kDoCancel,
-              kDoMute, kDoUnmute, kDoMessage, kDoBack };
+              kDoMute, kDoUnmute, kDoMessage, kDoBack, kDoJoin };
 struct Row {
   int kind = 1;  // 0 the search line, 1 a player, 2 "send a request to <search>"
   uint64_t xuid = 0;
@@ -169,6 +170,7 @@ struct Row {
 std::atomic<bool> screen{false};
 std::atomic<bool> toggle_request{false}, chat_request{false};
 std::atomic<int> page_request{-1};
+uint64_t join_request = 0;  // consumed after releasing the friends mutex
 Tab tab = kFriends;
 // The Chat tab: where a message goes (0 session, 1 world, 2.. a friend online), the text.
 size_t chat_to = 0;
@@ -459,6 +461,13 @@ void OpenMenuLocked(const Row& row) {
     menu_items = {{"Send a friend request", kDoRequest}, {"Block", kDoBlock}};
   }
   if (!row.has_rel || row.rel == LiveRelationKind::kFriend) {
+    for (const auto& player : LiveRoster()) {
+      if (player.xuid == row.xuid && (player.state & 0x13) == 0x13 &&
+          (!(player.state & 0x100) || (row.has_rel && row.rel == LiveRelationKind::kFriend))) {
+        menu_items.insert(menu_items.begin(), {"Join game", kDoJoin});
+        break;
+      }
+    }
     if (muted.count(row.xuid)) {
       menu_items.push_back({"Unmute in chat", kDoUnmute});
     } else {
@@ -479,6 +488,9 @@ void OpenMenuLocked(const Row& row) {
 void DoLocked(Action a, const Row& row) {
   const char* what = "";
   switch (a) {
+    case kDoJoin:
+      join_request = row.xuid;
+      return;
     case kDoMessage:  // the Chat tab, to this friend
       tab = kChat;
       chat_to = 2;  // FixChatTargetLocked finds the friend among those online
@@ -923,7 +935,7 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
   using namespace pad;
   block_all = false;
   const bool busy = LiveInviteBusy();  // before our lock: that one takes the invites' lock
-  std::lock_guard<std::mutex> lock(mutex);
+  std::unique_lock<std::mutex> lock(mutex);
   latched &= buttons;
   if (!LiveSignin()) return latched;
   const int64_t now = NowMs();
@@ -947,6 +959,14 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
       dirty = true;
     }
     ScreenInputLocked(buttons, left_x, left_y, now);
+    if (join_request) {
+      const auto xuid = std::exchange(join_request, 0);
+      CloseScreenLocked(buttons, "join game");
+      lock.unlock(); // Invite validation reads friends; keep the lock order.
+      if (!LiveRequestJoin(xuid)) HudShow("Join game", "That game is no longer joinable", 3);
+      block_all = true;
+      return 0xFFFF;
+    }
     if (!screen) return latched;
     if (now >= idle_until) {
       CloseScreenLocked(buttons, "no input");

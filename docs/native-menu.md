@@ -9,9 +9,10 @@ runtime adapters and build configuration have been retired.
 
 ## Structure
 
-The pause strip has Home, Cars, Social and Settings. Social uses a larger
+The pause strip has Home, Cars, Social, Settings and Bucket List. The four native
+tab presentations scroll to keep the selected logical tab visible. Social uses a larger
 Friends activity panel, Horizon World/Create Game actions, direct Requests and
-Chat entries, and Connection & Help. Friends shows server-supplied counts and
+Chat entries, and Session & Connection. Friends shows server-supplied counts and
 up to three online friends with their actual presence; selecting it opens the
 existing friends editor on Friends. Requests opens Requests directly, with
 incoming/sent counts; Chat shows a read-only unread count and latest-line
@@ -30,16 +31,92 @@ An active local party/game session is identified separately; room population
 is not presented as a count of players in that session. Disabled online-entry
 tiles explain when Colorado single-player free roam is required.
 
-Connection & Help keeps the same Social tab selected. It shows the player,
+Session & Connection keeps Social selected and shows actual XSession membership,
+five players per page, with local/host labels and car/class/PI when published.
+Selecting a longer player list advances to the next five. Server-room population
+is separate from this list. Join a Friend opens the friends editor; a joinable
+friend's menu offers Join Game and requires the existing local join confirmation
+before broadcasting the native invite-accepted notification. The target is
+revalidated for connection, session identity, privacy, blocked status and available
+slots. Cancelling an explicit join does not mute that friend's later invites.
+Invite Friends uses the existing picker with the current session's information.
+Leave Session uses FH1's native exit confirmation. Both require a current session.
+For a free-roam host this is explicitly named End Free Roam and explains that it
+ends the round for everyone. Native Horizon World can start its next round after
+returning to the lobby. Cancelling result 2/18 restores the composed page without
+waiting for a parent rebind; confirming releases composed resources before the
+native activity transition.
+
+Connection & Help is available inside this view. It shows the player,
 connection state and title-service endpoint when supplied by the server, plus
 the launcher's actual Online server choices and troubleshooting instructions.
 It does not pretend to reconnect or modify launcher settings from inside the
 game. Career Statistics is a secondary action here, alongside Back to Social;
 native Back restores the previous root selection. Statistics returns to the
 help view and its selected action. Shoulder navigation leaves the help view and
-continues through the normal tabs. Neither the friends editor nor its public
-API currently exposes a verified per-friend join action; no synthetic Join or
-Invite button is presented. Native custom lobbies retain their own invites.
+continues through the normal tabs. Native custom lobbies retain their own invites.
+
+Car presence is an optional versioned `FH1C` suffix after the existing slot/QoS
+envelope. The sender preserves all native QoS bytes and omits car details when the
+1024-byte server limit leaves insufficient space. Older clients remain compatible;
+the session view says car details are unavailable when a peer supplies none.
+Car model/name, class and PI come from the bound native car presentation, rather
+than an estimated performance calculation. XSessionJoin/Leave maintain the member
+XUID list independently of the server roster.
+
+Gameplay sessions without USES_PRESENCE also count: FH1 deletes its presence party
+when entering a world or race. These peer sessions are advertised to friends only,
+subject to native join-via-presence permission. Unique member XUIDs supply the
+displayed population (native slot counters can receive duplicate joins). The loaded
+PlayerBar car supplies metadata, rather than the garage's cached single-player car.
+Metadata is refreshed while pause is open and scoped to the current session ID;
+a newly entered session omits old car details until its presentation is read.
+Native exit uses action 15 for a host's End Free Roam, or model-gated action 17
+with the bound `quit` callback at pause+0x1F8. Action 14 is Retire and must never
+be labelled Leave Session: it leaves a guest waiting in the running round.
+Action 5 opens the Message Center and is never used to exit.
+
+## Bucket List prototype
+
+Three single-player challenges use the current car in Colorado free roam:
+Colorado Sprint (100 mph in 60 seconds), Steady Sixty (at least 60 mph continuously
+for 10 seconds within 60 seconds), and Mile Marker (one mile in 120 seconds).
+These are repository-authored prototypes, with no FH2 code/assets or parked loaner
+cars. Selecting a challenge resumes native gameplay after releasing the pause's
+composed resources. A three-second countdown and progress/result notifications use
+the native challenge HUD. The tab also shows goal progress and completion count.
+
+Samples come from the same native player-vehicle position list as telemetry.
+Physics time and progress freeze while paused; changing car, loading, rewind,
+joining a session or an implausible position jump cancels the attempt. Only one
+attempt can run at a time, with explicit cancellation and retry. Completion bits
+live in `user_data_root/bucket-list/<offline-XUID>.txt`, with a recoverable backup;
+the prototype does not award credits/XP or alter ForzaProfile.
+
+Focused model tests cover timing, success, failure, hold resets, cancellation,
+teleports, profile storage/reload/recovery and presence compatibility. A copied-save
+1280x720 run exercised countdown, real driving, native timeout/retry, distance
+progress, a paused progress snapshot remaining unchanged and cancellation.
+Live challenge completion/relaunch is still unverified; model coverage alone is
+not a claim that a challenge was won in gameplay. Two private local clients
+exercised Friends join confirmation/cancel/accept, a populated custom lobby,
+race start and joining a running Horizon World. The session page showed both
+players' actual loaded cars with class/PI and distinct host/local labels.
+At 1280x720, guest Quit confirmation/cancel/accept returned from the running
+World to a native Party Lobby; the populated invite picker opened/cancelled
+without sending invitations. Testing Party Lobby Exit Multiplayer exposed stale
+title-layout nodes in the graphics-menu hook. The root-list rebuild now discards
+those references instead of restoring a destroyed scene. A fresh 720p regression
+run entered multiplayer, accepted the native Party exit, and returned to playable
+single-player with its normal HUD. The World-to-lobby and corrected lobby-to-game
+transitions were verified in separate copied-save runs.
+
+Presence joins to a running Horizon World bypass the local matchmaking search.
+The world drop-in classifier therefore accepts an unknown playlist only when the
+native Find Game mode and free-roam preset match; a known other playlist or preset
+still fails closed. This preserves Jump In and any-class handling for invite joins.
+
+## Native transitions
 
 Online Free Roam enters the original multiplayer flow and opens Find Game's
 playlist picker, where Horizon World can be selected. Create Game enters the

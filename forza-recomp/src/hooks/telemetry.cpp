@@ -7,6 +7,7 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/telemetry.h"
+#include "../platform/bucket_list.h"
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
 #include <atomic>
@@ -35,4 +36,5 @@ extern "C" REX_FUNC(sub_823E40D8) {
   f.rewinding = std::bit_cast<float>(std::byteswap(scale)) < 0.0f;
   f.stepped = g_substeps.load(std::memory_order_relaxed) != substeps;
   forza::telemetry::Player().Frame(forza::telemetry::DrivingNowMs(), f);
+  forza::bucket_list::WorldFrame(base,f,forza::telemetry::DrivingNowMs());
 }
