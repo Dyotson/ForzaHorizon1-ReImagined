@@ -470,6 +470,7 @@ edited by hand:
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
 | `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
+| `wheel_ffb_keep_playing` | -1 | Seconds between restarts of the force feedback effects that play, so the wheel does not end them (#304): -1 is 5 on Windows and macOS and never on Linux, 0 never |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
@@ -650,6 +651,29 @@ force feedback. The actual combined wheel adapter compiles against Windows
 SDK/SDL3 headers. No physical force-feedback device or game/GPU session was used;
 DirectInput acquisition, force feel and real Fanatec/vJoy ordering remain hardware
 validation gates.
+**The steering force no longer stops about 30 s after a pause (#304).** The same Simagic Alpha EVO Pro owner
+(Windows) then felt the wheel go light about 30 s after every pause or fast travel, often around an autosave:
+the reactive force gone, only a centring spring left, until the next pause. The driver gives every effect SDL's
+endless length, but SDL's DirectInput (Windows) and macOS backends turn it into 4294966296 microseconds (the
+length times 1000 in 32 bits), about 71 minutes and not DirectInput's endless value, and a HID PID wheel's
+duration field (16 bits of milliseconds) cannot hold that. The game starts its steering force and damper once
+(the driver starts them again only when the forces come back to full strength after a pause), but stops and
+starts its centring spring whenever the spring's gain passes 0 with the speed, every few seconds: a wheel that
+ends effects after about half a minute keeps only the spring, which is what the report describes (not yet
+confirmed on the wheel itself). Now the driver starts every effect
+that plays again every 5 seconds on Windows and macOS (`wheel_ffb_keep_playing`, SDK patch 0146; starting a
+playing effect restarts it unchanged), and every 10 seconds it asks the wheel whether the game's effects still
+play (DirectInput can tell): one that stopped by itself is logged (`Wheel: "..." says the game's effect block 5
+(constant) has stopped ...`) and started again. Reproduced in free roam with a virtual Simagic (uinput) that
+ends each effect 32.767 s after its start: without the restarts the steering force and damper ended 32.8 s
+after the forces came back to full strength, while the spring went on; with them, nothing ended over a drive of
+several minutes with a pause. The autosave itself (the profile is written every minute or so while driving) changes nothing
+the game sends. To see it in a log, the driver now also logs what the game sends and what the wheel gets
+(SDK patch 0145): a block's line when it changes (`Wheel: the game's effect block 4 is now ...`), the game's
+effect operations and device controls, and every 10 seconds a summary: `Wheel: the last 10 s: block 5
+constant: game 300 updates, gain 255, force -62..48, playing; wheel 208 updates, 2 restarts, level
+-7431..9598, running | ...`.
+
 **An effect the wheel refuses (#308).** A TMX on Windows refused the game's steering force ("Haptic error
 Unable to create effect"), and the driver tried again every frame: 86,000 warnings in one log. Now an effect is
 created on SDL's steering axis, else as a Cartesian or polar direction (SDK patch 0136); a type the wheel refuses

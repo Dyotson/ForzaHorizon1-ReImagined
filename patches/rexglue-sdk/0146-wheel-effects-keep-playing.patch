@@ -1,0 +1,172 @@
+diff --git a/src/input/wheel/wheel_ff_keep_playing.h b/src/input/wheel/wheel_ff_keep_playing.h
+new file mode 100644
+index 0000000..2d7cdcc
+--- /dev/null
++++ b/src/input/wheel/wheel_ff_keep_playing.h
+@@ -0,0 +1,54 @@
++/**
++ * @file        src/input/wheel/wheel_ff_keep_playing.h
++ * @brief       Keeping the wheel's effects playing where SDL cannot make them endless (#304),
++ *              without SDL.
++ *
++ * Every effect the driver plays has SDL's endless length (SDL_HAPTIC_INFINITY, 0xFFFFFFFF ms) and
++ * is started for ever. SDL's Linux backend sends that as an endless effect, but its DirectInput
++ * (Windows) and ForceFeedback (macOS) backends multiply the length by 1000 in 32 bits
++ * (`length * 1000UL`, SDL 3.4.14 and SDL's main branch): the effect gets 4294966296 us, about 71
++ * minutes, never INFINITE (0xFFFFFFFF). A HID PID wheel's duration field holds 16 bits of
++ * milliseconds (32.767 s or 65.535 s at most), so the system's PID driver cannot pass 71 minutes
++ * on: a Simagic Alpha EVO Pro on Windows ended the game's steering force, spring and damper about
++ * 30 s after each start, leaving the base's own centring, until a pause started them again (the
++ * forces back at full strength restart every effect, SDK patch 0130).
++ *
++ * So where SDL's lengths are finite the driver starts every effect it plays again every few
++ * seconds (starting a playing effect restarts it, with the same parameters), well inside that
++ * limit. `wheel_ffb_keep_playing` sets the interval: -1 (default) 5 s on Windows and macOS and
++ * never on Linux, 0 never, N every N seconds.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <cstdint>
++
++namespace rex::input::wheel {
++
++#if defined(_WIN32) || defined(__APPLE__)
++constexpr bool kSdlEffectLengthsFinite = true;
++#else
++constexpr bool kSdlEffectLengthsFinite = false;
++#endif
++constexpr int kFfKeepPlayingSeconds = 5;
++
++// The duration SDL's DirectInput and macOS backends give an effect of `length_ms` (32 bits, as
++// `length * 1000UL` is with Windows' 32-bit unsigned long).
++constexpr uint32_t SdlBackendDurationUs(uint32_t length_ms) {
++  return static_cast<uint32_t>(length_ms * 1000u);
++}
++
++// The restart interval in seconds for the wheel_ffb_keep_playing setting; 0: never.
++constexpr int FfKeepPlayingSeconds(int setting, bool sdl_lengths_finite = kSdlEffectLengthsFinite) {
++  return setting < 0 ? (sdl_lengths_finite ? kFfKeepPlayingSeconds : 0) : setting;
++}
++
++// When the effects are next started again: `last` is when they last were (or when the wheel was
++// opened), all in seconds.
++constexpr bool FfKeepPlayingDue(double last, double now, int seconds) {
++  return seconds > 0 && now - last >= seconds;
++}
++
++}  // namespace rex::input::wheel
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 4996552..26ec61d 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -35,6 +35,7 @@
+ #include <rex/ui/virtual_key.h>
+ 
+ #include "wheel_devices.h"
++#include "wheel_ff_keep_playing.h"
+ #include "wheel_ff_log.h"
+ #include "wheel_ff_reject.h"
+ #include "wheel_gear_request.h"
+@@ -173,6 +174,11 @@ REXCVAR_DEFINE_INT32(wheel_handbrake_axis, 0, "Input",
+     .range(0, 99);
+ REXCVAR_DEFINE_BOOL(wheel_invert_handbrake, false, "Input",
+                     "Flip the handbrake axis detected as released/pulled");
++REXCVAR_DEFINE_INT32(wheel_ffb_keep_playing, -1, "Input",
++                     "Seconds between restarts of the force feedback effects that play, so a "
++                     "wheel does not end them (SDL gives them a finite length on Windows and "
++                     "macOS): -1 auto (5 on Windows and macOS, never on Linux), 0 never")
++    .range(-1, 60);
+ REXCVAR_DEFINE_STRING(wheel_device, "", "Input",
+                       "The wheel the first player drives with and the pedal, shifter and handbrake "
+                       "devices are read with: empty picks one with force feedback first; a device "
+@@ -547,6 +553,46 @@ void NoteFfFailure(int& failures, const char* what, uint32_t block) {
+   }
+ }
+ 
++// Starts every effect the wheel plays again every few seconds (wheel_ff_keep_playing.h, #304): SDL's
++// DirectInput and macOS backends give an endless effect a finite length, which a HID PID wheel
++// ended about 30 s after each start. Starting a playing effect restarts it as it is.
++template <typename W>
++void KeepPlaying(W& w, bool game_ff, double now) {
++  const int seconds = FfKeepPlayingSeconds(REXCVAR_GET(wheel_ffb_keep_playing));
++  if (!w.haptic || seconds <= 0) {
++    return;
++  }
++  if (w.kept_playing_at < 0) {
++    w.kept_playing_at = now;
++  }
++  if (!FfKeepPlayingDue(w.kept_playing_at, now, seconds)) {
++    return;
++  }
++  w.kept_playing_at = now;
++  for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
++    const int id = w.game_fx[b - 1];
++    if (id < 0 || !w.game_fx_running[b - 1]) {
++      continue;
++    }
++    if (SDL_RunHapticEffect(w.haptic, id, SDL_HAPTIC_INFINITY)) {
++      g_ff_log.Sdl(b, FfSdlCall::kKeepPlaying);
++    } else {
++      g_ff_log.Sdl(b, FfSdlCall::kFailure);
++      NoteFfFailure(w.ff_failures, "keeping playing", b);
++    }
++  }
++  const std::pair<int, bool> waves[] = {
++      {w.road_fx, w.road_running}, {w.engine_fx, w.engine_running}, {w.sine_fx, w.sine_running}};
++  for (const auto& [fx, running] : waves) {
++    if (fx >= 0 && running && SDL_RunHapticEffect(w.haptic, fx, SDL_HAPTIC_INFINITY)) {
++      g_ff_log.RumbleKept();
++    }
++  }
++  if (!game_ff && w.spring_fx >= 0) {  // the approximate spring, started when the wheel opened
++    SDL_RunHapticEffect(w.haptic, w.spring_fx, SDL_HAPTIC_INFINITY);
++  }
++}
++
+ int CreateSine(SDL_Haptic* haptic, uint16_t period_ms) {
+   SDL_HapticEffect e{};
+   e.type = SDL_HAPTIC_SINE;
+@@ -615,6 +661,7 @@ struct WheelInputDriver::Wheel {
+   // Set while the game's forces come back to full strength: every effect that should play is
+   // started again, running or not (#304).
+   bool restart_effects = false;
++  double kept_playing_at = -1;  // when its effects were last started again (KeepPlaying), seconds
+   int ff_failures = 0;  // failed SDL calls on the game's effects (NoteFfFailure)
+   int ff_ended = 0;     // the game's effects the wheel says have stopped by themselves (#304)
+   int autocenter = -1;
+@@ -1586,6 +1633,9 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+   }
+   PumpLocked();
+   UpdateFadeLocked();
++  for (auto& wheel : wheels_) {
++    KeepPlaying(*wheel, game_ff_active_, FfNow());
++  }
+   if (game_ff_active_ && g_ff_log.SummaryDue(FfNow())) {
+     // Every 10 s, what the game sent and what the wheel got (wheel_ff_log.h, #304), and whether the
+     // wheel still plays what it was told to (SDL's DirectInput backend can ask it).
+@@ -1601,13 +1651,20 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+       if (status && !SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) &&
+           !*SDL_GetError()) {
+         ended |= 1u << i;
++        // It plays again, unless wheel_ffb_keep_playing is 0 (wheel_ff_keep_playing.h).
++        const bool again = FfKeepPlayingSeconds(REXCVAR_GET(wheel_ffb_keep_playing)) > 0 &&
++                           SDL_RunHapticEffect(first.haptic, first.game_fx[i], SDL_HAPTIC_INFINITY);
++        if (again) {
++          g_ff_log.Sdl(i + 1, FfSdlCall::kKeepPlaying);
++        }
+         // The 1st, 10th, 100th... time: a wheel that ends effects by itself (#304).
+         const int n = ++first.ff_ended;
+         for (int k = 1; k <= n; k *= 10) {
+           if (k == n) {
+             REXLOG_WARN("Wheel: \"{}\" says the game's effect block {} ({}) has stopped, though it "
+-                        "was started and not stopped ({} so far)",
+-                        first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type), n);
++                        "was started and not stopped ({} so far){}",
++                        first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type), n,
++                        again ? "; started again" : "");
+           }
+         }
+       }

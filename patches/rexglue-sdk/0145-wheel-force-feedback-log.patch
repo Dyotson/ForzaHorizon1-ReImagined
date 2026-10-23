@@ -1,0 +1,464 @@
+diff --git a/src/input/wheel/wheel_ff_log.h b/src/input/wheel/wheel_ff_log.h
+new file mode 100644
+index 0000000..90004ba
+--- /dev/null
++++ b/src/input/wheel/wheel_ff_log.h
+@@ -0,0 +1,272 @@
++/**
++ * @file        src/input/wheel/wheel_ff_log.h
++ * @brief       What the game asks of a wheel's force feedback and what the driver plays on it, for
++ *              the log (#304), without SDL: a line when an effect block changes, a summary every
++ *              10 s.
++ *
++ * A Simagic Alpha EVO Pro owner on Windows felt the game's steering force stop about 30 s after
++ * every pause, leaving only a centring spring, while the log said nothing: the driver logged each
++ * effect block once, at its first definition, and nothing it did with them after. Now:
++ *  - a block's line when its type, a condition's coefficients, saturations, dead band or centre,
++ *    or the constant force's gain to or from 0 change, at most once a second per block (a change
++ *    in between is logged at the next update after it). The steering force's magnitude (every
++ *    frame) and a condition's gain (FH1's spring moves with the speed) are left to the summary;
++ *  - the game's effect operations and device controls, the first few of each 10 s;
++ *  - every 10 s while the game drives the force feedback, one summary: per block what the game
++ *    sent (updates, gain and force range, starts and stops, whether it plays) and what the wheel
++ *    got (SDL updates, creations, starts, restarts, stops, failures, the level or coefficient
++ *    range, whether it runs and, where SDL can ask, whether the wheel says it still plays).
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <algorithm>
++#include <climits>
++#include <cstdint>
++#include <cstdio>
++#include <string>
++
++#include <rex/input/wheel/wheel_ff.h>
++
++namespace rex::input::wheel {
++
++constexpr double kFfLogSummarySeconds = 10.0;
++constexpr double kFfLogBlockSeconds = 1.0;  // a block's change lines at most this often
++constexpr uint32_t kFfLogEventsPerWindow = 8;  // operations and controls logged per summary window
++
++// A change worth its own line: the type; the constant force's gain to or from 0; a condition's
++// coefficients, saturations, dead band and centre. Not the constant force's magnitude, nor a
++// condition's gain: FH1 moves its spring's gain with the speed, through 0 every few seconds.
++inline bool FfBlockChanged(const FfEffect& a, const FfEffect& b) {
++  if (a.type != b.type) {
++    return true;
++  }
++  if (a.type == kFfConstant) {
++    return (a.gain == 0) != (b.gain == 0);
++  }
++  return a.center != b.center || a.pos_coeff != b.pos_coeff || a.neg_coeff != b.neg_coeff ||
++         a.pos_sat != b.pos_sat || a.neg_sat != b.neg_sat || a.deadband != b.deadband;
++}
++
++inline const char* FfBlockTypeName(uint32_t type) {
++  switch (type) {
++    case kFfConstant: return "constant";
++    case kFfSpring: return "spring";
++    case kFfDamper: return "damper";
++    case kFfInertia: return "inertia";
++    case kFfFriction: return "friction";
++    default: return "other";
++  }
++}
++
++inline const char* FfControlName(uint32_t command) {
++  switch (command) {
++    case kFfEnableActuators: return "actuators on";
++    case kFfDisableActuators: return "actuators off";
++    case kFfStopAll: return "stop all";
++    case kFfReset: return "reset";
++    case kFfPause: return "pause";
++    case kFfContinue: return "continue";
++    default: return "unknown";
++  }
++}
++
++// What the driver does with a block on the wheel (SDL haptics).
++enum class FfSdlCall { kCreate, kUpdate, kStart, kKeepPlaying, kStop, kFailure };
++
++class FfLog {
++ public:
++  // SetEffect / UpdateEffect of a defined block, at `now` seconds: true when its line is due. Not
++  // for a block's first definition, which the driver logs once whatever comes after.
++  bool Defined(const FfEffect& e, double now) {
++    if (e.block < 1 || e.block > kFfMaxBlocks) {
++      return false;
++    }
++    Block& b = blocks_[e.block - 1];
++    Window& w = b.window;
++    w.sets++;
++    w.min_gain = std::min(w.min_gain, e.gain);
++    w.max_gain = std::max(w.max_gain, e.gain);
++    if (e.type == kFfConstant) {
++      w.min_force = std::min(w.min_force, e.magnitude);
++      w.max_force = std::max(w.max_force, e.magnitude);
++    }
++    active_ = true;
++    if (!b.logged) {
++      b.logged = true;
++      b.logged_at = now;
++      b.last = e;
++      return false;
++    }
++    if (!FfBlockChanged(b.last, e) || now - b.logged_at < kFfLogBlockSeconds) {
++      return false;  // a change within the second is caught at the next update after it
++    }
++    b.logged_at = now;
++    b.last = e;
++    return true;
++  }
++  // EffectOperation and DeviceControl: true when the call gets its own line.
++  bool Operated(uint32_t block, uint32_t op) {
++    if (block >= 1 && block <= kFfMaxBlocks) {
++      Window& w = blocks_[block - 1].window;
++      (op == kFfOpStop ? w.stops : w.starts)++;
++    }
++    active_ = true;
++    return ++events_ <= kFfLogEventsPerWindow;
++  }
++  bool Controlled() {
++    controls_++;
++    active_ = true;
++    return ++events_ <= kFfLogEventsPerWindow;
++  }
++  void Rumbled() { rumbles_++; }
++  // The driver on the wheel: `value` is the SDL level (constant) or right coefficient (conditions)
++  // sent with a creation or an update.
++  void Sdl(uint32_t block, FfSdlCall call, int32_t value = 0) {
++    if (block < 1 || block > kFfMaxBlocks) {
++      return;
++    }
++    Window& w = blocks_[block - 1].window;
++    switch (call) {
++      case FfSdlCall::kCreate: w.creates++; break;
++      case FfSdlCall::kUpdate: w.updates++; break;
++      case FfSdlCall::kStart: w.starts_sdl++; return;
++      case FfSdlCall::kKeepPlaying: w.kept++; return;
++      case FfSdlCall::kStop: w.stops_sdl++; return;
++      case FfSdlCall::kFailure: w.failures++; return;
++    }
++    w.min_value = std::min(w.min_value, value);
++    w.max_value = std::max(w.max_value, value);
++  }
++  // Rumble restarts that keep the vibration playing (the keep-alive, #304).
++  void RumbleKept() { rumble_kept_++; }
++
++  // Whether the window is kFfLogSummarySeconds old: Summary then gives its line.
++  bool SummaryDue(double now) {
++    if (window_start_ < 0) {
++      window_start_ = now;
++    }
++    return now - window_start_ >= kFfLogSummarySeconds;
++  }
++  // The summary when the window is due and the game did something in it (empty otherwise); then a
++  // new window starts. `running` has bit (block - 1) set for each block the first wheel was told
++  // to play, `ended` for each of those the wheel says it does not play (SDL_HAPTIC_STATUS: SDL's
++  // DirectInput backend); `fade` is the fade level (wheel_ff.h FfFade).
++  std::string Summary(const FfState& s, uint32_t running, uint32_t ended, float fade, double now) {
++    if (!SummaryDue(now)) {
++      return {};
++    }
++    const double seconds = now - window_start_;
++    std::string out;
++    if (active_) {
++      char buf[160];
++      std::snprintf(buf, sizeof(buf), "the last %.0f s:", seconds);
++      out = buf;
++      for (uint32_t i = 0; i < kFfMaxBlocks; i++) {
++        const Window& b = blocks_[i].window;
++        const bool runs = running >> i & 1;
++        const bool quiet = !b.sets && !b.starts && !b.stops && !b.creates && !b.updates &&
++                           !b.starts_sdl && !b.kept && !b.stops_sdl && !b.failures;
++        if (!s.defined(i + 1) && quiet && !runs) {
++          continue;
++        }
++        const FfEffect& e = s.effect(i + 1);
++        std::snprintf(buf, sizeof(buf), "%sblock %u %s: ", out.back() == ':' ? " " : " | ", i + 1,
++                      s.defined(i + 1) ? FfBlockTypeName(e.type) : "undefined");
++        out += buf;
++        if (quiet) {  // nothing sent either way: where it stands
++          std::snprintf(buf, sizeof(buf), "gain %u, %s, %s%s", e.gain,
++                        s.Active(i + 1) ? "playing" : "not playing",
++                        runs ? "running" : "not running",
++                        ended >> i & 1 ? " (the wheel says it is not playing)" : "");
++          out += buf;
++          continue;
++        }
++        std::snprintf(buf, sizeof(buf), "game %u updates", b.sets);
++        out += buf;
++        out += b.sets ? Range(", gain ", b.min_gain, b.max_gain) : Range(", gain ", e.gain, e.gain);
++        if (b.min_force <= b.max_force) {
++          out += Range(", force ", b.min_force, b.max_force);
++        }
++        out += Count(b.starts, "start");
++        out += Count(b.stops, "stop");
++        out += s.Active(i + 1) ? ", playing" : ", not playing";
++        std::snprintf(buf, sizeof(buf), "; wheel %u updates", b.updates);
++        out += buf;
++        out += Count(b.creates, "creation");
++        out += Count(b.starts_sdl, "start");
++        out += Count(b.kept, "restart");
++        out += Count(b.stops_sdl, "stop");
++        out += Count(b.failures, "failure");
++        if (b.min_value <= b.max_value) {
++          out += Range(s.defined(i + 1) && e.type == kFfConstant ? ", level " : ", coefficient ",
++                       b.min_value, b.max_value);
++        }
++        out += runs ? ", running" : ", not running";
++        out += ended >> i & 1 ? " (the wheel says it is not playing)" : "";
++      }
++      out += " |";
++      if (controls_) {
++        std::snprintf(buf, sizeof(buf), " %u device control%s,", controls_, controls_ == 1 ? "" : "s");
++        out += buf;
++      }
++      std::snprintf(buf, sizeof(buf), " device gain %u, %u rumbles", s.device_gain(), rumbles_);
++      out += buf;
++      out += Count(rumble_kept_, "rumble restart");
++      std::snprintf(buf, sizeof(buf), ", forces at %.0f%%", fade * 100.0f);
++      out += buf;
++    }
++    for (Block& b : blocks_) {
++      b.window = Window{};
++    }
++    controls_ = rumbles_ = rumble_kept_ = events_ = 0;
++    active_ = false;
++    window_start_ = now;
++    return out;
++  }
++
++ private:
++  // What the game sent and the wheel got, this window.
++  struct Window {
++    uint32_t sets = 0, starts = 0, stops = 0;
++    uint32_t min_gain = UINT32_MAX, max_gain = 0;
++    int32_t min_force = INT32_MAX, max_force = INT32_MIN;
++    uint32_t creates = 0, updates = 0, starts_sdl = 0, kept = 0, stops_sdl = 0, failures = 0;
++    int32_t min_value = INT32_MAX, max_value = INT32_MIN;
++  };
++  struct Block {
++    Window window;
++    // The block's last line.
++    bool logged = false;
++    double logged_at = 0;
++    FfEffect last{};
++  };
++  template <typename T>
++  static std::string Range(const char* what, T lo, T hi) {
++    char buf[64];
++    if (lo == hi) {
++      std::snprintf(buf, sizeof(buf), "%s%lld", what, static_cast<long long>(lo));
++    } else {
++      std::snprintf(buf, sizeof(buf), "%s%lld..%lld", what, static_cast<long long>(lo),
++                    static_cast<long long>(hi));
++    }
++    return buf;
++  }
++  static std::string Count(uint32_t n, const char* what) {
++    if (!n) {
++      return {};
++    }
++    char buf[64];
++    std::snprintf(buf, sizeof(buf), ", %u %s%s", n, what, n == 1 ? "" : "s");
++    return buf;
++  }
++
++  Block blocks_[kFfMaxBlocks];
++  uint32_t controls_ = 0, rumbles_ = 0, rumble_kept_ = 0, events_ = 0;
++  bool active_ = false;
++  double window_start_ = -1;
++};
++
++}  // namespace rex::input::wheel
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 4bdd6b0..4996552 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -35,6 +35,7 @@
+ #include <rex/ui/virtual_key.h>
+ 
+ #include "wheel_devices.h"
++#include "wheel_ff_log.h"
+ #include "wheel_ff_reject.h"
+ #include "wheel_gear_request.h"
+ #include "wheel_handbrake.h"
+@@ -186,6 +187,13 @@ constexpr uint8_t kSubTypeWheel = 2;  // XINPUT_DEVSUBTYPE_WHEEL
+ std::atomic<WheelInputDriver*> g_ff_driver{nullptr};
+ // Whether the player drives, from the game (ForzaWheelPlayerDriving): -1 never said, 0, 1.
+ std::atomic<int> g_player_driving{-1};
++// What the game sends and the wheels get, for the log (wheel_ff_log.h, #304); under the driver's
++// mutex.
++FfLog g_ff_log;
++
++double FfNow() {
++  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
++}
+ // FH1's constant force pushes the wheel right when positive (in a right-hand corner it is negative:
+ // the tyres pull the wheel back to the centre). An SDL level on the steering axis comes from the
+ // east (SDL_haptic.h: where the force comes from; Linux direction 0x4000, which pulls left), so it
+@@ -608,6 +616,7 @@ struct WheelInputDriver::Wheel {
+   // started again, running or not (#304).
+   bool restart_effects = false;
+   int ff_failures = 0;  // failed SDL calls on the game's effects (NoteFfFailure)
++  int ff_ended = 0;     // the game's effects the wheel says have stopped by themselves (#304)
+   int autocenter = -1;
+   int sine_magnitude = -1;
+   std::string name;
+@@ -1073,10 +1082,14 @@ void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
+   }
+   SetEffectDirection(fx, w.ff_direction);  // the direction its effects work in (#308)
+   int& id = w.game_fx[i];
++  // What the log's summary shows of it: the constant force's level, a condition's coefficient.
++  const int32_t sent_value =
++      fx.type == SDL_HAPTIC_CONSTANT ? fx.constant.level : fx.condition.right_coeff[0];
+   if (!play) {
+     if (id >= 0 && w.game_fx_running[i]) {
+       SDL_StopHapticEffect(w.haptic, id);
+       w.game_fx_running[i] = false;
++      g_ff_log.Sdl(block, FfSdlCall::kStop);
+     }
+     return;
+   }
+@@ -1092,6 +1105,7 @@ void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
+       return;
+     }
+     id = CreateEffectAnyDirection(w.haptic, fx, w.ff_direction);
++    g_ff_log.Sdl(block, id < 0 ? FfSdlCall::kFailure : FfSdlCall::kCreate, sent_value);
+     if (id < 0) {
+       if (w.ff_rejected.Reject(fx.type)) {
+         REXLOG_WARN("Wheel: \"{}\" refuses the game's {} (effect block {}, SDL type {}) in every "
+@@ -1111,12 +1125,15 @@ void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
+     // FH1 updates its constant force every frame, mostly with the same value.
+     if (SDL_UpdateHapticEffect(w.haptic, id, &fx)) {
+       w.game_fx_sent[i] = fx;
++      g_ff_log.Sdl(block, FfSdlCall::kUpdate, sent_value);
+     } else {
++      g_ff_log.Sdl(block, FfSdlCall::kFailure);
+       NoteFfFailure(w.ff_failures, "an update", block);
+     }
+   }
+   if (!w.game_fx_running[i] || w.restart_effects) {
+     w.game_fx_running[i] = SDL_RunHapticEffect(w.haptic, id, SDL_HAPTIC_INFINITY);
++    g_ff_log.Sdl(block, w.game_fx_running[i] ? FfSdlCall::kStart : FfSdlCall::kFailure);
+     if (!w.game_fx_running[i]) {
+       NoteFfFailure(w.ff_failures, "starting", block);
+     }
+@@ -1175,6 +1192,7 @@ bool WheelInputDriver::GameRumble(uint16_t left_motor, uint16_t right_motor) {
+   }
+   game_rumble_[0] = left_motor;
+   game_rumble_[1] = right_motor;
++  g_ff_log.Rumbled();
+   UpdateFadeLocked();
+   for (auto& w : wheels_) {
+     ApplyRumbleLocked(*w, left_motor, right_motor, true);
+@@ -1236,8 +1254,23 @@ bool GameFfDeviceInfo() {
+ bool GameFfSetEffect(const FfEffect& effect) {
+   WheelInputDriver* d = g_ff_driver;
+   bool ok = true;
+-  const bool wheel =
+-      d && d->GameForceFeedback([&](FfState& s) { return ok = s.Define(effect); }, effect.block);
++  const bool wheel = d && d->GameForceFeedback(
++                              [&](FfState& s) {
++                                ok = s.Define(effect);
++                                // A change of the block after its first definition (logged once,
++                                // below): its type, coefficients, gain to or from 0 (#304).
++                                if (ok && g_ff_log.Defined(effect, FfNow())) {
++                                  REXLOG_INFO("Wheel: the game's effect block {} is now {} (type "
++                                              "{}) gain {}, word 11 {}, coefficients {}/{}, "
++                                              "saturations {}/{}, dead band {}",
++                                              effect.block, FfBlockTypeName(effect.type),
++                                              effect.type, effect.gain, effect.magnitude,
++                                              effect.pos_coeff, effect.neg_coeff, effect.pos_sat,
++                                              effect.neg_sat, effect.deadband);
++                                }
++                                return ok;
++                              },
++                              effect.block);
+   return wheel && ok;
+ }
+ 
+@@ -1250,8 +1283,17 @@ bool GameFfUpdateEffect(const FfEffect& effect, uint32_t flags) {
+ bool GameFfOperate(uint32_t block, uint32_t op) {
+   WheelInputDriver* d = g_ff_driver;
+   bool ok = true;
+-  const bool wheel =
+-      d && d->GameForceFeedback([&](FfState& s) { return ok = s.Operate(block, op); }, block);
++  const bool wheel = d && d->GameForceFeedback(
++                              [&](FfState& s) {
++                                ok = s.Operate(block, op);
++                                if (g_ff_log.Operated(block, op)) {
++                                  REXLOG_INFO("Wheel: the game {} effect block {} (operation {}){}",
++                                              op == kFfOpStop ? "stops" : "starts", block, op,
++                                              ok ? "" : ", which is not defined");
++                                }
++                                return ok;
++                              },
++                              block);
+   return wheel && ok;
+ }
+ 
+@@ -1260,6 +1302,10 @@ bool GameFfControl(uint32_t command) {
+   return d && d->GameForceFeedback(
+                   [&](FfState& s) {
+                     s.Control(command);
++                    if (g_ff_log.Controlled()) {
++                      REXLOG_INFO("Wheel: the game's device control {} ({})", command,
++                                  FfControlName(command));
++                    }
+                     return true;
+                   },
+                   0);
+@@ -1269,6 +1315,9 @@ bool GameFfSetGain(uint32_t gain) {
+   WheelInputDriver* d = g_ff_driver;
+   return d && d->GameForceFeedback(
+                   [&](FfState& s) {
++                    if (std::min<uint32_t>(gain, 255) != s.device_gain() && g_ff_log.Controlled()) {
++                      REXLOG_INFO("Wheel: the game sets the device gain to {}", gain);
++                    }
+                     s.SetDeviceGain(gain);
+                     return true;
+                   },
+@@ -1537,6 +1586,37 @@ X_RESULT WheelInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state)
+   }
+   PumpLocked();
+   UpdateFadeLocked();
++  if (game_ff_active_ && g_ff_log.SummaryDue(FfNow())) {
++    // Every 10 s, what the game sent and what the wheel got (wheel_ff_log.h, #304), and whether the
++    // wheel still plays what it was told to (SDL's DirectInput backend can ask it).
++    Wheel& first = *wheels_[0];
++    const bool status = first.haptic && (SDL_GetHapticFeatures(first.haptic) & SDL_HAPTIC_STATUS);
++    uint32_t running = 0, ended = 0;
++    for (uint32_t i = 0; i < kFfMaxBlocks; i++) {
++      if (!first.game_fx_running[i] || first.game_fx[i] < 0) {
++        continue;
++      }
++      running |= 1u << i;
++      SDL_ClearError();
++      if (status && !SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) &&
++          !*SDL_GetError()) {
++        ended |= 1u << i;
++        // The 1st, 10th, 100th... time: a wheel that ends effects by itself (#304).
++        const int n = ++first.ff_ended;
++        for (int k = 1; k <= n; k *= 10) {
++          if (k == n) {
++            REXLOG_WARN("Wheel: \"{}\" says the game's effect block {} ({}) has stopped, though it "
++                        "was started and not stopped ({} so far)",
++                        first.name, i + 1, FfBlockTypeName(game_ff_.effect(i + 1).type), n);
++          }
++        }
++      }
++    }
++    const std::string summary = g_ff_log.Summary(game_ff_, running, ended, fade_.level, FfNow());
++    if (!summary.empty()) {
++      REXLOG_INFO("Wheel: {}", summary);
++    }
++  }
+   X_INPUT_STATE s{};
+   if (is_active()) {
+     ComputeStateLocked(*w, &s.gamepad);

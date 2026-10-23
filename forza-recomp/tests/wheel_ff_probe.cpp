@@ -6,7 +6,8 @@
 // a reset left the hardware autocentre at its last value). Then (#256) the forces fade out while
 // the game says the player is not driving (ForzaWheelPlayerDriving) and come back when they are,
 // and wheel_ffb_spring_strength scales the spring; quick toggles leave the spring whole, and back
-// at full strength the steering force is started again (#304, patch 0130). Then (#273, patch 0129)
+// at full strength the steering force is started again (#304, patch 0130), and wheel_ffb_keep_playing
+// starts it again every few seconds (#304, patch 0146). Then (#273, patch 0129)
 // the game's rumble on a wheel with periodic effects (a uinput Fanatec CSR Elite): which effects
 // each wheel_rumble_style sends (fine: a 40 Hz road sine and a ~71 Hz engine sine; classic: one
 // 25 Hz sine, as before), and fine falling back to classic on a wheel with room for one effect.
@@ -84,6 +85,10 @@ struct VirtualWheel {
       n += v != 0;
     }
     return n;
+  }
+  int LastPlayed() {  // the effect of the last play or stop request
+    std::lock_guard lock(m);
+    return plays.empty() ? -1 : plays.back().first;
   }
   bool Playing(int id) {
     std::lock_guard lock(m);
@@ -389,6 +394,21 @@ void SpringAndFade() {
   ForzaWheelPlayerDriving(1);
   Poll(driver, id, 700);
   Check(dev.Starts() > starts, "back at full strength: the steering force is started again");
+  // #304 (patch 0146): wheel_ffb_keep_playing starts every playing effect again every N seconds
+  // (by default 5 on Windows and macOS, where SDL's endless length is a finite 71 minutes that a
+  // HID PID wheel ended after about 30 s; never on Linux).
+  const int playing = dev.Starts();
+  Poll(driver, id, 1500);
+  Check(dev.Starts() == playing, "Linux by default: no restarts");
+  SetCvar("wheel_ffb_keep_playing", "1");
+  Poll(driver, id, 2600);
+  const int kept = dev.Starts() - playing;
+  Check(kept >= 2 && kept <= 3, "keep playing every second: the steering force restarted");
+  Check(dev.Playing(dev.LastPlayed()), "still playing after the restarts");
+  SetCvar("wheel_ffb_keep_playing", "0");
+  Poll(driver, id, 1500);
+  Check(dev.Starts() - playing == kept, "0: no restarts");
+  std::printf("wheel ff probe: the steering force kept playing (%d restarts in 2.6 s)\n", kept);
   Check(GameFfOperate(5, kFfOpStop), "stop the steering force");
   // wheel_ffb_spring_strength 50: half the centring (autocentre 15).
   SetCvar("wheel_ffb_spring_strength", "50");
