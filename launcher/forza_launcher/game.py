@@ -695,6 +695,8 @@ class Session:
             guard.__enter__()
             self._save_lock = guard
         try:
+            if self.plan.save_profile is not None:
+                saves._recover(self.plan.save_profile)
             self._start()
         except BaseException:
             self.cleanup()

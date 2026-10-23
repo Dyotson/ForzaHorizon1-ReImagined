@@ -26,7 +26,8 @@ paid its online credits and XP; the prize here is the career's, once per improve
 
 The edit is the save editor's: the save lock, both files read, decoded and verified with the
 player's own keys, one backup of the save ("Before co-op results"), both files checked unchanged
-before they are replaced (each through a temporary file). The server learns which results were
+before a complete staged save replaces the directory through the save manager's recovery
+journal. Recovery runs before another grant or game session. The server learns which results were
 applied; those not applied wait there until the next session. Nothing happens offline, on the
 server on this PC, or without a Forza Live identity (shader_share's rules).
 """
@@ -198,18 +199,30 @@ def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: No
             raise saves.SaveError('Could not back up the selected save.')
         profile_path = saves._inside(profile.folder/'ForzaProfile/ForzaProfile', profile.root)
         garage_path = garage._path(profile)
-        temporaries = []
+        # Stage the entire verified backup, then publish both edits together via
+        # the save manager's recoverable directory swap. Originals stay intact
+        # while either staged file is being written.
+        parent = saves._inside(profile.folder.parent, profile.root)
+        stage = parent / ('.save-restore-' + uuid.uuid4().hex)
+        journal = parent / '.save-manager-restore.json'
+        stage.mkdir()
         try:
+            metadata, _ = saves._manifest(backup.path, profile)
+            source = saves._inside(backup.path / 'save', profile.backups)
+            copied = saves._copy(source, stage, saves._files(source, cancelled), cancelled, progress)
+            if copied != metadata['files']:
+                raise saves.SaveError('The co-op backup failed its integrity check.')
             for path, edited in ((garage_path, edited_garage), (profile_path, edited_profile)):
-                temporaries.append((_written(path, edited), path))
+                staged_path = stage / path.relative_to(profile.folder)
+                temporary = _written(staged_path, edited)
+                os.replace(temporary, staged_path)
             saves._check(cancelled)
             if save_editor._read(profile) != profile_raw or garage._read(profile) != garage_raw:
                 raise saves.SaveError('The save changed before the co-op results were applied.')
-            for temporary, path in temporaries:
-                os.replace(temporary, path)
+            saves._replace_directory(profile, stage, cancelled)
         finally:
-            for temporary, _ in temporaries:
-                temporary.unlink(missing_ok=True)
+            if not journal.exists():
+                saves._remove(stage, parent)
         # what the game will read back
         save_editor.decode(profile, save_editor._read(profile), ((document.aes_key, document.mac_key),))
         garage.decode(profile, garage._read(profile), ((garage_doc.aes_key, garage_doc.mac_key),))
