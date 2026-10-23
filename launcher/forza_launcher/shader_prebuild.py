@@ -362,7 +362,7 @@ def prebuild(cfg, game, status_cb=None, progress=None, cancelled=None, log=print
     from . import game as game_mod
     if build_problem(cfg):
         raise PrebuildError(REBUILD_FIRST)
-    plan = game_mod.build_plan(cfg, game, write=True, log=log)
+    plan = game_mod.build_plan(cfg, game, write=True, log=log, battery_saver=False)
     if not uses_vulkan(plan):
         raise PrebuildError("Shader prebuild needs the Vulkan graphics API (Settings > Graphics API).")
     if ambiguous_paths(plan):

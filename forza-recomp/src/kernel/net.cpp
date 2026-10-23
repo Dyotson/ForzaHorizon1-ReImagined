@@ -610,6 +610,9 @@ class VNet {
     }
   }
 
+  // The machine slept for `seconds` (LiveResumed): LiveLoop says HELLO at once.
+  void Resumed(double seconds) { resumed_.store(seconds); }
+
   // This instance's XNADDR: the Forza Live form once the server has welcomed us,
   // else the LAN form.
   void WriteSelfXnAddr(uint8_t* xna) {
@@ -954,8 +957,23 @@ class VNet {
   void LiveLoop() {
     Clock::time_point next_hello{}, next_resolve{}, next_list{}, next_match{};
     bool resolved = false;
+    Clock::time_point last_pass = Clock::now();
     for (;;) {
       const auto now = Clock::now();
+      double away = resumed_.exchange(0);  // the machine slept (LiveResumed)
+      if (now - last_pass >= std::chrono::seconds(2)) {
+        // This thread did not run either: the game was stopped.
+        away += std::chrono::duration<double>(now - last_pass).count();
+      }
+      last_pass = now;
+      if (away > 0 && resolved) {
+        // The server may have dropped us meanwhile (#140): say HELLO now instead of in up to 5 s.
+        REXLOG_INFO("FORZA_LIVE: back after {:.0f} s; signing in to {} again", away, ServerName());
+        next_hello = next_list = now;
+        rejoining_ = true;  // log the welcome even when the server kept our id
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_welcome_ = now;  // not "lost the server": the time away was ours
+      }
       if (!resolved && now >= next_resolve) {
         resolved = ResolveServer();
         next_resolve = now + std::chrono::seconds(10);
@@ -1031,7 +1049,7 @@ class VNet {
           last_welcome_ = Clock::now();
           cv_.notify_all();
         }
-        if (changed) {
+        if (rejoining_.exchange(false) || changed) {
           REXLOG_INFO("FORZA_LIVE: signed in to {} as {} (player #{}), public address {}:{}{}{}",
                       ServerName(), forza::IdentityGamertag(), id, IpString(public_ip),
                       public_port, motd_size ? ": " : "",
@@ -1301,6 +1319,8 @@ class VNet {
   Endpoint public_ep_;
   uint16_t http_port_ = 0;  // the server's title servers (HTTP), from its welcome
   Clock::time_point last_welcome_{};
+  std::atomic<double> resumed_{0};  // seconds the machine slept (LiveResumed), 0: none
+  std::atomic<bool> rejoining_{false};  // back after a stop or a sleep, not welcomed yet
   std::unordered_map<uint32_t, LivePeer> live_peers_;
   std::unordered_map<uint32_t, uint32_t> live_id_by_vip_;
   std::vector<uint8_t> presence_;  // body of our last presence message
@@ -1336,6 +1356,10 @@ void LiveSetPresence(uint32_t state, const uint8_t* session_info, const std::str
 }
 
 void LiveSelfXnAddr(uint8_t* xnaddr) { VNet::Get().WriteSelfXnAddr(xnaddr); }
+
+void LiveResumed(double seconds) {
+  if (NetOn() && LiveMode()) VNet::Get().Resumed(seconds);
+}
 
 void LiveSendInvite(uint64_t xuid, const uint8_t* session_info) {
   if (NetOn()) VNet::Get().SendInvite(xuid, session_info);
