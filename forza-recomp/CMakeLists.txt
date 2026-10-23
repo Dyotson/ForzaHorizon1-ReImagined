@@ -178,6 +178,7 @@ set(FORZA_SOURCES
     src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp

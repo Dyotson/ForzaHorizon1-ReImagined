@@ -65,6 +65,11 @@ SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange
 MAX_PRESENCE_EXTRA = 1024
 
 PEER_TIMEOUT = 30.0  # seconds without a HELLO before a peer is dropped
+# A player dropped for silence whose game says HELLO again with its token and XUID gets its id
+# back for this long (#140: a Steam Deck that slept, a game that was stopped): its XNADDR, the
+# session it hosts and the others' view of it stay the same. At most GONE_MAX are kept.
+GONE_KEEP = 12 * 3600.0
+GONE_MAX = 5000
 # A restarting server keeps its players (#93): registrations are written to
 # DATA_DIR/live_state.json when they change, every STATE_REFRESH seconds and on shutdown,
 # and loaded again if the file is at most STATE_MAX_AGE seconds old.
@@ -172,6 +177,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.state_dirty = False
         self.state_saved = 0.0  # monotonic time of the last write
         self.restored = set()  # ids of players loaded from the state file, not heard from yet
+        self.gone = {}  # token -> (id, xuid, monotonic time): players dropped for silence
         self.friends = friends.Friends(self)
         self.chat = chat.Chat(self, self.friends.store)
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
@@ -280,18 +286,23 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return
             if not take(self.hello_buckets, key, HELLOS_PER_IP):
                 return
-            while self.next_id in self.peers or self.next_id == 0:
+            back = self.take_gone(token, xuid)
+            if back is None:
+                reserved = {pid for pid, _, _ in self.gone.values()}
+                while self.next_id in self.peers or self.next_id == 0 or self.next_id in reserved:
+                    self.next_id = (self.next_id + 1) & 0xFFFFFF
+            peer = Peer(back if back is not None else self.next_id, addr, token, xuid, name, room,
+                        (local_ip, local_port))
+            if back is None:
                 self.next_id = (self.next_id + 1) & 0xFFFFFF
-            peer = Peer(self.next_id, addr, token, xuid, name, room, (local_ip, local_port))
-            self.next_id = (self.next_id + 1) & 0xFFFFFF
             peer.proxied = proxied
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
             self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
             self.state_dirty = True
-            log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s", peer.id, name,
-                     xuid, room, addr[0], addr[1], u32_to_ip(local_ip), local_port,
-                     " via proxy" if proxied else "")
+            log.info("%s  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s",
+                     "join" if back is None else "back", peer.id, name, xuid, room, addr[0],
+                     addr[1], u32_to_ip(local_ip), local_port, " via proxy" if proxied else "")
         peer.seen = time.monotonic()
         self.restored.discard(peer.id)
         if ((peer.name, peer.xuid, peer.room, peer.local, peer.features) !=
@@ -775,7 +786,22 @@ class ForzaLive(asyncio.DatagramProtocol):
             return peer
         return None
 
+    def take_gone(self, token, xuid):
+        """The id of a player dropped for silence that says HELLO again with its token and XUID
+        (GONE_KEEP), or None."""
+        entry = self.gone.pop(token, None)
+        if entry is None:
+            return None
+        pid, gone_xuid, when = entry
+        if gone_xuid != xuid or time.monotonic() - when > GONE_KEEP or pid in self.peers:
+            return None
+        return pid
+
     def drop(self, peer, why):
+        if why == "timed out":
+            self.gone[peer.token] = (peer.id, peer.xuid, time.monotonic())
+            while len(self.gone) > GONE_MAX:
+                del self.gone[next(iter(self.gone))]  # the oldest
         self.challenges.drop(peer.id)
         self.peers.pop(peer.id, None)
         self.restored.discard(peer.id)
@@ -794,6 +820,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         now = time.monotonic()
         for peer in [p for p in self.peers.values() if now - p.seen > PEER_TIMEOUT]:
             self.drop(peer, "timed out")
+        for token in [t for t, (_, _, when) in self.gone.items() if now - when > GONE_KEEP]:
+            del self.gone[token]
         for buckets in (self.packet_buckets, self.hello_buckets, self.error_buckets):
             if len(buckets) > 5000:  # forgotten addresses (forged sources)
                 for ip in [ip for ip, (_, last) in buckets.items() if now - last > 60]:

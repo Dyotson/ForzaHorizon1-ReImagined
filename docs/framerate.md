@@ -82,7 +82,12 @@ VSync thread fires vblank j at the first 1 ms check after start + j * interval, 
 callback is never early and the schedule is the earliest one consistent with every
 callback. dt is the difference of two timestamps, so frames that keep up get exactly the
 frame period, late frames their real length, and the sum is real time. The game's rules
-stay: more than 4 s still counts as one 60 Hz frame, and dt is at least 0.1 ms. At 144 fps
+stay: more than 4 s still counts as one 60 Hz frame, and dt is at least 0.1 ms. A game
+that was stopped (the process paused while the clock ran on, #140) needs nothing more: the
+frame after a 3 s stop got dt = 3.0 s at 60 fps, but the physics step takes at most 0.2 s of
+it and the race clock moved the same 2.1 s across a 3 s stop as across a 10 s one (over 4 s:
+one 60 Hz frame), at 30 and at 60 fps; a system suspend stops the guest clock
+(CLOCK_MONOTONIC_RAW), so the game sees no gap at all. At 144 fps
 99-100% of the frames get exactly 6.944 ms (`FORZA_FRAMETIME_LOG=1` logs the statistics).
 
 **Pacing.** The divider of two stays above 30 and the guest vblank runs at twice the frame

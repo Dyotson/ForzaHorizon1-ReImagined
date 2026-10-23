@@ -819,6 +819,25 @@ Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_
 - `server/test_forza_world_players.py`: placement of the third player, fullest world first,
   full worlds not offered, the standby host after the host left, AI level per human count.
 
+## A game that went silent (#140)
+
+A suspended Steam Deck, or a game process stopped for a while, sends no HELLO; the server
+drops it after `PEER_TIMEOUT` (30 s). Before, its next HELLO registered it under a NEW id
+(log: `leave #479 (timed out)`, then `join #480`; the game: `lost the server ...;
+reconnecting`, `server error 1: not registered`, `signed in ... (player #480)`), so its
+XNADDR changed under the session it hosted, as after a restart without the state file
+(below). Now the server keeps the token, XUID and id of a player it dropped for silence
+(`GONE_KEEP`, 12 hours, at most 5,000) and gives the id back when that token and XUID say
+HELLO again, from any address (`back  #479`); the id is not handed to anyone else
+meanwhile. A player that said BYE, a new game process (new token) or another XUID gets a
+new id. The game says HELLO at once instead of within 5 s when its network thread did not run
+for 2 s or more (the game was stopped) or, on Linux, when `src/platform/resume.cpp` finds that
+the machine slept: `FORZA_LIVE: back after 45 s; signing in to ... again`, then `signed in ...
+(player #484)` with the same id. Tested with a hosted Horizon World on a local server, the game
+stopped (SIGSTOP) for 10 s, 45 s and 2 minutes: after the two that outlasted the timeout the
+server logged `back  #484` and had the world's record again at once (same session, 1/8), and
+the game drove on in the world. `server/test_forza_live_resume.py`.
+
 ## Server restart in a lobby or a world (#93)
 
 Cause: the server kept its players only in memory. After a restart the games' packets got
