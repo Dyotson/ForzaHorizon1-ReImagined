@@ -77,7 +77,14 @@ common offsets are engine angular velocity +324, redline +452, maximum +456,
 idle +1228, gear byte +2240, ABS +3020, speed +3128, controls +3904. Wheels start
 at +3936: disc stride **1024**, TU4 stride **1040**. Each wheel has rotation
 speed +12, normalized longitudinal slip +496, normalized slip angle +520 and
-contact byte +796; suspension displacement is +0 minus spring rest +860.
+contact byte +796 on disc, +800 on TU4; suspension displacement is +0 minus spring rest +860 on disc, +876 on TU4.
+
+A Windows TU4 copied-save run on 2026-10-23 exposed and corrected both moved
+wheel fields. An independent UDP receiver captured 2,699 Horizon packets,
+including 2,084 active samples, engine speed to 8,004 RPM, speed to 24.7 m/s,
+full processed throttle/brake input and inactive packets after pause. The same
+sampler feeds FH1T v2. Disc/TU4 native UDP probes and strict reader tests pass;
+physical Xbox trigger output still requires controller hardware validation.
 Angular velocity becomes RPM by 60/(2*pi). Gear 0 is reverse, 9 neutral.
 
 Research reference: [Pinyon Shift's car dynamics findings](https://github.com/arcanite24/pinyon-shift/blob/main/src/pinyon_shift_runtime_hooks.cpp).

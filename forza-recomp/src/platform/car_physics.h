@@ -60,11 +60,11 @@ CarPhysics ReadCarPhysics(uint32_t car, bool tu4, Reader read) {
     const uint32_t wheel = car + 3936 + i * stride;
     uint8_t contact;
     float spring, position;
-    if (!read(wheel + 796, &contact, 1) || contact > 1 ||
+    if (!read(wheel + (tu4 ? 800 : 796), &contact, 1) || contact > 1 ||
         !number(wheel + 496, out.slip[i], 1000) ||
         !number(wheel + 520, out.slip_angle[i], 1000) ||
         !number(wheel + 12, out.wheel_speed[i], 10000) ||
-        !number(wheel, position, 10) || !number(wheel + 860, spring, 10)) return {};
+        !number(wheel, position, 10) || !number(wheel + (tu4 ? 876 : 860), spring, 10)) return {};
     out.contact[i] = contact != 0;
     if (!contact) out.slip[i] = out.slip_angle[i] = 0;
     out.suspension[i] = position - spring;

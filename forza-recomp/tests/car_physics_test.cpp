@@ -21,17 +21,21 @@ int main() {
     bytes[2240] = 3; word(3020, 1);
     for (unsigned i = 0; i < 5; ++i) number(3904 + i * 4, i * .1f);
     const auto stride = tu4 ? 1040u : 1024u;
+    const auto contact_offset = tu4 ? 800u : 796u;
     for (unsigned i = 0; i < 4; ++i) {
       const auto wheel = 3936 + i * stride;
-      bytes[wheel + 796] = 1;
+      if (tu4) number(wheel + 860, 154.f);  // Old offset is not suspension.
+      if (tu4) bytes[wheel + 796] = 0x3b;  // Old offset is float data in TU4.
+      bytes[wheel + contact_offset] = 1;
       number(wheel + 496, float(i) + .25f); number(wheel + 520, -.5f);
-      number(wheel + 12, 100 + float(i)); number(wheel, .1f); number(wheel + 860, .02f);
+      number(wheel + 12, 100 + float(i)); number(wheel, .1f); number(wheel + (tu4 ? 876 : 860), .02f);
     }
     auto sample = forza::telemetry::ReadCarPhysics(car, tu4, read);
     assert(sample.valid && sample.abs && sample.gear == 3);
+    for (float v : sample.suspension) assert(std::abs(v - .08f) < .0001f);
     assert(std::abs(sample.rpm - 4774.648f) < .1f);
     for (unsigned i = 0; i < 4; ++i) assert(sample.slip[i] == float(i) + .25f);
-    bytes[3936 + 3 * stride + 796] = 0;
+    bytes[3936 + 3 * stride + contact_offset] = 0;
     sample = forza::telemetry::ReadCarPhysics(car, tu4, read);
     assert(sample.valid && sample.slip[3] == 0 && sample.slip_angle[3] == 0);
     number(324, std::numeric_limits<float>::quiet_NaN());

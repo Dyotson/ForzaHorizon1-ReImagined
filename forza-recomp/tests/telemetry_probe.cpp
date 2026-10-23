@@ -29,9 +29,9 @@ int main(int argc, char**) {
   for (unsigned i = 0; i < 5; ++i) number(3904 + i * 4, .5f);
   for (unsigned i = 0; i < 4; ++i) {
     const auto wheel = 3936 + i * (FORZA_TU4 ? 1040u : 1024u);
-    number(wheel, .1f); number(wheel + 860, .02f); number(wheel + 12, 100);
+    number(wheel, .1f); number(wheel + (FORZA_TU4 ? 876 : 860), .02f); number(wheel + 12, 100);
     number(wheel + 496, float(i) + .25f); number(wheel + 520, -.5f);
-    word(car + wheel + 796, 0x01000000);
+    word(car + wheel + (FORZA_TU4 ? 800 : 796), 0x01000000);
   }
   const auto now = forza::telemetry::DrivingNowMs();
   for (auto time : {now - 600, now - 300, now})
