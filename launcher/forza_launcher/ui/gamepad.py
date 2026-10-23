@@ -97,7 +97,12 @@ class Navigation(QObject):
         scope = self.active_scope()
         self.window.controller_guide.set_state(connected=state is not None, paused=scope is None)
         self.update_action_icon(self.target(scope) if state and scope else None)
-        for action in self.actions.update(state, time.monotonic(), scope is not None):
+        # A Bind or a calibration on the Controls page owns the device: its presses are bindings.
+        # Disabled, Actions also waits for a neutral pad before it acts again.
+        controls = getattr(self.window, "controls", None)
+        captured = bool(state and controls is not None and hasattr(controls, "captures")
+                        and controls.captures(state.device))
+        for action in self.actions.update(state, time.monotonic(), scope is not None and not captured):
             self.used = True
             # A button can enter QDialog.exec(). Deliver outside this timer callback so
             # the timer keeps polling inside that nested event loop (including B to cancel).

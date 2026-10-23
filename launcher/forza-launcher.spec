@@ -53,7 +53,7 @@ hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
 # prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
-for _tool in ("apply_title_update.py", "lzx_delta.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
 # The shipped pipeline list (hashes and render state only).
@@ -64,7 +64,7 @@ a = Analysis(
     pathex=[str(root), str(repo / "tools")],
     datas=datas,
     binaries=collect_dynamic_libs("sdl2dll"),
-    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "tomllib", "pipeline_list",
+    hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "xdc_decode", "livery_codec", "tomllib", "pipeline_list",
                             "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",

@@ -497,8 +497,9 @@ still needed to tell.
 
 Ideas left (not cheap; the generated code built with FMA behind a CPU check is done, see
 [CPU target x86-64-v3](#cpu-target-x86-64-v3-220-2026-10-21)): cache Vulkan descriptor sets in
-`UpdateBindings` (~15% of the command processor); a futex wake from the command processor's read pointer
-write-back instead of the 50 us sleeps.
+`UpdateBindings` (~15% of the command processor); a futex wake instead of the 50 us sleeps (done for the swap
+waits, see [Low-end CPUs](#low-end-cpus-45-263-268-2026-10-22); the word they poll is not the read pointer
+write-back but one the GPU writes while it executes the ring).
 
 ## CPU target x86-64-v3 (#220, 2026-10-21)
 
@@ -736,6 +737,161 @@ frame in the scene, mean [min-max]):
 - The DLC notice has no gamma transition yet, so it does not change there.
 - Not measured: Windows. There the change matters more: with the game's loop the render thread built the ramp
   in every pass between frames.
+
+## Low-end CPUs (#45, #263, #268, 2026-10-22)
+
+Three players see low frame rates at the lowest settings: a Steam Deck (#45: 4 Zen 2 cores, 8 threads,
+0.1.27: 17 fps in free roam, 8 in an 8-car race, a choppy frame-time graph), an i5-1135G7 laptop with Iris Xe
+(#263: 4 cores, 8 threads, Linux, 720p, 30 fps target: 15-25 fps, better at the bumper camera) and a Ryzen 7
+7730U laptop with Vega graphics (#268: 8 cores, Windows, an AMD driver from 2023: spiky frame times).
+
+**A four-core budget.** This PC (Ryzen 7 7800X3D) runs without SMT (`/sys/devices/system/cpu/smt/control` says
+`notsupported`), so the game ran on four cores without SMT siblings (`PERF_CPUSET=0-3`: every game thread `taskset`
+to CPUs 0-3, the samplers on 4-7). The clock cannot be lowered without root (`scaling_max_freq` is root's), so each
+core still runs at up to 5 GHz: this budget has fewer cores than a Deck, not slower ones. Settings: the launcher's
+low tier (frame rate 30, render scale 1, AMD FSR 1), TU4, `-DFORZA_CPU_TARGET=x86-64-v3` (as the launcher builds
+for these three CPUs), a copy of the Xenia save, a warm scratch shader cache, offline, audio muted (the silent
+output takes the game's audio at the device's pace, so the audio threads do the same work). Scenes: the inputs of
+`tools/perf_scenario.sh freeroam` (90 s of driving) and `race` (the 8-car festival race, 26 s from the start; here
+without its screenshots and car log). `PERF_CPUSET=0-3 PERF_THREADS=1 tools/perf_scenario.sh race DIR`, then
+`tools/thread_stats.py report DIR --cpus 0-3`, repeats such a run. Per-thread figures come from `/proc` once a
+second (`PERF_THREADS=1`, `tools/thread_stats.py`: CPU time, time runnable but waiting for a CPU, voluntary
+switches, which are mostly wakeups), the GPU time from the game's DRM client (`drm-engine-gfx` in fdinfo), hot
+functions from `PERF_CPUPROF=1`, the threads' guest entry functions from `eu-stack`. BENCH lock held, no other game
+running.
+
+**Where the time goes** (before; % of one 5 GHz core over the scene, 3 runs each on four cores; ms per frame at
+30 fps in brackets):
+
+| Thread (guest entry) | Free roam | Race | Wakeups/s | Hot spots |
+| --- | --- | --- | --- | --- |
+| GPU command processor | 14.9 (5.0) | 25.2 (8.4) | 850 | `UpdateBindings`, `ExecutePacket`, `WriteRegistersFromMem`, texture and render target lookups (a flat profile) |
+| Render thread (`sub_8261E178`) | 10.5 (3.5) | 12.4 (4.1) | 15,500 | the game's own work about 7%; the rest its waits: 50 us sleeps in `gpu_wait.cpp` and `render_idle.cpp`, their yield phase (`sched_yield` 12% of its samples) |
+| Audio mixer (`sub_83075D18`, one of four) | 10.4 (3.5) | 13.3 (4.4) | 850 | the game's DSP code (`sub_830CE6C0`, `sub_83087D70`, ...), and `pthread_cond_broadcast` (4%): every event it sets woke the threads below |
+| Main loop (`sub_825CEC88`) | 6.9 (2.3) | 8.2 (2.7) | 100-200 | game code |
+| Vulkan submission | 3.5 | 4.4 | 120 | the driver |
+| Audio Worker (SDK), `sub_83187E38`, `sub_83187E98` (game audio) | 1.4-1.6 each | 1.5-2.0 each | 4,000-5,700 each | re-scanning their handles: patch 0033's wakeups |
+| XMA decoder | 0.6 | 1.1 | 1,600-2,900 | |
+| Five threads in alertable waits, GPU VSync | 0.3-1.5 each | | 950-1,100 each | 1 ms polls |
+| All threads | 65 (21.7) | 82 (27.3) | 37,000-38,000 | |
+
+- The four cores are far from full (0.65 and 0.82 of a core in all), and the frame rate holds 30 (p99 35 ms) in
+  both scenes; with all eight cores the same (CPU 66% and 83%). What changes is the time threads spend runnable
+  but waiting for a CPU: 32% and 37% of a core on four cores against 3-5% on eight. The wakeups come in bursts
+  (one signal woke four threads at once), so they queue behind each other and behind the game's threads.
+- The GPU: 7.9 ms of this RX 9060 XT per free-roam frame, 8.3 ms per race frame (at the clock it picks for a
+  30 fps load). The Deck's GPU has about a quarter of this card's compute units at about half the clock and a
+  quarter of its memory bandwidth: if the frame cost scales with that (8-15 times), a Deck frame needs 60-120 ms of
+  GPU, 8-17 fps. That matches what the Deck shows (17 and 8 fps), so the Deck may well be bound by its GPU, not
+  its CPU; only a Deck can tell (below).
+- The 2 ms of CPU per frame the race adds sits in the command processor (more draws) and the audio mixer (more cars).
+
+**#263: Vertical sync off.** That player turned *Vertical sync* off. The setting is the SDK's `vsync`: off, the
+guest vblank runs at 1,000 Hz instead of 60, and the game's main loop, which the vblank paces, runs as often as
+it can. Their log shows it: during long frames the main loop ran 35-400 frames a second (`FORZA_STALL: ... main
+loop 710 frames meanwhile` over 1.8 s), against 2-30 on the Deck. Every one of those frames is game simulation
+on the CPU the renderer needs. Here, with both fixes on four cores, `--vsync=false` in free roam ran 164 guest
+frames a second and used 2.9 cores (the main loop 91% of one, the command processor 84%) against 0.64 with vsync
+on: on a four-core laptop whose CPU and GPU share one power budget that is the whole CPU, and power taken from
+the Iris Xe.
+
+**Fix 1: waits wake only their own threads (SDK patch 0114, runtime, Linux and macOS).** Patch 0033 made a
+thread blocked on several handles (`WaitForMultipleObjects`; the SDK's Audio Worker waits on its nine audio
+clients' semaphores, two of the game's audio threads on several events) sleep on one process-wide condition
+variable: every signal of any event or semaphore in the process woke all of them to re-scan their handles, about
+4,000 times a second in free roam and 5,500 in a race, each. Alertable waits (`SleepEx(n, TRUE)`,
+`WaitForSingleObjectEx(..., TRUE)`) re-checked every 1 ms for a queued APC. Now such a thread registers with each
+handle it waits on and with its own APC queue, and only a change of one of those wakes it (a 20 ms re-check stays
+as a safety net). `tools/test_wait_wakeups.cpp` checks both (Linux SDK CI job): a two-handle wait during 300 ms
+of unrelated signals switched 2,969 times before and 15 after; a 200 ms alertable sleep 191 times and 11. It also
+fixes a zero-timeout alertable wait, which timed out without looking at the handle.
+
+**Fix 2: the render thread's waits for the GPU block until the GPU writes (`src/hooks/gpu_wait.cpp`, SDK patch
+0115).** The D3D loop that waits for the swaps polls a word the GPU writes as it executes the ring (device +0x2B10
+points to it; in TU4 it sits 0x3C before the read pointer write-back, which the earlier text called it). The hook
+slept 50 us per poll after a 200 us spin and yield: about 15,000 wakeups a second. It now blocks on the word
+(Linux futex, Windows `WaitOnAddress`, at most 1 ms per poll), and patch 0115 has the command processor wake the
+threads blocked on a word after each of its writes to guest memory (scratch register and read pointer
+write-backs, `MEM_WRITE`, `COND_WRITE`, `EVENT_WRITE_SHD`, `REG_TO_MEM`). The value the loop compared is taken from
+its registers, so a write between its check and the block is not missed. With `FORZA_GPU_WAIT_LOG=1` in free roam:
+300 waits per 10 s, about 3,700 blocks, of which 300 end with the GPU's write (one a wait) and the rest at the 1 ms
+limit while the command processor waits for a vblank. The other six D3D wait loops (their conditions can depend
+on other words) keep the 50 us sleeps; on Windows those now sleep on a high-resolution waitable timer instead of
+yielding on every poll, which kept the waiting thread on a core for the whole wait (#268: it is the race's render
+thread, most of each frame). None of this has run on Windows yet, so there it is off unless the setting
+`gpu_wait_blocking` is on (Advanced > GPU, "Sleep while waiting for the GPU (testing)"); it is on by default on Linux
+and macOS (`launcher/test_gpu_wait_blocking.py` checks both defaults). Off, the waits are the ones before it.
+`FORZA_GPU_WAIT=block|sleep|spin` overrides the setting (sleep: the old waits; spin: the game's loop).
+
+**Measured** (four cores, 3 runs each, B and C alternating; A = neither fix: the main-branch game, runtime and
+plugin, plus one run of this branch's game with the private build of the base runtime and plugin and
+`FORZA_GPU_WAIT=sleep`, which matched; B = fix 1; C = fixes 1 and 2; mean [min-max]; the run-queue wait is the
+median of the scene's per-second values):
+
+| Scene | Build | fps | p99 ms | 1% low fps | CPU, % of a core | Run-queue wait (median a second) | Voluntary switches/s | Render thread | GPU ms/frame |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Free roam | A (3 runs + 1 on the private build) | 30.0 | 35.0 [34.7-35.3] | 26.5 [26.2-27.1] | 66 [62-68] | 29% [28-30] | 38,200 [37,200-39,100] | 10.5%, 15,500/s | 7.9 |
+| Free roam | B | 30.0 | 34.9 [34.9-35.0] | 26.4 [26.1-26.7] | 60 [59-62] | 3% [2-4] | 23,800 [23,700-23,900] | 10.4%, 15,700/s | 7.9 |
+| Free roam | C | 30.0 | 35.4 [35.0-35.7] | 26.0 [25.6-26.6] | 64 [63-64] | 5% [3-7] | 18,100 [18,000-18,100] | 9.9%, 9,800/s | 7.8 |
+| Race | A (3 + 1) | 30.0 | 35.5 [35.1-35.8] | 25.4 [24.9-25.9] | 83 [81-84] | 34% [27-47] | 37,000 [36,500-37,300] | 12.2%, 15,400/s | 8.4 |
+| Race | B | 30.0 | 35.7 [35.5-36.0] | 25.2 [24.9-25.5] | 76 [75-77] | 16% [10-24] | 24,700 | 12.0%, 15,600/s | 8.4 |
+| Race | C | 30.0 | 35.6 [35.4-35.8] | 24.8 [24.3-25.2] | 74 [74-75] | 15% [10-24] | 10,800 [10,500-11,200] | 9.8%, 1,400-2,000/s | 8.3 |
+
+- The frame rate holds 30 and the frame times do not change: four cores at 5 GHz never run out of CPU in these
+  scenes, so the fixes cannot show as frames here. What they change is the load: per frame the race needs 3.0 ms
+  less CPU (27.7 to 24.7 ms), free roam 0.7-2 ms less; the threads wait for a CPU 83-90% less in free roam and half
+  as long in the race, and wake 2.1 to 3.4 times less often.
+- Fix 1 alone: the SDK's Audio Worker from 4,500-5,700 wakeups a second to 290 (one per audio frame it renders),
+  the two game audio threads and the five alertable waits from thousands to tens; all threads 6-7% of a core less.
+- Fix 2: in the race the render thread wakes 1,400-2,000 times a second instead of 15,500 and uses 2.2% of a core
+  less; in free roam it is mostly in `render_idle.cpp`'s waits (below), so only a third of its wakeups go. The
+  command processor's futex wakes cost little: about 1,900 a second in free roam (a temporary counter).
+- Free roam C used 4% more CPU than B, within the spread of the A runs (62-68%); the command processor alone varies
+  13.4-16.3% between runs of the same build.
+- One B run of free roam was taken again: another job used CPUs 0-3 for half of it (run-queue wait 77%, p99 39 ms).
+  `tools/thread_stats.py report DIR --cpus 0-3` shows such load: how busy the four CPUs were besides the game.
+
+**A slower CPU** (one busy loop at the same priority on each of the four cores, so a game thread gets at most
+half a core and waits for it after each wakeup; one run each):
+
+| Scene | Build | fps | p99 ms | 1% low fps | max ms | Voluntary switches/s |
+| --- | --- | --- | --- | --- | --- | --- |
+| Free roam | A | 30.0 | 42.8 | 20.6 | 63 | 23,800 |
+| Free roam | C | 30.0 | 41.2 | 22.6 | 62 | 10,300 |
+| Race | A | 29.9 | 43.4 | 17.8 | 91 | 21,900 |
+| Race | C | 29.9 | 41.8 | 19.1 | 92 | 12,100 |
+
+The slowest frames get 1.5 ms shorter and the 1% low 1.3-2 fps higher in both scenes; single runs, so a hint, not
+a measurement. The frame rate holds 30 here too.
+
+**Stability** (both fixes, Linux): a 20-minute session (free roam; the 8-car festival race with photo mode, a
+restart and quitting the race; photo mode and the profile's stats in free roam; the map and fast travel to the
+festival; the Paint Shop's design menus and car select; the Autoshow's car select; quit to the title screen;
+Single Player again; driving) ran without a hang, a `FORZA_STALL` line or an error; its seven frames over 100 ms
+were all loading screens (start, Single Player, the race restart, quit and reload). Signed in to a local Forza Live
+server: Multiplayer, Find Game, Horizon World (hosted world, 8 minutes driving, the pause menu, End Free Roam
+and back into the world): one `FORZA_STALL` (216 ms, entering the world), no hang. Saving a photo did not finish
+in either build (the save slot screen stays; same with the base runtime), so it is not from these changes.
+
+**What is left**
+
+- Free roam: the render thread's idle waits for the next main frame (`render_idle.cpp`) still sleep in 50 us
+  steps (about 9,800 wakeups a second). Blocking there needs a wake from the main loop's frame hand-over, whose
+  writer is not found yet. The XMA decoder (1,900 a second, one per kick), one host thread at 1,100 a second and
+  the GPU VSync thread are the other regular wakeups left.
+- The GPU VSync thread (SDK) sleeps 1 ms at a time to raise 60 vblanks a second: 950 wakeups a second. Sleeping
+  until the next vblank is due would also make the vblanks exact to the timer slack instead of up to 1 ms late.
+- The command processor (5-8.4 ms per frame here, 2-2.5 times that on a Deck) is the busiest thread and the one
+  every frame waits for; #179 and #192 (opt-in) cut `UpdateBindings`.
+- The game's audio mixer (3.5-4.4 ms per frame) is game code (x86-64-v3 already took 17% off it, #220).
+- Not emulated here: a slower clock, SMT siblings sharing a core, and a power budget shared with the GPU (the
+  Deck, both laptops). Fewer wakeups matter more there: an idle core can sleep instead of waking every 50 us, and
+  the power it does not use goes to the GPU.
+- Windows (#268): fix 2's Windows paths (the hook and patch 0115) compile with clang-cl, but were not run. Patch
+  0114 is Linux and macOS only: Windows waits use the system's. The spikes in that log are shader
+  compilations (#226) and an old driver; frame rate 60 at 1080p is a lot for a Vega 8.
+- Only a Deck can tell whether it is bound by the GPU: Steam's performance overlay at level 4 (GPU and CPU load
+  and clocks) in a race, and a log with the frame-time graph.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 

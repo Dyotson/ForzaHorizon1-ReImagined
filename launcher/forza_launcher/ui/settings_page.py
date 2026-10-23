@@ -6,9 +6,9 @@ from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
-                               QVBoxLayout, QWidget)
+                               QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -139,10 +139,11 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         w = Combo()
         w.setEditable(True)
         w.addItem(display.label(monitor), 0)
-        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
+        for v in (*schema.LOW_FRAME_RATES, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
         w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
-        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
+        w.setToolTip("Pick a rate or type your own (20, 30, 40, or 60 to 240), such as your display's "
+                     "refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
@@ -164,6 +165,28 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         return w
     w = QLineEdit(str(value))  # str, keys
     w.setMinimumWidth(240)
+    if s.key == "gamertag":
+        # Limits while typing too: 15 characters, and anything but ASCII letters, digits and
+        # spaces is dropped (accents transliterated) as it is typed or pasted.
+        w.setMaxLength(gamertag.MAX_LENGTH)
+
+        def gamertag_typed(text, w=w):
+            kept = gamertag.filter_typing(text)
+            if kept != text:
+                pos = w.cursorPosition() - (len(text) - len(kept))
+                w.setText(kept)
+                w.setCursorPosition(max(0, min(pos, len(kept))))
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), gamertag.RULE, w, w.rect(), 4000)
+        w.textEdited.connect(gamertag_typed)
+
+        def gamertag_done(w=w):
+            cleaned, message = gamertag.check_name(w.text())
+            if message:
+                w.setText(cleaned)
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), message, w, w.rect(), 8000)
+            on_change(cleaned)
+        w.editingFinished.connect(gamertag_done)
+        return w
     w.editingFinished.connect(lambda w=w: on_change(w.text().strip()))
     return w
 
@@ -333,6 +356,30 @@ class SettingsPage(QWidget):
         self._apply_dependencies()
         self.touched()
 
+    def apply_external(self, changes):
+        """Values set elsewhere (the Controls page's bindings): store them, show them in their
+        controls and save."""
+        for key, value in changes.items():
+            s = schema.BY_KEY[key]
+            value = schema.coerce(s, value)
+            self.cfg.settings[key] = value
+            row = self.rows.get(key)
+            if row is None:
+                continue
+            control = row.control
+            control.blockSignals(True)
+            if isinstance(control, QLineEdit):
+                control.setText(str(value))
+            elif hasattr(control, "setChecked"):
+                control.setChecked(bool(value))
+            elif hasattr(control, "findData") and s.kind == "choice":
+                control.setCurrentIndex(max(0, control.findData(value)))
+            elif hasattr(control, "setValue"):
+                control.setValue(value)
+            control.blockSignals(False)
+        self._apply_dependencies()
+        self.touched()
+
     def touched(self):
         self._save_timer.start()
         self.refresh_preview()
@@ -382,7 +429,17 @@ class SettingsPage(QWidget):
         states["wheel_invert_clutch"] = (bool(self.cfg.settings.get("wheel_clutch", True)),
                                          "Turn on Clutch pedal to adjust this setting.")
         states["wheel_shifter_buttons"] = (shifter != "off", "Choose a shifter to set its buttons.")
+        for key in ("wheel_shifter_device", "wheel_shifter_device_buttons"):
+            states[key] = (shifter != "off", "Choose a shifter to set its device.")
+        states["wheel_pedal_axes"] = (
+            str(self.cfg.settings.get("wheel_pedal_device", "")).strip().lower() not in ("none", "off", "wheel"),
+            "Set Pedal device to a device (or empty) to set its axes.")
         states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_shifter_follow_slot"] = (shifter == "h",
+                                               "Choose the H-pattern shifter to use this setting.")
+        states["wheel_handbrake_axis"] = (
+            str(self.cfg.settings.get("wheel_handbrake_device", "")).strip().lower() not in ("none", "off", "wheel"),
+            "Set Handbrake device to a device (or empty) to set its axis.")
         states["wheel_clutch_threshold"] = (
             shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
             "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")
@@ -597,6 +654,9 @@ class SettingsPage(QWidget):
         for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
             if w.key and w.key not in vendor_keys:
                 found.setdefault(w.key, []).append(w.text)
+        saver = power.setting_warning(self.cfg.settings.get("battery_saver", power.OFF))
+        if saver:
+            found.setdefault("battery_saver", []).append(saver)
         for key, row in self.rows.items():
             if key == "discord_presence":
                 continue  # its setup warning is managed by _apply_dependencies

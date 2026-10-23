@@ -17,25 +17,25 @@ class DiscordSettingsTests(unittest.TestCase):
     def test_disabled_by_default_and_omitted_from_toml(self):
         with tempfile.TemporaryDirectory() as root:
             cfg = Config(Path(root) / "launcher.json")
-            self.assertFalse(cfg.settings["discord_presence"])
-            self.assertEqual(cfg.settings["discord_application_id"], "")
+            self.assertTrue(cfg.settings["discord_presence"])  # on by default
+            self.assertEqual(cfg.settings["discord_application_id"], "1563015276583460934")  # the project's application
             self.assertNotIn("discord_", render_toml(cfg))
 
     def test_sharing_and_public_id_survive_save_reload_and_toml_import(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "launcher.json"
             cfg = Config(path)
-            cfg.settings["discord_presence"] = True
+            cfg.settings["discord_presence"] = False  # on is the default, so only off is written
             cfg.settings["discord_application_id"] = "123456789012345678"
             cfg.online["mode"] = "offline"
             cfg.save()
             other = Config(path)
             text = render_toml(other)
-            self.assertIn('discord_presence = true', text)
+            self.assertIn('discord_presence = false', text)
             self.assertIn('discord_application_id = "123456789012345678"', text)
             imported = Config(Path(root) / "another.json")
             import_toml(imported, text)
-            self.assertTrue(imported.settings["discord_presence"])
+            self.assertFalse(imported.settings["discord_presence"])
             self.assertEqual(imported.settings["discord_application_id"], "123456789012345678")
             self.assertEqual(other.online["mode"], "offline")
 
@@ -84,6 +84,8 @@ class DiscordUITests(unittest.TestCase):
             try:
                 page.set_value("discord_presence", True)
                 warning = page.rows["discord_presence"].warning
+                self.assertTrue(warning.isHidden())  # the project's application ID is the default
+                page.set_value("discord_application_id", "")
                 self.assertFalse(warning.isHidden())
                 self.assertIn("Advanced", warning.text())
                 page.set_value("discord_application_id", "123456789012345678")

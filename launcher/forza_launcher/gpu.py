@@ -270,7 +270,9 @@ PRESETS = {
          Known("frame_rate", lambda v: int(v) > 30,
                "The Steam Deck cannot hold more than the 30 fps cap (17 to 25 fps measured at 60).", 45)],
         [("The game runs at 17 to 25 fps on a Steam Deck OLED with the previous defaults; a 40 fps cap "
-          "(for the 40 Hz mode) is not available, only 30 or 60 and above.", 45)]),
+          "(for the 40 Hz mode) is not available, only 30 or 60 and above.", 45),
+         ("Battery saver (Display > Frame rate) can start the game on these settings by itself whenever "
+          "the Deck runs on its battery (Auto on battery), whatever you set for playing docked.", 140)]),
 }
 
 

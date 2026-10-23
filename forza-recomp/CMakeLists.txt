@@ -131,6 +131,7 @@ set(FORZA_SOURCES
     src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
@@ -145,7 +146,9 @@ set(FORZA_SOURCES
     src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/ambient_leaderboard.cpp
     src/hooks/challenge_hud.cpp
+    src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/hooks/unicorn_eligibility.cpp
@@ -166,6 +169,7 @@ set(FORZA_SOURCES
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp
     src/kernel/xam_enumerate.cpp
+    src/kernel/xam_keyboard.cpp
     src/kernel/xam_loader.cpp
     src/kernel/xam_nui.cpp
     src/kernel/xam_signin.cpp
@@ -173,10 +177,14 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/discord_presence.cpp
+    src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
+    src/platform/benchmark.cpp
+    src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp

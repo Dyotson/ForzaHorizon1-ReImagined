@@ -46,6 +46,8 @@ CLUB_TYPE = 5       # the 1000 Club's leaderboard: GetRows(type 5, board 1)
 BIGGER_IS_BETTER = {SPEED_TRAP, SPEED_ZONE, ONLINE_XP_TYPE}
 KEPT_TYPES = {SPEED_TRAP, SPEED_ZONE, EVENT_TIME}  # submissions kept on a board
 GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap has none)
+# GetRows view 5 ("Friends & Club"): what the speed traps and zones read at the trap.
+FRIENDS_AND_CLUB = 5
 MAX_BOARDS = 4096   # boards on the server (the game has about 160)
 
 
@@ -156,7 +158,7 @@ def submit(xuid, gamertag, kind, data, extra=None):
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
     if not old and len(board) >= limits.MAX_PLAYERS:
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
-    entry = {"xuid": key, "gamertag": gamertag, "type": kind, "score": score,
+    entry = {"xuid": key, "gamertag": limits.clean_gamertag(gamertag, xuid), "type": kind, "score": score,
              "submitted": int(time.time()), "scoreId": score_id.hex(),
              "carId": data["carId"], "carClassId": data["carClassId"],
              "carPerformanceIndex": data["carPerformanceIndex"], "ghostFileId": -1}
@@ -340,6 +342,14 @@ def get_rows(xuid, body):
     if p["isClubBoard"]:
         entries = club_only(entries, xuid)
     rows, user_row = rows_view(entries, xuid, p["view"], p["startAt"], p["maxResults"])
+    # The speed traps and zones (CAmbientChallengeLeaderboard) place a new score by walking up
+    # from the caller's position through the rows sent (row[position - 2]): Turn 10's Friends
+    # & Club was a small group the caller was in. Here the view sends the top of everyone, so a
+    # caller ranked below those rows gets the place right after them (rank keeps the real
+    # one); 713 with 200 rows read past the game's array and crashed it (#288).
+    if p["view"] == FRIENDS_AND_CLUB and p["type"] in (SPEED_TRAP, SPEED_ZONE) and \
+            user_row["position"] > len(rows) + 1:
+        user_row = dict(user_row, position=len(rows) + 1)
     log.info("title: GetRows %016X board %d%s type %d view %d%s from %d max %d: %d of %d", xuid,
              p["gameScoreboardId"], " (time trial)" if p["isServerTimeTrial"] else "",
              p["type"], p["view"], " (club)" if p["isClubBoard"] else "", p["startAt"],

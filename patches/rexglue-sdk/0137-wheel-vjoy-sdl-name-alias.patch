@@ -1,0 +1,15 @@
+diff --git a/src/input/wheel/wheel_devices.h b/src/input/wheel/wheel_devices.h
+--- a/src/input/wheel/wheel_devices.h
++++ b/src/input/wheel/wheel_devices.h
+@@ -188,6 +188,11 @@
+   if (s.empty()) {
+     return 0;
+   }
++  // SDL2 calls this Windows device "vJoy Device"; SDL3 uses its HID product name (#306).
++  // Keep saved auxiliary bindings working without matching unrelated joysticks.
++  if (s == "vjoy device" && j.vid == 0x1234 && j.pid == 0xBEAD) {
++    return 2;
++  }
+   char vidpid[10];
+   std::snprintf(vidpid, sizeof(vidpid), "%04x:%04x", j.vid, j.pid);
+   if (s == AuxLower(j.name) || s == AuxLower(j.guid) || s == vidpid) {

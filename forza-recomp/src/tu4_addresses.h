@@ -8,6 +8,8 @@
 
 #define sub_82D4DE30 sub_82E100B0
 #define __imp__sub_82D4DE30 __imp__sub_82E100B0
+#define sub_823E40D8 sub_82414068
+#define __imp__sub_823E40D8 __imp__sub_82414068
 
 #define sub_823E22C8 sub_82412260
 #define __imp__sub_823E22C8 __imp__sub_82412260
@@ -33,6 +35,10 @@
 #define __imp__sub_82546460 __imp__sub_825B63B8
 #define sub_825548A0 sub_825D3860  // check
 #define __imp__sub_825548A0 __imp__sub_825D3860
+#define sub_825581E8 sub_825CBBD8
+#define __imp__sub_825581E8 __imp__sub_825CBBD8
+#define sub_8255DE80 sub_825D2528
+#define __imp__sub_8255DE80 __imp__sub_825D2528
 #define sub_825723B0 sub_825E7B40
 #define __imp__sub_825723B0 __imp__sub_825E7B40
 #define sub_82573660 sub_825E8608
@@ -109,6 +115,8 @@
 #define __imp__sub_82880A90 __imp__sub_82931F18
 #define sub_82895018 sub_82946618
 #define __imp__sub_82895018 __imp__sub_82946618
+#define sub_8289B618 sub_8294CF88
+#define __imp__sub_8289B618 __imp__sub_8294CF88
 #define sub_8299FB40 sub_82A54068
 #define __imp__sub_8299FB40 __imp__sub_82A54068
 #define sub_829F03B0 sub_82AAD320
@@ -145,6 +153,7 @@
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
   switch (a) {
+    case 0x823E9288: return 0x82419338;  // code
     case 0x823EDB08: return 0x8241DBC8;  // code  // check
     case 0x82586D80: return 0x825FCDF8;  // code
     case 0x8259FB5C: return 0x82616C44;  // code

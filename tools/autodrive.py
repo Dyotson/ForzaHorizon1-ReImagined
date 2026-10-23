@@ -22,7 +22,8 @@ SECS = float(sys.argv[2])
 LOG = open(sys.argv[3], "a") if len(sys.argv) > 3 else sys.stdout
 O = os.environ.get("FORZA_OUT", os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                              "forza-recomp", "out", "svc")))
-WANT = ("XDG_DATA_HOME=%s/xdg_%s" % (O, X)).encode()
+# AD_XDG / AD_FIFO: the game's XDG_DATA_HOME and input FIFO when they are not FORZA_OUT's.
+WANT = ("XDG_DATA_HOME=%s" % os.environ.get("AD_XDG", "%s/xdg_%s" % (O, X))).encode()
 HZ = 15.0
 LOOKAHEAD = float(os.environ.get("AD_LOOK", "18"))
 SPEED_FACTOR = float(os.environ.get("AD_SPEED", "0.8"))
@@ -30,6 +31,7 @@ GAIN = float(os.environ.get("AD_GAIN", "0.25"))  # seconds of full lock per radi
 LEAD_KINDS = {int(k) for k in os.environ.get("AD_KINDS", "1,3").split(",") if k}
 PATH_SAVE = os.environ.get("AD_PATH_SAVE")  # write the lap (x z speed per line) when closed
 PATH_LOAD = os.environ.get("AD_PATH_LOAD")  # start with a saved lap (races without CPU cars)
+# (a circuit's own AI route makes one: tools/track_path.py; Cat & Mouse driven that way, #13)
 # AD_OPEN=1: the loaded path is point to point (a rally stage, tools/owt_path.py), not a lap;
 # exit once the car, after it got going, has not moved for 8 s although it was told to back
 # out (the game holds it after the finish; routes can run on past the finish line).
@@ -106,7 +108,7 @@ def cars():
     return out
 
 
-fifo = open("%s/%s/in.fifo" % (O, X), "w", buffering=1)
+fifo = open(os.environ.get("AD_FIFO", "%s/%s/in.fifo" % (O, X)), "w", buffering=1)
 
 
 def send(*lines):

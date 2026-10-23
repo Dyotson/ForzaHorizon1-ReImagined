@@ -30,6 +30,7 @@
 // Before the server sends a list (an older server), everyone in the room stays a friend.
 
 #include "../platform/hud_overlay.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
 #include "live_osk.h"
@@ -760,6 +761,7 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
           r.state = Load32(p + pos + 9);
           pos += 13;
           if (!ReadText(p, n, pos, r.gamertag) || !ReadText(p, n, pos, r.status)) return;
+          r.gamertag = SanitizeGamertag(r.gamertag);
           parts.push_back(std::move(r));
           ++parts_seen;
         }
@@ -803,6 +805,7 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
           r.online = p[pos + 8] != 0;
           pos += 10;
           if (!ReadText(p, n, pos, r.gamertag)) break;
+          r.gamertag = SanitizeGamertag(r.gamertag);
           results.push_back(std::move(r));
         }
         dirty = true;

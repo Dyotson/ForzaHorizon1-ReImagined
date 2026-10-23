@@ -1,4 +1,4 @@
-"""The main window: Play, Photo gallery, Setup, Settings, Controls and About."""
+"""Play, gallery, catalogs, setup, settings, controls and saves."""
 import sys
 import threading
 
@@ -7,12 +7,13 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss
+from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss, shader_share
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .catalogs import CatalogsPage, CATALOG_PAGE_ID
 from .controls_page import ControlsPage
 from .saves_page import SavesPage
 
@@ -38,6 +39,7 @@ class MainWindow(QMainWindow):
         self._dlss_session_status = None
         self._shader_warmup_status = None
         self._busy = False
+        self._close_after_game = False
         self._dlss_task = None
         self._dlss_prepared = None
         self._dlss_result = (False, "")
@@ -101,28 +103,23 @@ class MainWindow(QMainWindow):
         self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
+        self.catalogs = CatalogsPage(cfg, self)
         self.saves = SavesPage(cfg, self)
         self.navs = QButtonGroup(self)
-        for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
-                                          ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery), ("Controls", self.controls),
-                                          ("Saves", self.saves))):
+        self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
+                       4: self.gallery, 5: self.controls, 6: self.saves,
+                       CATALOG_PAGE_ID: self.catalogs}
+        for page in self._pages.values():
+            self.stack.addWidget(page)
+        for i, name in ((0, "Play"), (4, "Photo gallery"),
+                        (CATALOG_PAGE_ID, "Designs && vinyls"), (1, "Setup"),
+                        (5, "Controls"), (2, "Settings"), (6, "Saves"), (3, "About")):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self.navs.addButton(btn, i)
-            # Keep the existing page IDs used by setup/update links; place Gallery
-            # beside Play in the sidebar without renumbering those destinations.
-            if page is self.gallery:
-                sl.insertWidget(2, btn)
-            elif page is self.controls:
-                sl.insertWidget(5, btn)
-            else:
-                sl.addWidget(btn)
-            self.stack.addWidget(page)
-        sl.insertWidget(sl.indexOf(self.navs.button(self.stack.indexOf(self.about))),
-                        self.navs.button(self.stack.indexOf(self.saves)))
+            sl.addWidget(btn)
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
         self.version = QLabel(f"Launcher {__version__}")
@@ -175,7 +172,7 @@ class MainWindow(QMainWindow):
 
     # ---- navigation -------------------------------------------------------------------
     def show_page(self, i):
-        self.stack.setCurrentIndex(i)
+        self.stack.setCurrentWidget(self._pages[i])
         self.navs.button(i).setChecked(True)
         self.navs.button(i).setFocus(Qt.OtherFocusReason)
         if i == 0:
@@ -186,7 +183,7 @@ class MainWindow(QMainWindow):
             self.about.refresh()
         elif i == 4:
             self.gallery.refresh()
-        elif self.stack.widget(i) is self.saves:
+        elif self._pages[i] is self.saves:
             self.saves.refresh()
         self.status("")
 
@@ -211,6 +208,12 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self.catalogs.busy():
+            self.catalogs.closing = True
+            self.catalogs.cancel_task()
+            self.status("Stopping the catalog operation before closing…")
+            e.ignore()
+            return
         if not self.saves.shutdown():
             e.ignore()
             return
@@ -259,7 +262,6 @@ class MainWindow(QMainWindow):
             return
         if not self.about.updates.restarting:
             self.settings.flush()
-        self.stop_game()
         super().closeEvent(e)
 
     def _gallery_idle(self):
@@ -329,6 +331,9 @@ class MainWindow(QMainWindow):
         return self.session is not None and self.session.poll() is None
 
     def start_game(self):
+        if self.catalogs.busy():
+            self.play.show_message('Wait for the catalog operation to finish before starting the game.', True)
+            return
         if (self.running() or self._dlss_task is not None or self._crash_probe is not None
                 or self.saves.busy() or self._busy):
             return
@@ -368,7 +373,7 @@ class MainWindow(QMainWindow):
             context = crash_report.launch_context(self.cfg, plan)
             session = game.Session(plan)
             session.start()
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError, ValueError) as e:
             self._start_failed(e)
             return
         self._last_start_error = None
@@ -494,12 +499,16 @@ class MainWindow(QMainWindow):
             try:
                 if self.session.relaunch():
                     return
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 paths.log_error("start the game again", e)
         self.poll.stop()
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        try:  # shader lists from play (#276): in the background, silent, never holds up Play
+            shader_share.share_in_background(self.cfg, self.session_plan)
+        except Exception as e:
+            paths.log_error("start the shader list upload", e)
         self._shader_warmup_status = None
         self.play.set_shader_warmup(None)
         plan = self.session_plan

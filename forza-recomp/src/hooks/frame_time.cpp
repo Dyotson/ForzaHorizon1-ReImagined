@@ -1,4 +1,4 @@
-// forza - frame pacing and frame time above 30 fps (docs/framerate.md).
+// forza - frame pacing and frame time at rates other than the console's 30 (docs/framerate.md).
 //
 // Pacing. The game's vblank callback (sub_8257E888, which ends in sub_8247C678) counts guest
 // vblanks and sets the main loop's event every second one while the developer option
@@ -8,15 +8,19 @@
 // at twice the frame rate while that fits under the SDK's limit (480 Hz with SDK patch 0037,
 // else 240: 144 fps then runs a 144 Hz vblank with mainthread30fps off). A fast vblank
 // matters: the emulated GPU's swap waits end on a vblank (SDK patch 0030), so the render
-// thread's frames come in whole vblanks.
+// thread's frames come in whole vblanks. 20 and 40 fps (#263) run the 60 and 120 Hz vblank
+// of the screens they divide, with a divider of three (the game's counter sees two of every
+// three vblanks): a frame that misses its vblank comes one screen refresh late, not 1.5.
+// Their presents are paced too ("Present pacing", below).
 //
 // Frame time. The main loop (sub_823ED888) takes its frame time from the kernel's
 // millisecond tick, so above 60 fps each frame's dt is whole milliseconds, and the frames
 // start on vblanks the SDK's VSync thread fires at its next 1 ms check: at 144 fps the game
 // saw 5 to 9 ms for frames 6.94 ms apart (0.1 ms when two fell in one millisecond), and
-// motion judders, though the sum stays right. Above 30 fps the main loop's call of sub_8247C168 (which picks the plain
-// "dt = ms * 0.001" path when it returns true) is answered true with f31, the loop's dt
-// register, set from the guest tick clock instead. Each frame gets a timestamp: the
+// motion judders, though the sum stays right. At rates other than 30 the main loop's call of
+// sub_8247C168 (which picks the plain "dt = ms * 0.001" path when it returns true) is
+// answered true with f31, the loop's dt register, set from the guest tick clock instead.
+// Each frame gets a timestamp: the
 // nominal time of the vblank that released it when it started within 2 ms of that vblank
 // (on target), else the time it started (a late frame); dt is the difference of two
 // timestamps. So frames that keep up get exactly the vblank period, late frames their
@@ -28,6 +32,8 @@
 #include "frame_time.h"
 #include "../debug/stall_watch.h"
 #include "../platform/graphics_menu.h"
+#include "../platform/benchmark.h"
+#include "../platform/frame_pacing.h"
 
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
@@ -98,12 +104,10 @@ double GuestVblankHz() {
 }
 
 uint64_t VblankIntervalTicks() {
-  // As the SDK's VSync thread computes it (graphics_system.cpp, VdQueryVideoMode's float).
-  const uint64_t ticks = [] {
-    const double hz = double(float(GuestVblankHz()));
-    return std::max<uint64_t>(1, uint64_t(double(rex::chrono::Clock::guest_tick_frequency()) / hz));
-  }();
-  return ticks;
+  // As the SDK's VSync thread computes it (graphics_system.cpp, VdQueryVideoMode's float), at
+  // the current rate: the in-game graphics menu changes it while the game runs.
+  const double hz = double(float(GuestVblankHz()));
+  return std::max<uint64_t>(1, uint64_t(double(rex::chrono::Clock::guest_tick_frequency()) / hz));
 }
 
 // The last guest vblank: its count, when the callback ran, and the nominal time of that
@@ -150,7 +154,7 @@ void ReadVblank(uint64_t& count, uint64_t& actual, uint64_t& nominal) {
   }
 }
 
-// Render sync. Above 30 fps the main loop runs at the target rate whatever the render thread
+// Render sync. Away from 30 fps the main loop runs at the target rate whatever the render thread
 // makes, and the render thread draws the newest main frame it finds. When the render thread
 // falls behind (a race at 240 fps renders about 63 frames a second here), the main loop runs
 // three or four frames for each one drawn, and now and then the drawn frame has no HUD (#78:
@@ -177,6 +181,33 @@ struct RenderState {
   std::atomic<uint64_t> waiting{0};  // the main loop's wait in progress (0: none)
   uint64_t idle = 0;                 // the wait in which the render loop found nothing to draw
 } render;
+
+// Present pacing (20 and 40 fps, PresentDelayNs). Where in its frame a guest frame reaches the
+// host present varies: the emulated GPU's swap ends on a guest vblank (SDK patch 0030), the
+// SDK's VSync thread fires a vblank up to about 1 ms after its time (it checks every 1 ms),
+// and a frame that is ready a little later swaps a vblank later. In a 20 fps race the
+// presents came 0.4 to 2.1 ms after the nominal time of the vblank their swap ended on, now
+// and then a vblank later; at 40 fps one frame in twenty swapped a 120 Hz vblank early.
+// Against the screen, whose refresh drifts slowly against the guest clock, that spread is a
+// phase window: while it straddles a refresh deadline, frames alternate between 2 and 4
+// refreshes of a 60 Hz screen instead of 3. So the first present of each guest frame waits
+// until a fixed time after the start of the frame period it falls in (the latest on-target
+// frame start, plus whole frames): about the 98th percentile of those times
+// (src/platform/frame_pacing.h). A later present is not held. FORZA_PRESENT_PACING=0 turns
+// it off.
+std::atomic<uint64_t> guest_swaps{0};
+
+struct PaceState {
+  std::mutex mutex;
+  uint64_t seen_swaps = 0;
+  forza::frame_pacing::PresentPacer pacer;
+} pace;
+std::atomic<uint64_t> last_release{0};  // nominal start of the latest on-target frame (ticks)
+
+bool PresentPacingEnabled() {
+  static const bool on = EnvInt("FORZA_PRESENT_PACING", 1) != 0;
+  return on;
+}
 
 struct SyncStats {
   uint64_t waits = 0;
@@ -249,7 +280,7 @@ bool GuestAddr(uint32_t a) { return a >= 0x00100000 && a < 0xF0000000; }
 
 bool OwnCarPosition(uint8_t* base, float& x, float& z) {
   auto u32 = [base](uint32_t a) { return Load32(forza::GuestPtr(base, a)); };
-  const uint32_t root = u32(0x832DF024);
+  const uint32_t root = u32(FORZA_ADDR(0x832DF024));
   if (!GuestAddr(root) || !GuestAddr(u32(root + 4))) return false;
   const uint32_t list = u32(u32(root + 4) + 4);
   if (!GuestAddr(list)) return false;
@@ -283,6 +314,7 @@ bool FrameTime(uint8_t* base, uint32_t game_ms, double& dt_out) {
   const bool paced = count != seen_count && now >= actual && now - actual <= window;
   seen_count = count;
   uint64_t stamp = paced ? nominal : now;
+  if (paced) last_release.store(stamp, std::memory_order_release);
   if (!prev) {
     prev = stamp;
     return false;
@@ -320,25 +352,42 @@ bool FrameTime(uint8_t* base, uint32_t game_ms, double& dt_out) {
 
 namespace forza::frame_time {
 
+bool ConsoleRate() { return REXCVAR_GET(frame_rate) == 30; }
+
 void ResetRenderTiming() {
   std::lock_guard lock(render.mutex);
   render.last_tick = 0;
   render.interval_ema = 0;
 }
 
+bool EvenRate() {
+  const int fps = REXCVAR_GET(frame_rate);
+  return fps == 20 || fps == 40;
+}
+
 int VblanksPerFrame() {
-  const int n = [] {
-    const int fps = REXCVAR_GET(frame_rate);
-    if (fps <= 30) return 2;
-    const int forced = EnvInt("FORZA_VBLANK_DIVIDER", 0);  // for comparisons
-    if (forced == 1 || forced == 2) return forced;
-    return 2 * fps <= MaxVblankHz() ? 2 : 1;
-  }();
-  return n;
+  static const int forced = EnvInt("FORZA_VBLANK_DIVIDER", 0);  // for comparisons
+  return frame_pacing::VblanksPerFrame(REXCVAR_GET(frame_rate), MaxVblankHz(), forced);
+}
+
+int64_t PresentDelayNs() {
+  if (!EvenRate() || !PresentPacingEnabled()) return 0;
+  const uint64_t swaps = guest_swaps.load(std::memory_order_acquire);
+  std::lock_guard lock(pace.mutex);
+  if (swaps == pace.seen_swaps) return 0;  // no new guest frame: a repaint of the UI
+  pace.seen_swaps = swaps;
+  const uint64_t release = last_release.load(std::memory_order_acquire);
+  const uint64_t now = rex::chrono::Clock::QueryGuestTickCount();
+  const uint64_t period = VblankIntervalTicks() * uint64_t(VblanksPerFrame());
+  if (!release || now < release) return 0;
+  const double ms = double(rex::chrono::Clock::guest_tick_frequency()) / 1000.0;
+  const double wait = pace.pacer.Delay(double((now - release) % period), double(period), ms);
+  return int64_t(wait * 1e6 / ms);
 }
 
 void OnGuestSwap() {
-  if (REXCVAR_GET(frame_rate) <= 30) return;
+  if (ConsoleRate()) return;
+  guest_swaps.fetch_add(1, std::memory_order_release);
   const uint64_t now = rex::chrono::Clock::QueryGuestTickCount();
   {
     std::lock_guard<std::mutex> lock(render.mutex);
@@ -362,14 +411,20 @@ double TargetMs() { return 1000.0 * VblanksPerFrame() / GuestVblankHz(); }
 // The vblank callback's counter (sub_8257E888 tail-calls it with the vblank data stored).
 extern "C" REX_FUNC(__imp__sub_8247C678);
 extern "C" REX_FUNC(sub_8247C678) {
-  if (REXCVAR_GET(frame_rate) > 30) {
+  if (!forza::frame_time::ConsoleRate()) {
     OnVblank();
-    // mainthread30fps off: the event every vblank. Set before each check, so the
-    // option parser or a defaults reset cannot bring the divider back.
-    if (forza::frame_time::VblanksPerFrame() == 1 &&
-        (Load32(forza::GuestPtr(base, kOptionsGuard)) & 1)) {
-      *forza::GuestPtr(base, kMainThread30Fps) = 0;
+    const int divider = forza::frame_time::VblanksPerFrame();
+    // One vblank per frame needs the game's divider off; two or three need it on.
+    // Restore both states: an earlier one-vblank rate or the option parser may have
+    // disabled it. With it left off, showing two of every three vblanks doubles 20/40 fps.
+    if (Load32(forza::GuestPtr(base, kOptionsGuard)) & 1) {
+      *forza::GuestPtr(base, kMainThread30Fps) = uint8_t(divider != 1);
     }
+    // A divider of three (20 and 40 fps): the counter, with mainthread30fps on, releases the
+    // main loop at every second vblank it sees; it sees two of every three, so whatever its
+    // count was, the releases come every third vblank.
+    static forza::frame_pacing::ThirdVblank third;
+    if (divider == 3 && !third.Forward()) return;
   }
   __imp__sub_8247C678(ctx, base);
 }
@@ -401,7 +456,8 @@ extern "C" REX_FUNC(sub_8247C168) {
   if (lr != kFrameTimeCallReturn) return;
   forza::stall::OnMainFrame();
   forza::graphics_menu::Tick(ctx, base);
-  if (REXCVAR_GET(frame_rate) <= 30) return;
+  forza::benchmark::Tick(ctx, base);
+  if (forza::frame_time::ConsoleRate()) return;
   double dt;
   const bool timed = FrameTime(base, game_ms, dt);
   if (RenderSyncEnabled()) WaitForRender();
