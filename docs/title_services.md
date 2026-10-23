@@ -41,6 +41,21 @@ X-TransactionId: <GUID as hex>                          (transactional calls onl
 <parameters>
 ```
 
+**Who is calling.** `X-UserId` is the only thing in the game's request that names the player,
+and anyone can send it. Our game adds `X-Friends-Key: <32 hex digits>` to every request on its
+title server connections (`src/kernel/live_tcp.cpp`, `lsp_request_header.h`: the head of each
+request is held until it is complete and the line goes in before its blank line), the friends
+key of its Live identity (`live_identity.txt`), which the server bound to the XUID at the
+game's first HELLO (`forza_friends.py`; the launcher's shader list upload proves itself the
+same way). The server (`forza_live_lsp.verify_caller`) refuses a call that changes anything
+(every method but `Get*`/`Search*`/`Download*`, and `Hopper.GetGameOptions`, which moves a
+world's event along) when the key is not the XUID's, and takes a call without a key, from a
+game before the key or for an XUID that never signed in with one, as unverified: accepted
+and logged (once per XUID every 10 minutes), its race stats marked `verified: false`, and
+never the player's word where it matters (`caller_trusted()`). Addresses can't do this job:
+behind a tunnel (`docs/hosting.md`) every HTTP connection and UDP datagram arrive from the
+tunnel agent's address, and a connection's TCP port says nothing about the player's UDP one.
+
 The call itself is `sub_82AABAC0(client, class, method, params, results member list,
 &results, ...)`; each service method has a small stub that passes its class and method
 names (`Logon2` calls it at `0x82ABC0A8` with class string `0x820E242C`, method
