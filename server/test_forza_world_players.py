@@ -1,9 +1,11 @@
 """The Horizon World with three or more players (issue #12): placement into the fullest
-world, the standby host after the host left, the AI level from the number of humans.
-Drives the server's matchmaking handlers directly (no sockets)."""
+world, the standby host after the host left (also before the gone host timed out), the AI
+level from the number of humans. Drives the server's matchmaking handlers directly (no
+sockets)."""
 
 import struct
 import unittest
+from unittest import mock
 
 import forza_live_lsp as lsp
 import forza_live_server as srv
@@ -127,6 +129,56 @@ class WorldPlayersTest(unittest.TestCase):
         self.standby(c, sid)
         self.server.drop(host, "left")
         self.assertEqual(self.server.world_sessions()[sid][0].name, "B")
+
+    def first_host(self, searcher):
+        """The player id of the first session a search by searcher answers."""
+        self.transport.sent.clear()
+        self.server.on_match(searcher, srv.MATCH_SEARCH, struct.pack(">II", KEY, 9))
+        return struct.unpack_from(">I", self.transport.sent[0][1][5:], 6)[0]
+
+    def test_a_closed_host_s_record_gives_way_to_the_game_s_new_host(self):
+        # The host's game was closed: it is still registered (until it times out), and so
+        # is its record, when the game makes C its host. Searchers go to C, not to the
+        # gone host (seen with four games: the searcher opened a world of its own).
+        host, b, c, d = (self.player(n) for n in ("Host", "B", "C", "D"))
+        sid = b"\x0a" * 8
+        self.publish(host, sid, 3)
+        self.standby(b, sid)
+        self.standby(c, sid)
+        self.assertEqual(self.first_host(d), host.id)
+        self.standby(c, sid, host=True)
+        self.assertEqual(self.search(d), [(sid, 2)])
+        self.assertEqual(self.first_host(d), c.id)
+        self.assertEqual(self.server.world_sessions()[sid][0].name, "C")  # world events go to C
+
+    def test_the_latest_of_the_game_s_hosts_leads(self):
+        # B became the host when the first host left; then B's game was closed and the
+        # game made C its host while B was still registered.
+        host, b, c, d, e = (self.player(n) for n in ("Host", "B", "C", "D", "E"))
+        sid = b"\x0b" * 8
+        self.publish(host, sid, 4)
+        for p in (b, c, d):
+            self.standby(p, sid)
+        self.server.drop(host, "left")
+        with mock.patch("forza_world_host.time.monotonic", return_value=100.0):
+            self.standby(b, sid, host=True)
+        self.assertEqual(self.first_host(e), b.id)
+        with mock.patch("forza_world_host.time.monotonic", return_value=130.0):
+            self.standby(c, sid, host=True)
+        self.assertEqual(self.first_host(e), c.id)
+        self.assertEqual(self.server.world_sessions()[sid][0].name, "C")
+        self.standby(b, sid, host=True)  # B's repeated op 4 does not take it back
+        self.assertEqual(self.first_host(e), c.id)
+        self.server.drop(b, "timed out")
+        self.assertEqual(self.server.world_sessions()[sid], (c, 2))
+
+    def test_a_host_claim_in_another_world_leaves_this_one_alone(self):
+        h1, h2, m2, d = (self.player(n) for n in ("H1", "H2", "M2", "D"))
+        self.publish(h1, b"\x0c" * 8, 3)
+        self.publish(h2, b"\x0d" * 8, 2)
+        self.standby(m2, b"\x0e" * 8, host=True)  # hosts a third world, left by its host
+        self.assertEqual([s for s, _ in self.search(d)], [b"\x0c" * 8, b"\x0d" * 8, b"\x0e" * 8])
+        self.assertEqual(self.server.world_sessions()[b"\x0c" * 8][0], h1)
 
     def test_a_world_without_players_disappears(self):
         host, b = self.player("Host"), self.player("B")

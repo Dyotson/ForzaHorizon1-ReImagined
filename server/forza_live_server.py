@@ -34,6 +34,7 @@ import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
 import forza_world as world
+import forza_world_host as world_host
 
 MAGIC = b"RLV1"
 VERSION = 1
@@ -464,15 +465,17 @@ class ForzaLive(asyncio.DatagramProtocol):
     # Standby records: a player in a session someone else hosts publishes it with its own
     # address as the host (op 2). Forza's game picks a new host among the remaining
     # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
-    # session id any more, its standby records stand in for it: searchers get the record
-    # of the member the game made its host (the client sees the game's host flag and
-    # sends op 4 instead of op 2), else of the oldest remaining member, with the number of
-    # members as the filled slots.
+    # session id any more (or a member reports to host it: a host whose game closed stays
+    # registered until it times out), its standby records stand in for it: searchers get
+    # the record of the member the game made its host (the client sees the game's host
+    # flag and sends op 4 instead of op 2; the latest one), else of the oldest remaining
+    # member, with the number of members as the filled slots (forza_world_host.py).
 
     def standby_sessions(self, src, key):
         """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
-        hosted = {p.match[1][:8] for p in self.peers.values()
-                  if p.room == src.room and getattr(p, "match", None)}
+        room = [p for p in self.peers.values() if p.room == src.room]
+        hosted = {p.match[1][:8] for p in room if getattr(p, "match", None)}
+        hosted -= world_host.taken_over(room, key)
         groups = {}
         for p in self.room_peers(src):
             standby = getattr(p, "standby", None)
@@ -483,7 +486,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, members in groups.items():
             if own and own[1][:8] == sid:
                 continue  # the searcher is in it already
-            members.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            members.sort(key=world_host.lead_order)
             record = bytearray(members[0].standby[1])
             if len(record) >= SESSION_INFO_SIZE + 4:
                 record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
@@ -502,6 +505,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 if host != getattr(peer, "standby_host", False):
                     log.info("match #%d %r %s the game's host of %s", peer.id, peer.name,
                              "is now" if host else "is no longer", body[5:13].hex())
+                world_host.note_host(peer, host)
                 peer.standby_host = host
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
@@ -539,9 +543,11 @@ class ForzaLive(asyncio.DatagramProtocol):
         # The client answers the game once the last datagram is in.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
+        stale = world_host.taken_over([peer] + self.room_peers(peer), key)
         found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
                  if getattr(p, "match", None) and p.match[0] == key
-                 and not (own and own[0] == key and p.match[2] >= own[2])]
+                 and not (own and own[0] == key and p.match[2] >= own[2])
+                 and p.match[1][:8] not in stale]
         found += self.standby_sessions(peer, key)
         found = [f for f in found if self.match_slots(f[1])[1] > 0]
         found.sort(key=lambda f: (-self.match_slots(f[1])[0], f[2]))
@@ -589,9 +595,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         whose host left is led by its standby host (see standby_sessions)."""
         key = lsp.WORLD_HOPPER
         worlds = {}
+        stale = world_host.taken_over(self.peers.values(), key)
         for p in self.peers.values():
             match = getattr(p, "match", None)
-            if match and match[0] == key:
+            if match and match[0] == key and match[1][:8] not in stale:
                 worlds[match[1][:8]] = (p, self.match_slots(match[1])[0])
         members = {}
         for p in self.peers.values():
@@ -599,7 +606,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             if standby and standby[0] == key and standby[1][:8] not in worlds:
                 members.setdefault(standby[1][:8], []).append(p)
         for sid, group in members.items():
-            group.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            group.sort(key=world_host.lead_order)
             worlds[sid] = (group[0], len(group))
         return worlds
 
