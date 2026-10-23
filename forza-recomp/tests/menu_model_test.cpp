@@ -270,7 +270,7 @@ void ChildOwnershipAndInputPolicy() {
 }
 
 void DefaultPausePages() {
-  const PauseCapabilities all{true, true, true, true, true};
+  const PauseCapabilities all{true, true, true, true, true, true};
   const auto pages = MakePausePages(all);
   Controller menu;
   menu.SetPages(pages);
@@ -318,9 +318,15 @@ void DefaultPausePages() {
   const auto& car_card = pages[1].tiles[0];
   assert(car_card.id == "current_car" && car_card.action.empty());
   assert(!Focusable(car_card));
+  assert(menu.FocusTile("car_tuning"));
+  assert(menu.Activate() == "car_tuning");
+  menu.Suspend();
+  menu.SetPages(MakePausePages(all));
+  menu.Resume();
+  assert(menu.page_id() == "cars" && menu.focused_tile_id() == "car_tuning");
 
   // Individual destination flags cannot override the free-roam gate.
-  const PauseCapabilities no_free_roam{false, true, true, true, true};
+  const PauseCapabilities no_free_roam{false, true, true, true, true, true};
   const auto gated_pages = MakePausePages(no_free_roam);
   menu.SetPages(gated_pages);
   menu.SelectPage("home");
@@ -350,6 +356,7 @@ void DefaultPausePages() {
   assert(menu.SelectPage("cars"));
   assert(menu.focused_tile_id() == "change_car");
   assert(!menu.FocusTile("garage") && !menu.FocusTile("autoshow"));
+  assert(!menu.FocusTile("car_tuning"));
   assert(!menu.Move(Direction::Down));
 
   menu.SetPages(MakePausePages(all));
@@ -441,7 +448,7 @@ void NativeLayoutContract() {
         assert(contained(car.photo, tile.bounds));
         assert(contained(car.specifications, tile.bounds));
         assert(car.name.y + car.name.height <= car.photo.y);
-        assert(car.photo.x + car.photo.width <= car.specifications.x);
+        assert(car.photo.y + car.photo.height <= car.specifications.y);
         ++car_panels;
       } else if (tile.id == "world_map") {
         const auto map = layout::Map(tile.bounds);

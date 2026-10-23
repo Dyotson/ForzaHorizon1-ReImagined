@@ -647,6 +647,7 @@ struct UserValue {
 };
 std::unordered_map<uint32_t, UserValue> user_properties;  // ours, by property id
 std::unordered_map<uint32_t, uint32_t> user_contexts;     // by context id
+std::unordered_map<uint32_t, uint32_t> local_activity;    // primary user, including offline
 bool match_published = false;
 bool standby_published = false;
 bool standby_game_host = false;  // the game made us its host (forza::OnlineGameIsHost)
@@ -1170,7 +1171,13 @@ uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, ui
   // Observe the game's primary-user presence before the Live sign-in gate: Discord
   // status also works in offline play. Leave the original SDK request unchanged.
   if (app == 0xFB && message == 0x000B0006 && arg1 && Load32(GuestPtr(base, arg1)) == 0) {
-    forza::discord::Context(Load32(GuestPtr(base, arg1 + 16)), Load32(GuestPtr(base, arg1 + 20)));
+    const auto id = Load32(GuestPtr(base, arg1 + 16));
+    const auto value = Load32(GuestPtr(base, arg1 + 20));
+    if (id == 0x8001 || id == 0x15) {
+      std::lock_guard<std::mutex> lock(sessions_mutex);
+      local_activity[id] = value;
+    }
+    forza::discord::Context(id, value);
   }
   // XamApp (0xFE) message 0x2B003: Xenia's XamApp answers success for this title ("Games
   // used in: 4D5309C9", a buffer of three u64s, unknown); the SDK fails it.
@@ -1348,6 +1355,15 @@ extern "C" REX_FUNC(__imp__XamShowGameInviteUI) {
 }
 
 namespace forza {
+bool LiveLocalActivity(uint32_t& presence, uint32_t& region) {
+  std::lock_guard<std::mutex> lock(sessions_mutex);
+  const auto p = local_activity.find(0x8001);
+  const auto r = local_activity.find(0x15);
+  if (p == local_activity.end() || r == local_activity.end()) return false;
+  presence = p->second;
+  region = r->second;
+  return true;
+}
 // The playlist of our last matchmaking search (Find Game: the hopper id), 0 before one.
 uint32_t LiveMatchPlaylist() { return match_playlist_now.load(std::memory_order_relaxed); }
 

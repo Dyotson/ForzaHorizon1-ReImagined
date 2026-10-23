@@ -15,7 +15,7 @@ inline constexpr double kPauseCanvasHeight = 720;
 
 enum class PauseAction {
   WorldMap, SettingsPage, ChangeCar, FestivalProgress, PhotoMode, MyProfile,
-  Garage, Autoshow, Difficulty, Graphics, Audio, Controls, Hud, Video,
+  Garage, Autoshow, TuneCar, Difficulty, Graphics, Audio, Controls, Hud, Video,
 };
 
 struct PauseActionBinding {
@@ -32,6 +32,7 @@ inline constexpr std::array kPauseActions{
     PauseActionBinding{"my_profile", PauseAction::MyProfile},
     PauseActionBinding{"garage", PauseAction::Garage},
     PauseActionBinding{"autoshow", PauseAction::Autoshow},
+    PauseActionBinding{"car_tuning", PauseAction::TuneCar},
     PauseActionBinding{"difficulty", PauseAction::Difficulty},
     PauseActionBinding{"graphics", PauseAction::Graphics},
     PauseActionBinding{"audio", PauseAction::Audio},
@@ -54,6 +55,7 @@ struct PauseCapabilities {
   bool my_profile = false;
   bool garage = false;
   bool autoshow = false;
+  bool car_tuning = false;
 };
 
 inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
@@ -68,9 +70,10 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
       }},
       {"cars", "CARS", {
           {"current_car", "CURRENT CAR", {64, 166, 560, 404}, ""},
-          {"change_car", "CHANGE CAR", {640, 166, 576, 124}, "change_car", true, caps.world_map},
-          {"garage", "GO TO GARAGE", {640, 306, 576, 124}, "garage", true, caps.world_map && caps.garage},
-          {"autoshow", "GO TO AUTOSHOW", {640, 446, 576, 124}, "autoshow", true, caps.world_map && caps.autoshow},
+          {"change_car", "CHANGE CAR", {640, 166, 576, 94}, "change_car", true, caps.world_map},
+          {"car_tuning", "TUNE CAR", {640, 270, 576, 94}, "car_tuning", true, caps.world_map && caps.car_tuning},
+          {"garage", "GO TO GARAGE", {640, 374, 576, 94}, "garage", true, caps.world_map && caps.garage},
+          {"autoshow", "GO TO AUTOSHOW", {640, 478, 576, 92}, "autoshow", true, caps.world_map && caps.autoshow},
       }, true, caps.world_map},
       {"settings", "SETTINGS", {
           {"difficulty", "DIFFICULTY", {64, 166, 374, 194}, "difficulty"},

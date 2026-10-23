@@ -29,11 +29,9 @@ struct CarContent {
 // values remain localized and keep the player's chosen measurement units.
 inline CarContent Car(const menu::Rect& panel) {
   const double inner = panel.width - 48;
-  const double photo = inner * .64;
   return {{panel.x + 24, panel.y + 62, inner, 42},
-          {panel.x + 24, panel.y + 116, photo, panel.height - 140},
-          {panel.x + 40 + photo, panel.y + 116,
-           inner - photo - 16, panel.height - 140}};
+          {panel.x + 24, panel.y + 108, inner, panel.height - 190},
+          {panel.x + 24, panel.y + panel.height - 66, inner, 46}};
 }
 inline menu::Rect Map(const menu::Rect& panel) {
   return {panel.x + 12, panel.y + 54, panel.width - 24, panel.height - 66};

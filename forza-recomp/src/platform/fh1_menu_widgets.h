@@ -1,7 +1,7 @@
 #pragma once
 #include "guest_addr.h"
 
-#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
+#if FORZA_TU4
 #include "guest_memory.h"
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
@@ -299,7 +299,7 @@ struct Donor {
     ui.Call(0x82CC2450,{preloader+4}); ui.Call(0x82F30490,{preloader,0x60000});
     status=Status::Loading; return true;
   }
-  bool Poll(Native& ui, uint32_t parent_screen, const KeepController& keep = {}) {
+  bool Poll(Native& ui, uint32_t parent_screen, const KeepController& keep = {}, int32_t layer_offset = 1) {
     if (Ready()) return true;
     if (!ui || status != Status::Loading || !parent_screen) return false;
     const auto ref=preloader+0x50;
@@ -325,7 +325,8 @@ struct Donor {
     const auto root_name=Read(ui.base,parent_screen+0x44)>=16 ? Read(ui.base,parent_screen+0x30) : parent_screen+0x30;
     ui.Call(0x82F2F398,{owner,presentation,ui.String("108_C_BUY_CARSELECT"),root_name});
     Write(ui.base,owner+0x10C,Read(ui.base,parent_screen+0x10C));
-    Write(ui.base,owner+0x110,Read(ui.base,parent_screen+0x110)+1);
+    const auto parent_layer=Read(ui.base,parent_screen+0x110);
+    Write(ui.base,owner+0x110,uint32_t(int64_t(parent_layer)+layer_offset));
     Write(ui.base,owner+0x11C,Read(ui.base,parent_screen+0x11C));
     Write(ui.base,metadata,owner);
     ui.Call(0x82F219E8,{owner}); GuestPtr(ui.base,owner+0x4C)[0]=1;

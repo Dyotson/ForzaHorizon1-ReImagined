@@ -5,6 +5,8 @@
 #include "../platform/guest_addr.h"
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/fh1_menu_widgets.h"
+#include "../platform/fh1_menu_components.h"
+#include "../platform/native_car_tuning_menu.h"
 #include "../platform/native_pause_layout.h"
 #include "../platform/native_pause_pages.h"
 #include "../platform/native_pause_assets.h"
@@ -59,6 +61,7 @@ struct State {
   bool stock_captured = false;
   bool ready = false, visible = true;
   menu::Controller controller{};
+  fh1_menu_components::TabBar tab_bar;
   std::array<Card, layout::kTileCapacity> cards;
   std::array<Card, layout::kTabCapacity> tabs;
   Donor header;
@@ -121,7 +124,8 @@ menu::PauseCapabilities Capabilities(Native& ui) {
   return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
-          fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow)};
+          fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow),
+          car_tuning_menu::Available(ui.ctx, ui.base, state.screen)};
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -223,6 +227,7 @@ const char* Description(std::string_view id) {
   if (id == "autoshow") return "Fast travel to buy cars";
   if (id == "settings") return "Audio, graphics, controls and difficulty";
   if (id == "photo_mode") return "Capture your Horizon";
+  if (id == "car_tuning") return "Adjust your current car setup";
   if (id == "my_profile") return "Your Horizon career";
   if (id == "difficulty") return "Driving assists and difficulty";
   if (id == "graphics") return "Display and graphics settings";
@@ -416,15 +421,17 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
                                      content.photo.height / 289));
   ui.Scale(d.presentation, car.image, scale, scale);
   for (size_t i = 0; i < car.rows.size(); ++i) {
-    const double y = content.specifications.y + 24 + i * 43;
+    const double width = content.specifications.width / car.rows.size();
+    const double x = content.specifications.x + width * i;
+    const double y = content.specifications.y;
     for (auto node : {car.labels[i], car.values[i]}) Normalize(ui, d, node);
     Depth(ui, d, car.labels[i], -3); Depth(ui, d, car.values[i], -3);
-    Point(ui, d, car.labels[i], content.specifications.x, y);
-    Point(ui, d, car.values[i], content.specifications.x + content.specifications.width, y + 18);
-    ui.TextStyle(d.access, d.presentation, car.labels[i], 17,
-                 float(content.specifications.width / 1200), .032f, 0);
-    ui.TextStyle(d.access, d.presentation, car.values[i], 18,
-                 float(content.specifications.width / 1200), .035f, 2);
+    Point(ui, d, car.labels[i], x + width / 2, y + 10);
+    Point(ui, d, car.values[i], x + width / 2, y + 32);
+    ui.TextStyle(d.access, d.presentation, car.labels[i], 14,
+                 float((width - 8) / 1200), .032f, 1);
+    ui.TextStyle(d.access, d.presentation, car.values[i], 16,
+                 float((width - 8) / 1200), .035f, 1);
   }
 }
 void StockVisibility(Native& ui, bool restore) {
@@ -466,6 +473,7 @@ void Activate(Native& ui, const std::string& id) {
   }
   // Revalidate gates immediately before transitions, not just on pause entry.
   const auto caps = Capabilities(ui);
+  if (*action == menu::PauseAction::TuneCar && !caps.car_tuning) return;
   if ((*action == menu::PauseAction::WorldMap || *action == menu::PauseAction::ChangeCar ||
        *action == menu::PauseAction::Garage || *action == menu::PauseAction::Autoshow) && !caps.world_map)
     return;
@@ -486,6 +494,7 @@ void Activate(Native& ui, const std::string& id) {
   switch (*action) {
     case A::WorldMap: requested = fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 2); break;
     case A::ChangeCar: requested = offline_cars::Open(ui.ctx, ui.base, screen); break;
+    case A::TuneCar: requested = car_tuning_menu::Open(ui.ctx, ui.base, screen); break;
     case A::Garage: case A::Autoshow:
       requested = fh1_festival_travel::Open(ui.ctx, ui.base, screen,
           *action == A::Garage ? fh1_festival_travel::Destination::Garage : fh1_festival_travel::Destination::Autoshow); break;
@@ -724,10 +733,12 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     card.donor.Tick(ui, [&] {
       StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
       if (card.caption) {
+        const bool compact = tile.bounds.height < 100;
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
         Label(ui, card.donor, card.caption,
-              {tile.bounds.x + 24, tile.bounds.y + 62, tile.bounds.width - 48, 32},
-              18, Description(tile.id), tile.enabled ? 0xe2dce2 : 0xaaaaaa);
+              {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
+               tile.bounds.width - 48, compact ? 26. : 32.},
+              compact ? 16 : 18, Description(tile.id), tile.enabled ? 0xe2dce2 : 0xaaaaaa);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";
@@ -749,19 +760,29 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       }
     });
   }
-  for (size_t i = 0; i < state.tabs.size(); ++i) {
-    auto& tab = state.tabs[i];
-    if (i >= state.controller.pages().size()) {
-      tab.donor.SetVisible(ui, false);
-      continue;
-    }
-    const auto& p = state.controller.pages()[i];
-    tab.donor.SetVisible(ui, p.visible);
-    if (!p.visible) continue;
-    tab.donor.Tick(ui, [&] {
-      StyleCard(ui, tab, layout::kTabs[i], p.label, p.id == page->id, p.enabled, true);
-    });
+  std::vector<fh1_menu_components::Tab> tabs;
+  for (const auto& p : state.controller.pages())
+    if (p.visible) tabs.push_back({p.id, p.label, !p.enabled});
+  if (!state.tab_bar.SetTabs(std::move(tabs)) || !state.tab_bar.Select(page->id)) {
+    Release(ui, true); return;
   }
+  const auto cells = state.tab_bar.Layout({64, 112, 580, 42}, layout::kTabCapacity);
+  for (size_t i = 0; i < state.tabs.size(); ++i)
+    state.tabs[i].donor.SetVisible(ui, i < cells.size());
+  state.tab_bar.Paint({64, 112, 580, 42}, layout::kTabCapacity,
+      [&](size_t slot, fh1_menu_components::Rect r, uint32_t color) {
+        auto& tab = state.tabs[slot];
+        tab.donor.Tick(ui, [&] {
+          StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
+          ui.Color(tab.donor.presentation, tab.material, color);
+        });
+      },
+      [&](size_t slot, unsigned index, fh1_menu_components::Rect r, float size,
+          const std::string& text, uint32_t color) {
+        if (index) return; // Pause capabilities disable a page rather than lock it.
+        auto& tab = state.tabs[slot];
+        Label(ui, tab.donor, tab.title, {r.x,r.y,r.w,r.h}, size, text, color, 1);
+      }, 23.f);
   state.header.Tick(ui, [&] { HeaderLayout(ui); });
   bool map_visible = false, map_selected = false;
   if (page->id == "home") {

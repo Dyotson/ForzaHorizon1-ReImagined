@@ -9,6 +9,22 @@ runtime adapters and build configuration have been retired.
 
 ## Structure
 
+The combined WIP includes the native tuning workspace described in
+[car-tuning.md](car-tuning.md). Cars exposes `car_tuning` through its native
+availability gate, alongside Change Car, Garage and Autoshow. Tuning returns
+through the pause page visibility API, preserving the selected Cars action.
+Both consumers use the same TU4 widget helper; its optional donor layer offset
+defaults to the existing pause behavior. Pause tabs now use the reusable
+`fh1_menu_components::TabBar` renderer while the pause controller retains input
+and capability ownership.
+
+The Cars composition uses a larger full-width photo with five specification
+columns underneath. The combined code passes focused CPU checks and TU4 syntax
+checks. These layout and transition changes still require a fresh 720p runtime
+pass. The earlier screenshots show the previous layout. Header/footer icon and
+contrast consistency across pause and tuning, and named setup/sharing work,
+remain in progress; this checkpoint does not claim those are finished.
+
 | Layer | Responsibility | Source |
 | --- | --- | --- |
 | Model/controller | Stable page and tile IDs, spatial navigation, per-page focus, action intent, input repeat and child suspension | `forza-recomp/src/platform/menu_model.h` |
