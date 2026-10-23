@@ -1,0 +1,266 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 0b0c5fed..0f276bed 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -446,6 +446,9 @@ void CommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+     REXGPU_DEBUG("GPU: Write to unknown register ({:04X} = {:08X})", index, value);
+   }
+ 
++  // The Vulkan backend stores the other registers of a range itself, without this
++  // function (PlainRegisters, FH1 patch 0140): a register that gets handling here must
++  // be added to its list.
+   // Scratch register writeback.
+   if (index >= XE_GPU_REG_SCRATCH_REG0 && index <= XE_GPU_REG_SCRATCH_REG7) {
+     uint32_t scratch_reg = index - XE_GPU_REG_SCRATCH_REG0;
+@@ -593,6 +596,17 @@ void CommandProcessor::WriteRegisterRangeFromRing(memory::RingBuffer* ring, uint
+   if (!num_registers) {
+     return;
+   }
++  // Nearly every range is contiguous in the ring: write it and advance the read
++  // offset here, as BeginRead and EndRead would (their no-wrap case), without two
++  // calls into the runtime for each of the hundred thousand ranges of a frame.
++  const size_t range_bytes = size_t(num_registers) * sizeof(uint32_t);
++  const size_t read_offset = ring->read_offset();
++  if (read_offset + range_bytes < ring->capacity()) {
++    WriteRegistersFromMem(base, reinterpret_cast<uint32_t*>(ring->buffer() + read_offset),
++                          num_registers);
++    ring->set_read_offset(read_offset + range_bytes);
++    return;
++  }
+   memory::RingBuffer::ReadRange range = ring->BeginRead(size_t(num_registers) * sizeof(uint32_t));
+   if (range.first_length != 0) {
+     uint32_t first_count = uint32_t(range.first_length / sizeof(uint32_t));
+@@ -751,29 +765,41 @@ void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
+   } while (reader.read_count());
+ }
+ 
++namespace {
++// Out of line, so the packet loop below needs no stack frame for the log call.
++#if defined(_MSC_VER) && !defined(__clang__)
++__declspec(noinline) void WarnUninitializedPacket() {
++#else
++__attribute__((noinline, cold)) void WarnUninitializedPacket() {
++#endif
++  REXGPU_WARN("GPU packet is CDCDCDCD - probably read uninitialized memory!");
++}
++}  // namespace
++
+ bool CommandProcessor::ExecutePacket(memory::RingBuffer* reader) {
+-  const uint32_t packet = reader->ReadAndSwap<uint32_t>();
+-  const uint32_t packet_type = packet >> 30;
+-  if (packet == 0) {
+-    return true;
++  uint32_t packet = reader->ReadAndSwap<uint32_t>();
++  // Zero words and type-2 packets do nothing. The D3D library pads its command
++  // buffers with type-2 packets (about two million a second in a race, more than
++  // the draws and constant writes together): skip a whole run of them here
++  // instead of returning to the caller's loop for each one.
++  while (packet == 0 || (packet >> 30) == 0x02) {
++    if (!reader->read_count()) {
++      return true;
++    }
++    packet = reader->ReadAndSwap<uint32_t>();
+   }
+ 
+-  if (packet == 0xCDCDCDCD) {
+-    REXGPU_WARN("GPU packet is CDCDCDCD - probably read uninitialized memory!");
++  if (packet == 0xCDCDCDCD) [[unlikely]] {
++    WarnUninitializedPacket();
+   }
+ 
+-  switch (packet_type) {
+-    case 0x00:
+-      return ExecutePacketType0(reader, packet);
+-    case 0x01:
+-      return ExecutePacketType1(reader, packet);
+-    case 0x02:
+-      return ExecutePacketType2(reader, packet);
++  switch (packet >> 30) {
+     case 0x03:
+       return ExecutePacketType3(reader, packet);
++    case 0x00:
++      return ExecutePacketType0(reader, packet);
+     default:
+-      assert_unhandled_case(packet_type);
+-      return false;
++      return ExecutePacketType1(reader, packet);
+   }
+ }
+ 
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 4531dbfd..bdbbf1a3 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -2707,6 +2707,34 @@ void VulkanCommandProcessor::WriteRegister(uint32_t index, uint32_t value) {
+   }
+ }
+ 
++namespace {
++// Registers outside the shader constant blocks whose write only stores the value:
++// known to the register table, and none of those CommandProcessor::WriteRegister
++// acts on (scratch write-back, coherency status, gamma ramp; keep in sync with it).
++// Unknown and out-of-range registers still take that function, which logs them.
++class PlainRegisters {
++ public:
++  PlainRegisters() {
++    for (uint32_t i = 0; i < RegisterFile::kRegisterCount; ++i) {
++      bool side_effect = (i >= XE_GPU_REG_SCRATCH_REG0 && i <= XE_GPU_REG_SCRATCH_REG7) ||
++                         i == XE_GPU_REG_COHER_STATUS_HOST || i == XE_GPU_REG_DC_LUT_RW_INDEX ||
++                         i == XE_GPU_REG_DC_LUT_SEQ_COLOR || i == XE_GPU_REG_DC_LUT_PWL_DATA ||
++                         i == XE_GPU_REG_DC_LUT_30_COLOR;
++      if (!side_effect && RegisterFile::GetRegisterInfo(i)) {
++        bits_[i >> 6] |= uint64_t(1) << (i & 63);
++      }
++    }
++  }
++  bool IsPlain(uint32_t index) const {
++    return index < RegisterFile::kRegisterCount && ((bits_[index >> 6] >> (index & 63)) & 1);
++  }
++
++ private:
++  uint64_t bits_[(RegisterFile::kRegisterCount + 63) / 64] = {};
++};
++const PlainRegisters plain_registers;
++}  // namespace
++
+ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_t* base,
+                                                    uint32_t num_registers) {
+   if (!num_registers) {
+@@ -2845,8 +2873,16 @@ void VulkanCommandProcessor::WriteRegistersFromMem(uint32_t start_index, uint32_
+     if (constant_block) {
+       VulkanCommandProcessor::WriteRegistersFromMem(index, part_base, part_end - index);
+     } else {
++      // Most of these (render state, about 3 million a second in a race) only store
++      // the value: do that here, as CommandProcessor::WriteRegister would.
+       for (uint32_t i = index; i < part_end; ++i) {
+-        CommandProcessor::WriteRegister(i, memory::load_and_swap<uint32_t>(part_base + (i - index)));
++        uint32_t value = memory::load_and_swap<uint32_t>(part_base + (i - index));
++        if (plain_registers.IsPlain(i)) {
++          // Volatile like CommandProcessor::WriteRegister's store (WAIT_REG_MEM polls).
++          const_cast<volatile uint32_t&>(register_file_->values[i]) = value;
++        } else {
++          CommandProcessor::WriteRegister(i, value);
++        }
+       }
+     }
+     index = part_end;
+diff --git a/src/graphics/vulkan/fh1_shader_load_memo.h b/src/graphics/vulkan/fh1_shader_load_memo.h
+new file mode 100644
+index 00000000..0f01feae
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_shader_load_memo.h
+@@ -0,0 +1,60 @@
++// Which shader the command processor last loaded from a guest address (FH1 SDK
++// patch 0140). The game loads a vertex and a pixel shader for nearly every draw
++// (PM4_IM_LOAD: about 150,000 a second in a race), almost always the same few
++// hundred, each time hashing the microcode and looking the hash up. A load whose
++// address, length and words match the last load from that address gets that
++// load's shader: the same one the hash would find, since the shader map only
++// ever adds entries (until the cache shuts down: a new generation).
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <vector>
++
++namespace rex::graphics::vulkan::fh1_shader_load_memo {
++
++template <typename ShaderT, size_t kSlotCount = 256>
++class ShaderLoadMemo {
++  static_assert(kSlotCount && !(kSlotCount & (kSlotCount - 1)), "power of two");
++
++ public:
++  // The shader stored for these words at this address, or nullptr.
++  ShaderT* Find(const void* owner, uint64_t generation, const uint32_t* words,
++                uint32_t dword_count) const {
++    const Slot& slot = slots_[Index(words)];
++    if (slot.shader && slot.owner == owner && slot.generation == generation &&
++        slot.address == words && slot.words.size() == dword_count &&
++        (!dword_count || !std::memcmp(slot.words.data(), words, dword_count * sizeof(uint32_t)))) {
++      return slot.shader;
++    }
++    return nullptr;
++  }
++
++  void Store(const void* owner, uint64_t generation, const uint32_t* words, uint32_t dword_count,
++             ShaderT* shader) {
++    Slot& slot = slots_[Index(words)];
++    slot.owner = owner;
++    slot.generation = generation;
++    slot.address = words;
++    slot.words.assign(words, words + dword_count);
++    slot.shader = shader;
++  }
++
++ private:
++  struct Slot {
++    const void* owner = nullptr;
++    uint64_t generation = 0;
++    const uint32_t* address = nullptr;
++    std::vector<uint32_t> words;
++    ShaderT* shader = nullptr;
++  };
++  static size_t Index(const uint32_t* address) {
++    uint64_t key = uint64_t(reinterpret_cast<uintptr_t>(address) >> 2) * UINT64_C(0x9E3779B97F4A7C15);
++    return size_t(key >> 40) & (kSlotCount - 1);
++  }
++  std::array<Slot, kSlotCount> slots_;
++};
++
++}  // namespace rex::graphics::vulkan::fh1_shader_load_memo
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 48797b4a..21f95b11 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -19,6 +19,7 @@
+ #include <chrono>
+ #include <unordered_set>
+ #include <rex/graphics/shader_warmup.h>
++#include "fh1_shader_load_memo.h"
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -70,6 +71,15 @@ REXCVAR_DEFINE_BOOL(vulkan_store_pipeline_cache, true, "GPU/Vulkan",
+ 
+ namespace rex::graphics::vulkan {
+ 
++namespace {
++// The shaders last loaded from guest memory by address (FH1 patch 0140). Only the
++// command processor thread loads shaders from guest memory (PM4_IM_LOAD), so the
++// memo has no lock.
++fh1_shader_load_memo::ShaderLoadMemo<VulkanShader> loaded_shader_memo;
++// Raised when a pipeline cache deletes its shaders.
++std::atomic<uint64_t> loaded_shader_generation{1};
++}  // namespace
++
+ namespace {
+ 
+ constexpr std::string_view kPlaceholderPixelShaderSource = R"(#version 460
+@@ -1352,6 +1362,7 @@ void VulkanPipelineCache::Shutdown() {
+     delete it.second;
+   }
+   shaders_.clear();
++  loaded_shader_generation.fetch_add(1, std::memory_order_relaxed);
+   shader_storage_index_ = 0;
+   texture_binding_layout_map_.clear();
+   texture_binding_layouts_.clear();
+@@ -1362,9 +1373,15 @@ void VulkanPipelineCache::Shutdown() {
+ 
+ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
+                                               const uint32_t* host_address, uint32_t dword_count) {
++  const uint64_t generation = loaded_shader_generation.load(std::memory_order_relaxed);
++  if (VulkanShader* shader = loaded_shader_memo.Find(this, generation, host_address, dword_count)) {
++    return shader;
++  }
+   // Hash the input memory and lookup the shader.
+-  return LoadShader(shader_type, host_address, dword_count,
+-                    XXH3_64bits(host_address, dword_count * sizeof(uint32_t)));
++  VulkanShader* shader = LoadShader(shader_type, host_address, dword_count,
++                                    XXH3_64bits(host_address, dword_count * sizeof(uint32_t)));
++  loaded_shader_memo.Store(this, generation, host_address, dword_count, shader);
++  return shader;
+ }
+ 
+ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
