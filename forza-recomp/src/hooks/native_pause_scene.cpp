@@ -80,6 +80,7 @@ struct State {
   uint32_t status = 0, footer = 0;
   std::array<uint32_t, 2> bumpers{};
   std::string gamertag, connection;
+  std::string friends_summary;
   std::optional<float> completion;
   bool recovery = false;
   std::unordered_map<uint32_t, std::string> text;
@@ -92,6 +93,12 @@ struct ReturnBookmark {
   std::string page, tile;
 };
 std::optional<ReturnBookmark> return_bookmark;
+struct OnlineIntent {
+  menu::PauseAction action;
+  Clock::time_point expires;
+  Clock::time_point ready_since{};
+};
+std::optional<OnlineIntent> online_intent;
 
 bool Require(const char* group, const char* name, uint32_t node) {
   if (!node) REXLOG_WARN("Native pause binding: {} missing {}", group, name);
@@ -131,12 +138,16 @@ bool ActionAvailable(uint8_t* base, uint32_t action) {
 }
 menu::PauseCapabilities Capabilities(Native& ui) {
   using D = fh1_festival_travel::Destination;
+  uint32_t presence=0,region=0;
+  const bool online_entry=LiveConnected()&&ActionAvailable(ui.base,2)&&
+      Read(ui.base,state.screen+0x1e4)&&LiveLocalActivity(presence,region)&&
+      presence==1&&region==0;
   return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow),
           car_tuning_menu::Available(ui.ctx, ui.base, state.screen),
-          LiveConnected(), false, false};
+          LiveConnected(), online_entry, online_entry};
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -244,13 +255,13 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
   return Require("card", "BigPane01.Material866", card.material);
 }
-const char* Description(std::string_view id) {
+std::string Description(std::string_view id) {
   if (id == "world_map") return "Explore Colorado";
-  if (id == "friends") return LiveConnected() ? "Add friends, requests and invites" : "Connect to Forza Live to edit friends";
+  if (id == "friends") return LiveConnected() ? state.friends_summary : "Connect to Forza Live to edit friends";
   if (id == "chat") return LiveConnected() ? "World, session and private chat" : "Connect to Forza Live to chat";
   if (id == "social_stats") return "Your Horizon career in numbers";
-  if (id == "free_roam") return "Join Horizon World - coming soon";
-  if (id == "create_game") return "Host a custom lobby - coming soon";
+  if (id == "free_roam") return LiveConnected() ? "Find Horizon World and public games" : "Connect to Forza Live to play online";
+  if (id == "create_game") return LiveConnected() ? "Set up a custom game with friends" : "Connect to Forza Live to host a game";
   if (id == "my_cars" || id == "change_car") return "Choose an owned car";
   if (id == "garage") return "Fast travel for car upgrades";
   if (id == "autoshow") return "Fast travel to buy cars";
@@ -340,6 +351,23 @@ void RefreshData(Native& ui) {
       state.gamertag += char(GuestPtr(ui.base, ui.scratch + 1800)[i]);
   }
   state.connection = LiveConnected() ? "ONLINE" : "";
+  if(LiveConnected()){
+    unsigned friends=0,online=0,incoming=0,sent=0;
+    const bool active=LiveFriendsActive();
+    if(active){
+      for(const auto& relation:LiveRelations())switch(relation.kind){
+        case LiveRelationKind::kFriend:++friends;if(relation.state&1)++online;break;
+        case LiveRelationKind::kAsksUs:++incoming;break;
+        case LiveRelationKind::kWeAsked:++sent;break;
+        default:break;
+      }
+    }else for(const auto& player:LiveFriendsList()){
+      ++friends;if(player.state&1)++online;
+    }
+    state.friends_summary=std::to_string(online)+" ONLINE / "+std::to_string(friends)+" FRIENDS\n";
+    if(active)state.friends_summary+=std::to_string(incoming)+" INCOMING / "+std::to_string(sent)+" SENT\n";
+    state.friends_summary+="Manage friends, requests and blocks";
+  }else state.friends_summary.clear();
   state.recovery = Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
       fh1_car_recovery::Available(ui.ctx, ui.base);
   // Same completion getter used by the original Statistics General page.
@@ -614,6 +642,8 @@ void Activate(Native& ui, const std::string& id) {
   }
   // Revalidate gates immediately before transitions, not just on pause entry.
   const auto caps = Capabilities(ui);
+  if ((*action == menu::PauseAction::FreeRoam && !caps.free_roam) ||
+      (*action == menu::PauseAction::CreateGame && !caps.create_game)) return;
   if (*action == menu::PauseAction::TuneCar && !caps.car_tuning) return;
   if ((*action == menu::PauseAction::WorldMap || *action == menu::PauseAction::ChangeCar ||
        *action == menu::PauseAction::Garage || *action == menu::PauseAction::Autoshow) && !caps.world_map)
@@ -641,6 +671,12 @@ void Activate(Native& ui, const std::string& id) {
           *action == A::Garage ? fh1_festival_travel::Destination::Garage : fh1_festival_travel::Destination::Autoshow); break;
     case A::FestivalProgress: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
     case A::SocialStats: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
+    case A::FreeRoam: case A::CreateGame: {
+      online_intent=OnlineIntent{*action,Clock::now()+std::chrono::seconds(30)};
+      requested=fh1_pause_actions::OpenMultiplayer(ui.ctx,ui.base,screen);
+      if(!requested)online_intent.reset();
+      break;
+    }
     case A::PhotoMode: requested = caps.photo_mode && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 11); break;
     case A::MyProfile: requested = caps.my_profile && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 12); break;
     case A::Audio: requested = fh1_pause_actions::OpenAudio(ui.ctx, ui.base, screen); break;
@@ -755,6 +791,37 @@ void AfterBind(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.Start(ui, "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_TAB_" + std::to_string(i) + ".bgf");
   state.header.Start(ui, "game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_HEADER.bgf");
+}
+void PartyInput(PPCContext& ctx,uint8_t* base,uint32_t screen,uint32_t event) {
+  if(!online_intent||!event||Read(base,screen)!=0x820634b4)return;
+  Native ui(ctx,base);
+  if(ui.Call(0x82cbc110,{event,0xa,0x60,0})&0xffu)online_intent.reset();
+}
+void PartyTick(PPCContext& ctx,uint8_t* base,uint32_t screen) {
+  if(!online_intent)return;
+  if(Clock::now()>=online_intent->expires||!LiveConnected()){
+    online_intent.reset();return;
+  }
+  // CPartyLobby's normal tick populates its choice list and host state.
+  // The original builder omits Find/Create while the local party isn't ready.
+  if(Read(base,screen)!=0x820634b4||!Read(base,screen+0x17c))return;
+  const auto party=Read(base,screen+0x170);
+  if(!party||!GuestPtr(base,party+0x71)[0]||
+      !GuestPtr(base,screen+0x12a70)[0]||GuestPtr(base,screen+0x12a73)[0]||
+      LiveSessionIds().empty()){
+    online_intent->ready_since={};return;
+  }
+  // A lobby can report its host role before async XSession creation completes.
+  // Let its published session and controls settle before requesting a child.
+  const auto now=Clock::now();
+  if(online_intent->ready_since==Clock::time_point{})online_intent->ready_since=now;
+  if(now-online_intent->ready_since<std::chrono::milliseconds(300))return;
+  const auto action=online_intent->action;
+  online_intent.reset(); // Back to the party must never repeat this shortcut.
+  Native ui(ctx,base);
+  ui.Call(0x827d1280,{screen,action==menu::PauseAction::CreateGame?2u:0u});
+  REXLOG_INFO("Native Social: entered {} through initialized FH1 party lobby",
+      action==menu::PauseAction::CreateGame?"Create Custom Game":"Find Game");
 }
 void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (!screen || screen != state.screen) return;
@@ -902,7 +969,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
-               tile.bounds.width - 48, compact ? 26. : 32.},
+               tile.bounds.width - 48, tile.id=="friends"?112.:compact ? 26. : 32.},
               compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?0xffffff:0x423b3d) : 0x6f686b);
       }
       if (i == 4) {
@@ -1006,5 +1073,7 @@ bool Page(PPCContext&, uint8_t*, uint32_t, bool) { return false; }
 void Destroy(PPCContext&, uint8_t*, uint32_t) {}
 void AfterBind(PPCContext&, uint8_t*, uint32_t) {}
 void Tick(PPCContext&, uint8_t*, uint32_t) {}
+void PartyTick(PPCContext&, uint8_t*, uint32_t) {}
+void PartyInput(PPCContext&, uint8_t*, uint32_t, uint32_t) {}
 }
 #endif

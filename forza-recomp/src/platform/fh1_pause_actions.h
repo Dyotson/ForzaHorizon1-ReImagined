@@ -142,6 +142,19 @@ inline bool OpenProgress(const PPCContext& context, uint8_t* base,
   return true; // Transition requested; native UI manager owns the child.
 }
 
+// The pause's "multiplayer" callback enters the original game-mode flow.
+// Opening CPartyLobby directly skips its session/resource initialization.
+inline bool OpenMultiplayer(const PPCContext& context, uint8_t* base,
+                            uint32_t screen) {
+  if (!detail::IsPause(base, screen)) return false;
+  detail::Native native(context, base);
+  native.Call(0x827DABD0, {screen});
+  const auto callback = detail::Read(base, screen + 0x1E4);
+  if (!callback) return false;
+  native.Call(0x82EAA148, {callback});
+  return true;
+}
+
 // Native Back/Start branch of 827DADC8, without its unrecognized-event fallback
 // into screen+0x170. The +0x1DC "done" callback resumes through FH1's own flow.
 // The adapter must own input and prevent this while a child screen is active.
@@ -185,6 +198,7 @@ inline bool OpenAudio(const PPCContext&, uint8_t*, uint32_t) { return false; }
 inline bool OpenHud(const PPCContext&, uint8_t*, uint32_t) { return false; }
 inline bool OpenVideo(const PPCContext&, uint8_t*, uint32_t) { return false; }
 inline bool OpenProgress(const PPCContext&, uint8_t*, uint32_t) { return false; }
+inline bool OpenMultiplayer(const PPCContext&, uint8_t*, uint32_t) { return false; }
 inline bool Resume(const PPCContext&, uint8_t*, uint32_t) { return false; }
 inline bool BackInput(const PPCContext&, uint8_t*, uint32_t, uint32_t) { return false; }
 #endif

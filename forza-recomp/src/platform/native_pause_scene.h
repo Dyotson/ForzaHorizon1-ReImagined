@@ -11,4 +11,6 @@ bool Page(PPCContext&, uint8_t* base, uint32_t screen, bool show);
 void Destroy(PPCContext&, uint8_t* base, uint32_t screen);
 void AfterBind(PPCContext&, uint8_t* base, uint32_t screen);
 void Tick(PPCContext&, uint8_t* base, uint32_t screen);
+void PartyTick(PPCContext&, uint8_t* base, uint32_t screen);
+void PartyInput(PPCContext&, uint8_t* base, uint32_t screen, uint32_t event);
 }

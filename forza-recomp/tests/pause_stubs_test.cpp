@@ -18,6 +18,8 @@ int main() {
     assert(!forza::native_pause_scene::Page(context, memory.data(), screen, true));
     forza::native_pause_scene::AfterBind(context, memory.data(), screen);
     forza::native_pause_scene::Tick(context, memory.data(), screen);
+    forza::native_pause_scene::PartyTick(context, memory.data(), screen);
+    forza::native_pause_scene::PartyInput(context, memory.data(), screen, 1);
     forza::native_pause_scene::Destroy(context, memory.data(), screen);
     for (bool visible : {false, true}) {
       forza::fh1_map_preview::Update(context, memory.data(), screen, visible);

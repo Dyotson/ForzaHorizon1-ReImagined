@@ -280,6 +280,24 @@ void DefaultPausePages() {
     assert(binding_ids.insert(std::string(binding.id)).second);
   assert(!FindPauseAction("unknown_extension_action"));
 
+  // Losing the server while Social is selected must remove online actions
+  // without stranding focus or preventing access to the local statistics view.
+  Controller social;
+  social.SetPages(pages);
+  assert(social.SelectPage("social"));
+  assert(social.FocusTile("free_roam") && social.Activate()=="free_roam");
+  assert(social.FocusTile("create_game") && social.Activate()=="create_game");
+  auto disconnected=all;
+  disconnected.friends=disconnected.free_roam=disconnected.create_game=false;
+  social.SetPages(MakePausePages(disconnected));
+  assert(social.page_id()=="social");
+  for(const auto* id:{"friends","chat","free_roam","create_game"})
+    assert(!social.FocusTile(id));
+  assert(social.focused_tile_id()=="social_stats");
+  assert(social.Activate()=="social_stats");
+  social.SetPages(pages);
+  assert(social.FocusTile("friends") && social.Activate()=="friends");
+
   // Walk the actual navigation graph from every starting tile. This catches
   // layouts whose directional rules strand a tile even though it can be
   // selected programmatically or happens to be the default focus.

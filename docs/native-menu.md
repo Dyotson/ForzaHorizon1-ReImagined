@@ -11,10 +11,29 @@ runtime adapters and build configuration have been retired.
 
 The pause strip has Home, Cars, Social and Settings. Social's Friends and Chat
 tiles queue the existing Forza Live editor, including requests, removal,
-blocking and chat; they require a live server connection. Statistics opens
-FH1's original statistics screen and returns to Social. Online Free Roam and
-Create Game are disabled, labeled Coming soon while their native lobby entry
-flows are being integrated. These tiles do not dispatch an incomplete action.
+blocking and chat; they require a live server connection. Friends also shows
+live online/friend counts and incoming/sent request counts from the server's
+relations snapshot. Statistics opens FH1's original statistics screen and
+returns to Social.
+
+Online Free Roam enters the original multiplayer flow and opens Find Game's
+playlist picker, where Horizon World can be selected. Create Game enters the
+same flow and opens Create Custom Game's native lobby, including Setup Game,
+car selection and invites. Both entry tiles require a connected server, the
+original pause map gate, a multiplayer callback and Colorado single-player
+free-roam activity. They do not start another multiplayer transition from an
+online world or a race. Availability is rechecked when activated.
+
+The pause's original `multiplayer` callback at +0x1E4 initializes the game mode,
+session and resources; opening CPartyLobby directly skips that initialization
+and is unsafe. A one-shot intent waits for the party's normal tick, native
+host/choice gates and a published session to remain ready for 300 ms, then
+dispatches the native Find Game/Create Custom Game choice. It expires after
+30 seconds, clears on disconnect or Back, and is consumed before dispatch so
+returning to the party does not reopen the child. Original lobby navigation,
+confirmation dialogs, playlist contents and online game options remain native.
+Exiting multiplayer follows FH1's normal mode transition rather than returning
+directly to an overlaid single-player pause screen.
 
 Home renders the original `fullscreen` map profile into a separate native map
 record at the card's resolution. Terrain, roads, labels and the player's
@@ -32,7 +51,18 @@ database verified Friends entry, shoulder navigation to Requests and Add friend,
 Chat entry, and closing back to Social. No requests or chat messages were sent.
 The existing Friends editor uses the SDK overlay, which is not included in the
 native game-render-target screenshots; its open/tab/close log events supplied
-the integration evidence. Online Free Roam and Create Game remain unimplemented.
+the integration evidence.
+
+A later 1280x720 copied-profile pass on a loopback-only server verified Social's
+counts/appearance, Free Roam directly opening the native playlist picker,
+selecting Horizon World and reaching a playable online world, and Create Game
+opening the native custom lobby. Setup Game displayed the original privacy,
+permissions, game type, track and rules controls; Back returned to the lobby
+and then the party without repeating the shortcut. No public server, friend
+request, chat message or external invite was used. This was a single-client
+entry-flow check; joining a friend's game and multi-client racing were not
+retested. Model checks cover losing the server while an online tile is focused,
+keeping Social selected and moving focus to local Statistics.
 
 The combined WIP includes the native tuning workspace described in
 [car-tuning.md](car-tuning.md). Cars exposes `car_tuning` through its native
