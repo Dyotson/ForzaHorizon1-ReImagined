@@ -491,8 +491,8 @@ their `EventHubInitialEvents`), on popularity, and with the wristband upgrade. T
 level is not the grant's job: the free roam reminds the player when the XP is past the next
 threshold and Race Central awards it (`race_central.xml`: `is_new_wristband_available` ->
 `CIsWristbandUpgradeAvailable`, then `CTriggerWristbandUpgrade`, which runs the level's unlocks
-and its reward). So a grant writes the result, the XP improvement, the payout and the race
-completion's unlocks, and leaves `Main/WristbandLevel` to the game.
+and its reward). So a grant writes the result, the XP improvement, the payout and the event's
+own unlock rewards, and leaves `Main/WristbandLevel` and the unlocks by XP to the game (phase B).
 
 **Question 2, `X_PROPERTY_RELATIVE_SCORE`: the place among all cars.** The host's
 `XSessionWriteStats` gives each human `cars - place`: 7th of 8 wrote 1, 8th 0, 4th 4 (and in
@@ -518,7 +518,7 @@ picks cars with the bucket's filter. The named field would need a hook.
 | `GridOrderingType="PIWithPlayerLast"` | works | the two humans started 7th and 8th (`PLACE 7/8` and `8/8` at 00:00.000) although their cars had the highest PI (600 against 507-541) (`screenshots/2026-10-23_coop_street_race_start_players_7th_8th.jpg`) |
 | Time of day | works, as one of four | the online options name a time with `HorizonTimeOfDay` only: Dawn 07:47, Midday 12:00, Sunset 17:30, Midnight (`sub_82696DB8`); an event's `TimeOfDayStart` (seconds) goes to the nearest: FR05 (17:39) raced at sunset, FR50 (09:17) at dawn. The exact time would need the options' float written by a hook (TU4 options `+716`) |
 | `Checkpoint` (street race, preset 198) | runs | Plains Run loaded on both consoles with the PROGRESS HUD and the GPS route; not driven to its end (the test drivers left the road) |
-| Traffic (`UseTraffic="true"`) | not seen | no civilian car on the route's first stretch, and the race's car list held only the 8 racers. Street races are therefore off by default (`--coop-street` offers them) |
+| Traffic (`UseTraffic="true"`) | no | no civilian car on the route's first stretch, and the race's car list held only the 8 racers. The flows explain it: `game_street_race_flow.xml` turns traffic spawning on (`global.enable_traffic_spawning`, `CEnableTraffic`), and `game_multiplayer_race_flow.xml` turns it off before every online race (`global.disable_traffic_spawning`), whatever the options say. Street races are therefore off by default (`--coop-street` offers them, without traffic); traffic would need that step changed for campaign rounds |
 
 Two side findings. The peer's race clock started about 12 s after the host's in all three
 rounds (its intro ran longer). With the event's own CPU skill the CPU drivers also get the
@@ -591,9 +591,68 @@ server logged `co-op: world 88f17d51eb63d38e campaign event 4 (FR05, asked by Dr
 place 7/8 finished 1` and the same for DriverB; then both were back in the world. FR50 (point to
 point, the 1960s, dawn) and the street race followed in the same world.
 
+### Phase B (2026-10-23): the ledger and the launcher's grant
+
+**Server: the ledger** (`server/forza_coop_ledger.py`). When a campaign round starts (its own
+prefetch, `forza_world.Worlds.next_round`) the server records it: the world session, the event,
+the player who asked for it (the world's host) and the humans in the world. Each human's place
+comes from its own `WriteRaceStatsEx`, cross-checked with the host's `XSessionWriteStats`
+(`cars - score`, forza_stats' `on_skill_write`). The first write after the round's start is the
+race's: the game writes again for the same session when the world's next free roam ends (the
+first two-game run found the ledger taking that write, 1 and 0 for the humans, over the race's
+4 and 0; fixed and tested). A result goes to the career when the player is the round's
+requester (milestone 1: the host's own career), finished, on the grid, and the host's write (if
+any) agrees. The launcher asks for its player's results and confirms what it applied, signed
+like the shader list upload (X-Xuid and X-Friends-Key, the friends key the XUID was bound to):
+`GET /coop/results`, `POST /coop/results/applied {"ids": [...]}`. Kept in
+`DATA_DIR/coop_ledger.json` for 30 days (a round is dropped once applied, or 20 minutes after
+its start without a result), at most 2000 rounds and 50 pending results per player.
+
+**Launcher: the grant** (`launcher/forza_launcher/coop_grant.py`). After every session (the
+same place as the shader list upload, in a background thread, public or custom servers only)
+it fetches the player's results and applies them to the session's save, as the career's race
+end would:
+
+- `Career_RaceResults` and `Career_EventResults` at the new place, only when it beats the save's
+  (a worse or equal place changes nothing, so a result applied twice is harmless);
+- the wristband XP of the improvement (`WristbandScoring` at the event's level: new place's
+  points less the old place's);
+- the prize at that place, decoded from `sub_8269BA50` and `sub_826984E8`: the festival modes
+  pay `CashPrize * (cars - place + 1) / cars`, the street mode 100/50/25 % to the top three, and
+  the amount is rounded to two significant figures (`CreditsMultiplier` is 1.0 for every event;
+  the difficulty bonus is not applied). This answers most of question 6;
+- the event's own unlock rewards (`Rewards_EventUnlock`).
+
+Left to the game: `Main/WristbandLevel` (Race Central awards it, see question 1) and the unlocks
+by XP. `CTriggerEventUnlocks` runs those with the save's XP after every race, so the player's
+next race catches up; the Nemesis races there have conditions of their own: a first version that
+unlocked by XP alone (the query of `sub_82546080` without them) gave a real save five Nemesis
+races (NR02-NR06) the game had not unlocked. The edit is the save editor's: the save lock, both
+files decoded and verified with the player's keys, one backup ("Before co-op results"), both
+files checked unchanged before each is replaced through a temporary file, and decoded again
+after. Tests: `launcher/test_coop_grant.py` (synthetic saves and database: payout and rounding,
+a new result, a better place paying the difference once, a worse or equal place changing
+nothing and making no backup, events it does not take, the wristband and XP unlocks left alone,
+a save changing during the backup, fetch-apply-confirm) and `server/test_forza_coop_ledger.py`.
+
+**Acceptance, checked with two games** (local server, FR69 "Advan Asphalt Attack", level 6, R3,
+not raced in the host's save):
+
+| Milestone 1 acceptance | Result |
+| --- | --- |
+| The lobby shows the event's class, restrictions and CPU drivers in restricted cars | FR05 (phase A); FR69: R3, Red Rock Descent 6.61 km, six CPU drivers in R3 cars (`screenshots/2026-10-23_coop_fr69_lobby_A_left_B_right.jpg`) |
+| Both race it | twice: host 4th, guest 8th (`screenshots/2026-10-23_coop_fr69_A_4th_B_8th.jpg`); then host 8th, guest 4th. Ledger: `round 5a662e6f69c403d8 (FR69): DriverA place 4/8`, the host's write `relative score 4`; the guest's results kept but not offered (`GET /coop/results` for DriverB: none) |
+| After closing the game, the host's save shows the event done at the right place, with XP and credits added once | the launcher's grant: "FR69 at place 4 (was not raced): +120 XP, +11,000 CR", the 8th "unchanged", one backup; the save decoded after: XP 11,230 -> 11,350, credits 652,056 -> 663,056, `Career_EventResults` 233 = 4. In the game the credits show 663,056, and the map's card says FR69 "130 PTS" (250 for 1st less the 120 earned at 4th) where an unraced level-6 event says "250 PTS" (`screenshots/2026-10-23_coop_granted_fr69_4th_130pts_vs_unraced_250pts.jpg`); with a granted 1st, STATS counts the event won (question 1) |
+| A second run at a worse place changes nothing | the second round's 8th was offered and left unchanged; applying both again changed nothing and made no backup |
+
+Not done in milestone 1: guests' careers (M2: the ledger keeps their results; each launcher
+would apply them when the event is unlocked in its save), the prize car (`Rewards_EventPrizes`),
+the base game's addresses for the client hook (the server and launcher parts are the same for
+both), the exact time of day, the named CPU field and traffic.
+
 ## Open questions (measure first)
 
-Questions 1-5 are answered under "Milestone 1 progress".
+Questions 1-5 are answered under "Milestone 1 progress", most of 6 under its phase B.
 
 1. Does the game load a launcher-granted save cleanly and show the event done? Does it re-run
    its unlock and wristband checks at load, or does the grant have to write them? (A
