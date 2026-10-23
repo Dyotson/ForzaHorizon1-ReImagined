@@ -1,6 +1,7 @@
 # Publishes site/ (the landing page) to GitHub Pages on every push to main that changes it,
 # and every 30 minutes with a fresh copy of the public server's leaderboards (data/leaderboards.json).
-# The page uses the project's logo and screenshots from docs/images, copied in here.
+# The page uses the project's logo and screenshots from docs/images, copied in here. The
+# leaderboards map (site/images/colorado-map.svg, site/data/map_points.json) is in site/.
 # The server is plain http (a tunnel), which the https site cannot fetch from the browser: the
 # job fetches it and the site serves the copy.
 name: pages

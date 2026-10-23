@@ -10,9 +10,10 @@ XUID), gamertag (ASCII, as the game shows it), score (km/h for speeds, seconds f
 unit, display, car id and name, class id and letter, date. Only what the in-game
 leaderboards already show.
 
-Names: the game's own names are game data and not shipped here. Without them a board is
-"Speed trap 230" and a car "Car 797". An operator can add names in
-DATA_DIR/leaderboard_names.json: {"boards": {"speed-trap-230": "I-70"}, "cars": {"797": "..."}}.
+Names: the server has none of its own. Without them a board is "Speed trap 230" and a car
+"Car 797". An operator adds them in DATA_DIR/leaderboard_names.json:
+{"boards": {"speed-trap-230": "Rt. 29 Speed Trap"}, "cars": {"1398": "2012 ..."}}, which
+tools/extract_map_points.py --names writes from their own copy of the game (docs/hosting.md).
 
 CORS: the server's HTTP replies carry Access-Control-Allow-Origin: * (response() in
 forza_live_server.py), which covers these public, read-only answers.

@@ -185,10 +185,20 @@ No XUIDs are in the output. The player id is a hash with a secret salt kept in t
 60 s and the server builds at most 120 answers a minute (429 beyond). Replies carry
 `Access-Control-Allow-Origin: *`, like the rest of the HTTP port.
 
-The game's own board and car names are game data and are not shipped: boards show as "Speed
-trap 230" and cars as "Car 797". To name them, put
-`{"boards": {"speed-trap-230": "I-70"}, "cars": {"797": "Lamborghini Aventador"}}` in
-`leaderboard_names.json` in the data folder (read again when it changes).
+The server ships no board or car names: without them boards show as "Speed trap 230" and cars
+as "Car 1398". To name them, write `leaderboard_names.json` from your own copy of the game and
+put it in the data folder (read again when it changes):
+
+```
+python3 tools/extract_map_points.py --game extracted/game --update extracted/tu4 \
+    --out /tmp/map_points.json --names forza_live_data/leaderboard_names.json
+```
+
+The file is `{"boards": {"speed-trap-230": "Rt. 29 Speed Trap", "event-199": "..."},
+"cars": {"1398": "2012 Lamborghini Aventador LP700-4"}}` (the in-game names of the speed traps,
+speed zones and events, and the cars). The website has the same board names in
+`site/data/map_points.json`, so the page shows them either way; only the boards without a place
+on the map (monthly Rivals, events off the Colorado map) and the cars need the server's file.
 
 The website (https) cannot fetch a plain-http tunnel (mixed content), so the `pages` workflow
 (`.github/workflows/pages.yml`) copies `/leaderboards/snapshot` from
@@ -197,6 +207,27 @@ minutes, and `site/leaderboards.html` reads that file. A scheduled run that cann
 server fails and leaves the published site as it was. Nothing else is needed at deploy but the
 tunnel publishing the HTTP port. To try the page against a local server:
 `leaderboards.html?api=http://127.0.0.1:21201`.
+
+### The map (#316)
+
+The page's map of Colorado is our own drawing, not the game's map:
+
+- `site/images/colorado-map.svg`: the roads are the lines players drove in their Rivals laps
+  (the server's `ghosts/`), merged and simplified; the terrain regions, the reservoir and the
+  landmark icons are drawn by `tools/build_map_roads.py` from `tools/map_terrain.json`. Its
+  colours are the page's CSS tokens (`--map-*`), for the light and dark themes.
+- `site/data/map_points.json`: the place and in-game name of every speed trap, speed zone,
+  event (Rivals) and landmark, written by `tools/extract_map_points.py` from a copy of the game
+  (`--game extracted/game --update extracted/tu4 --out site/data/map_points.json`). Only
+  coordinates and names.
+
+The roads grow as players race Rivals. To redraw them with the server's ghosts (copied, never
+changed on the server) and any drives logged with `tools/carlog.py`:
+
+```
+python3 tools/build_map_roads.py --ghosts COPY_OF_DATA_DIR/ghosts [--carlog drive.log ...] \
+    --points site/data/map_points.json --out site/images/colorado-map.svg
+```
 
 ## Shader lists from players (#276)
 
