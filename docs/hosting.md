@@ -211,26 +211,32 @@ server fails and leaves the published site as it was. Nothing else is needed at 
 tunnel publishing the HTTP port. To try the page against a local server:
 `leaderboards.html?api=http://127.0.0.1:21201`.
 
-### The map (#316)
+### The map (#316, #324)
 
-The page's map of Colorado is our own drawing, not the game's map:
+The page's map of Colorado is our own drawing, not the game's map image:
 
-- `site/images/colorado-map.svg`: the roads are the lines players drove in their Rivals laps
-  (the server's `ghosts/`), merged and simplified; the terrain regions, the reservoir and the
-  landmark icons are drawn by `tools/build_map_roads.py` from `tools/map_terrain.json`. Its
-  colours are the page's CSS tokens (`--map-*`), for the light and dark themes.
+- `site/images/colorado-map.svg`: every road of Colorado (the interstates, main and secondary
+  roads, dirt roads, the towns and the festival), drawn by `tools/build_map_roads.py` from the
+  road layout in a copy of the game: the sat-nav road graph
+  (`media/tracks/colorado/colorado.nav`). Its lanes (a freeway's carriageways, one-way pairs)
+  are joined into one centreline per road and simplified; roads are drawn by class (freeway,
+  main, secondary, dirt). The terrain regions, the reservoir and the landmark icons are drawn
+  from `tools/map_terrain.json`. Its colours are the page's CSS tokens (`--map-*`), for the
+  light and dark themes.
 - `site/data/map_points.json`: the place and in-game name of every speed trap, speed zone,
   event (Rivals) and landmark, written by `tools/extract_map_points.py` from a copy of the game
   (`--game extracted/game --update extracted/tu4 --out site/data/map_points.json`). Only
   coordinates and names.
 
-The roads grow as players race Rivals. To redraw them with the server's ghosts (copied, never
-changed on the server) and any drives logged with `tools/carlog.py`:
+To redraw the map from your own copy of the game:
 
 ```
-python3 tools/build_map_roads.py --ghosts COPY_OF_DATA_DIR/ghosts [--carlog drive.log ...] \
+python3 tools/build_map_roads.py --game extracted/game \
     --points site/data/map_points.json --out site/images/colorado-map.svg
 ```
+
+`--ghosts COPY_OF_DATA_DIR/ghosts` (the server's Rivals ghosts, copied) and `--carlog drive.log`
+(`tools/carlog.py`) add players' driven lines where the network has no road.
 
 ## Shader lists from players (#276)
 
