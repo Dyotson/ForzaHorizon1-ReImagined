@@ -4,14 +4,6 @@
 using namespace forza::fh1_menu_components;
 void Check(bool condition,const char* message){if(!condition){std::cerr<<message<<'\n';std::exit(1);}}
 int main(){
-  const auto shear=MenuShearFactors();
-  const double u=shear.outer_radians,v=shear.inner_radians;
-  const double cu=std::cos(u),su=std::sin(u),cv=std::cos(v),sv=std::sin(v);
-  Check(std::fabs(cu*shear.scale_x*cv-su*shear.scale_y*sv-kMenuScaleX)<1e-6&&
-        std::fabs(cu*shear.scale_x*-sv-su*shear.scale_y*cv-kMenuShear)<1e-6&&
-        std::fabs(su*shear.scale_x*cv+cu*shear.scale_y*sv)<1e-6&&
-        std::fabs(su*shear.scale_x*-sv+cu*shear.scale_y*cv-1)<1e-6,
-        "Native map TRS groups must reproduce the shared shear without tilting horizontal edges");
   const auto grid=SliderGridStart(188.55,0,.1);
   Check(std::fabs(grid-188.6)<1e-8,"Choice grid must align to display precision, not raw minimum");
   Check(std::fabs((grid+489*1.3)-824.3)<1e-8,"Spring choices must avoid half-decimal rounding midpoints");

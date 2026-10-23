@@ -57,6 +57,8 @@ for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
 datas.append((str(repo / "tools" / "native_menu" / "fh1_donors.json"), "tools/native_menu"))
+for name in ("change_car", "tune_car", "garage", "autoshow"):
+    datas.append((str(repo / "tools" / "native_menu" / "icons" / (name + ".xds")), "tools/native_menu/icons"))
 # The shipped pipeline list (hashes and render state only).
 datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
 

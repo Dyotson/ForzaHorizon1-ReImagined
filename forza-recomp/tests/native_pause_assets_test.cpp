@@ -36,6 +36,8 @@ std::vector<Entry> RequiredEntries() {
   add("native_menu_map");
   for (unsigned i = 0; i < 6; ++i) add("native_menu_tile_" + std::to_string(i));
   for (unsigned i = 0; i < 4; ++i) add("native_menu_tab_" + std::to_string(i));
+  for (const char* name : {"change_car", "tune_car", "garage", "autoshow"})
+    entries.push_back({std::string("ui/textures/ui4/native_menu/")+name+".xds"});
   return entries;
 }
 
@@ -131,7 +133,7 @@ class Fixture {
 void Run(std::string_view name) {
   Fixture fixture;
   auto entries = RequiredEntries();
-  if (entries.size() != 36) throw std::runtime_error("Expected twelve complete scene triplets");
+  if (entries.size() != 40) throw std::runtime_error("Expected twelve complete triplets and four original icons");
   if (name == "complete") {
     fixture.Check(Zip(entries).bytes, true, name);
   } else if (name == "missing_each") {

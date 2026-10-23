@@ -460,6 +460,12 @@ void NativeLayoutContract() {
         const auto map = layout::Map(tile.bounds);
         assert(contained(map, tile.bounds));
         assert(map.x > tile.bounds.x && map.y > tile.bounds.y);
+        using namespace forza::fh1_menu_components;
+        for(const double y : {map.y,map.y+map.height}) {
+          const auto project=[&](double x){return 640+kMenuTranslateX+kMenuScaleX*(x-640)+kMenuShear*(360-y);};
+          assert(map.x>=project(tile.bounds.x)+8);
+          assert(map.x+map.width<=project(tile.bounds.x+tile.bounds.width)-8);
+        }
         ++map_panels;
       }
     }

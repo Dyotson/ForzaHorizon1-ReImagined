@@ -1,5 +1,6 @@
 #pragma once
 #include "menu_model.h"
+#include "fh1_menu_components.h"
 #include <array>
 #include <cmath>
 
@@ -36,7 +37,13 @@ inline CarContent Car(const menu::Rect& panel) {
           {panel.x + 24, panel.y + panel.height - 66, inner, 46}};
 }
 inline menu::Rect Map(const menu::Rect& panel) {
-  return {panel.x + 12, panel.y + 54, panel.width - 24, panel.height - 66};
+  using namespace fh1_menu_components;
+  const double x=panel.x+12,y=panel.y+54,w=panel.width-24,h=panel.height-66;
+  // Inscribe an upright image inside the slanted, padded panel. Its center
+  // follows the composition while neither pixels nor map heading are skewed.
+  const double width=kMenuScaleX*w-kMenuShear*h;
+  const double center=640+kMenuTranslateX+kMenuScaleX*(x+w/2-640)+kMenuShear*(360-y-h/2);
+  return {center-width/2,y,width,h};
 }
 inline constexpr std::array<menu::Rect, kTabCapacity> kTabs{{
     {64, 112, 172, 42}, {244, 112, 172, 42}, {424, 112, 172, 42}, {604, 112, 172, 42}}};

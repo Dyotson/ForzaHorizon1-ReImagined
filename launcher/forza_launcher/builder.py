@@ -109,7 +109,9 @@ def runtime_dir(root: Path) -> Path:
 EXCLUDE_DIRS = {"out", "__pycache__"}
 # Original resource preparation shipped with the project; no generated game assets.
 NATIVE_MENU_FILES = ("native_menu_scene.py", "offline_cars_flow.py", "lzx_delta.py",
-                     "native_menu/fh1_donors.json")
+                     "native_menu/fh1_donors.json",
+                     *(f"native_menu/icons/{name}.xds" for name in
+                       ("change_car", "tune_car", "garage", "autoshow")))
 
 
 def source_files(proj: Path):

@@ -5,7 +5,6 @@
 
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
-#include "../platform/fh1_menu_components.h"
 #include <rex/logging.h>
 #include <rex/ppc/func.h>
 #include <rex/system/kernel_state.h>
@@ -836,14 +835,6 @@ void MaintainDisplay(Native& ui) {
       ui.Call(0x82F34DE0, {preview.presentation, node, hash});
     }
   }
-  // Keep the shear in native properties: this donor rebuilds its local
-  // matrices after pause binding. Tip and Bar are existing normalized groups.
-  static const auto shear=fh1_menu_components::MenuShearFactors();
-  ui.Scalar(preview.tip,"position.x",0xC,fh1_menu_components::kMenuTranslateX);
-  ui.Scalar(preview.tip,"scale.x",0x24,shear.scale_x);
-  ui.Scalar(preview.tip,"scale.y",0x28,shear.scale_y);
-  ui.Scalar(preview.tip,"rotation.z",0x20,shear.outer_radians);
-  ui.Scalar(preview.bar,"rotation.z",0x20,shear.inner_radians);
   if (layout.caption) ui.CaptionFont();
 }
 } // namespace

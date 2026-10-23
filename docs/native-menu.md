@@ -43,8 +43,11 @@ defaults to the existing pause behavior. Pause tabs now use the reusable
 `fh1_menu_components::TabBar` renderer while the pause controller retains input
 and capability ownership.
 
-Pause panels, artwork, labels and the native map quad share a 15-degree shear
-with horizontal top and bottom edges. The 720p composition fits within the
+Pause papers, labels and decorative icons share a 7-degree shear with horizontal
+top and bottom edges. The car photo is translated into the composition through
+its own branch, preserving its native aspect without shear or compression. The
+map preview is an upright rectangle inscribed inside the padded slanted panel;
+its terrain, labels and player heading remain undistorted. The 720p composition fits within the
 existing safe area. FH1's layer nodes are render boundaries, so the shared
 matrix is composed onto their drawable children rather than the layer itself;
 camera and light nodes retain their authored transforms.
@@ -55,8 +58,16 @@ then reveals the next tab. Edge arrows indicate hidden pages; wraparound brings
 the selected first or last page into view. The normal menu still has four pages.
 A private seven-page staged build at 1280x720 verified both hidden-edge hints,
 scrolling in both directions, and wraparound. The temporary extra pages are not
-part of the shipped menu or its scene assets. Affine reconstruction and viewport
-tests cover the shared transform, stable windows and bounded page capacity.
+part of the shipped menu or its scene assets. Geometry and viewport tests cover
+map containment, stable windows and bounded page capacity.
+
+The four action icons are original white SVG outlines: car/swap arrows, tuning
+spanners, a garage door and an autoshow frontage. Native 256x256 XDS surfaces are
+staged from `tools/native_menu/icons`; their SVG sources are retained there.
+Developers can rebuild them with `python tools/native_menu_icons.py` (Pillow is
+required only for rebuilding). The launcher ships the prebuilt original art;
+players need no image conversion dependency. Archive preflight checks all 36
+scene members plus these four textures before activating the menu.
 
 The Cars composition uses a larger full-width photo with five specification
 columns underneath. Both menus bind real controller icons through the shared

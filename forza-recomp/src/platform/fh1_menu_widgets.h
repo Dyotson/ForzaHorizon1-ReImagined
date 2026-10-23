@@ -255,15 +255,16 @@ public:
     GuestPtr(base,instance+0xFB)[0]=(GuestPtr(base,instance+0xFB)[0]&~0x20)|0x10;
     Dirty(presentation,node);return true;
   }
-  void MenuComposition(uint32_t presentation,uint32_t root) {
+  void MenuComposition(uint32_t presentation,uint32_t root,uint32_t preserve=0) {
     std::vector<uint32_t> pending;
     unsigned siblings=0;
     if(root)for(auto child=Read(base,root+20);child&&siblings++<1024;child=Read(base,child+16))pending.push_back(child);
     for(unsigned count=0;!pending.empty()&&count<8192;++count){
       const auto node=pending.back();pending.pop_back();
+      if(node==preserve)continue;
       const auto name=Read(base,node),instance=Read(base,node+4);
       if(name==Hash("Camera")||name==Hash("Light")||!instance)continue;
-      if(GuestPtr(base,instance+0xA)[0]!=8){MenuShear(presentation,node);continue;}
+      if(GuestPtr(base,instance+0xA)[0]!=8&&!IsDescendant(base,preserve,node)){MenuShear(presentation,node);continue;}
       unsigned siblings=0;
       for(auto child=Read(base,node+20);child&&siblings++<1024;child=Read(base,child+16))pending.push_back(child);
     }

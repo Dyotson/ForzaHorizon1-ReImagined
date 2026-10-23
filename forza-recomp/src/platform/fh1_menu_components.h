@@ -31,20 +31,10 @@ inline std::optional<size_t> SliderNeighbor(std::span<const float> choices,
   return next==first?selected:size_t((next-1)-choices.begin());
 }
 struct Rect { float x=0,y=0,w=0,h=0; };
-// tan(15 degrees). One screen-space shear for the whole pause composition.
-inline constexpr float kMenuShear = .2679491924f;
+// tan(7 degrees). UI papers share this angle; media keeps its own aspect.
+inline constexpr float kMenuShear = .1227845609f;
 inline constexpr float kMenuScaleX = (1152.f - kMenuShear * (570.f - 32.f)) / 1152.f;
 inline constexpr float kMenuTranslateX = 576.f * (kMenuScaleX - 1.f) + 210.f * kMenuShear;
-struct ShearFactors { float outer_radians, scale_x, scale_y, inner_radians; };
-// Two native TRS groups can retain the same affine matrix through animation
-// rebuilds: R(outer) * Scale * R(inner), followed by the canvas translation.
-inline ShearFactors MenuShearFactors() {
-  const double a=kMenuScaleX,b=kMenuShear;
-  const double v=.5*std::atan2(2*a*b,a*a-b*b-1);
-  const double x=a*std::cos(v)+b*std::sin(v),y=std::sin(v);
-  const double scale=std::hypot(x,y);
-  return {float(std::atan2(y,x)),float(scale),float(a/scale),float(-v)};
-}
 inline Rect BackdropBounds(uint32_t width,uint32_t height) {
   if(!width||!height){width=1280;height=720;}
   const float scale=std::min(float(width)/1280,float(height)/720);

@@ -4,6 +4,7 @@
 This is resource preparation, not a BGF/BSG/FBF scene compiler. The
 runtime owns layout, text, input and controller isolation. Whole scene triplets
 are copied without decoding or changing geometry, fonts, textures or animation.
+Four repository-authored monochrome action textures are staged separately.
 The existing FH1 pause flow is patched to support native offline car changes.
 Only a recognized original FH1 TU4 archive is accepted; an old modified overlay
 is not an input. No other game's files or preparation modules are required.
@@ -39,6 +40,26 @@ TITLE_ID = 0x4D5309C9
 TU4_VERSION = 0x0000040C
 ORIGINAL_ARCHIVE_SHA256 = "dfb31d11bf00153cfc5f3634681a41ea7e2a877d470230a148721ba3ccd5bab3"
 DEFAULT_MANIFEST = Path(__file__).parent / "native_menu" / "fh1_donors.json"
+ACTION_ICONS = ("change_car", "tune_car", "garage", "autoshow")
+
+
+def append_action_icons(archive):
+    """Stage repository-authored monochrome art, not borrowed game textures."""
+    records = []
+    for name in ACTION_ICONS:
+        data = (DEFAULT_MANIFEST.parent / "icons" / (name + ".xds")).read_bytes()
+        if len(data) != 52 + 256 * 256 * 4 or data[:8] != struct.pack(">II", 3, 1):
+            raise ValueError(f"Invalid original menu artwork: {name}")
+        entry = f"ui/textures/ui4/native_menu/{name}.xds"
+        if entry in archive.namelist():
+            raise ValueError(f"Menu artwork already exists: {entry}")
+        info = zipfile.ZipInfo(entry)
+        info.compress_type = zipfile.ZIP_STORED
+        info.file_size = info.compress_size = len(data)
+        info.CRC = zlib.crc32(data)
+        append_compressed(archive, entry, info, data)
+        records.append({"entry": entry, "sha256": hashlib.sha256(data).hexdigest()})
+    return records
 SUFFIXES = ("bgf", "bsg", "fbf")
 EXECUTABLES = ("default.xex", "XMediaFacade_default.xex", "SpeechFacade_default.xex")
 MAX_MANIFEST_BYTES = 64 * 1024
@@ -356,6 +377,7 @@ def stage(update, output, manifest=DEFAULT_MANIFEST):
                 })
             flow_report["payload_offset"] = append_compressed(
                 archive, offline_cars_flow.ENTRY, flow_info, patched_flow)
+            artwork = append_action_icons(archive)
         executables = {}
         for name in EXECUTABLES:
             executable = update / name
@@ -373,6 +395,7 @@ def stage(update, output, manifest=DEFAULT_MANIFEST):
             "manifest_sha256": hashlib.sha256(manifest_bytes(scenes)).hexdigest(),
             "executables": executables, "entries": records,
             "offline_cars_flow": flow_report,
+            "original_action_icons": artwork,
         }
         (staged / "native-menu-provenance.json").write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

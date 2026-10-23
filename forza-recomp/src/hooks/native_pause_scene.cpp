@@ -262,10 +262,10 @@ const char* Description(std::string_view id) {
 void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
   struct Art {const char* id;const char* path;float w,h,l,t,bw,bh;};
   static constexpr Art art[]{
-    {"change_car","UI4\\Common\\BUTTON_ICON_CAR.tga",164,164,10,37,144,89},
-    {"car_tuning","UI4\\MyStore\\tuning_icon.tga",220,116,79,29,60,60},
-    {"garage","UI4\\Common\\Icon_Home.tga",220,123,61,13,97,97},
-    {"autoshow","UI4\\Common\\Icon_Grid.tga",220,123,61,13,98,97},
+    {"change_car","UI4\\Native_Menu\\change_car.tga",256,256,0,0,256,256},
+    {"car_tuning","UI4\\Native_Menu\\tune_car.tga",256,256,0,0,256,256},
+    {"garage","UI4\\Native_Menu\\garage.tga",256,256,0,0,256,256},
+    {"autoshow","UI4\\Native_Menu\\autoshow.tga",256,256,0,0,256,256},
   };
   const Art* image=nullptr;for(const auto& a:art)if(tile.id==a.id){image=&a;break;}
   if(!card.icon)return;
@@ -279,7 +279,7 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
   }
   // Clip the final quarter in UV space; the quad stays completely inside the
   // tile, so artwork cannot bleed into the neighboring action or footer.
-  const float fit=180/std::max(image->bw,image->bh);
+  const float fit=208/std::max(image->bw,image->bh);
   const float w=image->bw*.75f*fit,h=image->bh*.75f*fit;
   Normalize(ui,d,card.icon);Point(ui,d,card.icon,tile.bounds.x+tile.bounds.width-w/2,tile.bounds.y+tile.bounds.height-h/2);
   ui.Scale(d.presentation,card.icon,w/100,h/100);Depth(ui,d,card.icon,1);
@@ -533,6 +533,13 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   // This authored image branch keeps a fixed vertical extent. Enlarge its
   // dedicated parent as well, preserving the visible car's proportions.
   ui.Scale(d.presentation,Read(ui.base,car.image+12),1,1.45f);
+  // The dedicated photo branch is excluded from the paper shear. Translate
+  // its center into the composition without compressing or skewing the car.
+  const float x=float(content.photo.x+content.photo.width/2-640);
+  const float y=float(360-content.photo.y-content.photo.height/2+14)*1.45f;
+  using namespace fh1_menu_components;
+  ui.Position(d.presentation,Read(ui.base,car.image+12),
+      (kMenuScaleX-1)*x+kMenuShear*y+kMenuTranslateX,0);
 }
 void StockVisibility(Native& ui, bool restore) {
   if (!state.stock_captured) return;
@@ -933,7 +940,8 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         {after?838.:38.,114,22,38},20,after?">":"<",0xffffff,1);
   }
   for(auto& card:state.cards)if(card.donor.visible)
-    ui.MenuComposition(card.donor.presentation,card.donor.root);
+    ui.MenuComposition(card.donor.presentation,card.donor.root,
+        &card==&state.cards[0]?Read(ui.base,state.car.image+12):0);
   for(auto& tab:state.tabs)if(tab.donor.visible)
     ui.MenuComposition(tab.donor.presentation,tab.donor.root);
   ui.MenuComposition(state.header.presentation,state.header.root);
