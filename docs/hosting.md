@@ -103,7 +103,11 @@ that was requested but not taken.
   at most `FORZA_MAX_PLAYERS` (20000) player records;
 - the status page lists gamertags and XUIDs but no IP addresses.
 
-Players are not authenticated (the XUID is whatever the client claims).
+- shader lists (below): 1 MiB and 500 pipelines per upload, 5000 pipelines per player and UTC day,
+  8 storage versions and 200000 pipelines per version.
+
+Players are not authenticated (the XUID is whatever the client claims), except for the friends
+list and the shader lists, which need the friends key bound to the XUID.
 
 ### Names are plain ASCII
 
@@ -161,6 +165,32 @@ Mutes and bans are kept in `moderation.json` in the data folder until they run o
 
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.
+
+## Shader lists from players (#276)
+
+The launcher's *Prebuild shaders* step builds a list of pipelines before play. Launchers upload
+pipeline *descriptions* (shader hashes and decoded render state, plus how to rebuild a shader from
+the player's own files; never shader code or game data) and the server publishes what several
+players saw ([shader prebuild](shader_prebuild.md#phase-3-lists-from-players-276)). Both endpoints
+are on `--http-port` (`forza_shader_lists.py`):
+
+- `POST /shader-lists/upload`: JSON `{"version", "pipelines", "shaders"}` in the list format
+  (`tools/pipeline_list.py check`). Needs `X-Xuid` (16 hex) and `X-Friends-Key` (32 hex, the
+  `friends_key` of `live_identity.txt`): the XUID must have joined the server and be bound to that
+  key (a 403 otherwise). Every field is checked against the list format and its enum ranges; a bad
+  entry rejects the request (400). Over the size caps: 413, 400; over the daily cap: 429.
+- `GET /shader-lists?version=fbo:20260228/20261018`: the merged list of one storage version, for
+  anybody. It holds the pipelines reported by at least `MIN_PLAYERS` (3) different players (a
+  player counts once per entry, whatever it re-sends; players are kept as a hash of the XUID) and
+  the recipes of their shaders, plus an optional seed list.
+
+Data: `shader_lists.json` in the data folder (atomic writes, at most a few MB; keep it with the
+rest of the data folder). To seed the published list, put a list for one storage version in
+`shader_lists_seed.json` beside it (the launcher's `data/pipelines-4D5309C9.json` fits; entries
+are checked on load). Nothing else is needed at deploy: the module ships with the other
+`server/*.py` files (the Dockerfile copies them), and a tunnel must publish the HTTP port as for
+the other title services (the launcher reaches it at the server's UDP port plus one, 56678 for
+the public server).
 
 ## Players online in Discord (optional)
 
