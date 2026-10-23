@@ -22,6 +22,7 @@ namespace trim = rex::graphics::vulkan::fh1_render_target_trim;
 namespace {
 
 constexpr uint64_t kMB = uint64_t(1) << 20;
+constexpr uint64_t kGB = uint64_t(1) << 30;
 
 // Runs frames [first, last) the way EndSubmission does; returns the frames that trimmed.
 struct Session {
@@ -103,19 +104,47 @@ int main() {
   CHECK(!trim::OverBudget(15000 * kMB, 0, 90));
   CHECK(trim::OverBudget(9 * kMB, 10 * kMB, 90));
   CHECK(!trim::OverBudget(8 * kMB, 10 * kMB, 90));
-  // #268 (patch 0138): on integrated GPUs, where new textures go to system memory, a nearly
-  // full device-local heap does not trim; device-local use over the whole budget, the system
-  // memory heap at the percentage or a failure does. Elsewhere as before.
+  // #268 (patch 0138): on integrated GPUs with a small carve-out, where new textures go to
+  // system memory, a nearly full device-local heap does not trim; a device-local heap over its
+  // whole budget, the system memory heap at the percentage, render targets in system memory
+  // past their limit (512 MB or an eighth of the system budget) or a failure does. Elsewhere
+  // (discrete GPUs, RADV's APUs) as before.
   {
+    using R = trim::Reason;
+    auto m = [](uint64_t usage, uint64_t budget, bool heap_over, uint64_t system_usage,
+                uint64_t system_budget, uint64_t render_targets) {
+      trim::Memory x;
+      x.usage = usage, x.budget = budget, x.heap_over_budget = heap_over;
+      x.system_usage = system_usage, x.system_budget = system_budget;
+      x.render_targets_in_system = render_targets;
+      return x;
+    };
     const uint64_t b = 486 * kMB, sb = 7000 * kMB;
-    CHECK(!trim::ShouldTrim(true, false, 470 * kMB, b, 2000 * kMB, sb, 90));
-    CHECK(trim::ShouldTrim(false, false, 470 * kMB, b, 2000 * kMB, sb, 90));
-    CHECK(trim::ShouldTrim(true, false, 486 * kMB, b, 2000 * kMB, sb, 90));
-    CHECK(trim::ShouldTrim(true, false, 1017 * kMB, b, 2000 * kMB, sb, 90));
-    CHECK(trim::ShouldTrim(true, false, 300 * kMB, b, 6400 * kMB, sb, 90));
-    CHECK(trim::ShouldTrim(true, true, 100 * kMB, b, 100 * kMB, sb, 90));
-    CHECK(!trim::ShouldTrim(false, false, 400 * kMB, b, 6900 * kMB, sb, 90));
-    CHECK(!trim::ShouldTrim(true, false, 400 * kMB, 0, 0, 0, 90));  // no budget known
+    CHECK(trim::ShouldTrim(true, false, m(470 * kMB, b, false, 2000 * kMB, sb, 300 * kMB), 90) ==
+          R::kNone);
+    CHECK(trim::ShouldTrim(false, false, m(470 * kMB, b, false, 2000 * kMB, sb, 0), 90) ==
+          R::kMemoryFull);
+    CHECK(trim::ShouldTrim(false, false, m(400 * kMB, b, true, 6900 * kMB, sb, 2 * kGB), 90) ==
+          R::kNone);  // discrete: 0112's rule only
+    // One device-local heap over its own budget, although the pooled use is 51 %.
+    CHECK(trim::ShouldTrim(true, false, m(250 * kMB, b, true, 2000 * kMB, sb, 0), 90) ==
+          R::kMemoryFull);
+    CHECK(trim::ShouldTrim(true, false, m(300 * kMB, b, false, 6400 * kMB, sb, 0), 90) ==
+          R::kMemoryFull);
+    CHECK(trim::ShouldTrim(true, true, m(100 * kMB, b, false, 100 * kMB, sb, 0), 90) ==
+          R::kAllocationFailed);
+    // Render targets in system memory: the limit is an eighth of 7000 MB (875 MB) here...
+    CHECK(trim::RenderTargetsInSystemLimit(sb) == 875 * kMB);
+    CHECK(trim::ShouldTrim(true, false, m(470 * kMB, b, false, 2000 * kMB, sb, 874 * kMB), 90) ==
+          R::kNone);
+    CHECK(trim::ShouldTrim(true, false, m(470 * kMB, b, false, 2000 * kMB, sb, 875 * kMB), 90) ==
+          R::kRenderTargetsInSystemMemory);
+    // ...and at least 512 MB (an 8 GB laptop's 3.5 GB budget, or no budget known).
+    CHECK(trim::RenderTargetsInSystemLimit(3584 * kMB) == 512 * kMB);
+    CHECK(trim::RenderTargetsInSystemLimit(0) == 512 * kMB);
+    CHECK(trim::ShouldTrim(true, false, m(400 * kMB, 0, false, 0, 0, 511 * kMB), 90) == R::kNone);
+    CHECK(trim::ShouldTrim(true, false, m(400 * kMB, 0, false, 0, 0, 512 * kMB), 90) ==
+          R::kRenderTargetsInSystemMemory);
   }
   std::puts("render target trim: ok");
   return 0;
