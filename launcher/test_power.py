@@ -56,7 +56,7 @@ class PowerSource(unittest.TestCase):
     def test_usb_c_charger_counts_as_mains(self):
         def build(t):
             supply(t, "ACAD", type="Mains", online=0)
-            supply(t, "ucsi-source-psy-USBC000:001", type="USB", online=1)
+            supply(t, "ucsi-source-psy-USBC000-001", type="USB", online=1)
             supply(t, "BAT1", type="Battery", status="Discharging")
         self.assertEqual(self.source(build), power.MAINS)
 
@@ -66,7 +66,7 @@ class PowerSource(unittest.TestCase):
 
     def test_a_controllers_battery_is_not_the_systems(self):
         def build(t):
-            supply(t, "ps-controller-battery-aa:bb", type="Battery", status="Discharging", scope="Device")
+            supply(t, "ps-controller-battery-aa-bb", type="Battery", status="Discharging", scope="Device")
             supply(t, "hidpp_battery_0", type="Battery", status="Discharging", scope="Device")
         self.assertEqual(self.source(build), "")
 
@@ -77,6 +77,12 @@ class PowerSource(unittest.TestCase):
 
 
 class Decide(unittest.TestCase):
+    def setUp(self):
+        # Exercise the Linux policy on every host, retaining the explicit Windows guard test.
+        platform = patch.object(power, "IS_WINDOWS", False)
+        platform.start()
+        self.addCleanup(platform.stop)
+
     def decide(self, mode, build, **settings):
         with tempfile.TemporaryDirectory() as t:
             build(t)
@@ -129,6 +135,9 @@ class Decide(unittest.TestCase):
 
 class LaunchPlan(unittest.TestCase):
     def setUp(self):
+        platform = patch.object(power, "IS_WINDOWS", False)
+        platform.start()
+        self.addCleanup(platform.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         t = Path(self.tmp.name)
