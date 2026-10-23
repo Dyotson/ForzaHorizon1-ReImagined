@@ -3,15 +3,18 @@ game database (no game rows, assets or key material)."""
 from contextlib import closing
 from pathlib import Path
 import sqlite3
+import os
+import subprocess
 import struct
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from forza_launcher import coop_grant, garage, save_editor, saves
+from forza_launcher import coop_grant, garage, game, save_editor, saves
 from forza_launcher.config import Config
 from test_garage import KEYS, envelope
 from test_save_editor import field, profile_bytes
@@ -214,6 +217,185 @@ class GrantTests(unittest.TestCase):
                                  '1 event(s) unlocked'])
         self.assertEqual(self.state()['events'], {4: 1})
         self.assertEqual(coop_grant.after_session(self.cfg, self.profile, base=''), 'no server')
+
+    def grant(self):
+        return coop_grant.apply(self.cfg, self.profile,
+                                [{'id': 'r1', 'event': 4, 'place': 1, 'places': 8}])
+
+    def originals(self):
+        return {p.name: p.read_bytes() for p in self.folder.iterdir()}
+
+    def assert_once(self):
+        self.assertEqual((self.state()['events'], self.state()['xp'], self.state()['credits']),
+                         ({4: 1}, 1100, 8000))
+        self.assertEqual(self.grant().applied, ())
+        self.assertEqual((self.state()['xp'], self.state()['credits']), (1100, 8000))
+
+    def test_second_staged_file_failure_never_changes_originals(self):
+        before = self.originals()
+        real = os.replace
+
+        def fail_profile(source, target):
+            if Path(source).name.startswith('.coop-grant-') and Path(target).name == 'ForzaProfile':
+                raise PermissionError('second file unavailable')
+            return real(source, target)
+
+        with patch.object(coop_grant.os, 'replace', side_effect=fail_profile):
+            with self.assertRaises(PermissionError):
+                self.grant()
+        self.assertEqual(self.originals(), before)
+        saves.recover(self.profile)
+        self.grant()
+        self.assert_once()
+
+    def test_directory_publish_failure_rolls_back_both_files(self):
+        before = self.originals()
+        real = os.replace
+
+        def fail_publish(source, target):
+            if Path(source).name.startswith('.save-restore-') and Path(target) == self.profile.folder:
+                raise PermissionError('directory unavailable')
+            return real(source, target)
+
+        with patch.object(saves.os, 'replace', side_effect=fail_publish):
+            with self.assertRaises(PermissionError):
+                self.grant()
+        self.assertEqual(self.originals(), before)
+        self.assertFalse((self.profile.folder.parent / '.save-manager-restore.json').exists())
+        self.grant()
+        self.assert_once()
+
+    def test_interruption_between_directory_renames_recovers_before_session_start(self):
+        before = self.originals()
+        real = os.replace
+
+        def interrupted(source, target):
+            if Path(source).name.startswith('.save-restore-') and Path(target) == self.profile.folder:
+                raise SystemExit('process stopped before publish')
+            return real(source, target)
+
+        with patch.object(saves.os, 'replace', side_effect=interrupted):
+            with self.assertRaises(SystemExit):
+                self.grant()
+        self.assertFalse(self.profile.folder.exists())
+        # The first session after a process restart must recover before _start
+        # can launch anything, even if no pending co-op result was fetched.
+        session = game.Session(SimpleNamespace(save_profile=self.profile))
+        try:
+            with patch.object(session, '_start', side_effect=lambda: self.assertEqual(self.originals(), before)) as start:
+                session.start()
+                start.assert_called_once()
+        finally:
+            session.cleanup()
+        self.grant()
+        self.assert_once()
+
+    def test_interruption_after_publish_keeps_both_edits_and_retry_does_not_pay_twice(self):
+        real = os.replace
+
+        def interrupted(source, target):
+            real(source, target)
+            if Path(source).name.startswith('.save-restore-') and Path(target) == self.profile.folder:
+                raise SystemExit('process stopped after publish')
+
+        with patch.object(saves.os, 'replace', side_effect=interrupted):
+            with self.assertRaises(SystemExit):
+                self.grant()
+        saves.recover(self.profile)
+        self.assert_once()
+
+    def test_failed_journal_write_leaves_originals_and_backup_intact(self):
+        before = self.originals()
+        atomic_write = saves._atomic_write
+
+        def fail_journal(path, text):
+            if path.name == '.save-manager-restore.json':
+                raise OSError('journal unavailable')
+            return atomic_write(path, text)
+
+        with patch.object(saves, '_atomic_write', side_effect=fail_journal):
+            with self.assertRaises(OSError):
+                self.grant()
+        self.assertEqual(self.originals(), before)
+        self.assertEqual(len(saves.snapshots(self.profile)[0]), 1)
+        self.grant()
+        self.assert_once()
+
+    def test_real_process_exit_at_either_rename_recovers_and_retries_once(self):
+        self.cfg.save()
+        child = r'''
+from pathlib import Path
+import os, sys
+from forza_launcher import coop_grant, garage, save_editor, saves
+from forza_launcher.config import Config
+from test_garage import KEYS
+cfg = Config(Path(sys.argv[1]))
+profile = saves.profile_for(cfg)
+garage._keys = save_editor._keys = lambda _: (KEYS,)
+real = os.replace
+def replace(source, target):
+    real(source, target)
+    if ((sys.argv[2] == 'old' and Path(source) == profile.folder) or
+        (sys.argv[2] == 'new' and Path(source).name.startswith('.save-restore-') and Path(target) == profile.folder)):
+        os._exit(77)
+os.replace = replace
+coop_grant.apply(cfg, profile, [{'id': 'r1', 'event': 4, 'place': 1, 'places': 8}])
+'''
+        for boundary in ('old', 'new'):
+            with self.subTest(boundary=boundary):
+                self.write()
+                before = self.originals()
+                result = subprocess.run([sys.executable, '-c', child, str(self.cfg.path), boundary],
+                                        cwd=Path(__file__).parent, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 77, result.stderr)
+                saves.recover(self.profile)
+                if boundary == 'old':
+                    self.assertEqual(self.originals(), before)
+                    self.grant()
+                self.assert_once()
+
+    def test_recovery_failure_blocks_session_and_releases_lock(self):
+        journal = self.profile.folder.parent / '.save-manager-restore.json'
+        journal.write_text('{"old": "invalid", "stage": "invalid"}')
+        session = game.Session(SimpleNamespace(save_profile=self.profile))
+        with patch.object(session, '_start') as start:
+            with self.assertRaises(saves.SaveError):
+                session.start()
+            start.assert_not_called()
+        with saves.locked(self.profile):
+            pass
+
+    def test_failed_rollback_preserves_journal_for_later_recovery(self):
+        before = self.originals()
+        real = os.replace
+
+        def unavailable(source, target):
+            if Path(target) == self.profile.folder:
+                raise PermissionError('publish and rollback unavailable')
+            return real(source, target)
+
+        with patch.object(saves.os, 'replace', side_effect=unavailable):
+            with self.assertRaises(PermissionError):
+                self.grant()
+        self.assertTrue((self.profile.folder.parent / '.save-manager-restore.json').is_file())
+        saves.recover(self.profile)
+        self.assertEqual(self.originals(), before)
+        self.grant()
+        self.assert_once()
+
+    def test_corrupt_staging_backup_is_rejected_without_changing_originals(self):
+        before = self.originals()
+        create = saves._create
+
+        def corrupted(*args):
+            snapshot = create(*args)
+            (snapshot.path / 'save/ForzaProfile/PlayerDatabase').write_bytes(b'corrupt backup')
+            return snapshot
+
+        with patch.object(saves, '_create', side_effect=corrupted):
+            with self.assertRaisesRegex(saves.SaveError, 'integrity'):
+                self.grant()
+        self.assertEqual(self.originals(), before)
 
 
 if __name__ == '__main__':

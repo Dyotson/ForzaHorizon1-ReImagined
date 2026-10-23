@@ -629,8 +629,13 @@ next race catches up; the Nemesis races there have conditions of their own: a fi
 unlocked by XP alone (the query of `sub_82546080` without them) gave a real save five Nemesis
 races (NR02-NR06) the game had not unlocked. The edit is the save editor's: the save lock, both
 files decoded and verified with the player's keys, one backup ("Before co-op results"), both
-files checked unchanged before each is replaced through a temporary file, and decoded again
-after. Tests: `launcher/test_coop_grant.py` (synthetic saves and database: payout and rounding,
+files checked unchanged before a complete staged save is published through the save manager's
+directory-swap journal, and decoded again after. An interruption before publication rolls back
+the whole save; one after publication keeps both edits. Recovery runs before the next grant or
+game session, so a partial result cannot skip its XP/credits on retry. Tests include failures
+writing the second staged file and journal, a failed directory swap, and real child-process
+exits after each rename followed by recovery and an idempotent retry.
+Tests: `launcher/test_coop_grant.py` (synthetic saves and database: payout and rounding,
 a new result, a better place paying the difference once, a worse or equal place changing
 nothing and making no backup, events it does not take, the wristband and XP unlocks left alone,
 a save changing during the backup, fetch-apply-confirm) and `server/test_forza_coop_ledger.py`.
