@@ -57,6 +57,7 @@ struct Car {
   std::array<uint32_t, 5> rows{}, labels{}, values{};
   uint32_t owned = 0, model = 0;
   bool bound = false;
+  float photo_x=1,photo_y=1;
 };
 struct State {
   uint32_t screen = 0, engine = 0, root = 0;
@@ -232,6 +233,12 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   if(tab){const auto grain=Descendants(ui.base,tape,0x43a6b655);
     card.grain=grain.empty()?0:grain.front();card.grain_material=Named(ui,card.grain,"Material90");
     PaperUV(ui,card.donor,card.grain_material);}
+  if(!tab){
+    const auto binding=ui.scratch+832;ui.Call(0x82664A38,{binding});
+    Write(ui.base,binding+4,card.material);Write(ui.base,binding+8,card.donor.presentation);
+    ui.Call(0x82F38E80,{binding,ui.String("GAME:\\MEDIA\\UI\\TEXTURES\\HORIZON\\DIRTMASKS\\PANEL01.TGA"),0,8});
+    ui.CropImage(card.material,0,0,1,1);
+  }
   PaperUV(ui, card.donor, card.material);
   if (card.progress_fill) PaperUV(ui, card.donor, card.progress_fill);
   if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
@@ -283,9 +290,11 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
   const float w=image->bw*.75f*fit,h=image->bh*.75f*fit;
   Normalize(ui,d,card.icon);Point(ui,d,card.icon,tile.bounds.x+tile.bounds.width-w/2,tile.bounds.y+tile.bounds.height-h/2);
   ui.Scale(d.presentation,card.icon,w/100,h/100);Depth(ui,d,card.icon,1);
-  ui.Color(d.presentation,card.icon_material,0xffffff);ui.Opacity(d.presentation,card.icon,14);
+  const auto focus=state.controller.focused_tile_id();
+  const bool selected=focus&&*focus==tile.id;
+  ui.Color(d.presentation,card.icon_material,selected?0xffffff:0x161416);ui.Opacity(d.presentation,card.icon,selected?18:12);
   ui.CropImage(card.icon_material,image->l/image->w,image->t/image->h,image->bw*.75f/image->w,image->bh*.75f/image->h);
-  Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?0xffffff:0xaaaaaa);
+  Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?(selected?0xffffff:0x171416):0x6f686b);
 }
 bool BindHeader(Native& ui) {
   const auto& d = state.header;
@@ -393,12 +402,12 @@ void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
   ui.Scale(d.presentation, card.paper, float(bounds.width / 100),
            float(bounds.height / 100));
   if (card.material)
-    ui.Color(d.presentation, card.material, selected ? 0xff007a : 0x302b30);
+    ui.Color(d.presentation, card.material, selected ? 0xff007a : tab?0x302b30:0xece8df);
   ui.Opacity(d.presentation, card.paper, enabled ? 100.f : 48.f);
   Label(ui, d, card.title,
         {bounds.x + 20, bounds.y + (tab ? 0 : 12), bounds.width - 40,
          tab ? bounds.height : 40}, tab ? 23.f : 27.f, title,
-        enabled ? 0xffffff : 0xaaaaaa, tab ? 1 : 0);
+        enabled ? (tab||selected?0xffffff:0x171416) : 0x6f686b, tab ? 1 : 0);
 }
 void Progress(Native& ui, Card& card, const menu::Rect& bounds) {
   const auto& d = card.donor;
@@ -420,9 +429,9 @@ void Progress(Native& ui, Card& card, const menu::Rect& bounds) {
   if (state.completion) std::snprintf(label, sizeof(label), "%.1f%% COMPLETE", fraction * 100);
   else std::snprintf(label, sizeof(label), "PROGRESS UNAVAILABLE");
   Label(ui, d, card.caption, {bounds.x + bounds.width - 228, bounds.y + 12, 204, 38},
-        20, label, 0xffffff, 2);
+        20, label, 0x171416, 2);
   Label(ui, d, card.title, {bounds.x + 20, bounds.y + 12, bounds.width - 264, 40},
-        23, "FESTIVAL PROGRESS");
+        23, "FESTIVAL PROGRESS",0x171416);
 }
 bool BindCar(Native& ui) {
   auto& d = state.cards[0].donor;
@@ -432,8 +441,22 @@ bool BindCar(Native& ui) {
   car.make = Named(ui, car.root, "TEXT_MANUFACTURER");
   car.logo = Named(ui, car.root, "LOGO");
   car.logo_material = Named(ui, car.logo, "Material_Car_Logo");
-  car.material = Named(ui, car.root, "Material_Car_Ima");
-  car.image = Named(ui, car.root, "Car_Thumb_");
+  car.image=Named(ui,car.root,"Car_Thumb_");
+  car.material=Named(ui,car.root,"Material_Car_Ima");
+  if(car.image){
+    const auto instance=Read(ui.base,car.image+4);
+    car.photo_x=Float(ui.base,instance+0x24);car.photo_y=Float(ui.base,instance+0x28);
+    float sx=car.photo_x,sy=car.photo_y;
+    unsigned depth=0;
+    for(auto parent=Read(ui.base,car.image+12);parent&&parent!=d.root&&depth++<100;parent=Read(ui.base,parent+12)){
+      const auto wrapper=Read(ui.base,parent+4);
+      if(GuestPtr(ui.base,wrapper+0xA)[0]==8)break;
+      sx*=Float(ui.base,wrapper+0x24);sy*=Float(ui.base,wrapper+0x28);
+    }
+    car.photo_x=sx;car.photo_y=sy;
+    if(!std::isfinite(sx)||!std::isfinite(sy)||std::abs(sx)<.001f||std::abs(sy)<.001f)return false;
+    REXLOG_INFO("Native pause photo: authored scale {} {} effective {} {}",car.photo_x,car.photo_y,sx,sy);
+  }
   car.stats = Named(ui, car.root, "STATS");
   car.controller = d.ControllerByVtable(ui, 0x82074f4c);
   car.badge=Named(ui,car.root,"CLASS_SM");
@@ -496,8 +519,8 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
                float((content.name.width-168) / 1200), .045f, 0);
   ui.TextStyle(d.access, d.presentation, car.make, 18,
                float((content.name.width-78) / 1200), .035f, 0);
-  ui.Color(d.presentation, car.name, 0xffffff, true);
-  ui.Color(d.presentation, car.make, 0xe2dce2, true);
+  ui.Color(d.presentation, car.name, 0x171416, true);
+  ui.Color(d.presentation, car.make, 0x423b3d, true);
   ui.Show(d.presentation,car.badge,car.badge_ready);
   if(car.badge_ready){Normalize(ui,d,car.badge);Depth(ui,d,car.badge,-3);
     Point(ui,d,car.badge,bounds.x+bounds.width-51,content.name.y+12);
@@ -505,18 +528,19 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   Normalize(ui, d, car.image);
   Depth(ui, d, car.name, -3); Depth(ui, d, car.make, -3);
   Depth(ui, d, car.image, -1);
-  Point(ui, d, car.image, content.photo.x + content.photo.width / 2,
-        content.photo.y + content.photo.height / 2-14);
+  // Preserve the authored thumbnail's X/Y ratio. Its animated Y scale is
+  // owned by FH1, so resizing the child stretches it; zoom its parent equally
+  // on both axes and counter-scale only the center position.
+  const float zoom=float(std::min(content.photo.width/320,content.photo.height/128));
+  ui.Position(d.presentation,car.image,
+      float(content.photo.x+content.photo.width/2-640)/zoom,
+      float(360-content.photo.y-content.photo.height/2+14)/zoom);
   ui.Show(d.presentation,car.logo,car.logo_ready);
   if(car.logo_ready){Normalize(ui,d,car.logo);Depth(ui,d,car.logo,-3);
     Point(ui,d,car.logo,content.name.x+32+car.logo_fit.dx,content.name.y+23+car.logo_fit.dy);
     ui.Scale(d.presentation,car.logo,car.logo_fit.sx,car.logo_fit.sy);ui.RotationZ(d.presentation,car.logo,0);
     ui.Opacity(d.presentation,car.logo,100);ui.Color(d.presentation,car.logo_material,0xffffff);}
-  // Keep the native thumbnail's aspect ratio, rather than stretching a car.
-  // The native thumbnail includes a generous transparent frame around the car.
-  const float scale = 1.45f*float(std::min(content.photo.width / 608,
-                                     content.photo.height / 289));
-  ui.Scale(d.presentation, car.image, scale, scale);
+  ui.Scale(d.presentation,car.image,car.photo_x,car.photo_y);
   for (size_t i = 0; i < car.rows.size(); ++i) {
     const double width = content.specifications.width / car.rows.size();
     const double x = content.specifications.x + width * i;
@@ -529,14 +553,14 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
                  float((width - 8) / 1200), .032f, 1);
     ui.TextStyle(d.access, d.presentation, car.values[i], 16,
                  float((width - 8) / 1200), .035f, 1);
+    ui.Color(d.presentation,car.labels[i],0x423b3d,true);
+    ui.Color(d.presentation,car.values[i],0x171416,true);
   }
-  // This authored image branch keeps a fixed vertical extent. Enlarge its
-  // dedicated parent as well, preserving the visible car's proportions.
-  ui.Scale(d.presentation,Read(ui.base,car.image+12),1,1.45f);
+  ui.Scale(d.presentation,Read(ui.base,car.image+12),zoom,zoom);
   // The dedicated photo branch is excluded from the paper shear. Translate
   // its center into the composition without compressing or skewing the car.
   const float x=float(content.photo.x+content.photo.width/2-640);
-  const float y=float(360-content.photo.y-content.photo.height/2+14)*1.45f;
+  const float y=float(360-content.photo.y-content.photo.height/2+14);
   using namespace fh1_menu_components;
   ui.Position(d.presentation,Read(ui.base,car.image+12),
       (kMenuScaleX-1)*x+kMenuShear*y+kMenuTranslateX,0);
@@ -879,7 +903,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
                tile.bounds.width - 48, compact ? 26. : 32.},
-              compact ? 16 : 18, Description(tile.id), tile.enabled ? 0xe2dce2 : 0xaaaaaa);
+              compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?0xffffff:0x423b3d) : 0x6f686b);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";
@@ -889,10 +913,10 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       }
       const bool car = tile.id == "current_car";
       if (tile.id == "world_map" && fh1_map_preview::Ready()) {
-        ui.Color(card.donor.presentation, card.material, 0x302b30);
+        ui.Color(card.donor.presentation, card.material, 0xece8df);
         ui.Show(card.donor.presentation, card.caption, false);
         ui.Color(card.donor.presentation, card.title,
-                 focus && tile.id == *focus ? 0xff007a : 0xffffff, true);
+                 focus && tile.id == *focus ? 0xff007a : 0x171416, true);
       }
       if (i == 0) {
         for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats, state.car.logo,state.car.badge})

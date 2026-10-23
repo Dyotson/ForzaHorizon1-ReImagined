@@ -4,7 +4,7 @@
 This is resource preparation, not a BGF/BSG/FBF scene compiler. The
 runtime owns layout, text, input and controller isolation. Whole scene triplets
 are copied without decoding or changing geometry, fonts, textures or animation.
-Four repository-authored monochrome action textures are staged separately.
+Four attributed monochrome action textures are staged separately.
 The existing FH1 pause flow is patched to support native offline car changes.
 Only a recognized original FH1 TU4 archive is accepted; an old modified overlay
 is not an input. No other game's files or preparation modules are required.
@@ -44,12 +44,12 @@ ACTION_ICONS = ("change_car", "tune_car", "garage", "autoshow")
 
 
 def append_action_icons(archive):
-    """Stage repository-authored monochrome art, not borrowed game textures."""
+    """Stage attributed SVG-derived art, not borrowed game textures."""
     records = []
     for name in ACTION_ICONS:
         data = (DEFAULT_MANIFEST.parent / "icons" / (name + ".xds")).read_bytes()
         if len(data) != 52 + 256 * 256 * 4 or data[:8] != struct.pack(">II", 3, 1):
-            raise ValueError(f"Invalid original menu artwork: {name}")
+            raise ValueError(f"Invalid menu artwork: {name}")
         entry = f"ui/textures/ui4/native_menu/{name}.xds"
         if entry in archive.namelist():
             raise ValueError(f"Menu artwork already exists: {entry}")
@@ -395,10 +395,13 @@ def stage(update, output, manifest=DEFAULT_MANIFEST):
             "manifest_sha256": hashlib.sha256(manifest_bytes(scenes)).hexdigest(),
             "executables": executables, "entries": records,
             "offline_cars_flow": flow_report,
-            "original_action_icons": artwork,
+            "action_icons": artwork,
         }
         (staged / "native-menu-provenance.json").write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+        (staged / "native-menu-icons-license.txt").write_text(
+            (DEFAULT_MANIFEST.parent / "icons/ATTRIBUTION.md").read_text(encoding="utf-8")+"\n"+
+            (DEFAULT_MANIFEST.parent / "icons/FONT-AWESOME-LICENSE.txt").read_text(encoding="utf-8"), encoding="utf-8")
         if output.exists():
             raise FileExistsError(f"Output already exists: {output}")
         staged.rename(output)

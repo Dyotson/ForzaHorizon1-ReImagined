@@ -214,16 +214,19 @@ class Fixture(unittest.TestCase):
 
 
 class ArchiveContracts(Fixture):
-    def test_original_action_art_is_staged_with_native_offsets(self):
+    def test_attributed_action_art_is_staged_with_native_offsets(self):
         report = self.stage()
         with zipfile.ZipFile(self.output / "media.zip") as archive:
-            for name, record in zip(menu.ACTION_ICONS, report["original_action_icons"]):
+            for name, record in zip(menu.ACTION_ICONS, report["action_icons"]):
                 info = archive.getinfo(record["entry"])
                 expected = (menu.DEFAULT_MANIFEST.parent / "icons" / (name + ".xds")).read_bytes()
                 self.assertEqual(archive.read(info), expected)
                 _, _, offset = struct.unpack("<HHI", info.extra)
                 raw = (self.output / "media.zip").read_bytes()
                 self.assertEqual(raw[offset:offset + info.file_size], expected)
+        attribution = (self.output / "native-menu-icons-license.txt").read_text(encoding="utf-8")
+        self.assertIn("Font Awesome Free", attribution)
+        self.assertIn("CC BY 4.0", attribution)
 
     def test_stored_and_deflated_geometry_fonts_and_unrelated_payloads_preserved(self):
         for codec in (0, 8):
