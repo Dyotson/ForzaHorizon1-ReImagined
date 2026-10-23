@@ -51,12 +51,14 @@ class DamagedPackage(unittest.TestCase):
             p = os.path.join(d, "pkg")
             Path(p).write_bytes(pkg_bytes)
             pkg = xc.open_package(p)
-            (e,) = [e for e in pkg.entries() if not e.is_dir]
-            bad = xc.extract(pkg, e, os.path.join(d, "out"))
-            out = Path(d, "out", "b.bin").read_bytes()
-            for f in pkg.files:
-                f.close()
-            return bad, out
+            try:
+                (e,) = [e for e in pkg.entries() if not e.is_dir]
+                bad = xc.extract(pkg, e, os.path.join(d, "out"))
+                out = Path(d, "out", "b.bin").read_bytes()
+                return bad, out
+            finally:
+                for f in pkg.files:
+                    f.close()
 
     def test_intact_package_extracts_without_complaint(self):
         data = os.urandom(4096 * 3 + 100)
@@ -70,6 +72,29 @@ class DamagedPackage(unittest.TestCase):
         self.assertEqual(bad, [1])
         self.assertNotEqual(out, data)
         self.assertEqual(out[:4096], data[:4096])
+
+    def test_damaged_partial_final_block_is_reported(self):
+        for size in (100, 4096 * 3 + 100):
+            with self.subTest(size=size):
+                data = b"x" * size
+                last_block = (size - 1) // 4096
+                bad, out = self.run_extract(build(data, damage_block=last_block), size)
+                self.assertEqual(bad, [last_block])
+                self.assertEqual(len(out), size)
+                self.assertNotEqual(out, data)
+
+    def test_partial_block_hash_includes_stored_padding_without_extracting_it(self):
+        data = b"x" * (4096 + 100)
+        package = bytearray(build(data))
+        package[-1] ^= 0xFF  # damage only padding, not the declared file contents
+        bad, out = self.run_extract(bytes(package), len(data))
+        self.assertEqual(bad, [1])
+        self.assertEqual(out, data)
+
+    def test_truncated_final_block_cannot_be_verified(self):
+        data = b"x" * (4096 + 100)
+        with self.assertRaisesRegex(SystemExit, "short read"):
+            self.run_extract(build(data)[:-1], len(data))
 
 
 if __name__ == "__main__":

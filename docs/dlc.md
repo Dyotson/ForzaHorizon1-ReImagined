@@ -278,6 +278,15 @@ prints a `WARNING ... damaged 4 KB block(s)` line naming the file. The fix for a
 different copy of the package; extractions made earlier cannot be told apart without that check,
 so a pack added before this update has to be added again from a good copy.
 
+The extractor also verifies the last block of a file whose size is not a multiple of
+4 KB. STFS hashes the complete stored block, including padding beyond the declared
+file size. Earlier extraction skipped that partial block, so corruption in its payload
+or padding was not reported. Verification now reads the stored padding without adding
+it to the output; a truncated stored block fails with a short-read error. Synthetic
+single-block and multi-block packages cover damaged tails, damaged padding, intact
+extraction and truncation. This closes a validation gap; it does not establish the
+source of the distinct compressed-data mismatch reported in #327.
+
 ### The 1000 Club (#17)
 
 Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam
