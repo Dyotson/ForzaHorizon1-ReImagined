@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3
+from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3, power
 from .config import Config, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -365,10 +365,33 @@ def gpu_vendor_arg(cfg: Config, extra_args=()) -> str:
     return f"--gpu_vendor={gpu.SDK_VENDORS[vendor]}"
 
 
-def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print) -> LaunchPlan:
+def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print,
+               battery_saver=True) -> LaunchPlan:
+    """battery_saver=False plans with the player's settings even when battery saver would apply
+    (the shader prebuild, which builds for them)."""
     from . import ingame
     if write:
         ingame.import_pending(cfg, log)
+    saver = power.decide(cfg.effective_settings()) if battery_saver else power.Saver()
+    if write and battery_saver:
+        if cfg.settings.get("battery_saver", power.OFF) != power.OFF:
+            log(f"Battery saver: {'applies' if saver.active else 'off'} ({saver.reason})")
+        if (cfg.d["power"].get("applied") or {}) != saver.settings:
+            cfg.d["power"]["applied"] = dict(saver.settings) or None
+            try:
+                cfg.save()
+            except OSError as e:
+                log(f"could not save launcher.json: {e}")
+    real = cfg.d["settings"]
+    cfg.d["settings"] = {**real, **saver.settings}  # this start only; launcher.json keeps the player's
+    try:
+        return _build_plan(cfg, game, write, refresh_xenia, log, saver)
+    finally:
+        cfg.d["settings"] = real
+
+
+def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
+    from . import ingame
     if cfg.gamertag_cleaned:
         log("The saved Gamertag %r is not plain ASCII (letters, digits, spaces, at most 15): "
             "using %r" % cfg.gamertag_cleaned)
@@ -463,6 +486,9 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     vendor_arg = gpu_vendor_arg(cfg, extra)
     if vendor_arg:
         args.append(vendor_arg)
+    if saver.active:
+        args += saver.flags
+        notes.append(saver.note())
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
     args += extra

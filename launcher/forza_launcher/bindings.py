@@ -426,6 +426,10 @@ def device_match(setting, device):
     s = _squash(setting)
     if not s:
         return 0
+    # SDL2's vJoy name differs from SDL3's Windows HID product name (#306).
+    # Preserve existing saved bindings, restricted to the device's reported USB id.
+    if s == "vjoy device" and (device.vid, device.pid) == (0x1234, 0xBEAD):
+        return 2
     if s in (_squash(device.name), _squash(device.guid), f"{device.vid:04x}:{device.pid:04x}"):
         return 2
     return 1 if s in _squash(device.name) else 0

@@ -169,6 +169,69 @@ frame, about 100 bytes per car it runs, so a player in a full Horizon World (7 p
 `docs/online_vision.md`, "Three and four players"). Players with a direct path to each other do
 not use the relay.
 
+## Leaderboards on the website (#148)
+
+`forza_leaderboards.py` serves the scoreboards as public, read-only JSON on the HTTP port (the
+same one as the status page; 56678 on the public tunnel):
+
+- `GET /leaderboards`: the boards that have scores (`id`, `name`, `unit`, `better`, `players`,
+  the class ids on it).
+- `GET /leaderboards/<board>?class=<id|letter>&limit=<1-100>`: the top rows (default 50). Board
+  ids are `speed-trap-230`, `speed-zone-101`, `event-199` (events and Rivals) and
+  `time-trial-7` (monthly Rivals). A row has `rank`, `player` (an opaque id), `gamertag` (the
+  ASCII name the game shows), `score` (km/h for speeds, seconds for times), `unit`, `display`,
+  `carId`, `car`, `classId`, `class` (D to R1) and `date`.
+- `GET /leaderboards/snapshot`: every board with the top 50 of each class, in one document.
+
+No XUIDs are in the output. The player id is a hash with a secret salt kept in the data folder
+(`leaderboards_salt.txt`; keep it so ids stay the same across restarts). Answers are cached for
+60 s and the server builds at most 120 answers a minute (429 beyond). Replies carry
+`Access-Control-Allow-Origin: *`, like the rest of the HTTP port.
+
+The server ships no board or car names: without them boards show as "Speed trap 230" and cars
+as "Car 1398". To name them, write `leaderboard_names.json` from your own copy of the game and
+put it in the data folder (read again when it changes):
+
+```
+python3 tools/extract_map_points.py --game extracted/game --update extracted/tu4 \
+    --out /tmp/map_points.json --names forza_live_data/leaderboard_names.json
+```
+
+The file is `{"boards": {"speed-trap-230": "Rt. 29 Speed Trap", "event-199": "..."},
+"cars": {"1398": "2012 Lamborghini Aventador LP700-4"}}` (the in-game names of the speed traps,
+speed zones and events, and the cars). The website has the same board names in
+`site/data/map_points.json`, so the page shows them either way; only the boards without a place
+on the map (monthly Rivals, events off the Colorado map) and the cars need the server's file.
+
+The website (https) cannot fetch a plain-http tunnel (mixed content), so the `pages` workflow
+(`.github/workflows/pages.yml`) copies `/leaderboards/snapshot` from
+`http://forza-reimagined.playit.plus:56678` into the site as `data/leaderboards.json` every 30
+minutes, and `site/leaderboards.html` reads that file. A scheduled run that cannot reach the
+server fails and leaves the published site as it was. Nothing else is needed at deploy but the
+tunnel publishing the HTTP port. To try the page against a local server:
+`leaderboards.html?api=http://127.0.0.1:21201`.
+
+### The map (#316)
+
+The page's map of Colorado is our own drawing, not the game's map:
+
+- `site/images/colorado-map.svg`: the roads are the lines players drove in their Rivals laps
+  (the server's `ghosts/`), merged and simplified; the terrain regions, the reservoir and the
+  landmark icons are drawn by `tools/build_map_roads.py` from `tools/map_terrain.json`. Its
+  colours are the page's CSS tokens (`--map-*`), for the light and dark themes.
+- `site/data/map_points.json`: the place and in-game name of every speed trap, speed zone,
+  event (Rivals) and landmark, written by `tools/extract_map_points.py` from a copy of the game
+  (`--game extracted/game --update extracted/tu4 --out site/data/map_points.json`). Only
+  coordinates and names.
+
+The roads grow as players race Rivals. To redraw them with the server's ghosts (copied, never
+changed on the server) and any drives logged with `tools/carlog.py`:
+
+```
+python3 tools/build_map_roads.py --ghosts COPY_OF_DATA_DIR/ghosts [--carlog drive.log ...] \
+    --points site/data/map_points.json --out site/images/colorado-map.svg
+```
+
 ## Shader lists from players (#276)
 
 The launcher's *Prebuild shaders* step builds a list of pipelines before play. Launchers upload
