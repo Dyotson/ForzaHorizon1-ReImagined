@@ -901,10 +901,14 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     Release(ui, true); return;
   }
   state.tab_bar.Advance(elapsed);
-  const auto cells = state.tab_bar.Layout({64, 112, 768, 42}, layout::kTabCapacity);
+  // TabShear moves the bottom edge left by half the 0.28*height shear.
+  // Inset the strip by that amount so its bottom-left meets the tile column.
+  constexpr float tab_inset = .14f * 42.f;
+  const fh1_menu_components::Rect tab_bounds{64 + tab_inset, 112, 768 - tab_inset, 42};
+  const auto cells = state.tab_bar.Layout(tab_bounds, layout::kTabCapacity);
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
-  state.tab_bar.Paint({64, 112, 768, 42}, layout::kTabCapacity,
+  state.tab_bar.Paint(tab_bounds, layout::kTabCapacity,
       [&](size_t slot, fh1_menu_components::Rect r, uint32_t color) {
         auto& tab = state.tabs[slot];
         tab.donor.Layer(ui,Read(ui.base,state.screen+0x110)+(color==0xff007a?3:2));
