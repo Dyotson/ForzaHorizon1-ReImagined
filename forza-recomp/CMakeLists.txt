@@ -177,6 +177,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/guest_cpu.cpp
     src/platform/discord_presence.cpp
     src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
@@ -225,6 +226,11 @@ include(cmake/discord.cmake)
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+
+# Experimental CPU optimization, independent of the GPU/driver. Keep the host
+# bootstrap at the SDK baseline so it can reject an incompatible CPU safely.
+include(cmake/GuestFma.cmake)
+forza_configure_guest_fma(forza)
 
 # The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
 include(cmake/CpuTarget.cmake)
