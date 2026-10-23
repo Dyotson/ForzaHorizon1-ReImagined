@@ -84,6 +84,8 @@ class Config:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            # A new launcher.json starts with today's defaults: nothing to migrate later.
+            self.d["migrated"]["discord_application_id"] = True
             return
         if isinstance(data, dict):
             _merge(self.d, data)

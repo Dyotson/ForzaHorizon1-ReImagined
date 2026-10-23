@@ -21,6 +21,14 @@ class DiscordSettingsTests(unittest.TestCase):
             self.assertEqual(cfg.settings["discord_application_id"], "1563015276583460934")  # the project's application
             self.assertNotIn("discord_", render_toml(cfg))
 
+    def test_first_run_clear_is_kept(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "launcher.json"
+            cfg = Config(path)  # no launcher.json yet
+            cfg.settings["discord_application_id"] = ""
+            cfg.save()
+            self.assertEqual(Config(path).settings["discord_application_id"], "")
+
     def test_empty_id_saved_by_an_older_launcher_becomes_the_default_once(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "launcher.json"
