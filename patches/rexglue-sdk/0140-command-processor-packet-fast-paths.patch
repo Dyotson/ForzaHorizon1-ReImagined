@@ -146,10 +146,10 @@ index 4531dbfd..bdbbf1a3 100644
      index = part_end;
 diff --git a/src/graphics/vulkan/fh1_shader_load_memo.h b/src/graphics/vulkan/fh1_shader_load_memo.h
 new file mode 100644
-index 00000000..0f01feae
+index 00000000..24abe008
 --- /dev/null
 +++ b/src/graphics/vulkan/fh1_shader_load_memo.h
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,75 @@
 +// Which shader the command processor last loaded from a guest address (FH1 SDK
 +// patch 0140). The game loads a vertex and a pixel shader for nearly every draw
 +// (PM4_IM_LOAD: about 150,000 a second in a race), almost always the same few
@@ -157,6 +157,11 @@ index 00000000..0f01feae
 +// address, length and words match the last load from that address gets that
 +// load's shader: the same one the hash would find, since the shader map only
 +// ever adds entries (until the cache shuts down: a new generation).
++//
++// On a miss the guest words are copied into the slot first, and the hash, the
++// shader's own microcode and the memo's key are all taken from that one copy: a
++// guest write while the shader is looked up or made cannot pair the new words
++// with the old shader.
 +#pragma once
 +
 +#include <array>
@@ -184,14 +189,24 @@ index 00000000..0f01feae
 +    return nullptr;
 +  }
 +
-+  void Store(const void* owner, uint64_t generation, const uint32_t* words, uint32_t dword_count,
-+             ShaderT* shader) {
++  // The stored shader for the words at `words`, else load(snapshot), where snapshot
++  // is this memo's copy of the words (stable while load runs), and remembers that.
++  template <typename Load>
++  ShaderT* FindOrLoad(const void* owner, uint64_t generation, const uint32_t* words,
++                      uint32_t dword_count, Load&& load) {
++    if (ShaderT* shader = Find(owner, generation, words, dword_count)) {
++      return shader;
++    }
 +    Slot& slot = slots_[Index(words)];
++    slot.shader = nullptr;
++    slot.words.assign(words, words + dword_count);
++    const uint32_t* snapshot = dword_count ? slot.words.data() : words;
++    ShaderT* shader = load(snapshot);
 +    slot.owner = owner;
 +    slot.generation = generation;
 +    slot.address = words;
-+    slot.words.assign(words, words + dword_count);
 +    slot.shader = shader;
++    return shader;
 +  }
 +
 + private:
@@ -211,7 +226,7 @@ index 00000000..0f01feae
 +
 +}  // namespace rex::graphics::vulkan::fh1_shader_load_memo
 diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
-index 48797b4a..21f95b11 100644
+index 48797b4a..e8b922c7 100644
 --- a/src/graphics/vulkan/pipeline_cache.cpp
 +++ b/src/graphics/vulkan/pipeline_cache.cpp
 @@ -19,6 +19,7 @@
@@ -246,21 +261,21 @@ index 48797b4a..21f95b11 100644
    shader_storage_index_ = 0;
    texture_binding_layout_map_.clear();
    texture_binding_layouts_.clear();
-@@ -1362,9 +1373,15 @@ void VulkanPipelineCache::Shutdown() {
+@@ -1362,9 +1373,14 @@ void VulkanPipelineCache::Shutdown() {
  
  VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
                                                const uint32_t* host_address, uint32_t dword_count) {
-+  const uint64_t generation = loaded_shader_generation.load(std::memory_order_relaxed);
-+  if (VulkanShader* shader = loaded_shader_memo.Find(this, generation, host_address, dword_count)) {
-+    return shader;
-+  }
-   // Hash the input memory and lookup the shader.
+-  // Hash the input memory and lookup the shader.
 -  return LoadShader(shader_type, host_address, dword_count,
 -                    XXH3_64bits(host_address, dword_count * sizeof(uint32_t)));
-+  VulkanShader* shader = LoadShader(shader_type, host_address, dword_count,
-+                                    XXH3_64bits(host_address, dword_count * sizeof(uint32_t)));
-+  loaded_shader_memo.Store(this, generation, host_address, dword_count, shader);
-+  return shader;
++  const uint64_t generation = loaded_shader_generation.load(std::memory_order_relaxed);
++  // Hash the memo's copy of the input memory and lookup the shader: the hash and the
++  // shader's microcode come from the same words the memo remembers.
++  return loaded_shader_memo.FindOrLoad(
++      this, generation, host_address, dword_count, [&](const uint32_t* words) {
++        return LoadShader(shader_type, words, dword_count,
++                          XXH3_64bits(words, dword_count * sizeof(uint32_t)));
++      });
  }
  
  VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
