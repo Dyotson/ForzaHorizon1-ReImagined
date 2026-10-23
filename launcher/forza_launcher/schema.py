@@ -469,6 +469,14 @@ add("video_mode_width", "Guest video width", "Advanced", "int", 1280,
 add("video_mode_height", "Guest video height", "Advanced", "int", 720,
     "Overridden by the resolution preset.", "GPU", lo=480, hi=4095, restart=True)
 
+# Launcher only (never written to forza.toml): see shader_share.py, #276.
+add("share_shader_list", "Share shader list", "Online", "bool", True,
+    "After a game session, send the shader hashes and render settings from your pipeline cache to the "
+    "server you play on (the public server or your own), once per entry. No game data and nothing "
+    "personal is sent, only pipeline descriptions: which shaders were used and how. The server publishes "
+    "the entries several players reported, and Prebuild shaders builds that list from your own game files, "
+    "so new places and cars stop compiling shaders while you drive. Nothing is sent offline or to a "
+    "server on this PC.", "Shader prebuild")
 # Discord status display is opt-in. The application ID is public maintainer setup,
 # separated from the ordinary sharing switch. Never request a token or secret.
 add("discord_presence", "Share activity on Discord", "Online", "bool", False,
