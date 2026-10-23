@@ -706,9 +706,16 @@ void Release(Native& ui, bool restore) {
 }
 void Resume(Native& ui) {
   return_bookmark.reset();
-  Page(ui.ctx, ui.base, state.screen, false);
-  if (!fh1_pause_actions::Resume(ui.ctx, ui.base, state.screen))
-    Page(ui.ctx, ui.base, state.screen, true);
+  const auto screen = state.screen;
+  ui.Call(0x827DABD0, {screen});
+  if (!Read(ui.base, screen + 0x1DC)) return;
+  Page(ui.ctx, ui.base, screen, false);
+  // The native done callback can start loading the gameplay interface before
+  // the pause's deferred destructor runs. Release our extra presentations now
+  // so their textures do not overlap that load in the front-end GPU heap.
+  Release(ui, true);
+  if (!fh1_pause_actions::Resume(ui.ctx, ui.base, screen))
+    AfterBind(ui.ctx, ui.base, screen);
 }
 void SocialHelp(Native& ui,bool show) {
   if(show)state.social_return=state.controller.focused_tile_id().value_or("social_connection");

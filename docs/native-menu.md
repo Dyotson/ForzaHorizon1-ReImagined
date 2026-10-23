@@ -372,7 +372,35 @@ Social artwork validation (2026-10-23): native compilation/link, 24 staging test
 17 model/archive/tuning CTests, 62 launcher checks and six TU4 syntax checks pass.
 A private copied-save 1280x720 session verified offline Social, connection help,
 Cars manufacturer-logo preservation and return to Social. It then hit a native
-allocator write fault on resume (guest 0x00000005, LR 0x8242306C). A comparison
-against the preceding implementation is pending the shared game test window;
-the cause and whether this revision introduced it are not established. Keep
-the existing draft and runtime opt-in gates. Source save hashes were unchanged.
+allocator write fault on resume (guest 0x00000005, LR 0x8242306C).
+The following resume-lifetime fix addresses this failure. Source save hashes
+were unchanged.
+
+### Resume resource lifetime (2026-10-23)
+
+Resume now releases the additional pause presentations before invoking FH1's
+native done callback. Previously it only hid them; their deferred teardown
+could overlap gameplay-interface texture loading in the front-end GPU heap.
+The recorded write to guest address 5 is the allocator's deliberate failure
+trap. Refresh/check the native done callback before cleanup, preserve the
+original screen handle through cleanup, and rebuild composition if native
+resume rejects the transition. Native destruction can safely run afterward
+because composition state has already been cleared.
+
+A private diagnostic 1280x720 run measured front-end GPU heap use falling from
+60,578,432 to 56,363,288 bytes before callback dispatch (about 4 MiB released),
+with no allocation-failure counters. The preceding implementation without
+Social artwork also completed the same navigation/resume sequence; this is
+limited heap headroom during overlapping resource lifetimes, not evidence that
+every earlier resume necessarily fails.
+
+Final hooks without diagnostic modifications passed six copied-save, offline
+1280x720 pause/resume cycles: Social via help and Cars; Home with native map;
+Cars; Settings; Social; and Social with Start-button resume. Every cycle
+captured resumed gameplay/HUD, and the menu reopened after the final cycle.
+There were no guest access violations and source save hashes were unchanged.
+Native compile/link, 17 CTests, 62 launcher checks and six TU4 syntax checks
+pass. UI tests used the private silent backend because Windows had no default
+audio endpoint; it and diagnostics are not committed. The ordinary private
+runtime was restored and all owned test games closed. Online and extended
+session validation remain outside this focused check; retain draft/opt-in gates.
