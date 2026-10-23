@@ -46,6 +46,8 @@ MAX_PER_DAY = 5000        # pipelines one player may send per UTC day
 MAX_VERSIONS = 8          # storage versions kept
 MAX_PIPELINES = 200000    # pipelines kept per storage version
 MAX_RECIPES = 4           # different recipes kept per shader hash
+MAX_SHADERS_KEPT = 400000 # shader hashes kept per storage version
+MAX_SHADERS_PER_DAY = 2 * MAX_PER_DAY  # shader recipes one player may send per UTC day
 TITLE = "4D5309C9"
 LIST_FORMAT = 2
 
@@ -172,11 +174,11 @@ def check_recipe(h, r):
                 len(fetch) + len(export) + len(nop) > MAX_RECIPE_ITEMS:
             return "size"
         for e in fetch:
-            if len(e) != 4 or any(not isinstance(v, int) or isinstance(v, bool) or v < 0
+            if not isinstance(e, list) or len(e) != 4 or any(not isinstance(v, int) or isinstance(v, bool) or v < 0
                                   for v in e) or any(v & ~m for v, m in zip(e[1:], FETCH_LAYOUT_MASK)):
                 return "fetch"
         for e in export:
-            if len(e) != 2 or any(not isinstance(v, int) or isinstance(v, bool) or v < 0
+            if not isinstance(e, list) or len(e) != 2 or any(not isinstance(v, int) or isinstance(v, bool) or v < 0
                                   for v in e) or e[1] & ~EXPORT_MASK:
                 return "export"
         if not all(isinstance(k, int) and not isinstance(k, bool) and k >= 0 for k in nop):
@@ -221,13 +223,14 @@ def upload(xuid, body):
         st = load()
         day = st["daily"].get(pid)
         used = day[1] if day and day[0] == today else 0
+        used_shaders = day[2] if day and day[0] == today and len(day) > 2 else 0
         if used + len(pipelines) > MAX_PER_DAY:
             return 429, {"error": "daily limit of %d pipelines reached" % MAX_PER_DAY}
         versions = st["versions"]
         if version not in versions and len(versions) >= MAX_VERSIONS:
             return 400, {"error": "unknown storage version"}
         v = versions.setdefault(version, {"pipelines": {}, "shaders": {}})
-        added = 0
+        added, kept = 0, []
         for p in pipelines:
             k = entry_key(p)
             e = v["pipelines"].get(k)
@@ -240,7 +243,16 @@ def upload(xuid, body):
             if pid not in e["by"]:
                 e["by"].append(pid)
                 added += 1
-        for h, r in shaders.items():
+            kept.append(p)
+        # Only recipes of shaders a kept pipeline of this upload uses are stored; anything else
+        # would grow the file without a pipeline to publish it with.
+        used_hashes = {p["vs"] for p in kept} | {p["ps"] for p in kept}
+        recipes = {h: r for h, r in shaders.items() if h in used_hashes}
+        if used_shaders + len(recipes) > MAX_SHADERS_PER_DAY:
+            return 429, {"error": "daily limit of %d shader recipes reached" % MAX_SHADERS_PER_DAY}
+        for h, r in recipes.items():
+            if h not in v["shaders"] and len(v["shaders"]) >= MAX_SHADERS_KEPT:
+                continue
             seen = v["shaders"].setdefault(h, [])
             text = json.dumps(r, sort_keys=True, separators=(",", ":"))
             for entry in seen:
@@ -251,7 +263,7 @@ def upload(xuid, body):
             else:
                 if len(seen) < MAX_RECIPES:
                     seen.append({"r": text, "by": [pid]})
-        st["daily"][pid] = [today, used + len(pipelines)]
+        st["daily"][pid] = [today, used + len(pipelines), used_shaders + len(recipes)]
         for k in [k for k, d in st["daily"].items() if d[0] != today]:
             del st["daily"][k]
         _cache.pop(version, None)

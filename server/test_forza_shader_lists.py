@@ -210,6 +210,54 @@ class ListsTest(unittest.TestCase):
         finally:
             sl.MAX_VERSIONS, sl.MAX_PIPELINES = old
 
+    def shaders_kept(self):
+        return sum(len(v["shaders"]) for v in sl.load()["versions"].values())
+
+    def test_recipes_without_a_kept_pipeline_are_dropped(self):
+        # #305 review: shader-only uploads must not grow the file or dodge the daily quota.
+        junk = {"%016X" % (0x9000 + i): {"from": "file", "type": "vs"} for i in range(900)}
+        for _ in range(3):
+            self.assertEqual(self.post(1, [], junk)[0], 200)
+        self.assertEqual(self.shaders_kept(), 0)
+        p = pipeline(7)
+        own = {p["vs"]: {"from": "file", "type": "vs"}, p["ps"]: {"from": "file", "type": "ps"}}
+        self.assertEqual(self.post(1, [p], dict(junk, **own))[0], 200)
+        self.assertEqual(self.shaders_kept(), 2)
+
+    def test_full_pipeline_cap_keeps_no_new_recipes(self):
+        old = sl.MAX_PIPELINES
+        sl.MAX_PIPELINES = 1
+        try:
+            a, b = pipeline(1), pipeline(2)
+            recipes = {h: {"from": "file"} for h in (a["vs"], a["ps"], b["vs"], b["ps"])}
+            self.assertEqual(self.post(1, [a, b], recipes)[0], 200)
+            kept = sl.load()["versions"][VERSION]["shaders"]
+            self.assertEqual(set(kept), {a["vs"], a["ps"]})
+        finally:
+            sl.MAX_PIPELINES = old
+
+    def test_shader_store_and_daily_recipes_are_capped(self):
+        old = sl.MAX_SHADERS_KEPT, sl.MAX_SHADERS_PER_DAY
+        sl.MAX_SHADERS_KEPT, sl.MAX_SHADERS_PER_DAY = 3, 4
+        try:
+            ps = [pipeline(n) for n in range(3)]
+            recipes = {h: {"from": "file"} for p in ps for h in (p["vs"], p["ps"])}
+            self.assertEqual(self.post(1, ps[:2], recipes)[0], 200)        # 4 recipes, 3 kept
+            self.assertEqual(self.shaders_kept(), 3)
+            self.assertEqual(self.post(1, ps[2:], recipes)[0], 429)        # 4 + 2 > 4 a day
+        finally:
+            sl.MAX_SHADERS_KEPT, sl.MAX_SHADERS_PER_DAY = old
+
+    def test_malformed_recipe_entries_are_400_without_changes(self):
+        p = pipeline(1)
+        for bad in ({"fetch": [42]}, {"export": [42]}, {"fetch": [None]}, {"export": [{"a": 1}]},
+                    {"fetch": [[1, [2], 3, 4]]}):
+            with self.subTest(bad=bad):
+                recipe = dict({"from": "bound", "base": "00000000000000AA"}, **bad)
+                status, _t, _b = self.post(1, [p], {p["vs"]: recipe})
+                self.assertEqual(status, 400)
+        self.assertEqual(sl.load()["versions"], {})
+
     def test_persistence(self):
         for n in (1, 2, 3):
             self.post(n, [pipeline(1)], {"%016X" % 0x1001: {"type": "vs", "from": "file"}})
