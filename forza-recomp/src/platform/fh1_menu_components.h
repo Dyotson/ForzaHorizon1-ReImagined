@@ -55,7 +55,6 @@ class TabBar {
     return size_t(found-tabs_.begin());
   }
 public:
-  static constexpr float kSlantDegrees=-3.f;
   static constexpr double kSelectionSeconds=.15;
   void Advance(double seconds) {
     if(!std::isfinite(seconds)||seconds<0)return;
@@ -98,8 +97,9 @@ public:
     if(tabs_.empty()||!capacity||!std::isfinite(bounds.w)||bounds.w<=0)return {};
     auto count=std::min(capacity,tabs_.size());auto focused=Index(focused_);
     auto first=focused<count?0:std::min(focused-count+1,tabs_.size()-count);
-    float gap=3, width=std::min(220.f,(bounds.w-gap*float(count-1))/float(count));
-    if(width<=0)return {};
+    // Overlap the transparent paper fringe; only the outside edges remain exposed.
+    float gap=-2, width=std::min(220.f,(bounds.w-gap*float(count-1))/float(count));
+    if(width<24)return {};
     std::vector<TabCell> cells;
     for(size_t i=0;i<count;++i)cells.push_back({first+i,{bounds.x+float(i)*(width+gap),bounds.y,width,bounds.h},tabs_[first+i].id==selected_,tabs_[first+i].id==focused_});
     return cells;
@@ -136,7 +136,7 @@ struct Header {
     paper(bounds,0x302b30u);
     label(0,{bounds.x+22,bounds.y+3,735,45},31.f,title,0xffffffu,0u);
     label(1,{bounds.x+bounds.w-420,bounds.y+10,396,33},18.f,status,changed?0xff83bfu:0xffffffu,2u);
-    identity({bounds.x+84,bounds.y+51,160,26},{bounds.x+244,bounds.y+51,bounds.w-580,26},15.f);
+    identity({bounds.x+22,bounds.y+51,154,26},{bounds.x+188,bounds.y+51,bounds.w-524,26},15.f);
   }
   Rect CurrentClassBounds()const{return {bounds.x+bounds.w-260,bounds.y+51,236,26};}
 };

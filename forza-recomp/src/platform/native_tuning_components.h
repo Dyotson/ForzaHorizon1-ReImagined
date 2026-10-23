@@ -187,16 +187,12 @@ public:
     fh1_menu_components::Header heading{view.library?"TUNE LIBRARY":"CAR TUNING",view.dirty?"UNSAVED DRAFT":"SAVED SETUP",view.dirty};
     const auto native_name=[&](unsigned index,Rect r,float size){auto n=header.text[index];auto& d=header.donor;
       ui.Show(d.presentation,n,true);Normalize(ui,d,n);ui.Scale(d.presentation,n,1,1);Depth(ui,d,n,-5);
-      Point(ui,d,n,r.x,r.y+r.h/2);ui.TextStyle(d.access,d.presentation,n,size,r.w/1200,r.h/720,0);ui.Color(d.presentation,n,0xc9c2c9,true);ui.Opacity(d.presentation,n,100);};
+      Point(ui,d,n,index==9?r.x+r.w:r.x,r.y+r.h/2);ui.TextStyle(d.access,d.presentation,n,size,r.w/1200,r.h/720,index==9?2:0);ui.Color(d.presentation,n,0xc9c2c9,true);ui.Opacity(d.presentation,n,100);};
     heading.Paint([&](Rect r,uint32_t c){Mesh(ui,header,header.paper,r,c,header.ink);},
       [&](unsigned i,Rect r,float z,const std::string& text,uint32_t color,unsigned align){label(header,i,r,z,text,color,align);},
       [&](Rect make,Rect name,float size){native_name(9,make,size);native_name(10,name,size);
-        if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id,logo_material,&logo_ready);named_model=view.model_id;}});
-    ui.Show(header.donor.presentation,manufacturer_logo,logo_ready);
-    if(logo_ready){Normalize(ui,header.donor,manufacturer_logo);Depth(ui,header.donor,manufacturer_logo,-5);
-      ui.Opacity(header.donor.presentation,manufacturer_logo,100);ui.Color(header.donor.presentation,logo_material,0xffffff);
-      Point(ui,header.donor,manufacturer_logo,88,89);ui.Scale(header.donor.presentation,manufacturer_logo,.44f,.26f);
-      ui.RotationZ(header.donor.presentation,manufacturer_logo,0);}
+        if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id);named_model=view.model_id;}});
+    ui.Show(header.donor.presentation,manufacturer_logo,false);
     const auto class_bounds=heading.CurrentClassBounds();
     if(std::chrono::steady_clock::now()>=class_refresh){
       class_ready=fh1_current_car::BindCurrentClass(ui,class_controller,view.model_id,&bound_class);
@@ -208,7 +204,7 @@ public:
       Point(ui,header.donor,class_badge,class_bounds.x+176,class_bounds.y+class_bounds.h/2);
       ui.Scale(header.donor.presentation,class_badge,.8f,.8f);ui.RotationZ(header.donor.presentation,class_badge,0);}
     view.tabs.Paint({44,120,1192,48},9,
-      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);ui.RotationZ(p.donor.presentation,p.paper,fh1_menu_components::TabBar::kSlantDegrees);},
+      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);ui.TabShear(p.donor.presentation,p.paper,r.w,r.h);},
       [&](size_t slot,unsigned index,Rect r,float size,const std::string& text,uint32_t color){label(pieces[slot],index,r,size,text,color,1);});
     const auto category=view.tabs.tabs().empty()?std::string{}:view.tabs.tabs()[view.tabs.selected_index()].label;
     Mesh(ui,header,header.track,{48,191,726,36},0x302b30,Named(ui,header.track,"Material100"));
@@ -239,9 +235,19 @@ public:
     Mesh(ui,metrics2,metrics2.paper,{802,195,434,361},0x302b30,metrics2.ink);
     label(metrics,0,{822,203,390,31},21,"PERFORMANCE SIMULATION");
     label(metrics,1,{822,236,390,24},13,view.status,0xc9c2c9);
-    label(pieces[17],8,{949,270,119,25},13,"SAVED",0xc9c2c9,2);label(pieces[17],9,{1080,270,134,25},13,"DRAFT",0xff83bf,2);
+    label(pieces[17],8,{949,270,119,25},13,"BEFORE",0xc9c2c9,2);label(pieces[17],9,{1080,270,134,25},13,"AFTER",0xff83bf,2);
+    // Normalized setup adjustments retain the installed upgrade parts. Their
+    // homologated PI is the current native rating on both sides; performance
+    // metrics below are evaluated independently on the saved/draft clones.
+    std::string pi="N/A";
+    if(class_ready){ui.ctx.f1.f64=std::bit_cast<float>(uint32_t(bound_class));
+      const auto table=Read(ui.base,0x8352EE3C);
+      if(table)pi=std::to_string(ui.Call(0x82C9F6A0,{table}));}
+    label(pieces[16],8,{821,303,136,29},14,"PI");
+    label(pieces[16],9,{961,303,107,29},15,pi,0xc9c2c9,2);
+    label(pieces[16],10,{1080,303,134,29},15,pi,0xffffff,2);
     for(unsigned i=0;i<7;++i){auto& p=i<3?metrics:metrics2;unsigned index=i<3?2+i*3:(i-3)*3;
-      float y=305+i*33.f;const auto& m=view.metrics[i];
+      float y=335+i*29.f;const auto& m=view.metrics[i];
       label(p,index,{821,y,136,29},14,m.label);label(p,index+1,{961,y,107,29},15,m.saved,0xc9c2c9,2);
       label(p,index+2,{1080,y,134,29},15,m.draft,0xffffff,2);
     }

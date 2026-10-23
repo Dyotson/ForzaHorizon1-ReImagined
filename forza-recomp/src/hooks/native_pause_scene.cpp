@@ -49,7 +49,8 @@ struct Card {
 };
 struct Car {
   uint32_t root = 0, name = 0, make = 0, image = 0, material = 0;
-  uint32_t stats = 0, controller = 0;
+  uint32_t stats = 0, controller = 0, logo = 0, logo_material = 0;
+  bool logo_ready = false;
   std::array<uint32_t, 5> rows{}, labels{}, values{};
   uint32_t owned = 0, model = 0;
   bool bound = false;
@@ -207,8 +208,7 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   // BGF renames these FBF meshes. Match their serialized runtime identities,
   // scoped under the verified tape component, rather than FBF display names.
   const auto highlight = Named(ui, Named(ui, card.donor.root, "CAR_LIST"), "HIGHLIGHT");
-  const auto papers = Descendants(ui.base, tab ? tape : highlight,
-                                  tab ? 0x43a6b655 : 0xe0dc09b7);
+  const auto papers = Descendants(ui.base, highlight, 0xe0dc09b7);
   card.paper = papers.empty() ? 0u : papers.front();
   card.caption = Named(ui, card.donor.root, "TEXT_STATUS");
   const auto fills = Descendants(ui.base, tape, 0x747ffda5);
@@ -217,13 +217,13 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   card.progress_track = Named(ui, button, "Pill");
   bool valid = Require("card", "TitleTape", tape);
   valid = Require("card", "TitleTapeText", card.title) && valid;
-  valid = Require("card", tab ? "Crisp_Tape" : "HIGHLIGHT.BigPane01", card.paper) && valid;
+  valid = Require("card", "HIGHLIGHT.BigPane01", card.paper) && valid;
   if (!valid) return false;
-  card.material = Named(ui, card.paper, tab ? "Material90" : "Material866");
+  card.material = Named(ui, card.paper, "Material866");
   PaperUV(ui, card.donor, card.material);
   if (card.progress_fill) PaperUV(ui, card.donor, card.progress_fill);
   if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
-  return Require("card", tab ? "Crisp_Tape.Material90" : "BigPane01.Material866", card.material);
+  return Require("card", "BigPane01.Material866", card.material);
 }
 const char* Description(std::string_view id) {
   if (id == "world_map") return "Explore Colorado";
@@ -330,7 +330,7 @@ void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
         bounds.y + bounds.height / 2);
   ui.RotationZ(d.presentation, card.paper, 0);
   Depth(ui, d, card.paper, 3);
-  // Native TitleTape paper is a fixed mesh. Text is a separate branch and
+  // Native garage paper is a fixed mesh. Text is a separate branch and
   // never inherits the panel's nonuniform scaling.
   ui.Scale(d.presentation, card.paper, float(bounds.width / 100),
            float(bounds.height / 100));
@@ -372,6 +372,8 @@ bool BindCar(Native& ui) {
   car.root = Named(ui, d.root, "CAR_STATS");
   car.name = Named(ui, car.root, "TEXT_CAR_NAME");
   car.make = Named(ui, car.root, "TEXT_MANUFACTURER");
+  car.logo = Named(ui, car.root, "LOGO");
+  car.logo_material = Named(ui, car.logo, "Material_Car_Logo");
   car.material = Named(ui, car.root, "Material_Car_Ima");
   car.image = Named(ui, car.root, "Car_Thumb_");
   car.stats = Named(ui, car.root, "STATS");
@@ -401,7 +403,7 @@ void CarData(Native& ui) {
   const auto current = fh1_current_car::ReadCurrentCar(ui);
   if (!current || (car.bound && current.owned_id == car.owned && current.model_id == car.model))
     return;
-  const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id);
+  const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id, car.logo_material, &car.logo_ready);
   const bool specs = fh1_current_car::BindPerformance(ui, car.controller, current.owned_id);
   if (!current.thumbnail.empty()) {
     // This operation is synchronous. Retain no host-allocated binding across
@@ -423,12 +425,12 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   // Native names/data are retained; only their anchors and fitting boxes move.
   Normalize(ui, d, car.name);
   Normalize(ui, d, car.make);
-  Point(ui, d, car.name, content.name.x, content.name.y + 12);
-  Point(ui, d, car.make, content.name.x, content.name.y + 35);
+  Point(ui, d, car.name, content.name.x+78, content.name.y + 12);
+  Point(ui, d, car.make, content.name.x+78, content.name.y + 35);
   ui.TextStyle(d.access, d.presentation, car.name, 23,
-               float(content.name.width / 1200), .045f, 0);
+               float((content.name.width-78) / 1200), .045f, 0);
   ui.TextStyle(d.access, d.presentation, car.make, 18,
-               float(content.name.width / 1200), .035f, 0);
+               float((content.name.width-78) / 1200), .035f, 0);
   ui.Color(d.presentation, car.name, 0xffffff, true);
   ui.Color(d.presentation, car.make, 0xe2dce2, true);
   Normalize(ui, d, car.image);
@@ -436,6 +438,11 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   Depth(ui, d, car.image, -1);
   Point(ui, d, car.image, content.photo.x + content.photo.width / 2,
         content.photo.y + content.photo.height / 2);
+  ui.Show(d.presentation,car.logo,car.logo_ready);
+  if(car.logo_ready){Normalize(ui,d,car.logo);Depth(ui,d,car.logo,-3);
+    Point(ui,d,car.logo,content.name.x+32,content.name.y+23);
+    ui.Scale(d.presentation,car.logo,.72f,.44f);ui.RotationZ(d.presentation,car.logo,0);
+    ui.Opacity(d.presentation,car.logo,100);ui.Color(d.presentation,car.logo_material,0xffffff);}
   // Keep the native thumbnail's aspect ratio, rather than stretching a car.
   const float scale = float(std::min(content.photo.width / 608,
                                      content.photo.height / 289));
@@ -694,7 +701,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       std::vector<uint32_t> retained{card.paper, card.title};
       if (card.caption) retained.push_back(card.caption);
       if (i == 0) {
-        retained.insert(retained.end(), {state.car.name, state.car.make, state.car.image});
+        retained.insert(retained.end(), {state.car.name, state.car.make, state.car.image, state.car.logo});
         for (unsigned row = 0; row < 5; ++row) {
           retained.push_back(state.car.labels[row]); retained.push_back(state.car.values[row]);
         }
@@ -801,7 +808,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
                  focus && tile.id == *focus ? 0xff007a : 0xffffff, true);
       }
       if (i == 0) {
-        for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats})
+        for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats, state.car.logo})
           ui.Show(card.donor.presentation, node, car);
         if (car) CarLayout(ui, tile.bounds);
       }
@@ -823,7 +830,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         tab.donor.Tick(ui, [&] {
           StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
           ui.Color(tab.donor.presentation, tab.material, color);
-          ui.RotationZ(tab.donor.presentation,tab.paper,fh1_menu_components::TabBar::kSlantDegrees);
+          ui.TabShear(tab.donor.presentation,tab.paper,r.w,r.h);
         });
       },
       [&](size_t slot, unsigned index, fh1_menu_components::Rect r, float size,

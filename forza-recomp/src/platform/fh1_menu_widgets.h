@@ -208,6 +208,21 @@ public:
     }
     return true;
   }
+  // FH1 82FE6238 builds the node-local matrix at +3C before combining it
+  // with its ancestors. Supply a 2D shear there; leave the label nodes alone.
+  bool TabShear(uint32_t presentation,uint32_t node,float width,float height) {
+    const auto instance=node?Read(base,node+4):0;
+    if(!instance||Read(base,instance+4)!=node||!std::isfinite(width)||
+        !std::isfinite(height)||width<=0||height<=0)return false;
+    for(unsigned axis=0;axis<3;++axis)Write(base,instance+0x18+axis*4,0);
+    Scale(presentation,node,width/100,height/100);
+    Call(0x82FE4368,{instance+0x3C,instance+0xC,instance+0x18,
+        instance+0x24,instance+0x30,GuestPtr(base,instance+0xF9)[0],GuestPtr(base,instance+0xF8)[0]});
+    Write(base,instance+0x3C+0x10,std::bit_cast<uint32_t>(.28f*height/100));
+    // Keep our local matrix; request only the native world-matrix update.
+    GuestPtr(base,instance+0xFB)[0]=(GuestPtr(base,instance+0xFB)[0]&~0x20)|0x10;
+    Dirty(presentation,node);return true;
+  }
   void Opacity(uint32_t presentation, uint32_t node, float percent) {
     if (!node || !std::isfinite(percent) || Scalar(presentation,node,"opacity",percent)) return;
     const auto instance = Read(base,node+4);
