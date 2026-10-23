@@ -1,5 +1,5 @@
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 7741fc9..4234ddf 100644
+index 80666dd..455a165 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -38,6 +38,7 @@

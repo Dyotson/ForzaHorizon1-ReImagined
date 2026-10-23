@@ -6,9 +6,10 @@
 //  - the pedals unplugged at run time: nothing from them, the wheel's own axes count again;
 //    plugged back in, they work again; wheel_pedal_device = none leaves them alone.
 // #303 (patches 0132, 0133):
-//  - the H-pattern gear is asked of the game when the lever moves: a lever already in 3rd when the
-//    driver starts asks for nothing (thumb_rx 10, the game's "no request"), a move asks for the new
-//    gear for a moment, then nothing; wheel_shifter_follow_slot reports the slot all the time;
+//  - with wheel_shifter_follow_slot off, the H-pattern gear is asked of the game when the lever
+//    moves: a lever already in 3rd when the driver starts asks for nothing (thumb_rx 10, the game's
+//    "no request"), a move asks for the new gear for a moment, then nothing; on (the default) it
+//    reports the slot all the time;
 //  - an analog handbrake on its own USB device (a Simagic TB-RS, 3670:0a04) is read with the wheel
 //    as the left stick Y (the 360 wheel's analog handbrake) next to the B button, and is no wheel;
 //    wheel_axes handbrake=1 reads the base's axis instead, 99 nothing, and
@@ -300,7 +301,9 @@ int main() {
   }
 
   {
-    // #303: the H-pattern gear on lever moves. The lever is in 3rd when the driver starts.
+    // #303: the H-pattern gear on lever moves (the setting off). The lever is in 3rd when the
+    // driver starts.
+    SetCvar("wheel_shifter_follow_slot", "false");
     shifter.SetButton(2, true);
     Sleep(100);
     WheelInputDriver driver(nullptr, 0);
@@ -337,7 +340,7 @@ int main() {
     Check(State(driver, id).thumb_rx == kGearNoRequest, "then nothing: the paddles keep their gear");
     std::printf("  lever left in 3rd: no request; moved into 4th: 4th asked for %lld ms, then none\n",
                 static_cast<long long>(held));
-    // wheel_shifter_follow_slot: the slot all the time, as before.
+    // wheel_shifter_follow_slot (the default): the slot all the time.
     SetCvar("wheel_shifter_follow_slot", "true");
     Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 4; }), "follow: 4th");
     Poll(driver, id, 600);
@@ -347,6 +350,7 @@ int main() {
           "back to lever moves: nothing until the lever moves");
     shifter.SetButton(3, false);
     Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 0; }), "out to neutral: asked");
+    SetCvar("wheel_shifter_follow_slot", "true");
     std::printf("  wheel_shifter_follow_slot: the slot all the time\n");
   }
   {

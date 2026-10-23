@@ -430,7 +430,7 @@ edited by hand:
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
-| `wheel_shifter_follow_slot` | off | H-pattern: on, the game takes the lever's gear whenever it sets the gear itself (race and event starts), as before #303; off, a gear engages only when the lever moves (launcher: Gear follows the lever's slot) |
+| `wheel_shifter_follow_slot` | on | H-pattern: on, the game takes the lever's gear whenever it sets the gear itself (race and event starts and finishes), as on the Xbox; off, a gear engages only when the lever moves, for switching to the paddles (#303; launcher: Gear follows the lever's slot) |
 | `wheel_shifter_device` | found | A shifter on its own USB device: empty finds a known one or one named like a shifter; a name, SDL GUID or `vid:pid` picks one; `none` reads the wheel's own buttons |
 | `wheel_shifter_device_buttons` | by model | Its gears, e.g. `1=0,2=1,3=2,4=3,5=4,6=5,r=6`, or `up=..,down=..`; while a shifter device is connected every gear comes from it |
 
@@ -475,15 +475,16 @@ button.
   and down with `sequential`) is taken out of the wheel's pad buttons, whatever the defaults or `wheel_buttons`
   say: on a G923 for Xbox reverse is button 11, which the generic map had as the left stick press, so engaging
   reverse also opened the friends screen (#256).
-- **A gear engages when the lever moves (#303).** The game turns the lever's gear into a gear request every
-  frame, shifts when the request changes, and takes it again whenever it sets the gear itself: at every race and
-  event start the car went into the gear the lever sat in, or into neutral with the lever out, even after the
-  paddles had shifted. Now the driver asks for a gear only for a moment after the lever moves into a slot or
-  out to neutral (SDK patch 0132), and for nothing otherwise, so the paddles or a sequential shifter keep their
-  gear and a start keeps the game's until you move the lever. Where the lever sits when the game starts is not
-  a move. `wheel_shifter_follow_slot` (launcher: Gear follows the lever's slot) brings back the old behaviour.
-  Tested with a virtual wheel and DS-8X, the lever left in 3rd: the paddles shifted freely, a race started in
-  1st, and moving the lever to 4th engaged 4th.
+- **The lever's slot, or gears on lever moves (#303).** The game turns the lever's gear into a gear request
+  every frame, shifts when the request changes, and takes it again whenever it sets the gear itself: at race and
+  event starts and finishes the car goes into the gear the lever sits in, or into neutral with the lever out.
+  That is what the Xbox does with a 360 wheel's shifter, so it stays the default (*Gear follows the lever's
+  slot*, `wheel_shifter_follow_slot`). If you switch to the paddles or a sequential shifter mid-session, turn it
+  off (SDK patch 0132): the driver then asks for a gear only for a moment after the lever moves into a slot or
+  out to neutral, and for nothing otherwise, so the paddles keep their gear and a start keeps the game's until
+  you move the lever (where the lever sits when the game starts is not a move). Tested with it off, a virtual
+  wheel and DS-8X, the lever left in 3rd: the paddles shifted freely, a race started in 1st, and moving the
+  lever to 4th engaged 4th.
 - **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
   least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
   neutral until you press it. Off by default (the lever's gear engages at once).

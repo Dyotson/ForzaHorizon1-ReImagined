@@ -1,25 +1,26 @@
 diff --git a/src/input/wheel/wheel_gear_request.h b/src/input/wheel/wheel_gear_request.h
 new file mode 100644
-index 0000000..35ffd2d
+index 0000000..54ca8a1
 --- /dev/null
 +++ b/src/input/wheel/wheel_gear_request.h
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +/**
 + * @file        src/input/wheel/wheel_gear_request.h
 + * @brief       The H-pattern shifter's gear as the game's gear request (#303), without SDL: a gear
-+ *              is asked for when the lever moves (the default), or for as long as the lever sits in
-+ *              its slot (wheel_shifter_follow_slot, as before).
++ *              is asked for for as long as the lever sits in its slot (wheel_shifter_follow_slot,
++ *              the default, as on the Xbox), or only when the lever moves.
 + *
 + * The car's input frame (sub_824B7360) turns the wheel's thumb_rx (sub_82CBC320 returns it as it
 + * is) into a gear request every frame: -1 reverse, 0 neutral, 1 to 8 that gear; any other value
 + * leaves its "no request" (10), as on a wheel without a shifter. The game shifts when the request
 + * changes, and takes it again when it resets the car at a race or event start: a lever left in 3rd
 + * put the car in 3rd at every start even after the paddles had shifted, and one left in neutral
-+ * put it in neutral (#4). Here a change of the engaged gear (EngageGear in
-+ * wheel_shifter.h: the lever moved into a slot or out to neutral, or the clutch let a gear in) is
-+ * asked for while the game reads at least kGearRequestReads states over kGearRequestMs, then
-+ * nothing: the paddles and a sequential shifter keep the gear they chose until the lever moves.
-+ * The lever's position when the wheel is first read is not a movement.
++ * put it in neutral (#4). The Xbox does the same with a 360 wheel's shifter (#4), so that stays
++ * the default. With wheel_shifter_follow_slot off (for paddle users), a change of the engaged
++ * gear (EngageGear in wheel_shifter.h: the lever moved into a slot or out to neutral, or the
++ * clutch let a gear in) is asked for while the game reads at least kGearRequestReads states over
++ * kGearRequestMs, then nothing: the paddles and a sequential shifter keep the gear they chose
++ * until the lever moves. The lever's position when the wheel is first read is not a movement.
 + *
 + * @license     BSD 3-Clause License
 + *              See LICENSE file in the project root for full license text.
@@ -72,7 +73,7 @@ index 0000000..35ffd2d
 +
 +}  // namespace rex::input::wheel
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 8ccda6c..020e3d9 100644
+index 8ccda6c..b2408f2 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -35,6 +35,7 @@
@@ -87,10 +88,10 @@ index 8ccda6c..020e3d9 100644
                       "centre), stronger ones play as they are, so a light car still has weight "
                       "(0: off; before wheel_ffb_strength; not the spring, damper or rumble)")
      .range(0, 100);
-+REXCVAR_DEFINE_BOOL(wheel_shifter_follow_slot, false, "Input",
++REXCVAR_DEFINE_BOOL(wheel_shifter_follow_slot, true, "Input",
 +                    "H-pattern: the game takes the lever's slot whenever it sets the gear itself "
-+                    "(race and event starts), as before #303; false: a gear engages only when the "
-+                    "lever moves, so the paddles keep the gear they chose");
++                    "(race and event starts and finishes), as on the Xbox; false: a gear engages "
++                    "only when the lever moves, so the paddles keep the gear they chose");
  
  namespace rex::input::wheel {
  

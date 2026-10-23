@@ -110,8 +110,8 @@ class WheelShifterSettings(unittest.TestCase):
 
 
 class ShifterFollowSlot(unittest.TestCase):
-    """#303 (patch 0132): the H-pattern engages a gear on lever moves; the old behaviour is a
-    setting in Shifter and clutch, off by default."""
+    """#303 (patch 0132): the H-pattern follows the lever's slot by default, as on the Xbox; gears on
+    lever moves only are the setting turned off (Shifter and clutch)."""
     def test_setting_matches_the_sdk_cvar(self):
         patch = PATCH.parent / "0132-wheel-shifter-gear-on-lever-moves.patch"
         text = "\n".join(line[1:] for line in patch.read_text().splitlines() if line.startswith("+"))
@@ -119,7 +119,7 @@ class ShifterFollowSlot(unittest.TestCase):
         setting = schema.BY_KEY["wheel_shifter_follow_slot"]
         self.assertIsNotNone(m)
         self.assertEqual(setting.default, m.group(1) == "true")
-        self.assertIs(setting.default, False)
+        self.assertIs(setting.default, True)
         self.assertEqual((setting.kind, setting.section), ("bool", "Shifter and clutch"))
         keys = [s.key for s in schema.for_group("Controls")]
         self.assertEqual(keys[keys.index("wheel_clutch_threshold") + 1], "wheel_shifter_follow_slot")
@@ -129,12 +129,12 @@ class ShifterFollowSlot(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         cfg = Config(Path(folder.name) / "launcher.json")
         self.assertNotIn("wheel_shifter_follow_slot", render_toml(cfg))
-        cfg.settings["wheel_shifter_follow_slot"] = True
+        cfg.settings["wheel_shifter_follow_slot"] = False
         text = render_toml(cfg)
-        self.assertIn("wheel_shifter_follow_slot = true", text)
+        self.assertIn("wheel_shifter_follow_slot = false", text)
         imported = Config(Path(folder.name) / "other.json")
         import_toml(imported, text)
-        self.assertIs(imported.settings["wheel_shifter_follow_slot"], True)
+        self.assertIs(imported.settings["wheel_shifter_follow_slot"], False)
 
 
 if __name__ == "__main__":

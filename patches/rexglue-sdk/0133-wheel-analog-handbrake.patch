@@ -97,7 +97,7 @@ index 0000000..b301a95
 +
 +}  // namespace rex::input::wheel
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 020e3d9..7741fc9 100644
+index b2408f2..80666dd 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -36,6 +36,7 @@
@@ -118,10 +118,10 @@ index 020e3d9..7741fc9 100644
  REXCVAR_DEFINE_STRING(wheel_buttons, "", "Input",
                        "Button overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,"
                        "rs=10,up=12,down=13,left=14,right=15 (SDL button numbers; -1 unmaps)");
-@@ -157,6 +159,16 @@ REXCVAR_DEFINE_BOOL(wheel_shifter_follow_slot, false, "Input",
+@@ -157,6 +159,16 @@ REXCVAR_DEFINE_BOOL(wheel_shifter_follow_slot, true, "Input",
                      "H-pattern: the game takes the lever's slot whenever it sets the gear itself "
-                     "(race and event starts), as before #303; false: a gear engages only when the "
-                     "lever moves, so the paddles keep the gear they chose");
+                     "(race and event starts and finishes), as on the Xbox; false: a gear engages "
+                     "only when the lever moves, so the paddles keep the gear they chose");
 +REXCVAR_DEFINE_STRING(wheel_handbrake_device, "", "Input",
 +                      "Analog handbrake on its own USB device: empty finds a known handbrake (or "
 +                      "one named like one), a device name, SDL GUID or vid:pid picks one (also the "
