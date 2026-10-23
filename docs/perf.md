@@ -1270,3 +1270,114 @@ The GLSL source and its precompiled SPIR-V header are included in 0071; no shade
 compiler is required when building the game. To regenerate the shader binary,
 compile `texture_load_32bpb_scaled_image.cs.glsl` with glslang (`-V -S comp`) and
 convert the resulting little-endian uint32 words into the checked-in header.
+
+## Steam Deck frame collapses (#45, 2026-10-23)
+
+The player's Deck video (0.1.28, Steam overlay on): steady free roam at 28-30 fps, but 10-15 fps near AI
+drivers or traffic, dramatic drops on fast camera changes (looking back at the cars behind) and 10-12 fps
+with heavy stutter for a while after the pause menu or the map. The overlay showed the GPU 50-74% busy at
+700-950 MHz and all eight CPU threads at 35-45%: a few CPU threads, mainly the GPU command processor, set
+the frame. This looks at what the command processor does in those moments.
+
+**The simulation and how far it goes.** TU4, `-DFORZA_CPU_TARGET=x86-64-v3`, a copy of the Xenia save, offline,
+audio muted, a 1280x800 window (the guest renders 1280x720, as on the Deck), 30 fps, render scale 1, AMD FSR 1,
+a warm shader cache (as after *Prebuild shaders*), the game's threads on CPUs 0-3, the samplers and
+`tools/autodrive.py` on 4-7; once with one busy loop per core (a game thread gets half a core). Faithful: the
+settings, the guest work per frame, the frame cap, four cores. Not: the cores are Zen 4 at 5 GHz with 96 MB of
+L3, about 2-2.5 times a Deck core (Zen 2, 2.4-3.5 GHz, 4 MB of L3); this CPU has no SMT
+(`smt/control` is `notsupported`), so there are no busy siblings; no CPU and GPU power budget; the GPU (RX
+9060 XT, 7.7-8.6 ms of GPU a free-roam frame) is a discrete card with 16 GB. Memory: the Deck's BIOS carve-out
+is 1 GB, but RADV shows APUs two thirds of carve-out plus GTT as device-local memory, so the game sees several
+GB, and the player's 0.1.30 log has no `Render targets trimmed` line. The runs below use the driver's budget.
+The first two runs used the 1 GB test cap (`vulkan_device_local_budget_mb=1024`): no trim and no texture
+eviction either; the cap only moved new textures (1,400, 94 MB) and some guest memory pages to system memory
+once render targets (540-553 MB) and the rest filled 80-95% of it. What the kernel does with the real 1 GB
+carve-out (moving buffers between it and GTT) cannot be reproduced on this card.
+
+Method: the SDK counts what the command processor does in every frame (patch 0180 below; the hidden
+`fh1_frame_cost_csv` writes each frame): draws, its CPU time, its waits for the GPU and for the game,
+textures created, loaded and evicted, guest memory uploads, shaders and pipelines, render targets, resolve
+readbacks. Per-thread CPU from `tools/thread_stats.py`, cars within 30/60/120 m from the car list
+(`tools/autodrive.py`'s reader), the command processor's profile from `PERF_CPUPROF`. Scripted: free roam
+following the traffic for 40 s, the right stick press (look back) four times while driving, the five
+cameras (RB), the pause menu for 8 s, the map for 8 or 40 s, driving again; the 8-car festival race with
+three looks back; four map round trips per run.
+
+**What each trigger does to the frame** (command processor, ms of CPU a frame on this CPU; a Deck needs
+2-2.5 times that):
+
+| Moment | Draws a frame | Command processor | Anything else |
+| --- | --- | --- | --- |
+| Free roam, no car within 60 m | 2,865-3,144 | 5.3-5.9 ms | |
+| Free roam, 4 or more traffic cars within 60 m | 3,345-3,983 | 6.3-7.2 ms | |
+| 8-car race, grid and intro | 4,314 | 7.4 ms | |
+| 8-car race, first 15 s in the pack | 5,802 | 9.8 ms | one 51 ms frame at the start (26 ms, 16 ms GPU waits) |
+| Looking back (free roam / race) | +0-15% / +7-22% | +0-0.6 / +0.2-1.1 ms | |
+| Camera changes | 2,500-3,900 by camera | 4.5-7.1 ms | 0-0.3 pipelines a frame (warm cache) |
+| Pause menu | 3,370 (the world goes on) | 5.8-6.2 ms | nothing on return |
+| Map | 1,560-1,800 | 2.0-2.3 ms | |
+| First frame back from the map | 3,450-4,130 | 29-31 ms | 9-10 resolve readbacks, 23-24 MB, 23-25 ms; 7-11 ms GPU waits; a 50 ms frame |
+
+- Cars cost draws, at the same 1.7-1.8 us of command processor per draw as the rest of the frame: the pack of
+  a race adds 70-80% to the frame's draws, traffic up to 30% when several cars are close. None of them brings
+  texture creation, uploads (0.5-0.9 MB a frame), pipelines, render targets or evictions. On a Deck that holds
+  28-30 fps with the command processor near its limit, every such frame passes 33 ms and waits for the next
+  vblank: 20 fps. Most of the draws are the scene's three EDRAM tile passes (one pass is worked on
+  separately); there is no per-car overhead of its own to remove.
+- Looking back and changing the camera change the draws by the view; with a warm cache no shader, pipeline,
+  texture or render target work shows up.
+- No render target trim, texture eviction (the texture cache stayed at 171-172 MB, under its 384 MB limit;
+  render targets 540-553 MB, 38-39 of them) or CPU texture conversion (texture loads are compute dispatches: about 90 a frame, 0.1 ms to record) in any
+  run, with or without the 1 GB cap.
+- Back from the map: every scene resolve was copied back to guest memory again. `readback_resolve = some`
+  (the default) copies a resolve the first time its key is seen and drops the key after 60 unused frames;
+  after the map (8 s or 40 s) all of the scene's were first-seen again: a GPU wait, a new readback buffer and
+  a copy each. Fixed by 0181 (below). The pause menu draws the world behind it, so nothing is dropped there.
+- Not reproduced: a lasting slowdown after the map. Here the frame returns to 30 fps (5.6-6.6 ms of command
+  processor) right after that first frame, and the threads' CPU time is what it was before the map (61-67% of
+  a core in all; the per-second samples show no burst of the game's own threads). On the Deck the likely
+  causes of a slowdown that lasts seconds are outside these counters: buffers moved between the 1 GB carve-out and GTT after the map's
+  textures and render targets pushed the world's out, or the GPU clock coming back up after the light map
+  screen. The log line below now tells whether the command processor did extra work in those frames.
+
+**Change 1: SDK patch 0180, why a frame was slow, in the log.** From 30 s after the first frame, frames of at
+least 50 ms and 1.5 times the typical frame are collected for 10 s, then one warning names what they did on
+average and the largest cost (at most 60 such lines, then one a minute):
+
+```
+GPU slow frames: 7 of 296 in 10 s over 50 ms (worst 133 ms, typical 33 ms); each: command processor 8 ms CPU,
+3 ms GPU waits, 6 ms game waits, 1179 draws (typical 3200); textures 14.6 new (4.2 MB, 0.0 ms), 54.3 loaded
+(26.4 MB, 0.1 ms), 0.0 evicted (0.0 MB); uploads 3.3 MB (1.4 ms); shaders 0.0 (0.0 ms), pipelines 0.0 (0.0 ms);
+render targets 0.9 new (10.3 MB, 0.0 ms), 0 trims; resolve readbacks 7.2 (3.3 MB, 3.4 ms, 3.1 ms GPU waits);
+cause: the game (the command processor waited for its commands)
+```
+
+(that one is a race loading screen). Causes: `more draws` (the draws above the typical count at the typical
+cost per draw), `textures`, `guest memory uploads`, `shaders and pipelines`, `render targets`, `resolve
+readbacks`, `waits for the GPU`, `the game` (the command processor was mostly idle: CPU and GPU waits under half
+the frame, so the game's own threads were late; `FORZA_STALL` has their call chains when it took 200 ms), or
+`unclear`. The CPU time is the thread's own (`CLOCK_THREAD_CPUTIME_ID`; 0 on Windows), so time spent waiting
+for a CPU on a busy Deck shows as a frame longer than its CPU time. The counters are increments on the
+command processor thread; clocks are read only around the rare paths. `tools/test_frame_cost.cpp`.
+
+**Change 2: SDK patch 0181, the scene's resolves are not copied back again.** A readback key resolved in 150
+frames in a row is a scene render target; when its buffer was dropped and it comes back, it counts as copied
+(no GPU wait, no copy). Car pictures already copy every time (their resolves are recognised), photos are a
+key seen once, and keys made only when the world starts (four 2 MB depth resolves) still copy.
+`tools/test_readback_history.cpp`. Four map round trips (8 s in the map) per run, two runs each, alternating,
+BENCH lock held:
+
+| Build | Worst frame back from the map | First world frame: command processor | Its GPU waits | Copies back |
+| --- | --- | --- | --- | --- |
+| 0180 only (`vulkan_readback_skip_render_targets=false`) | 50-51 ms (8 of 8) | 28.8-31.0 ms | 6.7-10.7 ms | 9-10, 23-24 MB |
+| 0180 and 0181 | 34 ms (8 of 8) | 14.3-16.4 ms | about 3 ms | 4, 7.8 MB (6 skipped) |
+
+With the map open for 40 s the same: 34 ms. The world renders the same; the copies only fill guest memory the
+game's CPU does not read for these targets ("some" left them stale after their first copy already).
+
+**For a Deck player to confirm:** a `forza.log` of a session on a build with 0180 that goes near traffic, into
+a race, looks back and opens the map: each collapse leaves `GPU slow frames` lines with the cause. If the drop
+after the map still lasts seconds with `cause: waits for the GPU` or `the game` and little command processor
+CPU, the time is outside the emulation's work (memory moves or clocks); a run with the BIOS UMA frame buffer
+at 4 GB instead of 1 GB, and Steam's overlay at level 4 showing the GPU clock right after leaving the map,
+would tell which.

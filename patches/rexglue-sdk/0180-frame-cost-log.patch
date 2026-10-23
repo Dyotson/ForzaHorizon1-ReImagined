@@ -1,0 +1,763 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 0b0c5fed..257c0bf2 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "fh1_frame_cost.h"
+ #include <algorithm>
+ #include <cinttypes>
+ #include <cmath>
+@@ -1085,6 +1086,8 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(memory::RingBuffer* reade
+   bool is_memory = (wait_info & 0x10) != 0;
+ 
+   bool matched = false;
++  // FH1 (#45): the time spent waiting for the game (fh1_frame_cost.h), from the first miss.
++  std::chrono::steady_clock::time_point wait_start{};
+   do {
+     uint32_t value = 0;
+     if (is_memory) {
+@@ -1125,6 +1128,9 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(memory::RingBuffer* reade
+         break;
+     }
+     if (!matched) {
++      if (wait_start == std::chrono::steady_clock::time_point{}) {
++        wait_start = std::chrono::steady_clock::now();
++      }
+       // Wait.
+       if (wait >= 0x100) {
+         PrepareForWait();
+@@ -1149,6 +1155,11 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(memory::RingBuffer* reade
+       }
+     }
+   } while (!matched);
++  if (wait_start != std::chrono::steady_clock::time_point{}) {
++    fh1_frame_cost::Current().guest_wait_ms +=
++        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start)
++            .count();
++  }
+ 
+   return true;
+ }
+diff --git a/src/graphics/fh1_frame_cost.h b/src/graphics/fh1_frame_cost.h
+new file mode 100644
+index 00000000..96a380af
+--- /dev/null
++++ b/src/graphics/fh1_frame_cost.h
+@@ -0,0 +1,298 @@
++#pragma once
++// FH1 (#45): what the GPU command processor did in each frame, so that frames much longer than
++// usual say why in the log. On a Steam Deck the command processor is the thread every frame
++// waits for, and the frame rate collapses near other cars, after a fast camera turn and back
++// from the map; a player's log only showed the 200 ms stalls (FORZA_STALL), not why 30 fps
++// fell to 12.
++//
++// The counters of the open frame (Current()) are written on the command processor thread only
++// (pipelines the background threads create are not counted, the placeholders drawn meanwhile
++// are). The Vulkan command processor closes a frame at each swap (EndFrame there) and hands it
++// to a Report, which collects the slow frames and makes at most one log line every 10 s.
++// Free of Vulkan and the runtime, so tools/test_frame_cost.cpp can test it.
++#include <algorithm>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <string>
++
++namespace rex::graphics::fh1_frame_cost {
++
++struct Frame {
++  double ms = 0;             // since the previous frame end
++  double cpu_ms = 0;         // the command processor thread's CPU time (0 where unknown)
++  double gpu_wait_ms = 0;    // blocked on GPU fences (frames in flight, readbacks, trims)
++  double guest_wait_ms = 0;  // WAIT_REG_MEM: waiting for the game to write a value
++  uint32_t draws = 0;
++  uint32_t textures_created = 0;
++  uint64_t texture_created_bytes = 0;  // host memory of the new textures
++  double texture_create_ms = 0;
++  uint32_t texture_loads = 0;  // textures (re)loaded from guest memory (untiled on the GPU)
++  uint64_t texture_load_bytes = 0;  // their guest data
++  double texture_load_ms = 0;       // recording the loads
++  uint32_t textures_evicted = 0;    // destroyed by the texture cache's memory limits
++  uint64_t texture_evicted_bytes = 0;
++  uint64_t upload_bytes = 0;  // guest memory copied to the GPU's copy of it (CPU writes)
++  double upload_ms = 0;
++  uint32_t shaders = 0;  // guest shaders translated
++  double shader_ms = 0;
++  uint32_t pipelines = 0;  // pipelines created on this thread (async placeholders included)
++  double pipeline_ms = 0;
++  uint32_t render_targets = 0;  // render target images created
++  uint64_t render_target_bytes = 0;
++  double render_target_ms = 0;
++  uint32_t render_target_trims = 0;
++  uint32_t readbacks = 0;  // resolves copied back to guest memory (readback_resolve)
++  uint64_t readback_bytes = 0;
++  double readback_ms = 0;  // their buffers and copies
++  double readback_wait_ms = 0;  // their waits for the GPU (also in gpu_wait_ms)
++  uint32_t readbacks_skipped = 0;  // scene render targets back after a gap, not copied (0181)
++
++  void Add(const Frame& o) {
++    ms += o.ms;
++    cpu_ms += o.cpu_ms;
++    gpu_wait_ms += o.gpu_wait_ms;
++    guest_wait_ms += o.guest_wait_ms;
++    draws += o.draws;
++    textures_created += o.textures_created;
++    texture_created_bytes += o.texture_created_bytes;
++    texture_create_ms += o.texture_create_ms;
++    texture_loads += o.texture_loads;
++    texture_load_bytes += o.texture_load_bytes;
++    texture_load_ms += o.texture_load_ms;
++    textures_evicted += o.textures_evicted;
++    texture_evicted_bytes += o.texture_evicted_bytes;
++    upload_bytes += o.upload_bytes;
++    upload_ms += o.upload_ms;
++    shaders += o.shaders;
++    shader_ms += o.shader_ms;
++    pipelines += o.pipelines;
++    pipeline_ms += o.pipeline_ms;
++    render_targets += o.render_targets;
++    render_target_bytes += o.render_target_bytes;
++    render_target_ms += o.render_target_ms;
++    render_target_trims += o.render_target_trims;
++    readbacks += o.readbacks;
++    readback_bytes += o.readback_bytes;
++    readback_ms += o.readback_ms;
++    readback_wait_ms += o.readback_wait_ms;
++    readbacks_skipped += o.readbacks_skipped;
++  }
++};
++
++// The open frame's counters (command processor thread).
++inline Frame& Current() {
++  static Frame frame;
++  return frame;
++}
++
++// The host memory of all cached textures (the texture caches' own count, summed).
++inline uint64_t& TextureBytes() {
++  static uint64_t bytes = 0;
++  return bytes;
++}
++
++// Adds the time of its scope to a counter (milliseconds).
++class Timer {
++ public:
++  explicit Timer(double& ms) : ms_(ms), start_(std::chrono::steady_clock::now()) {}
++  ~Timer() {
++    ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_)
++               .count();
++  }
++  Timer(const Timer&) = delete;
++  Timer& operator=(const Timer&) = delete;
++
++ private:
++  double& ms_;
++  std::chrono::steady_clock::time_point start_;
++};
++
++// What made the slow frames slow, as the report names it.
++enum class Cause {
++  kUnclear,
++  kGame,  // the command processor was mostly idle: the game's frame came late
++  kDraws,
++  kTextures,
++  kUploads,
++  kShaders,
++  kRenderTargets,
++  kReadbacks,
++  kGpuWaits,
++};
++
++inline const char* CauseName(Cause cause) {
++  switch (cause) {
++    case Cause::kGame:
++      return "the game (the command processor waited for its commands)";
++    case Cause::kDraws:
++      return "more draws";
++    case Cause::kTextures:
++      return "textures";
++    case Cause::kUploads:
++      return "guest memory uploads";
++    case Cause::kShaders:
++      return "shaders and pipelines";
++    case Cause::kRenderTargets:
++      return "render targets";
++    case Cause::kReadbacks:
++      return "resolve readbacks";
++    case Cause::kGpuWaits:
++      return "waits for the GPU";
++    default:
++      return "unclear";
++  }
++}
++
++// Collects the slow frames and decides when to log them.
++class Report {
++ public:
++  // A frame is slow when it takes this long and kSlowFactor times the typical frame.
++  static constexpr double kSlowMs = 50.0;
++  static constexpr double kSlowFactor = 1.5;
++  // No report in the first seconds (loading the game), then at most one line per interval;
++  // after kMaxLines lines, one per kLateIntervalSeconds.
++  static constexpr double kStartSeconds = 30.0;
++  static constexpr double kIntervalSeconds = 10.0;
++  static constexpr double kLateIntervalSeconds = 60.0;
++  static constexpr uint32_t kMaxLines = 60;
++  // A cause is named when it takes at least this much of a slow frame on average.
++  static constexpr double kCauseMs = 4.0;
++
++  // Every frame end; true when a line is ready (Line(), then Taken()).
++  bool OnFrame(const Frame& f, double now_seconds) {
++    if (!started_) {
++      started_ = true;
++      start_seconds_ = now_seconds;
++    }
++    const bool starting = now_seconds - start_seconds_ < kStartSeconds;
++    const bool slow = !starting && f.ms >= SlowThresholdMs();
++    // The typical frame: an average of the frames that are not slow (all of them while the game
++    // starts). Slow frames move it a little, so that a new frame rate setting (20 fps) becomes
++    // the typical one within half a minute.
++    if (!typical_frames_) {
++      typical_ms_ = f.ms;
++      typical_cpu_ms_ = f.cpu_ms;
++      typical_draws_ = f.draws;
++    } else {
++      const double weight = slow ? kSlowTypicalWeight : kTypicalWeight;
++      typical_ms_ += (f.ms - typical_ms_) * weight;
++      typical_cpu_ms_ += (f.cpu_ms - typical_cpu_ms_) * weight;
++      typical_draws_ += (double(f.draws) - typical_draws_) * weight;
++    }
++    ++typical_frames_;
++    if (starting) return false;
++    if (window_open_) {
++      ++window_frames_;
++    }
++    if (slow) {
++      if (!window_open_) {
++        window_open_ = true;
++        window_start_ = now_seconds;
++        window_frames_ = 1;
++        slow_ = Frame();
++        slow_count_ = 0;
++        worst_ms_ = 0;
++      }
++      slow_.Add(f);
++      ++slow_count_;
++      worst_ms_ = std::max(worst_ms_, f.ms);
++    }
++    const double interval = lines_ < kMaxLines ? kIntervalSeconds : kLateIntervalSeconds;
++    return window_open_ && now_seconds - window_start_ >= interval;
++  }
++
++  void Taken() {
++    window_open_ = false;
++    ++lines_;
++  }
++
++  double SlowThresholdMs() const {
++    return typical_frames_ ? std::max(kSlowMs, kSlowFactor * typical_ms_) : kSlowMs;
++  }
++
++  // The slow frames' costs, each averaged over them.
++  Cause MainCause() const {
++    if (!slow_count_) return Cause::kUnclear;
++    const double n = double(slow_count_);
++    const double ms = slow_.ms / n;
++    const double cpu = slow_.cpu_ms / n;
++    const double gpu_wait = slow_.gpu_wait_ms / n;
++    // Mostly idle (neither working nor waiting for the GPU): the game was late.
++    if (cpu > 0 && cpu + gpu_wait < 0.5 * ms) return Cause::kGame;
++    double extra_draws_ms = 0;
++    if (typical_draws_ > 0 && typical_cpu_ms_ > 0) {
++      const double draws = double(slow_.draws) / n;
++      extra_draws_ms = std::max(0.0, draws - typical_draws_) * (typical_cpu_ms_ / typical_draws_);
++    }
++    const struct {
++      Cause cause;
++      double ms;
++    } costs[] = {
++        {Cause::kDraws, extra_draws_ms},
++        {Cause::kTextures, (slow_.texture_create_ms + slow_.texture_load_ms) / n},
++        {Cause::kUploads, slow_.upload_ms / n},
++        {Cause::kShaders, (slow_.shader_ms + slow_.pipeline_ms) / n},
++        {Cause::kRenderTargets, slow_.render_target_ms / n},
++        {Cause::kReadbacks, (slow_.readback_ms + slow_.readback_wait_ms) / n},
++        {Cause::kGpuWaits, std::max(0.0, gpu_wait - slow_.readback_wait_ms / n)},
++    };
++    Cause best = Cause::kUnclear;
++    double best_ms = kCauseMs;
++    for (const auto& c : costs) {
++      if (c.ms >= best_ms) {
++        best = c.cause;
++        best_ms = c.ms;
++      }
++    }
++    return best;
++  }
++
++  // The log line for the window: how many frames were slow and what each did on average.
++  std::string Line(double now_seconds) const {
++    const double n = slow_count_ ? double(slow_count_) : 1.0;
++    char text[1280];
++    std::snprintf(
++        text, sizeof(text),
++        "GPU slow frames: %u of %u in %.0f s over %.0f ms (worst %.0f ms, typical %.0f ms); "
++        "each: command processor %.0f ms CPU, %.0f ms GPU waits, %.0f ms game waits, %.0f draws "
++        "(typical %.0f); textures %.1f new (%.1f MB, %.1f ms), %.1f loaded (%.1f MB, %.1f ms), "
++        "%.1f evicted (%.1f MB); uploads %.1f MB (%.1f ms); shaders %.1f (%.1f ms), pipelines "
++        "%.1f (%.1f ms); render targets %.1f new (%.1f MB, %.1f ms), %u trims; resolve readbacks "
++        "%.1f (%.1f MB, %.1f ms, %.1f ms GPU waits); cause: %s",
++        slow_count_, window_frames_, now_seconds - window_start_, SlowThresholdMs(), worst_ms_,
++        typical_ms_, slow_.cpu_ms / n, slow_.gpu_wait_ms / n, slow_.guest_wait_ms / n,
++        double(slow_.draws) / n, typical_draws_, slow_.textures_created / n,
++        Mb(slow_.texture_created_bytes) / n, slow_.texture_create_ms / n, slow_.texture_loads / n,
++        Mb(slow_.texture_load_bytes) / n, slow_.texture_load_ms / n, slow_.textures_evicted / n,
++        Mb(slow_.texture_evicted_bytes) / n, Mb(slow_.upload_bytes) / n, slow_.upload_ms / n,
++        slow_.shaders / n, slow_.shader_ms / n, slow_.pipelines / n, slow_.pipeline_ms / n,
++        slow_.render_targets / n, Mb(slow_.render_target_bytes) / n, slow_.render_target_ms / n,
++        slow_.render_target_trims, slow_.readbacks / n, Mb(slow_.readback_bytes) / n,
++        slow_.readback_ms / n, slow_.readback_wait_ms / n, CauseName(MainCause()));
++    return text;
++  }
++
++  uint32_t slow_count() const { return slow_count_; }
++  const Frame& slow() const { return slow_; }
++  double typical_ms() const { return typical_ms_; }
++
++ private:
++  static constexpr double kTypicalWeight = 1.0 / 32.0;
++  static constexpr double kSlowTypicalWeight = 1.0 / 512.0;
++  static double Mb(uint64_t bytes) { return double(bytes) / (1024.0 * 1024.0); }
++
++  bool started_ = false;
++  double start_seconds_ = 0;
++  uint64_t typical_frames_ = 0;
++  double typical_ms_ = 0, typical_cpu_ms_ = 0, typical_draws_ = 0;
++  bool window_open_ = false;
++  double window_start_ = 0;
++  uint32_t window_frames_ = 0;
++  uint32_t slow_count_ = 0;
++  double worst_ms_ = 0;
++  Frame slow_;
++  uint32_t lines_ = 0;
++};
++
++}  // namespace rex::graphics::fh1_frame_cost
+diff --git a/src/graphics/pipeline/texture/cache.cpp b/src/graphics/pipeline/texture/cache.cpp
+index 940a1673..5ee46414 100644
+--- a/src/graphics/pipeline/texture/cache.cpp
++++ b/src/graphics/pipeline/texture/cache.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "../../fh1_frame_cost.h"
+ #include <algorithm>
+ #include <bit>
+ #include <cstdint>
+@@ -300,6 +301,12 @@ void TextureCache::CompletedSubmissionUpdated(uint64_t completed_submission_inde
+       ResetTextureBindings();
+     }
+     // Remove the texture from the map and destroy it via its unique_ptr.
++    {
++      // FH1 (#45): textures evicted in a frame (fh1_frame_cost.h).
++      fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++      ++cost.textures_evicted;
++      cost.texture_evicted_bytes += texture->GetHostMemoryUsage();
++    }
+     auto found_texture_it = textures_.find(texture->key());
+     assert_true(found_texture_it != textures_.end());
+     if (found_texture_it != textures_.end()) {
+@@ -589,8 +596,16 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
+         pending_shared_memory_range_pairs.data(), pending_shared_memory_range_pairs.size());
+   }
+ 
+-  if (batched_shared_memory_request_succeeded) {
++  if (batched_shared_memory_request_succeeded && !pending_texture_loads.empty()) {
++    // FH1 (#45): textures (re)loaded in a frame (fh1_frame_cost.h).
++    fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++    fh1_frame_cost::Timer timer(cost.texture_load_ms);
+     for (const PendingTextureLoad& pending_load : pending_texture_loads) {
++      if (pending_load.texture) {
++        ++cost.texture_loads;
++        if (pending_load.load_base) cost.texture_load_bytes += pending_load.texture->GetGuestBaseSize();
++        if (pending_load.load_mips) cost.texture_load_bytes += pending_load.texture->GetGuestMipsSize();
++      }
+       CommitPreparedTextureLoad(pending_load);
+     }
+   } else {
+@@ -897,7 +912,15 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
+   // Create the texture and add it to the map.
+   Texture* texture;
+   {
++    // FH1 (#45): textures created in a frame (fh1_frame_cost.h).
++    fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++    fh1_frame_cost::Timer timer(cost.texture_create_ms);
++    const uint64_t host_memory_before = textures_total_host_memory_usage_;
+     std::unique_ptr<Texture> new_texture = CreateTexture(key);
++    ++cost.textures_created;
++    if (textures_total_host_memory_usage_ > host_memory_before) {
++      cost.texture_created_bytes += textures_total_host_memory_usage_ - host_memory_before;
++    }
+     if (!new_texture) {
+       key.LogAction("Failed to create");
+       return nullptr;
+@@ -1039,6 +1062,8 @@ void TextureCache::ResetTextureBindings(bool from_destructor) {
+ 
+ void TextureCache::UpdateTexturesTotalHostMemoryUsage(uint64_t add, uint64_t subtract) {
+   textures_total_host_memory_usage_ = textures_total_host_memory_usage_ - subtract + add;
++  fh1_frame_cost::TextureBytes() += add;
++  fh1_frame_cost::TextureBytes() -= subtract;
+   COUNT_profile_set(
+       "gpu/texture_cache/total_host_memory_usage_mb",
+       uint32_t((textures_total_host_memory_usage_ + ((UINT32_C(1) << 20) - 1)) >> 20));
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 4531dbfd..4860e645 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -13,6 +13,8 @@
+ #include <array>
+ #include <chrono>
+ #include <cmath>
++#include <cstdio>
++#include <ctime>
+ #include <cstdint>
+ #include <cstdlib>
+ #include <cstring>
+@@ -38,6 +40,8 @@
+ #include <rex/graphics/util/fh1_hud.h>
+ #include "fh1_device_memory.h"
+ #include "fh1_render_target_trim.h"
++#include <rex/platform.h>
++#include "../fh1_frame_cost.h"
+ REXCVAR_DECLARE(int32_t, forza_native_width);
+ REXCVAR_DECLARE(int32_t, forza_native_height);
+ REXCVAR_DECLARE(bool, forza_present_16_9);
+@@ -125,6 +129,11 @@ REXCVAR_DEFINE_BOOL(vulkan_hoist_shared_memory_uploads, true, "GPU/Vulkan",
+                     "pages, instead of ending the render pass for every upload")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_STRING(fh1_frame_cost_csv, "", "GPU/Vulkan",
++                      "Testing: write what the command processor did in every frame (draws, "
++                      "textures, uploads, pipelines, render targets, waits) to this CSV file")
++    .debug_only();
++
+ REXCVAR_DEFINE_UINT32(vulkan_render_target_trim_percent, 90, "GPU/Vulkan",
+                       "Free the cached render targets that hold no EDRAM data when device-local "
+                       "memory use reaches this percentage of the driver's budget "
+@@ -778,6 +787,101 @@ VulkanCommandProcessor::VulkanCommandProcessor(VulkanGraphicsSystem* graphics_sy
+ 
+ VulkanCommandProcessor::~VulkanCommandProcessor() = default;
+ 
++namespace {
++
++// FH1 (#45): the command processor thread's CPU time, in ms (0 where not known: Windows,
++// whose thread times advance in scheduler ticks).
++double ThreadCpuMs() {
++#if REX_PLATFORM_WIN32
++  return 0;
++#else
++  timespec ts;
++  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;
++  return double(ts.tv_sec) * 1000.0 + double(ts.tv_nsec) / 1.0e6;
++#endif
++}
++
++struct FrameCostState {
++  bool started = false;
++  std::chrono::steady_clock::time_point start, last;
++  double last_cpu_ms = 0;
++  fh1_frame_cost::Report report;
++  std::FILE* csv = nullptr;
++  bool csv_tried = false;
++};
++
++FrameCostState& GetFrameCostState() {
++  static FrameCostState state;
++  return state;
++}
++
++// FH1 (#45): closes the frame's cost counters (fh1_frame_cost.h); a line in the log when
++// frames were much slower than usual, every frame to fh1_frame_cost_csv.
++void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
++                     uint32_t render_target_count) {
++  FrameCostState& state = GetFrameCostState();
++  fh1_frame_cost::Frame& frame = fh1_frame_cost::Current();
++  const auto now = std::chrono::steady_clock::now();
++  const double cpu_ms = ThreadCpuMs();
++  if (!state.started) {
++    state.started = true;
++    state.start = state.last = now;
++    state.last_cpu_ms = cpu_ms;
++    frame = fh1_frame_cost::Frame();
++    return;
++  }
++  frame.ms = std::chrono::duration<double, std::milli>(now - state.last).count();
++  frame.cpu_ms = cpu_ms > state.last_cpu_ms ? cpu_ms - state.last_cpu_ms : 0;
++  state.last = now;
++  state.last_cpu_ms = cpu_ms;
++  const double t = std::chrono::duration<double>(now - state.start).count();
++  if (!state.csv_tried) {
++    state.csv_tried = true;
++    const std::string path = REXCVAR_GET(fh1_frame_cost_csv);
++    if (!path.empty()) {
++      state.csv = std::fopen(path.c_str(), "w");
++      if (state.csv) {
++        std::fputs(
++            "epoch,t,ms,cpu_ms,gpu_wait_ms,guest_wait_ms,draws,textures_created,texture_created_bytes,"
++            "texture_create_ms,texture_loads,texture_load_bytes,texture_load_ms,textures_evicted,"
++            "texture_evicted_bytes,upload_bytes,upload_ms,shaders,shader_ms,pipelines,pipeline_ms,"
++            "render_targets,render_target_bytes,render_target_ms,render_target_trims,"
++            "texture_total_mb,render_target_total_mb,render_target_count,readbacks,readback_bytes,"
++            "readback_ms,readback_wait_ms,readbacks_skipped\n",
++            state.csv);
++      }
++    }
++  }
++  if (state.csv) {
++    std::fprintf(state.csv,
++                 "%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%u,%u,%llu,%.3f,%u,%llu,%.3f,%u,%llu,%llu,%.3f,%u,"
++                 "%.3f,%u,%.3f,%u,%llu,%.3f,%u,%.1f,%.1f,%u,%u,%llu,%.3f,%.3f,%u\n",
++                 std::chrono::duration<double>(
++                     std::chrono::system_clock::now().time_since_epoch())
++                     .count(),
++                 t, frame.ms, frame.cpu_ms, frame.gpu_wait_ms, frame.guest_wait_ms, frame.draws,
++                 frame.textures_created, (unsigned long long)frame.texture_created_bytes,
++                 frame.texture_create_ms, frame.texture_loads,
++                 (unsigned long long)frame.texture_load_bytes, frame.texture_load_ms,
++                 frame.textures_evicted, (unsigned long long)frame.texture_evicted_bytes,
++                 (unsigned long long)frame.upload_bytes, frame.upload_ms, frame.shaders,
++                 frame.shader_ms, frame.pipelines, frame.pipeline_ms, frame.render_targets,
++                 (unsigned long long)frame.render_target_bytes, frame.render_target_ms,
++                 frame.render_target_trims, double(fh1_frame_cost::TextureBytes()) / 1048576.0,
++                 double(render_target_bytes) / 1048576.0, render_target_count, frame.readbacks,
++                 (unsigned long long)frame.readback_bytes, frame.readback_ms,
++                 frame.readback_wait_ms, frame.readbacks_skipped);
++    if (frame_index % 300 == 0) std::fflush(state.csv);
++  }
++  if (state.report.OnFrame(frame, t)) {
++    REXGPU_WARN("{}", state.report.Line(t));
++    state.report.Taken();
++  }
++  frame = fh1_frame_cost::Frame();
++}
++
++}  // namespace
++
+ void VulkanCommandProcessor::ClearCaches() {
+   CommandProcessor::ClearCaches();
+   InvalidateAllVertexBufferResidency();
+@@ -827,6 +931,7 @@ void VulkanCommandProcessor::TrimRenderTargetsIfNeeded() {
+     return;
+   }
+   render_target_trim_requested_ = false;
++  ++fh1_frame_cost::Current().render_target_trims;
+   uint64_t before = render_target_cache_->render_target_memory_bytes();
+   uint32_t count_before = render_target_cache_->render_target_count();
+   render_target_cache_->TrimRenderTargets();
+@@ -4757,6 +4862,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+ 
++  ++fh1_frame_cost::Current().draws;
+   const RegisterFile& regs = *register_file_;
+   (void)index_buffer_info;
+   auto draw_fail = [&](const char* stage) {
+@@ -5978,6 +6084,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   uint64_t resolve_key = GetReadbackResolveKey(written_address, written_length);
+   ReadbackBuffer& readback = readback_buffers_[resolve_key];
+   readback.last_used_frame = frame_current_;
++  fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
+   // "some" only needs the first CPU copy of this address/size/format key.
+   // Keep the normal GPU resolve above, but avoid downscaling and transferring
+   // every subsequent result to a host buffer that the CPU will never read.
+@@ -5987,7 +6094,12 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   }
+   uint32_t write_index = readback.current_index;
+   uint32_t readback_size = AlignReadbackBufferSize(written_length);
+-  if (!ensure_readback_slot(readback, write_index, readback_size)) {
++  bool slot_ready;
++  {
++    fh1_frame_cost::Timer cost_timer(cost.readback_ms);
++    slot_ready = ensure_readback_slot(readback, write_index, readback_size);
++  }
++  if (!slot_ready) {
+     return true;
+   }
+ 
+@@ -6195,8 +6307,11 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   uint32_t read_index = write_index;
+   if (use_delayed_sync) {
+     read_index = 1 - write_index;
+-  } else if (!AwaitAllQueueOperationsCompletion()) {
+-    return true;
++  } else {
++    fh1_frame_cost::Timer cost_timer(cost.readback_wait_ms);
++    if (!AwaitAllQueueOperationsCompletion()) {
++      return true;
++    }
+   }
+ 
+   bool is_cache_miss = false;
+@@ -6205,6 +6320,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+                            readback.mapped_data[read_index] == nullptr)) {
+     is_cache_miss = true;
+     read_index = write_index;
++    fh1_frame_cost::Timer cost_timer(cost.readback_wait_ms);
+     if (!AwaitAllQueueOperationsCompletion()) {
+       return true;
+     }
+@@ -6213,6 +6329,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   bool should_copy = (readback_mode == ReadbackResolveMode::kSome) ? is_cache_miss : true;
+   if (should_copy && readback.buffers[read_index] != VK_NULL_HANDLE &&
+       written_length <= readback.sizes[read_index] && readback.mapped_data[read_index] != nullptr) {
++    fh1_frame_cost::Timer cost_timer(cost.readback_ms);
++    ++cost.readbacks;
++    cost.readback_bytes += written_length;
+     VkMappedMemoryRange readback_memory_range = {};
+     readback_memory_range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+     readback_memory_range.memory = readback.memories[read_index];
+@@ -6516,6 +6635,7 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+   if (submission_thread_) {
+     // Only the fences of submissions the thread has submitted can be waited for.
+     if (await_submission > submission_completed_) {
++      fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().gpu_wait_ms);
+       AwaitSubmissionThread(await_submission);
+     }
+     if (submission_thread_failed_.load(std::memory_order_acquire)) {
+@@ -6539,9 +6659,13 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+     // defined by vkQueueSubmit additionally include in the first
+     // synchronization scope all commands that occur earlier in submission
+     // order."
+-    VkResult wait_result =
+-        dfn.vkWaitForFences(device, uint32_t(await_submission - submission_completed_),
+-                            submissions_in_flight_fences_.data(), VK_TRUE, UINT64_MAX);
++    VkResult wait_result;
++    {
++      fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().gpu_wait_ms);
++      wait_result =
++          dfn.vkWaitForFences(device, uint32_t(await_submission - submission_completed_),
++                              submissions_in_flight_fences_.data(), VK_TRUE, UINT64_MAX);
++    }
+     if (wait_result == VK_SUCCESS) {
+       fences_awaited += await_submission - submission_completed_;
+       if (int64_t ms = waited_ms(); ms >= kSlowSubmissionWaitMs) {
+@@ -7110,6 +7234,9 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+     if (!cache_clear_requested_) {
+       TrimRenderTargetsIfNeeded();
+     }
++    Fh1EndFrameCost(frame_current_,
++                    render_target_cache_ ? render_target_cache_->render_target_memory_bytes() : 0,
++                    render_target_cache_ ? render_target_cache_->render_target_count() : 0);
+     if (cache_clear_requested_ && AwaitAllQueueOperationsCompletion()) {
+       cache_clear_requested_ = false;
+ 
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 48797b4a..c5589ac0 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "../fh1_frame_cost.h"
+ #include <algorithm>
+ #include <array>
+ #include <atomic>
+@@ -1514,6 +1515,9 @@ bool VulkanPipelineCache::EnsureShadersTranslated(VulkanShader::VulkanTranslatio
+                   xenos::VertexShaderExportMode::kPosition2VectorsEdgeKill);
+   assert_false(register_file_.Get<reg::SQ_PROGRAM_CNTL>().gen_index_vtx);
+   if (!vertex_shader->is_translated()) {
++    // FH1 (#45): shaders translated in a frame (fh1_frame_cost.h).
++    fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().shader_ms);
++    ++fh1_frame_cost::Current().shaders;
+     vertex_shader->shader().AnalyzeUcode(ucode_disasm_buffer_);
+     if (!TranslateAnalyzedShader(*shader_translator_, *vertex_shader)) {
+       REXGPU_ERROR("Failed to translate the vertex shader!");
+@@ -1526,6 +1530,8 @@ bool VulkanPipelineCache::EnsureShadersTranslated(VulkanShader::VulkanTranslatio
+   }
+   if (pixel_shader != nullptr) {
+     if (!pixel_shader->is_translated()) {
++      fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().shader_ms);
++      ++fh1_frame_cost::Current().shaders;
+       pixel_shader->shader().AnalyzeUcode(ucode_disasm_buffer_);
+       if (!TranslateAnalyzedShader(*shader_translator_, *pixel_shader)) {
+         REXGPU_ERROR("Failed to translate the pixel shader!");
+@@ -1625,6 +1631,8 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   if (it != pipelines_.end()) {
+     VkPipeline found_pipeline = it->second.pipeline.load(std::memory_order_acquire);
+     if (found_pipeline == VK_NULL_HANDLE) {
++      fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().pipeline_ms);
++      ++fh1_frame_cost::Current().pipelines;
+       PipelineCreationArguments creation_arguments;
+       if (!TryGetPipelineCreationArgumentsForDescription(description, &*it, creation_arguments) ||
+           !EnsurePipelineCreated(creation_arguments)) {
+@@ -1644,6 +1652,10 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   }
+ 
+   // Create the pipeline if not already existing.
++  // FH1 (#45): pipelines made on the command processor thread in a frame (async: the
++  // placeholder), fh1_frame_cost.h.
++  fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().pipeline_ms);
++  ++fh1_frame_cost::Current().pipelines;
+   auto& pipeline = *pipelines_.emplace(description, Pipeline()).first;
+   PipelineCreationArguments creation_arguments_real;
+   if (!TryGetPipelineCreationArgumentsForDescription(description, &pipeline,
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 73143659..b2166f06 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "../fh1_frame_cost.h"
+ #include <algorithm>
+ #include <array>
+ #include <cstddef>
+@@ -1892,6 +1893,10 @@ uint32_t VulkanRenderTargetCache::GetMaxRenderTargetHeight() const {
+ }
+ 
+ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(RenderTargetKey key) {
++  // FH1 (#45): render targets made in a frame (fh1_frame_cost.h).
++  fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++  fh1_frame_cost::Timer cost_timer(cost.render_target_ms);
++  ++cost.render_targets;
+   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+@@ -2129,6 +2134,7 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+       view_color_transfer_separate, descriptor_set_index_transfer_source);
+   render_target->memory_size_ = memory_size;
+   render_target_memory_bytes_ += memory_size;
++  cost.render_target_bytes += memory_size;
+   ++render_target_count_;
+   return render_target;
+ }
+diff --git a/src/graphics/vulkan/shared_memory.cpp b/src/graphics/vulkan/shared_memory.cpp
+index d67e01e2..648c15cf 100644
+--- a/src/graphics/vulkan/shared_memory.cpp
++++ b/src/graphics/vulkan/shared_memory.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "../fh1_frame_cost.h"
+ #include <algorithm>
+ #include <cstring>
+ #include <utility>
+@@ -279,6 +280,12 @@ bool VulkanSharedMemory::UploadRanges(
+   if (upload_page_ranges.empty()) {
+     return true;
+   }
++  // FH1 (#45): guest memory the CPU wrote, copied for the GPU (fh1_frame_cost.h).
++  fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++  fh1_frame_cost::Timer cost_timer(cost.upload_ms);
++  for (const auto& range : upload_page_ranges) {
++    cost.upload_bytes += uint64_t(range.second) << page_size_log2();
++  }
+   DeferredCommandBuffer& command_buffer = command_processor_.deferred_command_buffer();
+   // In a render pass whose draws have not read these pages, copy before the render pass
+   // instead of ending it: between a barrier after everything that read the buffer before the
