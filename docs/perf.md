@@ -81,6 +81,15 @@ screens can log long frames too. A player who sees a hitch can attach these line
 issue: the chains are guest return addresses (look them up in Ghidra). `FORZA_STALL_TEST=1`
 makes the main loop sleep 500 ms once, 90 s after the first frame, to check the lines.
 
+## Slow database queries (FORZA_SQL)
+
+Always on (`src/hooks/database_query.cpp`, #167): the game runs its SQLite queries on the
+thread that asks, the main loop included. A query that takes 50 ms or more logs
+`FORZA_SQL: <ms> ms (lock <ms> ms) on thread <handle>: <the SQL>` (at most 100 lines a
+session); `lock` is the time spent waiting for another thread's query. `FORZA_SQL_LOG=1`
+logs every query with its time (about 200 a second in free roam). A FORZA_STALL chain in
+`sub_83146F20` / `sub_83146E30` (TU4 `sqlite3_step`) is a query; the FORZA_SQL line says which.
+
 ## Scenarios
 
 `tools/perf_scenario.sh SCENARIO DIR [cold|warm] [flags]` drives the game through the
@@ -892,6 +901,68 @@ in either build (the save slot screen stays; same with the base runtime), so it 
   compilations (#226) and an old driver; frame rate 60 at 1080p is a lot for a Vega 8.
 - Only a Deck can tell whether it is bound by the GPU: Steam's performance overlay at level 4 (GPU and CPU load
   and clocks) in a race, and a log with the frame-time graph.
+
+## Hitches after loads: Title Update 4's car view (#167, 2026-10-23)
+
+**The report.** A player's log (RX 6700 XT, Windows, 0.1.31, Title Update 4, 21 DLC packages; the prebuilt
+shader cache loaded all 1,165 pipelines and about 5 were new) had 17 frames of 200-323 ms. 13 of them came in
+twos and threes in the first two seconds after a load (fast travel, back to free roam after an event, joining a
+session), e.g. 313, 297 and 280 ms, and one (278 ms) while driving. The FORZA_STALL chains (one dump per
+group) put the main loop thread in the game's SQLite each time (TU4 addresses): `sqlite3_step` (`sub_83146F20`;
+chain entries 83146F50 and 83146E30, its `sqlite3Step` calling the VDBE), the VDBE's loop and helpers (83141024,
+831415FC, 83141854, 831438A4, 83122B90 numeric affinity), the b-tree (8310E954 a cell insert, 83131CF0), under
+the database's query method (`sub_82CD8FD8`, base `sub_82C19130`: lock, run every statement of the string, copy
+all rows into a recordset in `sub_82CD8778`). The query is
+`SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId` (`sub_8253D9E0`, string
+0x82010FB0), the car list a game state builds when it is entered (`sub_82742D98` <- `sub_827431B0` <-
+`sub_825CB940` <- the state machine `sub_82F111F0`). The other 3 long frames were the render
+thread's (the main loop ran 9-12 frames meanwhile).
+
+**What it is.** The game keeps its data in an in-memory SQLite 3.6.19 database (`:memory:`, the tables copied
+from `gamedb.slt` and patched by each DLC's `*_merge.slt`) and runs queries synchronously on the thread that asks.
+Title Update 4 (the Rally Expansion) creates the view `Restrictions_Data_Car`: every drivable car (`Data_Car`)
+with `CarValue`, `IsRally` and `CouldRally`, LEFT JOINed to three derived tables: the level 4 springs, the level 5
+tyres, and the level 4 transmissions joined to their drivetrain. 3.6.19 has no automatic indexes (3.7.0) and
+does not flatten a derived table on the right of a LEFT JOIN, so it materializes the three and scans each one for
+every car: with all DLC, 251 cars x about 250 rows x 3, plus the transmissions' own join (986 x 251) without an
+index. The disc version has no such view (its `Drivable_Data_Car` is a plain filter). The main loop runs the query
+twice after every load into free roam. Signing up for an event runs three others on the view on another thread
+(F80013AC: the career garage's qualification, at the event card, the car select and the upgrade prompt); the main
+loop waits for the database lock meanwhile when it queries too. The queries are CPU-bound game code; nothing on
+our side waits or reads files.
+
+**The fix** (`src/hooks/database_query.cpp`). When the game creates the view (the statement is recognized by its
+text's length and hash), the query method gets a rewrite instead: the same columns (names, order, declared types)
+and rows, from joins on the tables themselves (the springs and tyres with their level in the ON clause; the
+transmissions through the car's drivetrains that have a level 4 transmission, `EXISTS`, then those
+transmissions), followed by indexes on the four joined columns (the game itself indexes the springs' `Ordinal`
+later, `i_5`). Each join becomes an index lookup. `FORZA_GAME_CAR_VIEW=1` keeps the game's view.
+
+Checked equal: `tools/check_car_view.py` (the game's statement from the update's default.xex, the rewrite from
+the hook, TU4's gamedb plain, with the 17 database patches of the update and all DLC, and with edge cases: parts
+missing, duplicate level 4 parts, extra drivetrains with and without a level 4 transmission, no drivetrain, cars
+not drivable): columns and rows identical (PASS x3); it fails on a variant without the `EXISTS`. In the game, a
+debug build hashed every value the recordsets read (type, integer, double, text): the 251 rows of the main loop's
+query hash the same with either view, and so does every other statement of the session except reads of
+`sqlite_master` (the schema lists 4 more indexes). The other game queries on the four tables look rows up by `Id`
+or by one `Ordinal` / `DrivetrainID` and return at most one row, so the new indexes do not change their order.
+
+**Measured** (TU4, Ryzen 7 7800X3D, RX 9060 XT, Linux, the test save with all 23 DLC packages, 30 fps, no other
+game running; 2 runs per view, interleaved; the route: boot to free roam, sign up for the festival race at the
+spawn, quit from the race intro back to free roam, drive 10 s):
+
+| | Game's view | Indexed view |
+| --- | --- | --- |
+| Main loop query after a load (8 runs) | 129-133 ms | 16.2-17.7 ms |
+| The frame that holds it | 155-193 ms | 32-74 ms |
+| Longest frame within 1 s of it | 155-193 ms | 66-75 ms |
+| Event sign-up: the 3 garage queries on the view (6 runs, thread F80013AC) | 103-105 ms | 6.2-7.5 ms |
+| A main loop query waiting for the lock meanwhile (car select) | 104-105 ms (both runs) | none over 50 ms |
+| Time in queries on the view, per run | about 830 ms | about 90 ms |
+
+The creation of the view and its indexes takes 6 ms once at start. On the player's PC the query took about 0.3 s;
+at the same ratio it takes about 40 ms there. Frames of 60-75 ms remain in the first seconds after a load on this
+PC with either view; they are not the database's (no query took 50 ms with the indexed view).
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
