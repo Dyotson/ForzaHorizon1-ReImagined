@@ -461,8 +461,8 @@ STYLE = """
 .cm-casing{stroke:var(--map-road-casing,#140d2e);stroke-opacity:.7;stroke-width:var(--map-rw-casing,15)}
 .cm-minor{stroke:var(--map-road,#ffc98a);stroke-width:var(--map-rw-minor,6)}
 .cm-main{stroke:var(--map-road-main,#ffe9c0);stroke-width:var(--map-rw-main,8)}
-.cm-label{font:italic 800 14px system-ui,sans-serif;letter-spacing:.2em;text-transform:uppercase;fill:var(--map-label,#ffe9c0);fill-opacity:.5;paint-order:stroke;stroke:var(--map-name-halo,#140d2e);stroke-opacity:.35;stroke-width:3px}
-.cm-name{font:700 12px system-ui,sans-serif;fill:var(--map-name,#ffe9c0);paint-order:stroke;stroke:var(--map-name-halo,#140d2e);stroke-width:3px;stroke-linejoin:round}
+.cm-label{font:italic 800 14px system-ui,sans-serif;letter-spacing:.2em;text-transform:uppercase;fill:var(--map-label,#ffe9c0);fill-opacity:.32;paint-order:stroke;stroke:var(--map-name-halo,#2a1c52);stroke-opacity:.2;stroke-width:3px}
+.cm-name{font:700 12px system-ui,sans-serif;fill:var(--map-name,#ffe9c0);paint-order:stroke;stroke:var(--map-name-halo,#2a1c52);stroke-width:3.5px;stroke-linejoin:round}
 .cm-mk{pointer-events:none}
 """
 

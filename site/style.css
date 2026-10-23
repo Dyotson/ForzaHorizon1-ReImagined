@@ -166,7 +166,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
   --map-mesa-a: #b44a5e; --map-mesa-b: #7d3150; --map-tree: #2f7a68;
   --map-field: #3a2a66; --map-furrow: #47347a; --map-glow: #ff9d3c;
   --map-road: #ffc98a; --map-road-main: #ffe9c0; --map-road-casing: #140d2e;
-  --map-label: #ffe9c0; --map-name: #ffe9c0; --map-name-halo: #140d2e;
+  --map-label: #ffe9c0; --map-name: #ffe9c0; --map-name-halo: #2e2058; --chip-ring: #ffe9c0;
   --map-icon-bg: #241747; --map-icon-line: #ffe9c0; --map-icon-a: #ff5470; --map-icon-b: #ff9d3c; --map-icon-ink: #241747;
   --pin-trap: #ff5470; --pin-zone: #ff9d3c; --pin-event: #ffd36b; --pin-glyph: #1a0f33; --pin-ring: #ffe9c0; --pin-shadow: rgba(8, 4, 24, .55);
   --tip-bg: rgba(20, 13, 46, .96);
@@ -185,7 +185,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
     --map-mesa-a: #e38b70; --map-mesa-b: #b9614f; --map-tree: #6aa98b;
     --map-field: #efdcb4; --map-furrow: #e2c992; --map-glow: #ff8a3d;
     --map-road: #c0708f; --map-road-main: #8a2f6c; --map-road-casing: #fffaf3;
-    --map-label: #5b3c80; --map-name: #2a1a4a; --map-name-halo: #fffaf3;
+    --map-label: #5b3c80; --map-name: #2a1a4a; --map-name-halo: #fbf2e4; --chip-ring: #6b5a8a;
     --map-icon-bg: #fffaf3; --map-icon-line: #3a2770; --map-icon-a: #e0335a; --map-icon-b: #f08a2c; --map-icon-ink: #3a2770;
     --pin-trap: #d92b52; --pin-zone: #e2700c; --pin-event: #b88512; --pin-glyph: #fff; --pin-ring: #fffaf3; --pin-shadow: rgba(58, 39, 112, .35);
     --tip-bg: rgba(255, 251, 247, .97);
@@ -219,8 +219,8 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 .lb-canvas .cm-mk { transform: translate(calc(var(--x) * 1px), calc(var(--y) * 1px)) scale(var(--cm-s, 1)); }
 .lb-pin { transform: translate(calc(var(--x) * 1px), calc(var(--y) * 1px)) scale(calc(var(--cm-s, 1) * var(--pin-k, 1))); }
 .lb-pin-event { --pin-k: .86; }
-.lb-canvas .cm-label { font-size: 13px; }
-.lb-canvas .cm-name { font-size: 11.5px; }
+.lb-canvas .cm-label { font-size: 13px; fill-opacity: .3; stroke-opacity: .18; }
+.lb-canvas .cm-name { font-size: 11.5px; stroke-width: 3.5px; }
 .lb-canvas .cmap.far .cm-lm-town .cm-name { display: none; }
 .lb-canvas .cm-lm use { pointer-events: auto; }
 .lb-canvas .cm-wave { stroke-width: 2px; vector-effect: non-scaling-stroke; }
@@ -252,7 +252,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
   color: var(--text); background: var(--panel); border: 1px solid var(--border); backdrop-filter: blur(8px); }
 .lb-chip[aria-pressed="false"] { opacity: .55; }
 .lb-chip[aria-pressed="false"] .dot { background: transparent !important; }
-.lb-chip .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--pin-ring); box-sizing: content-box; }
+.lb-chip .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--chip-ring); box-sizing: content-box; }
 .lb-chip .n { color: var(--muted); font-weight: 600; }
 .lb-zoom { position: absolute; z-index: 2; right: 12px; bottom: 12px; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: var(--panel); backdrop-filter: blur(8px); }
 .lb-zoom button { font: inherit; font-size: 20px; line-height: 1; width: 38px; height: 36px; border: 0; background: transparent; color: var(--text); cursor: pointer; }

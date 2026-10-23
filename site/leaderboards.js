@@ -182,6 +182,7 @@
     if (pin) {
       pin.classList.add("is-sel");
       pin.parentNode.appendChild(pin);  // on top of its neighbours
+      queueLabels();
     }
     if (!boardSel.querySelector('option[value="' + id + '"]')) fillList();
     boardSel.value = id;
@@ -222,6 +223,76 @@
     svg.style.setProperty("--cm-zr", Math.pow(f.w / view.w, 0.45).toFixed(3));
     svg.classList.toggle("far", view.w / (canvas.clientWidth || 1) > 5.5);
     hideTip();
+    var sc = view.w / (canvas.clientWidth || 1);
+    if (!placedAt || Math.abs(sc - placedAt) / sc > 0.04) queueLabels();
+  }
+
+  // ---- the landmarks' names go where no pin covers them ----
+  // Pins and names keep their size on screen, so whether they meet depends on the zoom: the
+  // names are placed again (first clear spot around the icon) when the zoom changes.
+  var labels = [], placedAt = 0, labelsQueued = false;
+  function queueLabels() {
+    if (labelsQueued) return;
+    labelsQueued = true;
+    requestAnimationFrame(function () { labelsQueued = false; placeLabels(); });
+  }
+  function collectLabels() {
+    labels = [];
+    svg.querySelectorAll(".cm-lm").forEach(function (g) {
+      var t = g.querySelector(".cm-name"), st = g.getAttribute("style") || "";
+      var x = /--x:\s*(-?[\d.]+)/.exec(st), y = /--y:\s*(-?[\d.]+)/.exec(st);
+      if (!t || !x || !y) return;
+      var use = g.querySelector("use");
+      labels.push({ t: t, x: +x[1], y: +y[1], half: use ? (+use.getAttribute("width") || 18) / 2 : 9, w: 0,
+                    town: g.classList.contains("cm-lm-town") });
+    });
+  }
+  function hitRect(r, cx, cy, rad) {
+    var dx = cx - Math.max(r[0], Math.min(cx, r[0] + r[2])), dy = cy - Math.max(r[1], Math.min(cy, r[1] + r[3]));
+    return dx * dx + dy * dy < rad * rad;
+  }
+  function overlap(a, b) {
+    return a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+  }
+  function placeLabels() {
+    if (!svg || !view) return;
+    var s = view.w / (canvas.clientWidth || 1), far = svg.classList.contains("far");
+    var small = window.matchMedia("(max-width: 600px)").matches;
+    placedAt = s;
+    // The pins that show, as circles in screen pixels.
+    var obstacles = [];
+    Object.keys(pins).forEach(function (id) {
+      var pin = pins[id], k = kindOf(id), cls = pinLayer.classList;
+      if (cls.contains("hide-" + k) || (k === "event" && pin.classList.contains("is-empty") && cls.contains("hide-empty-event"))) return;
+      var c = toMap(points[id]);
+      var r = (k === "event" ? 12 : 13) * (small ? 0.8 : 1) * (pin.classList.contains("is-sel") ? 1.3 : 1);
+      obstacles.push([c[0] / s, c[1] / s, r + 2]);
+    });
+    labels.forEach(function (l) { obstacles.push([l.x / s, l.y / s, l.half + 1]); });
+    var placed = [];
+    labels.forEach(function (l) {
+      if (l.town && far) return;
+      if (!l.w) { try { l.w = l.t.getComputedTextLength(); } catch (e) { l.w = 0; } }
+      if (!l.w) return;
+      var ax = l.x / s, ay = l.y / s, h = l.half, w = l.w + 4, best = null;
+      // baseline offsets and anchors around the icon: below, above, right, left, the corners, further out
+      [[0, h + 12, "middle"], [0, -h - 5, "middle"], [h + 4, 4, "start"], [-h - 4, 4, "end"],
+       [h - 2, h + 12, "start"], [2 - h, h + 12, "end"], [h - 2, -h - 5, "start"], [2 - h, -h - 5, "end"],
+       [0, h + 26, "middle"], [0, -h - 19, "middle"], [h + 18, 4, "start"], [-h - 18, 4, "end"]].some(function (c) {
+        var left = c[2] === "middle" ? c[0] - w / 2 : c[2] === "start" ? c[0] - 2 : c[0] - w + 2;
+        var rect = [ax + left, ay + c[1] - 10, w, 13.5], score = 0;
+        obstacles.forEach(function (o) {
+          if (Math.abs(o[0] - ax) < 200 && Math.abs(o[1] - ay) < 200 && hitRect(rect, o[0], o[1], o[2])) score += 10;
+        });
+        placed.forEach(function (p) { if (overlap(rect, p)) score += 4; });
+        if (!best || score < best.score) best = { c: c, rect: rect, score: score };
+        return score === 0;
+      });
+      l.t.setAttribute("x", best.c[0]);
+      l.t.setAttribute("y", best.c[1]);
+      l.t.setAttribute("text-anchor", best.c[2]);
+      placed.push(best.rect);
+    });
   }
 
   function startView() {
@@ -308,6 +379,9 @@
       pins[selected].classList.add("is-sel");
       pinLayer.appendChild(pins[selected]);
     }
+    collectLabels();
+    placedAt = 0;
+    queueLabels();
   }
 
   // The tooltip: the name and the #1.
@@ -491,6 +565,7 @@
         var on = chip.getAttribute("aria-pressed") !== "true";
         chip.setAttribute("aria-pressed", String(on));
         if (pinLayer) pinLayer.classList.toggle("hide-" + chip.dataset.kind, !on);
+        queueLabels();
       });
     });
     if (window.ResizeObserver) {
