@@ -32,8 +32,28 @@ to Cars with Tune Car focused, and resume. All screenshots came from that same
 combined binary and copied profile. No tuning values were applied in this pass.
 The tuning worker's separate tests cover file import and persistence/readback;
 those are not claimed as repeated combined-session checks. Header class/PI
-binding is a follow-up; platform, fallback and extended lifetime checks remain
+binding uses the current loaded car's native badge controller; its manufacturer
+logo comes from the database's standard IconPath resource. The legacy light
+filename is not used because the corresponding texture is absent in FH1.
+Both tuning and library use the same header identity. Platform, fallback and extended lifetime checks remain
 limited as detailed below.
+
+The shared tab bar uses compact spacing, upright native labels and angled FH1
+paper. Selection commits immediately while the active paper moves for150ms;
+interrupted motion continues from the displayed location, wrapping snaps, and
+large elapsed times settle immediately. This visual state belongs to the shared
+component and is preserved through tuning/library view snapshots. The pause
+header retains its native player/car/credits bindings over one continuous paper
+strip. Only the dim backdrop bleeds outside the safe area, sized from the output
+viewport so the donor texture's transparent perimeter is outside the frame.
+
+The shared UI polish was checked at1280x720 in a copied offline profile:
+Home/Cars header and slanted tabs, Tune Car entry, tuning/library manufacturer
+logo and current B437 badge for the Lancer, named Setup1 under Load, shoulder
+switches, Back and resume. Native screenshot sequences capture the active-paper
+motion on both pause and library tabs; no synthetic interpolation was added.
+The current class is cached until its native value changes, avoiding redundant
+texture/text rebinding every second. This pass did not Apply any tuning values.
 
 | Layer | Responsibility | Source |
 | --- | --- | --- |

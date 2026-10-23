@@ -6,6 +6,8 @@
 #include "guest_memory.h"
 #include <cstdint>
 #include <cstring>
+#include <cmath>
+#include <bit>
 #include <string>
 
 namespace forza::fh1_current_car {
@@ -30,12 +32,45 @@ inline void WriteWord(uint8_t* base, uint32_t address, uint32_t value) {
     p[i] = uint8_t(value >> (24 - i * 8));
 }
 
+// PlayerBar's current-car class/PI path (828C7114..828C71A4). Preserve
+// CClassBadge's native image lookup, class color and display-PI conversion.
+// This reads the loaded car; it does not estimate an unsaved tune's PI.
+template <typename UI>
+bool BindCurrentClass(UI& ui,uint32_t controller,uint32_t expected_model,uint64_t* last_value=nullptr) {
+#if FORZA_TU4
+  if(!controller||ReadWord(ui.base,controller)!=0x8207513C||!expected_model)return false;
+  const auto player=ui.Call(0x82915BE0,{});if(!player)return false;
+  const auto table=ReadWord(ui.base,player);
+  const auto getter=table?ReadWord(ui.base,table+0x78):0;
+  const auto car=getter?ui.Call(getter,{player}):0;
+  if(!car)return false;
+  const auto model=ui.Call(0x826BDCB0,{car});
+  if(!model||ReadWord(ui.base,model)!=expected_model)return false;
+  const auto car_class=ui.Call(0x825E6518,{car});
+  ui.Call(0x825E6620,{car});const double pi=ui.ctx.f1.f64;
+  if(!std::isfinite(pi)||pi<=0)return false;
+  const uint64_t value=uint64_t(car_class)<<32|std::bit_cast<uint32_t>(float(pi));
+  if(last_value&&*last_value==value)return true;
+  // A donor has no owning garage datasource. Detach its borrowed pointer via
+  // the native setter before explicitly supplying current-car values.
+  ui.Call(ReadWord(ui.base,ReadWord(ui.base,controller)+0x64),{controller,0});
+  ui.ctx.f1.f64=pi;ui.Call(0x8288F2B0,{controller,0,car_class});
+  ui.Call(0x82891220,{controller});
+  if(last_value)*last_value=value;
+  return true;
+#else
+  return false;
+#endif
+}
+
 // The native PlayerBar's localized Data_Car / List_CarMake query (828C71A8).
 // Bind separate model and manufacturer fields without converting localized
 // guest strings to ASCII. Missing data leaves the target text unchanged.
 template <typename UI>
 bool BindNames(UI& ui, uint32_t presentation, uint32_t model_node,
-               uint32_t manufacturer_node, uint32_t model_id) {
+               uint32_t manufacturer_node, uint32_t model_id,
+               uint32_t logo_material=0, bool* logo_bound=nullptr) {
+  if (logo_bound) *logo_bound=false;
 #if FORZA_TU4
   if (!presentation || !model_id || (!model_node && !manufacturer_node))
     return false;
@@ -56,7 +91,7 @@ bool BindNames(UI& ui, uint32_t presentation, uint32_t model_node,
       ui.Call(0x8242D1A0, {memory});
     }
   } cleanup{ui, temporary};
-  const auto sql = std::string("SELECT c.DisplayName AS carName, m.DisplayName AS makeName "
+  const auto sql = std::string("SELECT c.DisplayName AS carName, m.DisplayName AS makeName, m.IconPath AS logoPath "
                                "FROM Data_Car c INNER JOIN List_CarMake m ON c.MakeId=m.ID "
                                "WHERE c.Id = ") + std::to_string(model_id);
   ui.Call(ReadWord(ui.base, ReadWord(ui.base, database) + 0x20),
@@ -84,6 +119,33 @@ bool BindNames(UI& ui, uint32_t presentation, uint32_t model_node,
       bound = true;
     }
     ui.Call(0x824CEAB0, {temporary + 4});
+  }
+  if (logo_material) {
+    const auto key=temporary+16;
+    ui.Call(0x82480600,{key,ui.String("logoPath")});
+    // Raw filename getter, matching 825B6264. The localized text getter
+    // (+4C) used for car names intentionally does not return resource paths.
+    const auto filename=ui.Call(ReadWord(ui.base,table+0x44),{result,0,key,0});
+    const auto length=filename?ReadWord(ui.base,filename+16):0;
+    const auto capacity=filename?ReadWord(ui.base,filename+20):0;
+    const auto chars=filename?(capacity<16?filename:ReadWord(ui.base,filename)):0;
+    std::string path;
+    if (chars && length>0 && length<512 && length<=capacity) for (unsigned i=0;i<length;++i) {
+      const auto c=GuestPtr(ui.base,chars+i)[0];
+      if (!c) break;
+      if (c>127) {path.clear();break;}
+      path.push_back(char(c));
+    }
+    ui.Call(0x82441428,{key,1,0});
+    // Use the database's standard logo resource, never the donor's default.
+    if (!path.empty() && path.size()<512) {
+      const auto binding=temporary+48;
+      ui.Call(0x82664A38,{binding});
+      WriteWord(ui.base,binding+4,logo_material);
+      WriteWord(ui.base,binding+8,presentation);
+      ui.Call(0x82F38E80,{binding,ui.String(path),0,8});
+      if (logo_bound) *logo_bound=true;
+    }
   }
   return bound;
 #else

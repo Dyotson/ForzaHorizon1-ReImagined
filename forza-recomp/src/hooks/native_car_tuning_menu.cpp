@@ -128,6 +128,7 @@ struct Form {
   uint16_t held = 0;
   int direction = 0;
   std::chrono::steady_clock::time_point repeat_at{};
+  std::chrono::steady_clock::time_point animation_at{};
   std::string message;
   enum class Page { Tune, Library, Name, Delete } page=Page::Tune;
   unsigned action=0,library_selected=0,key=0;
@@ -650,6 +651,9 @@ void DrawWorkspace(UI& ui) {
     }
   }
   fh1_menu_widgets::Native native(ui.ctx,ui.base);workspace.Tick(native,view);
+  // Preserve the shared component's displayed animation position across the
+  // value snapshot, so interrupted tuning/library transitions stay continuous.
+  if(form.page==Form::Page::Tune)form.tabs=view.tabs;else form.library_tabs=view.tabs;
   if(workspace.Failed())REXLOG_WARN("Native car tuning: dedicated workspace rejected; next input closes without applying");
 }
 
@@ -683,6 +687,10 @@ void Direction(UI& ui,int direction) {
 }
 void Tick(const PPCContext& context, uint8_t* base) {
   if (!form.screen || !form.bound || form.apply_running) return;
+  const auto animation_now=std::chrono::steady_clock::now();
+  const auto animation_delta=form.animation_at.time_since_epoch().count()?std::chrono::duration<double>(animation_now-form.animation_at).count():1.;
+  form.animation_at=animation_now;
+  form.tabs.Advance(animation_delta);form.library_tabs.Advance(animation_delta);
   UI ui(context, base);
   if (!ui.scratch) return;
   if (workspace.Failed()) {

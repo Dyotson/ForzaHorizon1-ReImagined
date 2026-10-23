@@ -3,6 +3,7 @@
 #include "fh1_menu_widgets.h"
 #include "fh1_menu_components.h"
 #include "fh1_current_car.h"
+#include "ultrawide.h"
 #if FORZA_TU4
 #include <array>
 #include <chrono>
@@ -27,6 +28,12 @@ class Workspace {
   };
   std::array<Piece,22> pieces;
   Donor footer;uint32_t named_model=0;
+  uint32_t class_badge=0,class_controller=0;
+  uint32_t manufacturer_logo=0,logo_material=0;
+  bool logo_ready=false;
+  bool class_ready=false;
+  uint64_t bound_class=0;
+  std::chrono::steady_clock::time_point class_refresh{};
   uint32_t screen=0,engine=0,stock_root=0; uint8_t suppression=0,visibility=0;
   bool ready=false,failed=false;
   uint32_t parent_engine=0,parent_root=0; uint8_t parent_suppression=0,parent_visibility=0;
@@ -93,9 +100,22 @@ class Workspace {
     auto thumbs=Descendants(ui.base,tape,0x747ffda5);p.thumb=thumbs.empty()?0:thumbs.front();
     if(!p.paper||!p.ink||!p.track||!p.fill||!p.tick||!p.thumb || std::any_of(p.text.begin(),p.text.end(),[](auto n){return !n;}))return false;
     // Header uses the same native localized car-name fields as the pause car card.
-    if(&p==&pieces[20]){p.text[9]=Named(ui,Named(ui,d.root,"CAR_STATS"),"TEXT_MANUFACTURER");p.text[10]=Named(ui,Named(ui,d.root,"CAR_STATS"),"TEXT_CAR_NAME");}
+    if(&p==&pieces[20]){
+      const auto stats_root=Named(ui,d.root,"CAR_STATS");
+      p.text[9]=Named(ui,stats_root,"TEXT_MANUFACTURER");p.text[10]=Named(ui,stats_root,"TEXT_CAR_NAME");
+      class_controller=0;
+      class_badge=Named(ui,stats_root,"CLASS_SM");const auto pi=Named(ui,class_badge,"TEXT_PI");
+      manufacturer_logo=Named(ui,stats_root,"LOGO");
+      logo_material=Named(ui,manufacturer_logo,"Material_Car_Logo");
+      const auto manager=d.Components(ui);const auto begin=manager?Read(ui.base,manager+0x28):0,end=manager?Read(ui.base,manager+0x2c):0;
+      if(begin&&end>=begin&&end-begin<=8192&&(end-begin)%8==0)
+        for(auto item=begin;item<end;item+=8){auto controller=Read(ui.base,item+4);
+          if(controller&&Read(ui.base,controller)==0x8207513C&&Read(ui.base,controller+0xA8)==pi)class_controller=controller;}
+      if(!class_badge||!pi||!class_controller||!manufacturer_logo||!logo_material)return false;
+    }
     Uncrop(ui,d,p.ink);Uncrop(ui,d,p.track);Uncrop(ui,d,p.fill);Uncrop(ui,d,p.tick);Uncrop(ui,d,p.thumb);
     auto retain=p.text;retain.insert(retain.end(),{p.paper,p.track,p.fill,p.tick,p.thumb});
+    if(&p==&pieces[20]){retain.push_back(class_badge);retain.push_back(manufacturer_logo);}
     return d.Isolate(ui,retain);
   }
   void Restore(Native& ui) {
@@ -108,7 +128,7 @@ public:
   bool Start(Native& ui,uint32_t parent,uint32_t pause_parent) {
     if(screen || !Read(ui.base,parent+0x110)){failed=true;return false;}screen=parent;engine=Read(ui.base,screen+8);started=std::chrono::steady_clock::now();
     parent_engine=Read(ui.base,pause_parent+8);
-    for(unsigned i=0;i<pieces.size();++i){pieces[i].panel=true;pieces[i].plain_labels=i==19;if(!pieces[i].donor.Start(ui,"game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_TUNING_"+std::to_string(i)+".bgf"))failed=true;}
+    for(unsigned i=0;i<pieces.size();++i){pieces[i].panel=true;pieces[i].plain_labels=i==19||i<9;if(!pieces[i].donor.Start(ui,"game:\\media\\ui\\scenes\\ui4\\NATIVE_MENU_TUNING_"+std::to_string(i)+".bgf"))failed=true;}
     return !failed;
   }
   bool Ready()const{return ready;}
@@ -119,6 +139,9 @@ public:
     if(parent_root){ui.Call(0x82FEB480,{parent_engine,parent_suppression});GuestPtr(ui.base,parent_root+0xfc)[0]=parent_visibility;parent_root=parent_engine=0;}
     for(auto& p:pieces){p.donor.Release(ui);p.text.clear();p.paper=p.ink=p.track=p.fill=p.tick=p.thumb=0;}
     screen=engine=0;ready=failed=false;cache.clear();footer=Donor{};named_model=0;
+    class_badge=class_controller=0;class_ready=false;class_refresh={};
+    bound_class=0;
+    manufacturer_logo=logo_material=0;logo_ready=false;
   }
   void Tick(Native& ui,const View& view) {
     if(!screen||failed)return;
@@ -126,7 +149,9 @@ public:
       bool loaded=true;for(unsigned i=0;i<pieces.size();++i){auto& p=pieces[i];
         // Native 82F1F2B0 sorts context*100 + owner layer. Separate the
         // backdrop below the original blur/footer layer, then panel and foreground.
-        loaded=p.donor.Poll(ui,screen,{},i==21?-1:i==19?1:2)&&loaded;
+        loaded=p.donor.Poll(ui,screen,[i,&ui](uint32_t,uint32_t controller){
+          return i==20 && controller && Read(ui.base,controller)==0x8207513C;
+        },i==21?-1:i==19?1:2)&&loaded;
         failed|=p.donor.status==Donor::Status::Failed;}
       if(failed||std::chrono::steady_clock::now()-started>std::chrono::seconds(12)){failed=true;Release(ui);failed=true;return;}
       if(!loaded)return;
@@ -153,7 +178,10 @@ public:
     const auto label=[&](Piece& p,unsigned i,Rect r,float size,const std::string& s,uint32_t c=0xffffff,unsigned a=0){
       ui.Show(p.donor.presentation,p.text[i],true);Text(ui,p,i,r,size,s,c,a);};
     auto& backing=pieces[21];
-    Mesh(ui,backing,backing.paper,{0,0,1280,720},0x161117,backing.ink);
+    // Only the backdrop bleeds beyond the canvas: its donor texture has a
+    // transparent perimeter. Foreground panels retain their safe-area bounds.
+    const auto extent=ultrawide::OutputSize();
+    Mesh(ui,backing,backing.paper,fh1_menu_components::BackdropBounds(extent.width,extent.height),0x161117,backing.ink);
     ui.Opacity(backing.donor.presentation,backing.paper,91);
     auto& header=pieces[20];
     fh1_menu_components::Header heading{view.library?"TUNE LIBRARY":"CAR TUNING",view.dirty?"UNSAVED DRAFT":"SAVED SETUP",view.dirty};
@@ -163,9 +191,24 @@ public:
     heading.Paint([&](Rect r,uint32_t c){Mesh(ui,header,header.paper,r,c,header.ink);},
       [&](unsigned i,Rect r,float z,const std::string& text,uint32_t color,unsigned align){label(header,i,r,z,text,color,align);},
       [&](Rect make,Rect name,float size){native_name(9,make,size);native_name(10,name,size);
-        if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id);named_model=view.model_id;}});
+        if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id,logo_material,&logo_ready);named_model=view.model_id;}});
+    ui.Show(header.donor.presentation,manufacturer_logo,logo_ready);
+    if(logo_ready){Normalize(ui,header.donor,manufacturer_logo);Depth(ui,header.donor,manufacturer_logo,-5);
+      ui.Opacity(header.donor.presentation,manufacturer_logo,100);ui.Color(header.donor.presentation,logo_material,0xffffff);
+      Point(ui,header.donor,manufacturer_logo,88,89);ui.Scale(header.donor.presentation,manufacturer_logo,.44f,.26f);
+      ui.RotationZ(header.donor.presentation,manufacturer_logo,0);}
+    const auto class_bounds=heading.CurrentClassBounds();
+    if(std::chrono::steady_clock::now()>=class_refresh){
+      class_ready=fh1_current_car::BindCurrentClass(ui,class_controller,view.model_id,&bound_class);
+      class_refresh=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+    }
+    label(header,11,{class_bounds.x,class_bounds.y,126,class_bounds.h},12,class_ready?"CURRENT CLASS":"CLASS UNAVAILABLE",0xc9c2c9);
+    ui.Show(header.donor.presentation,class_badge,class_ready);
+    if(class_ready){Normalize(ui,header.donor,class_badge);Depth(ui,header.donor,class_badge,-5);
+      Point(ui,header.donor,class_badge,class_bounds.x+176,class_bounds.y+class_bounds.h/2);
+      ui.Scale(header.donor.presentation,class_badge,.8f,.8f);ui.RotationZ(header.donor.presentation,class_badge,0);}
     view.tabs.Paint({44,120,1192,48},9,
-      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);},
+      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);ui.RotationZ(p.donor.presentation,p.paper,fh1_menu_components::TabBar::kSlantDegrees);},
       [&](size_t slot,unsigned index,Rect r,float size,const std::string& text,uint32_t color){label(pieces[slot],index,r,size,text,color,1);});
     const auto category=view.tabs.tabs().empty()?std::string{}:view.tabs.tabs()[view.tabs.selected_index()].label;
     Mesh(ui,header,header.track,{48,191,726,36},0x302b30,Named(ui,header.track,"Material100"));

@@ -35,4 +35,27 @@ int main(){
   community.Paint({0,0,220,48},9,[](size_t,Rect,uint32_t){},
     [&](size_t,unsigned anchor,Rect,float,const std::string& text,uint32_t){if(anchor==1)unavailable=text;});
   Check(unavailable=="Coming soon","Unavailable tabs must expose their explicit availability label");
+  Header header;const auto badge=header.CurrentClassBounds();
+  header.Paint([](Rect,uint32_t){},[](unsigned,Rect,float,const std::string&,uint32_t,unsigned){},
+    [&](Rect make,Rect model,float){Check(make.x+make.w<=model.x&&model.x+model.w<badge.x,"Car class must not overlap manufacturer/model");});
+  Check(badge.x+badge.w<=header.bounds.x+header.bounds.w&&badge.y+badge.h<=header.bounds.y+header.bounds.h,"Class badge must remain inside header");
+  TabBar animated;animated.SetTabs({{"home","HOME"},{"cars","CARS"},{"settings","SETTINGS"}});
+  float active_x=0;
+  const auto paint=[&]{animated.Paint({64,112,580,42},3,
+    [&](size_t,Rect r,uint32_t color){if(color==0xff007a)active_x=r.x;},
+    [](size_t,unsigned,Rect,float,const std::string&,uint32_t){});};
+  paint();const auto first_x=active_x;
+  animated.Select("cars");Check(animated.selected_id()=="cars","Animation must not delay logical selection");
+  paint();Check(active_x==first_x,"A transition must begin at the prior visual location");
+  animated.Advance(.075);paint();const auto halfway=active_x;
+  Check(halfway>first_x&&halfway<animated.Layout({64,112,580,42},3)[1].bounds.x,"Selection motion must interpolate");
+  animated.Select("home");paint();Check(active_x==halfway,"Interrupted motion must continue from its displayed position");
+  animated.Advance(10);paint();Check(active_x==first_x,"Dropped frames must settle without queued animations");
+  animated.SelectNeighbor(-1);paint();
+  Check(animated.selected_id()=="settings"&&active_x==animated.Layout({64,112,580,42},3)[2].bounds.x,"Wrap must snap instead of sliding across unrelated tabs");
+  for(auto size:{std::pair{1280u,720u},std::pair{1280u,800u},std::pair{2560u,1080u}}){
+    const auto r=BackdropBounds(size.first,size.second);
+    const auto scale=std::min(float(size.first)/1280,float(size.second)/720);
+    Check(r.w>float(size.first)/scale&&r.h>float(size.second)/scale,"Backdrop bleed must cover the physical viewport at each aspect ratio");
+  }
 }

@@ -70,6 +70,7 @@ struct State {
   bool footer_bound=false, footer_recovery=false;
   Car car;
   uint32_t player_bar = 0, credits = 0, username = 0, username_paper = 0;
+  uint32_t header_paper=0,header_material=0;
   uint32_t status = 0, footer = 0;
   std::array<uint32_t, 2> bumpers{};
   std::string gamertag, connection;
@@ -202,6 +203,7 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   // before activation so format drift always returns to the stock pause.
   const auto tape = Named(ui, card.donor.root, "TitleTape");
   card.title = Named(ui, tape, "TitleTapeText");
+  if(tab)card.title=Named(ui,Named(ui,card.donor.root,"CAR_STATS"),"TEXT_CAR_NAME");
   // BGF renames these FBF meshes. Match their serialized runtime identities,
   // scoped under the verified tape component, rather than FBF display names.
   const auto highlight = Named(ui, Named(ui, card.donor.root, "CAR_LIST"), "HIGHLIGHT");
@@ -242,6 +244,11 @@ const char* Description(std::string_view id) {
 }
 bool BindHeader(Native& ui) {
   const auto& d = state.header;
+  const auto panes=Descendants(ui.base,Named(ui,Named(ui,d.root,"CAR_LIST"),"HIGHLIGHT"),0xe0dc09b7);
+  state.header_paper=panes.empty()?0:panes.front();
+  state.header_material=Named(ui,state.header_paper,"Material866");
+  if(!state.header_paper||!state.header_material)return false;
+  PaperUV(ui,d,state.header_material);
   state.player_bar = Named(ui, d.root, "PlayerBar");
   if (!state.player_bar) state.player_bar = Named(ui, d.root, "PLAYER_BAR");
   state.credits = Named(ui, state.player_bar, "BottomRow");
@@ -291,6 +298,13 @@ void RefreshData(Native& ui) {
 }
 void HeaderLayout(Native& ui) {
   const auto& d = state.header;
+  const auto r=fh1_menu_components::Header{}.bounds;
+  Normalize(ui,d,state.header_paper);
+  Point(ui,d,state.header_paper,r.x+r.w/2,r.y+r.h/2);
+  ui.Scale(d.presentation,state.header_paper,r.w/100,r.h/100);
+  ui.RotationZ(d.presentation,state.header_paper,0);Depth(ui,d,state.header_paper,3);
+  ui.Opacity(d.presentation,state.header_paper,100);
+  ui.Color(d.presentation,state.header_material,0x302b30);
   // Preserve PlayerBar's native wristband/class/car bindings on the left.
   ui.Position(d.presentation, state.credits, 647, -34);
   Normalize(ui, d, state.username_paper);
@@ -672,7 +686,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       DumpNodes(ui, state.header, "header");
       Release(ui, true); return;
     }
-    valid = state.header.Isolate(ui, {state.player_bar, state.username, state.username_paper,
+    valid = state.header.Isolate(ui, {state.header_paper,state.player_bar, state.username, state.username_paper,
         state.status, state.footer, state.bumpers[0], state.bumpers[1]}) && valid;
     for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title}) && valid;
     for (size_t i = 0; i < state.cards.size(); ++i) {
@@ -799,6 +813,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (!state.tab_bar.SetTabs(std::move(tabs)) || !state.tab_bar.Select(page->id)) {
     Release(ui, true); return;
   }
+  state.tab_bar.Advance(elapsed);
   const auto cells = state.tab_bar.Layout({64, 112, 580, 42}, layout::kTabCapacity);
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
@@ -808,6 +823,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         tab.donor.Tick(ui, [&] {
           StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
           ui.Color(tab.donor.presentation, tab.material, color);
+          ui.RotationZ(tab.donor.presentation,tab.paper,fh1_menu_components::TabBar::kSlantDegrees);
         });
       },
       [&](size_t slot, unsigned index, fh1_menu_components::Rect r, float size,
@@ -815,7 +831,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         if (index) return; // Pause capabilities disable a page rather than lock it.
         auto& tab = state.tabs[slot];
         Label(ui, tab.donor, tab.title, {r.x,r.y,r.w,r.h}, size, text, color, 1);
-      }, 23.f);
+      }, 20.f);
   state.header.Tick(ui, [&] { HeaderLayout(ui); });
   bool map_visible = false, map_selected = false;
   if (page->id == "home") {
