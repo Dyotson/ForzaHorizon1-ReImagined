@@ -728,12 +728,13 @@ index 73143659..b2166f06 100644
    const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
-@@ -2129,6 +2134,7 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+@@ -2129,7 +2134,8 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
        view_color_transfer_separate, descriptor_set_index_transfer_source);
    render_target->memory_size_ = memory_size;
    render_target_memory_bytes_ += memory_size;
 +  cost.render_target_bytes += memory_size;
    ++render_target_count_;
+   render_target->SetNativeStorage((image_create_info.usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0);
    return render_target;
  }
 diff --git a/src/graphics/vulkan/shared_memory.cpp b/src/graphics/vulkan/shared_memory.cpp
