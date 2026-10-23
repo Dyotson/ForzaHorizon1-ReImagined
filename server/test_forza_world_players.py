@@ -4,6 +4,7 @@ level from the number of humans. Drives the server's matchmaking handlers direct
 sockets)."""
 
 import struct
+import time
 import unittest
 from unittest import mock
 
@@ -192,6 +193,41 @@ class WorldPlayersTest(unittest.TestCase):
     def test_ai_difficulty_follows_the_human_share_of_the_grid(self):
         levels = [world.ai_difficulty(n) for n in range(1, 9)]
         self.assertEqual(levels, ["Easy", "Easy", "Medium", "Medium", "Medium", "Hard", "Hard", "Hard"])
+
+
+class CountingTransport:
+    def __init__(self):
+        self.count = 0
+
+    def sendto(self, data, addr):
+        self.count += 1
+
+
+class WorldRelayTest(unittest.TestCase):
+    """The relay budget for a full world. Measured through the relay with four games (#12):
+    a game sends each peer one datagram a frame, about 100 bytes per car it runs (its own,
+    and in an event its share of the CPU drivers)."""
+
+    def test_a_full_world_at_240_fps_through_the_relay_loses_nothing(self):
+        server = srv.ForzaLive("test", 64)
+        server.transport = CountingTransport()
+        clock = [time.monotonic()]
+        with mock.patch.object(srv.time, "monotonic", lambda: clock[0]):
+            peers = []
+            for n in range(1, 9):
+                peer = srv.Peer(n, ("198.51.100.%d" % n, 21300), n, 0x0009000000000000 + n,
+                                "P%d" % n, "#TU4", (0, 0))
+                server.peers[n] = peer
+                server.by_addr[peer.addr] = peer
+                peers.append(peer)
+            sender, others = peers[0], peers[1:]
+            for _ in range(240 * 60):  # a minute at 240 fps, 100 bytes to each of 7 peers
+                clock[0] += 1 / 240
+                for dst in others:
+                    server.datagram_received(srv.MAGIC + bytes([srv.RELAY]) +
+                                             struct.pack(">I", dst.id) + bytes(104), sender.addr)
+        self.assertEqual(server.dropped_packets, 0)
+        self.assertEqual(server.relayed_packets, 240 * 60 * 7)
 
 
 if __name__ == "__main__":

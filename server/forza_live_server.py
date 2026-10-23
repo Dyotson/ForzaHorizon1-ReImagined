@@ -75,9 +75,12 @@ STATE_REFRESH = 30.0
 STATE_VERSION = 1
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
-# once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
-# a few times that. Defaults to 160 KB/s with 640 KB bursts (--rate-limit).
-RATE_LIMIT = 160 * 1024
+# once per recipient). Measured through the relay (#12): a game sends each peer one
+# datagram a frame of about 100 bytes per car it runs (its own, and in an event its share
+# of the CPU drivers), so a full world of 8 costs a player about 7 x fps x 108 bytes with
+# the relay header: 106 KB/s at 144 fps, 181 KB/s at 240. Defaults to 256 KB/s with 1 MB
+# bursts (--rate-limit).
+RATE_LIMIT = 256 * 1024
 RATE_BURST = 4 * RATE_LIMIT
 
 
@@ -89,7 +92,8 @@ MAX_ROOM = 64
 MAX_MOTD = 64  # keeps the WELCOME about as large as the HELLO that asks for it
 # Limits against abuse from the internet (every datagram is untrusted):
 MAX_PEERS_PER_IP = 16  # registered players behind one public address (a LAN, a CGNAT)
-PACKETS_PER_IP = (1500, 3000)  # datagrams/s and burst accepted from one address
+# datagrams/s and burst accepted from one address (a player in a world of 8 at 240 fps: 1680/s)
+PACKETS_PER_IP = (2500, 5000)
 HELLOS_PER_IP = (2, 20)  # new registrations/s and burst from one address
 ERRORS_PER_IP = (2, 10)  # "not registered" replies/s and burst to one address
 

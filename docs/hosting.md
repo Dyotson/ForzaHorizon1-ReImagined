@@ -94,9 +94,9 @@ that was requested but not taken.
 
 ## Limits (all untrusted input)
 
-- per address (not for `--trusted-proxy` addresses): 16 players, 1500 datagrams/s, 2 new registrations/s, 32 HTTP connections
+- per address (not for `--trusted-proxy` addresses): 16 players, 2500 datagrams/s, 2 new registrations/s, 32 HTTP connections
   (they stay open while idle: the game needs that);
-- per player: relay budget 160 KB/s (`--rate-limit`), 30 open auctions, 50 unretrieved
+- per player: relay budget 256 KB/s (`--rate-limit`), 30 open auctions, 50 unretrieved
   gifts, 100 shared cars, 4 game invites per 30 s (the rest are dropped and logged);
   one upload at most 2 MB, HTTP bodies at most 8 MB;
 - whole server: ghosts, cars and market blobs at most `FORZA_DISK_CAP_MB` (default 4096) MB,
@@ -159,8 +159,11 @@ chat. Moderation (operator endpoints, same rules as `/gift`):
 Mutes and bans are kept in `moderation.json` in the data folder until they run out. Example:
 `curl -H "X-Admin-Token: <token>" "http://host:21201/admin/mute?who=Name&minutes=30"`.
 
-The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
-50 KB/s to each peer.
+The relay limit is 256 KB/s per player (bursts of 4 s): a game sends each peer one datagram a
+frame, about 100 bytes per car it runs, so a player in a full Horizon World (7 peers) needs about
+106 KB/s through the relay at 144 fps and 181 KB/s at 240 (measured with four games, #12;
+`docs/online_vision.md`, "Three and four players"). Players with a direct path to each other do
+not use the relay.
 
 ## Players online in Discord (optional)
 
