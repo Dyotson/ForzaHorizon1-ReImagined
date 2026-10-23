@@ -625,6 +625,13 @@ force feedback. The actual combined wheel adapter compiles against Windows
 SDK/SDL3 headers. No physical force-feedback device or game/GPU session was used;
 DirectInput acquisition, force feel and real Fanatec/vJoy ordering remain hardware
 validation gates.
+**An effect the wheel refuses (#308).** A TMX on Windows refused the game's steering force ("Haptic error
+Unable to create effect"), and the driver tried again every frame: 86,000 warnings in one log. Now an effect is
+created on SDL's steering axis, else as a Cartesian or polar direction (SDK patch 0136); a type the wheel refuses
+in every direction is logged once (`Wheel: "..." refuses the game's ...`) and not tried again until the game
+resets its force feedback or the wheel is plugged in again. A refused centring spring becomes the wheel's own
+autocentre where it has one. Tested with a virtual TMX (uinput) that refuses constant forces: three tries (one
+per direction), one warning, the spring still playing; after a reset, three more.
 
 Tested with a virtual wheel (uinput) that logs what it receives, and by a G29 and a G923 owner. Wheel drivers disagree about
 which way a positive force turns the wheel: if yours pulls further into a corner instead of back to the centre,

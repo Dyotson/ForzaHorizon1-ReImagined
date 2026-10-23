@@ -1,9 +1,13 @@
-// A Thrustmaster TMX as #308 saw it (SDK patch 0135), on a Linux uinput device through SDL:
+// A Thrustmaster TMX as #308 saw it (SDK patches 0135, 0136), on a Linux uinput device through SDL:
 // 044f:b67f named "44F B67F" (its Windows driver gives it no name), four axes (X, Y, Rz, Slider)
-// that all read 0 until its first report, 13 buttons.
+// that all read 0 until its first report, 13 buttons, and force feedback that refuses the constant
+// force.
 //  - the driver reads where the axes rest at the first report, and the built-in TMX map puts the
 //    steering on X, the throttle on Rz, the brake on Y and the clutch on the slider, the paddles
 //    on the bumpers and A on button 4;
+//  - the refused constant force is tried once in each direction (steering axis, Cartesian, polar),
+//    logged once and not again while the game updates it every frame; the spring still plays; a
+//    reset of the game's force feedback tries it once more.
 //
 // Linux only (needs write access to /dev/uinput). Build against the patched SDK source
 // (tools/build_rexglue_sdk.sh --source-only) and link the patched runtime, from the repository root:
@@ -256,6 +260,31 @@ int main() {
   tmx.SetButton(8, false);
   std::printf("  the paddles shift (LB, RB), A on 4, B on 8\n");
 
+  // The game's force feedback: a spring (block 4) and a constant force (block 5) the TMX refuses.
+  std::printf("the game's effects, the constant force refused:\n");
+  Check(GameFfControl(kFfStopAll), "stop all");
+  Check(GameFfSetEffect(Effect(4, kFfSpring, 0)), "spring");
+  Check(GameFfSetEffect(Effect(5, kFfConstant, 0)), "constant force");
+  Check(GameFfOperate(4, 2) && GameFfOperate(5, 2), "start them");
+  for (int frame = 0; frame < 300; frame++) {  // ten seconds of frames at 30 FPS
+    GameFfUpdateEffect(Effect(5, kFfConstant, (frame % 50) - 25), 0x400);
+  }
+  Sleep(200);
+  const int tries = tmx.constant_tries;
+  std::printf("  300 updates: %d attempts to create it, the spring uploaded %d time(s)\n", tries,
+              tmx.spring_uploads.load());
+  Check(tries == 3, "tried once in each direction, then not again");
+  Check(tmx.spring_uploads >= 1, "the spring still plays");
+  // A reset of the game's force feedback: tried once more.
+  Check(GameFfControl(kFfReset), "reset");
+  Check(GameFfSetEffect(Effect(5, kFfConstant, 10)), "constant force again");
+  Check(GameFfOperate(5, 2), "start it");
+  for (int frame = 0; frame < 100; frame++) {
+    GameFfUpdateEffect(Effect(5, kFfConstant, frame % 20), 0x400);
+  }
+  Sleep(200);
+  std::printf("  after a reset: %d more attempts\n", tmx.constant_tries.load() - tries);
+  Check(tmx.constant_tries == tries + 3, "after a reset it is tried again, once");
   std::printf("wheel tmx probe: all checks passed\n");
   return 0;
 }
