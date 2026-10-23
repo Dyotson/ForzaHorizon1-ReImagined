@@ -109,6 +109,12 @@ the frame pacing of FIFO at high frame rates on drivers without MAILBOX (#80). S
 
 0066 averages supersampled RGBA8 car-thumbnail pixels during readback, keeping other formats and resolves unchanged. Requires the known-thumbnail refresh rule already on main (0053); see [Rendering issues](rendering.md#filter-supersampled-car-thumbnails-50).
 
+0149 corrects that filter's scaled storage addressing: each 16-byte guest quad
+expands into host quads, rather than a contiguous block per pixel. This removes
+the jagged/striped saved garage previews in #336. It changes only RGBA8 thumbnail
+box filtering and includes the regenerated SPIR-V and a GPU regression test;
+see [validation](rendering.md#scaled-storage-layout-correction-336).
+
 0072 adds the AMD FidelityFX FSR 3.1 upscaler (no frame generation) as a second backend of
 0046's scene/UI split: `fh1_upscaler=fsr3_quality|fsr3_balanced|fsr3_performance|fsr3_native`
 on any Vulkan GPU. CMake fetches the FidelityFX SDK v1.1.4 GLSL passes and headers (MIT; pinned
