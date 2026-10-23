@@ -414,10 +414,11 @@ extern "C" REX_FUNC(sub_8247C678) {
   if (!forza::frame_time::ConsoleRate()) {
     OnVblank();
     const int divider = forza::frame_time::VblanksPerFrame();
-    // mainthread30fps off: the event every vblank. Set before each check, so the
-    // option parser or a defaults reset cannot bring the divider back.
-    if (divider == 1 && (Load32(forza::GuestPtr(base, kOptionsGuard)) & 1)) {
-      *forza::GuestPtr(base, kMainThread30Fps) = 0;
+    // One vblank per frame needs the game's divider off; two or three need it on.
+    // Restore both states: an earlier one-vblank rate or the option parser may have
+    // disabled it. With it left off, showing two of every three vblanks doubles 20/40 fps.
+    if (Load32(forza::GuestPtr(base, kOptionsGuard)) & 1) {
+      *forza::GuestPtr(base, kMainThread30Fps) = uint8_t(divider != 1);
     }
     // A divider of three (20 and 40 fps): the counter, with mainthread30fps on, releases the
     // main loop at every second vblank it sees; it sees two of every three, so whatever its

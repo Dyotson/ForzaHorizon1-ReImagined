@@ -242,7 +242,7 @@ a 60 Hz screen. Two changes:
   (tracked per present: 49 steps of 1 us down for each step of 50 us up). A later frame is not
   held. On a 40 fps race most frames swapped on the second 120 Hz vblank of their period and
   one in twenty already on the first; the pacing holds those to the others. The wait is
-  `nanosleep` on Linux and macOS, a high-resolution waitable timer on Windows (not run there);
+  `nanosleep` on Linux and macOS, a high-resolution waitable timer on Windows;
   Direct3D 12 is not paced.
 
 Measured (the probe's host present times; "3 refreshes" models a FIFO screen of exactly 60 or
@@ -260,10 +260,28 @@ dropped, below):
 third vblank whatever its count, and the pacing on modeled 20 and 40 fps frames (the share of
 frames held exactly 3 refreshes at the worst screen phase: 49% unpaced, 98% paced at 20 fps).
 
+**Windows native qualification (2026-10-23).** A host-only probe ran the actual Windows
+`PreciseWait` implementation without game files or a GPU. For 100 samples each at requested
+0.1, 0.5, 1, 3 and 10 ms waits, median overshoot was about 0.4–0.55 ms in the initial runs;
+the wait is subject to scheduler latency, not a 0.1 ms precision guarantee. These measurements
+do not establish the Linux table's screen-pacing percentages on Windows.
+
+The native disc/TU4 fixture `forza-recomp/tests/frame_time_hook_test.cpp` executes the real
+vblank hook with sparse guest memory and a modeled original counter. It covers the disabled
+divider state left by a one-vblank rate (such as 144 fps with the older 240 Hz SDK limit),
+then 20, 40 and 60 fps, plus an option parser disabling the divider. The hook must restore `mainthread30fps` for dividers
+two and three; leaving it disabled released 200 rather than 100 frames over 300 vblanks
+at 20 fps. The corrected hook releases exactly 100 at both 20 and 40 fps.
+
+Build this Windows fixture with `clang-cl /std:c++latest /O2 /Gy /MD /UNDEBUG`, the patched
+SDK include paths and `forza-recomp/src` on the include path, and
+`/D_USE_STD_VECTOR_ALGORITHMS=0 /DFORZA_TITLE_UPDATE=0` (then `4`). Link `rexruntime.lib`
+with `/OPT:REF`, and put the SDK's runtime DLL folder on `PATH` before running it.
+
 Left:
 
 - The guest clock is not locked to the screen. At a phase where the paced presents (a band of
-  about 0.1 ms per frame, the wait's precision) cross a refresh deadline, a frame or two still
+  about 0.1 ms per frame in the Linux runs; Windows wait latency differs) cross a refresh deadline, a frame or two still
   takes 2 or 4 refreshes; that happens once per refresh period of drift (seconds to minutes).
   Locking it needs the display's timing from the driver (`VK_KHR_present_wait` or
   `VK_EXT_present_timing`, an SDK change).

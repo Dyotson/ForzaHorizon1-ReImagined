@@ -111,7 +111,7 @@ bool FromGpuPlugin(void* return_address) {
 #endif
 }
 
-// Waits `ns` nanoseconds, to within about 0.1 ms: nanosleep on POSIX, a high-resolution
+// Waits at least `ns` nanoseconds, subject to scheduler latency: nanosleep on POSIX, a high-resolution
 // waitable timer on Windows (10 1803 and later; without one it does not wait).
 void PreciseWait(int64_t ns) {
   if (ns <= 0) return;
