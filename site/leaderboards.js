@@ -9,7 +9,7 @@
   "use strict";
   var TOP = 50;
   var NS = "http://www.w3.org/2000/svg";
-  var MAX_ZOOM = 12;
+  var MAX_ZOOM = 8;
   var KIND = { "speed-trap": "trap", "speed-zone": "zone", "event": "event", "time-trial": "trial" };
   var KIND_NAME = { trap: "Speed trap", zone: "Speed zone", event: "Rivals event", trial: "Monthly Rivals" };
   var GROUPS = [["trap", "Speed traps"], ["zone", "Speed zones"], ["event", "Events and Rivals"], ["trial", "Monthly Rivals"]];
@@ -188,9 +188,8 @@
     show(id);
     if (how.hash !== false) history.replaceState(null, "", "#" + id);
     if (how.pan && pin) panTo(points[id]);
-    if (how.focusPanel && window.matchMedia("(max-width: 900px)").matches) {
-      $("board-panel").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
-    }
+    // On phones the board is below the map: the pin's card links down to it.
+    if (how.card && pin && narrow()) showTip(pin, true);
   }
 
   // ---- the map ----
@@ -313,7 +312,15 @@
 
   // The tooltip: the name and the #1.
   var tipFor = null;
-  function showTip(pin) {
+  function keyboardFocus(e) {
+    try { return e.matches(":focus-visible"); } catch (err) { return true; }
+  }
+  function hashId() {
+    try { return decodeURIComponent(location.hash.slice(1)); } catch (err) { return ""; }
+  }
+  function narrow() { return window.matchMedia("(max-width: 900px)").matches; }
+
+  function showTip(pin, card) {
     var id = pin.dataset.id, b = boards[id], top = leader(b), k = kindOf(id);
     tip.replaceChildren(el("b", nameOf(id)), el("span", KIND_NAME[k] + (b ? " · " + drivers(b.players) : ""), "k"));
     var line = el("div", null, "top");
@@ -323,6 +330,17 @@
       line.textContent = data ? "No scores yet" : "Scores unavailable";
     }
     tip.appendChild(line);
+    tip.classList.toggle("card", !!card);
+    if (card) {
+      var go = el("button", boards[id] ? "See the top " + Math.min(TOP, b.players) + " below" : "Open the board below", "lb-tip-go");
+      go.type = "button";
+      go.addEventListener("click", function () {
+        hideTip();
+        $("board-panel").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+        $("board-panel").focus({ preventScroll: true });
+      });
+      tip.appendChild(go);
+    }
     var r = pin.getBoundingClientRect(), m = mapBox.getBoundingClientRect();
     tip.hidden = false;
     var x = r.left + r.width / 2 - m.left, y = r.top - m.top;
@@ -419,13 +437,13 @@
     canvas.addEventListener("click", function (e) {
       var pin = e.target.closest && e.target.closest(".lb-pin");
       if (!pin || moved) return;
-      select(pin.dataset.id, { focusPanel: true });
+      select(pin.dataset.id, { card: true });
     });
     canvas.addEventListener("keydown", function (e) {
       var pin = e.target.closest && e.target.closest(".lb-pin");
       if (pin && (e.key === "Enter" || e.key === " ")) {
         e.preventDefault();
-        select(pin.dataset.id, { focusPanel: true });
+        select(pin.dataset.id, { card: true });
         return;
       }
       var step = 0.15, pan = null;
@@ -442,17 +460,20 @@
     });
     canvas.addEventListener("pointerover", function (e) {
       var pin = e.target.closest && e.target.closest(".lb-pin");
-      if (pin && pin !== tipFor && !dragging) showTip(pin);
+      if (pin && pin !== tipFor && !dragging && e.pointerType === "mouse") showTip(pin);
     });
     canvas.addEventListener("pointerout", function (e) {
       var pin = e.target.closest && e.target.closest(".lb-pin");
-      if (pin && (!e.relatedTarget || !pin.contains(e.relatedTarget))) hideTip();
+      if (pin && e.pointerType === "mouse" && !tip.classList.contains("card") &&
+          (!e.relatedTarget || !pin.contains(e.relatedTarget))) hideTip();
     });
     canvas.addEventListener("focusin", function (e) {
       var pin = e.target.closest && e.target.closest(".lb-pin");
-      if (pin) { panTo(points[pin.dataset.id]); showTip(pin); }
+      if (pin && keyboardFocus(pin)) { panTo(points[pin.dataset.id]); showTip(pin); }
     });
-    canvas.addEventListener("focusout", hideTip);
+    canvas.addEventListener("focusout", function (e) {
+      if (!tip.classList.contains("card") && !(e.relatedTarget && tip.contains(e.relatedTarget))) hideTip();
+    });
     document.querySelectorAll(".lb-zoom button").forEach(function (b) {
       b.addEventListener("click", function () {
         var z = b.dataset.zoom;
@@ -488,6 +509,10 @@
   // ---- start ----
 
   boardSel.addEventListener("change", function () { select(boardSel.value, { pan: true }); });
+  window.addEventListener("hashchange", function () {
+    var id = hashId();
+    if (id && id !== selected && (boards[id] || pins[id])) select(id, { pan: true, hash: false });
+  });
   classSel.addEventListener("change", function () { if (selected) rows(selected); });
 
   Promise.all([
@@ -504,12 +529,12 @@
       mapState.textContent = "The map could not be loaded. The list beside it has every board.";
     }
     fillList();
-    var want = decodeURIComponent(location.hash.slice(1));
+    var want = hashId();
     if (!boards[want] && !(points[want] && KIND[points[want].kind])) {
       // The busiest board with a place on the map, else the busiest.
       var all = Object.keys(boards).sort(function (a, b) { return boards[b].players - boards[a].players; });
       want = all.filter(function (id) { return pins[id]; })[0] || all[0] ||
-        Object.keys(pins)[0] || null;
+        Object.keys(pins).filter(function (id) { return kindOf(id) === "trap"; })[0] || null;
     }
     if (want) select(want, { hash: false, pan: !!location.hash });
     else state(data ? "Nobody has set a score yet. Be the first on the public server." :
