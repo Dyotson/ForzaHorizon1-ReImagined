@@ -599,6 +599,11 @@ Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Market
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` entry becomes `fsr`; `fsr3` is now the temporal upscaler).
 
+**20 and 40 fps (#263).** The Frame rate list starts with 20, 30 and 40 fps; a typed rate under 60 becomes the
+highest of those not above it (45 becomes 40), as the game runs only those under 60
+(`schema.LOW_FRAME_RATES`, `docs/framerate.md`). The help text says what 20 is for: a PC that cannot hold 30
+gets frames that each stay on a 60 Hz screen equally long. Tests: `launcher/test_frame_rate_control.py`.
+
 **Match display (#215).** The first entry of the Frame rate list, "Match display (N Hz)", follows the refresh rate
 of the monitor the game runs on (Settings > Display > Monitor; 0 and 1 are the primary display, 2 the second,
 and so on). It is stored as `frame_rate = 0` in `launcher.json` and resolved by the launcher
@@ -675,7 +680,7 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 | NVIDIA | Vulkan, render scale 1, AMD FSR 1, 60 fps, shader cache and background shader compilation on (scale 2 is the most you should need) | Direct3D 12 (Windows): flicker, green reflections on glass and paint (#46). Render scale 3 and above: flicker and coloured artifacts across the map (#47). Background compilation or the shader cache off: Vulkan stutter (#49, open: warm-cache stutter unmeasured). Traffic car glow in the distance (#48): no setting avoids it |
 | AMD (Linux and Windows) | Vulkan, render scale 1, AMD FSR 1, 60 fps | none; render scale 3 and 4 are clean on Radeon (Vulkan/RADV, and Direct3D 12 under vkd3d-proton at 3) |
 | Intel | Vulkan, render scale 1, AMD FSR 1, 30 fps | nothing reported yet; Direct3D 12 (a different render target path on Intel) and render scale 2 and up are marked as untested / slow |
-| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
+| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). 20 and 40 fps are in the Frame rate list (#263: they divide 60 and 120 Hz screens; 40 suits a Deck screen set to 40 Hz) but not in the preset |
 
 Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
 valid for the schema, warnings, the first-run / existing-settings / player-choice flows, the `--gpu_vendor` argument).

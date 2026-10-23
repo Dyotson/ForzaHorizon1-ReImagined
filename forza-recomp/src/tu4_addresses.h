@@ -35,6 +35,10 @@
 #define __imp__sub_82546460 __imp__sub_825B63B8
 #define sub_825548A0 sub_825D3860  // check
 #define __imp__sub_825548A0 __imp__sub_825D3860
+#define sub_825581E8 sub_825CBBD8
+#define __imp__sub_825581E8 __imp__sub_825CBBD8
+#define sub_8255DE80 sub_825D2528
+#define __imp__sub_8255DE80 __imp__sub_825D2528
 #define sub_825723B0 sub_825E7B40
 #define __imp__sub_825723B0 __imp__sub_825E7B40
 #define sub_82573660 sub_825E8608
