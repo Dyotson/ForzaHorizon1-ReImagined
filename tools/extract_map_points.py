@@ -29,10 +29,14 @@ Where everything comes from (all read-only):
   media/db/gamedb.slt (the title update's when given)  Events, Races, Tracks, Data_Car
   media/stringtables/EN.zip  List_SpeedCameras, Events, Tracks, Environments, Activities,
       Data_Car, List_CarMake (LSB2 string tables; the title update's when it has one)
+  DLC packages (--dlc, the installed or extracted content folder): the cars of each car pack
+      (media/db/patch/*_merge.slt in its <offer>_pri_<n>.zip, Data_Car rows) and its string
+      tables (StringTables_pri_<n>.zip EN/*.str, mounted over the disc's: the highest
+      priority wins), for the car names
 
 Usage:
   tools/extract_map_points.py --game extracted/game [--update extracted/tu4] \\
-      --out site/data/map_points.json [--names leaderboard_names.json]
+      [--dlc DLC_CONTENT_FOLDER ...] --out site/data/map_points.json [--names leaderboard_names.json]
 """
 import argparse
 import json
@@ -93,7 +97,7 @@ def read_member(path, name):
 class Game:
     """The base game's media folder, and the title update's media.zip over it when given."""
 
-    def __init__(self, game_root, update_root=None):
+    def __init__(self, game_root, update_root=None, dlc_roots=()):
         self.media = os.path.join(game_root, "media")
         if not os.path.isdir(self.media):
             raise SystemExit("no media folder in %s" % game_root)
@@ -101,6 +105,7 @@ class Game:
         if update_root:
             z = os.path.join(update_root, "media.zip")
             self.update = z if os.path.isfile(z) else None
+        self.dlc_zips = dlc_zips(dlc_roots)
 
     def file(self, *parts):
         with open(os.path.join(self.media, *parts), "rb") as f:
@@ -115,9 +120,41 @@ class Game:
         return read_member(os.path.join(self.media, archive), name)
 
     def strings(self, table):
+        """The table as the game sees it: the disc's (or the title update's), with the DLC
+        packages' copies over it in the order of their priority."""
         data = self.member(os.path.join("stringtables", "EN.zip"), table + ".str",
                            "stringtables/en/%s.str" % table.lower())
-        return StringTable(data) if data else StringTable(None)
+        merged = StringTable(data) if data else StringTable(None)
+        for _, path in self.dlc_zips:
+            if re.match(r"(?i)stringtables_pri_\d+\.zip$", os.path.basename(path)):
+                extra = read_member(path, "EN/%s.str" % table)
+                if extra:
+                    merged.update(StringTable(extra))
+        return merged
+
+    def dlc_cars(self):
+        """Data_Car rows (Id, Year, DisplayName, MakeID) of the DLC packages' database patches."""
+        rows = {}
+        for _, path in self.dlc_zips:
+            with zipfile.ZipFile(path) as zf:
+                patches = [i.filename for i in zf.infolist() if re.search(r"(?i)/db/patch/[^/]*\.slt$", i.filename)]
+            for name in patches:
+                data = read_member(path, name)
+                tmp = tempfile.NamedTemporaryFile(suffix=".slt", delete=False)
+                try:
+                    tmp.write(data)
+                    tmp.close()
+                    db = sqlite3.connect("file:%s?mode=ro" % tmp.name, uri=True)
+                    try:
+                        for row in db.execute("select Id, Year, DisplayName, MakeID from Data_Car"):
+                            rows[row[0]] = row
+                    except sqlite3.Error:
+                        pass
+                    finally:
+                        db.close()
+                finally:
+                    os.unlink(tmp.name)
+        return rows
 
     def database(self):
         """A sqlite connection to gamedb.slt (the title update's when it has one)."""
@@ -173,6 +210,11 @@ class StringTable:
                 key, _, off = struct.unpack(">HHI", data[s2 + 8 + 8 * i:s2 + 16 + 8 * i])
                 e = data.find(b"\0", pool2 + off)
                 self.ids[data[pool2 + off:e].decode("latin-1")] = key
+
+    def update(self, other):
+        """Another copy of the table over this one (a DLC package's)."""
+        self.text.update(other.text)
+        self.ids.update(other.ids)
 
     def ref(self, ref):
         """The text of a database reference "_&N" (None when not here)."""
@@ -322,14 +364,18 @@ def extract(game):
                 if pos:
                     places[text] = pos
                     starts[tid - 1000] = pos
-        # Cars: "<year> <make> <model>", for the names file.
+        # Cars: "<year> <make> <model>", for the names file: the database's and the DLC
+        # packages' (a car the database has without a name in the disc's strings, the Rally
+        # cars of the title update, has it in its package's strings).
         makes = game.strings("List_CarMake")
         car_strings = game.strings("Data_Car")
-        for cid, year, dn, make in db.execute(
-                "select d.Id, d.Year, d.DisplayName, m.DisplayName from Data_Car d "
-                "left join List_CarMake m on m.ID = d.MakeID"):
-            model, maker = car_strings.ref(dn), makes.ref(make)
+        make_names = {mid: makes.ref(dn) for mid, dn in db.execute("select ID, DisplayName from List_CarMake")}
+        rows = {r[0]: r for r in db.execute("select Id, Year, DisplayName, MakeID from Data_Car")}
+        rows.update(game.dlc_cars())
+        for cid, year, dn, make in rows.values():
+            model = car_strings.ref(dn) or car_strings.by_id("IDS_DisplayName_%d" % cid)
             if model:
+                maker = make_names.get(make) or makes.by_id("IDS_DisplayName_%s" % make)
                 cars[str(cid)] = " ".join(str(p) for p in (year, maker, model) if p)
         envs = game.strings("Environments")
         areas = {}  # area id -> (its kind, e.g. "Mountains", its name, e.g. "The Rockies")
@@ -374,6 +420,22 @@ def extract(game):
     return points, boards, cars
 
 
+def dlc_zips(roots):
+    """[(priority, path)] of the DLC packages' zips under these folders (each package's
+    Media/DLCZips/*_pri_<n>.zip), lowest priority first."""
+    out = []
+    for root in roots:
+        for folder, _, files in os.walk(root):
+            if os.path.basename(folder).lower() != "dlczips":
+                continue
+            for name in files:
+                m = re.search(r"(?i)_pri_(\d+)\.zip$", name)
+                if m:
+                    out.append((int(m.group(1)), os.path.join(folder, name)))
+    out.sort()
+    return out
+
+
 def natural(text):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", text)]
 
@@ -382,10 +444,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game", required=True, help="the extracted game (the folder with media/)")
     ap.add_argument("--update", help="the title update's folder (with media.zip), e.g. extracted/tu4")
+    ap.add_argument("--dlc", action="append", default=[],
+                    help="a folder with DLC packages (installed or extracted content), for their cars' names")
     ap.add_argument("--out", required=True, help="the points JSON (site/data/map_points.json)")
     ap.add_argument("--names", help="also write the server's leaderboard_names.json here")
     a = ap.parse_args(argv)
-    game = Game(a.game, a.update)
+    game = Game(a.game, a.update, a.dlc)
     try:
         points, boards, cars = extract(game)
     finally:

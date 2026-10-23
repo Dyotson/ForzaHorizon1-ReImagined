@@ -88,7 +88,8 @@ run_check() {  # run_check NAME FUNCTION: FUNCTION's output goes to $LOG/NAME.lo
 # ---------------------------------------------------------------- sdk
 check_sdk() {
     local want have
-    want="$(cat patches/rexglue-sdk/*.patch tools/build_rexglue_sdk.sh | sha256sum | cut -d' ' -f1)"
+    want="$(cat patches/rexglue-sdk/*.patch patches/rexglue-sdk/sdl3/*.patch tools/build_rexglue_sdk.sh |
+        sha256sum | cut -d' ' -f1)"
     have="$(cat "$STATE/sdk.stamp" 2>/dev/null || true)"
     if [ "$want" = "$have" ] && [ -d "$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib" ]; then
         echo "RESULT: overlay up to date (stamp)"
