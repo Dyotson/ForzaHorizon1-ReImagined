@@ -993,7 +993,11 @@ extern "C" REX_FUNC(__imp__sub_82836928);
 extern "C" REX_FUNC(sub_8283CB68) {
   using namespace forza::graphics_menu;
   const uint32_t menu = ctx.r3.u32;
-  RestoreTitle(base);
+  // A mode transition can destroy the old title scene before rebuilding this
+  // list (for example, Exit Multiplayer). Its cached nodes are no longer ours
+  // to restore; only the new scene may receive the layout adjustment below.
+  title_layout_pending = false;
+  title_offsets.clear();
   __imp__sub_8283CB68(ctx, base);
   main_menu = menu;
   const auto source = Read(base, menu + 0x174);
