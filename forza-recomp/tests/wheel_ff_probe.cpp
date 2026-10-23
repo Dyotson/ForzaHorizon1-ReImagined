@@ -7,7 +7,7 @@
 // the game says the player is not driving (ForzaWheelPlayerDriving) and come back when they are,
 // and wheel_ffb_spring_strength scales the spring; quick toggles leave the spring whole, and back
 // at full strength the steering force is started again (#304, patch 0130), and wheel_ffb_keep_playing
-// starts it again every few seconds (#304, patch 0146). Then (#273, patch 0129)
+// can start it again every few seconds (#304, patch 0146). Then (#273, patch 0129)
 // the game's rumble on a wheel with periodic effects (a uinput Fanatec CSR Elite): which effects
 // each wheel_rumble_style sends (fine: a 40 Hz road sine and a ~71 Hz engine sine; classic: one
 // 25 Hz sine, as before), and fine falling back to classic on a wheel with room for one effect.
@@ -394,12 +394,12 @@ void SpringAndFade() {
   ForzaWheelPlayerDriving(1);
   Poll(driver, id, 700);
   Check(dev.Starts() > starts, "back at full strength: the steering force is started again");
-  // #304 (patch 0146): wheel_ffb_keep_playing starts every playing effect again every N seconds
-  // (by default 5 on Windows and macOS, where SDL's endless length is a finite 71 minutes that a
-  // HID PID wheel ended after about 30 s; never on Linux).
+  // #304 (patch 0146): wheel_ffb_keep_playing starts every playing effect again every N seconds,
+  // for a wheel that ends effects by itself (never by default: SDL patch 0147 makes the endless
+  // length endless on Windows and macOS too).
   const int playing = dev.Starts();
   Poll(driver, id, 1500);
-  Check(dev.Starts() == playing, "Linux by default: no restarts");
+  Check(dev.Starts() == playing, "by default: no restarts");
   SetCvar("wheel_ffb_keep_playing", "1");
   Poll(driver, id, 2600);
   const int kept = dev.Starts() - playing;

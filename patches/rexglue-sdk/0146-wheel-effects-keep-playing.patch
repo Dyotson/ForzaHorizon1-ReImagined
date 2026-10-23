@@ -1,54 +1,42 @@
 diff --git a/src/input/wheel/wheel_ff_keep_playing.h b/src/input/wheel/wheel_ff_keep_playing.h
 new file mode 100644
-index 0000000..2d7cdcc
+index 0000000..cfe8554
 --- /dev/null
 +++ b/src/input/wheel/wheel_ff_keep_playing.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,42 @@
 +/**
 + * @file        src/input/wheel/wheel_ff_keep_playing.h
-+ * @brief       Keeping the wheel's effects playing where SDL cannot make them endless (#304),
++ * @brief       Starting the wheel's effects again for a wheel that ends them by itself (#304),
 + *              without SDL.
 + *
-+ * Every effect the driver plays has SDL's endless length (SDL_HAPTIC_INFINITY, 0xFFFFFFFF ms) and
-+ * is started for ever. SDL's Linux backend sends that as an endless effect, but its DirectInput
-+ * (Windows) and ForceFeedback (macOS) backends multiply the length by 1000 in 32 bits
-+ * (`length * 1000UL`, SDL 3.4.14 and SDL's main branch): the effect gets 4294966296 us, about 71
-+ * minutes, never INFINITE (0xFFFFFFFF). A HID PID wheel's duration field holds 16 bits of
-+ * milliseconds (32.767 s or 65.535 s at most), so the system's PID driver cannot pass 71 minutes
-+ * on: a Simagic Alpha EVO Pro on Windows ended the game's steering force, spring and damper about
-+ * 30 s after each start, leaving the base's own centring, until a pause started them again (the
-+ * forces back at full strength restart every effect, SDK patch 0130).
-+ *
-+ * So where SDL's lengths are finite the driver starts every effect it plays again every few
-+ * seconds (starting a playing effect restarts it, with the same parameters), well inside that
-+ * limit. `wheel_ffb_keep_playing` sets the interval: -1 (default) 5 s on Windows and macOS and
-+ * never on Linux, 0 never, N every N seconds.
++ * Every effect the driver plays has SDL's endless length (SDL_HAPTIC_INFINITY) and is started for
++ * ever. SDL's DirectInput (Windows) and ForceFeedback (macOS) backends multiplied the length by
++ * 1000 in 32 bits (`length * 1000UL`, SDL 3.4.14 and SDL's main branch): 4294966296 us, about 71
++ * minutes, never their endless value, and more than a HID PID wheel's 16-bit duration field holds.
++ * A Simagic Alpha EVO Pro on Windows lost the game's steering force and damper about 30 s after
++ * each start, until a pause started them again. SDL patch 0147 (patches/rexglue-sdk/sdl3) sends
++ * the endless value there. For a wheel that still ends effects by itself:
++ *  - every 10 s the driver asks the wheel whether the game's effects still play (where SDL can ask:
++ *    DirectInput) and starts one that stopped again;
++ *  - wheel_ffb_keep_playing N starts every effect that plays again every N seconds (starting a
++ *    playing effect restarts it unchanged, which some wheels may feel as a bump: 0, the default,
++ *    never); -1 starts nothing again, not even an effect the wheel says has stopped.
 + *
 + * @license     BSD 3-Clause License
 + *              See LICENSE file in the project root for full license text.
 + */
 +#pragma once
 +
-+#include <cstdint>
-+
 +namespace rex::input::wheel {
 +
-+#if defined(_WIN32) || defined(__APPLE__)
-+constexpr bool kSdlEffectLengthsFinite = true;
-+#else
-+constexpr bool kSdlEffectLengthsFinite = false;
-+#endif
-+constexpr int kFfKeepPlayingSeconds = 5;
-+
-+// The duration SDL's DirectInput and macOS backends give an effect of `length_ms` (32 bits, as
-+// `length * 1000UL` is with Windows' 32-bit unsigned long).
-+constexpr uint32_t SdlBackendDurationUs(uint32_t length_ms) {
-+  return static_cast<uint32_t>(length_ms * 1000u);
++// The interval of the restarts, in seconds, for the wheel_ffb_keep_playing setting; 0: none.
++constexpr int FfKeepPlayingSeconds(int setting) {
++  return setting > 0 ? setting : 0;
 +}
 +
-+// The restart interval in seconds for the wheel_ffb_keep_playing setting; 0: never.
-+constexpr int FfKeepPlayingSeconds(int setting, bool sdl_lengths_finite = kSdlEffectLengthsFinite) {
-+  return setting < 0 ? (sdl_lengths_finite ? kFfKeepPlayingSeconds : 0) : setting;
++// Whether an effect the wheel says has stopped by itself is started again.
++constexpr bool FfRestartStopped(int setting) {
++  return setting >= 0;
 +}
 +
 +// When the effects are next started again: `last` is when they last were (or when the wheel was
@@ -59,7 +47,7 @@ index 0000000..2d7cdcc
 +
 +}  // namespace rex::input::wheel
 diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
-index 4996552..26ec61d 100644
+index 4996552..bba6f3c 100644
 --- a/src/input/wheel/wheel_input_driver.cpp
 +++ b/src/input/wheel/wheel_input_driver.cpp
 @@ -35,6 +35,7 @@
@@ -74,10 +62,10 @@ index 4996552..26ec61d 100644
      .range(0, 99);
  REXCVAR_DEFINE_BOOL(wheel_invert_handbrake, false, "Input",
                      "Flip the handbrake axis detected as released/pulled");
-+REXCVAR_DEFINE_INT32(wheel_ffb_keep_playing, -1, "Input",
-+                     "Seconds between restarts of the force feedback effects that play, so a "
-+                     "wheel does not end them (SDL gives them a finite length on Windows and "
-+                     "macOS): -1 auto (5 on Windows and macOS, never on Linux), 0 never")
++REXCVAR_DEFINE_INT32(wheel_ffb_keep_playing, 0, "Input",
++                     "For a wheel that ends force feedback effects by itself: start every effect "
++                     "that plays again every this many seconds (0: never; an effect the wheel says "
++                     "has stopped is still started again; -1: not even that)")
 +    .range(-1, 60);
  REXCVAR_DEFINE_STRING(wheel_device, "", "Input",
                        "The wheel the first player drives with and the pedal, shifter and handbrake "
@@ -86,9 +74,9 @@ index 4996552..26ec61d 100644
    }
  }
  
-+// Starts every effect the wheel plays again every few seconds (wheel_ff_keep_playing.h, #304): SDL's
-+// DirectInput and macOS backends give an endless effect a finite length, which a HID PID wheel
-+// ended about 30 s after each start. Starting a playing effect restarts it as it is.
++// Starts every effect the wheel plays again every wheel_ffb_keep_playing seconds, for a wheel that
++// ends effects by itself (wheel_ff_keep_playing.h, #304). Starting a playing effect restarts it as
++// it is.
 +template <typename W>
 +void KeepPlaying(W& w, bool game_ff, double now) {
 +  const int seconds = FfKeepPlayingSeconds(REXCVAR_GET(wheel_ffb_keep_playing));
@@ -151,8 +139,8 @@ index 4996552..26ec61d 100644
        if (status && !SDL_GetHapticEffectStatus(first.haptic, first.game_fx[i]) &&
            !*SDL_GetError()) {
          ended |= 1u << i;
-+        // It plays again, unless wheel_ffb_keep_playing is 0 (wheel_ff_keep_playing.h).
-+        const bool again = FfKeepPlayingSeconds(REXCVAR_GET(wheel_ffb_keep_playing)) > 0 &&
++        // It plays again, unless wheel_ffb_keep_playing is -1 (wheel_ff_keep_playing.h).
++        const bool again = FfRestartStopped(REXCVAR_GET(wheel_ffb_keep_playing)) &&
 +                           SDL_RunHapticEffect(first.haptic, first.game_fx[i], SDL_HAPTIC_INFINITY);
 +        if (again) {
 +          g_ff_log.Sdl(i + 1, FfSdlCall::kKeepPlaying);

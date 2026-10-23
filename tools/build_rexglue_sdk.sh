@@ -55,25 +55,37 @@ git -C "$SRC" submodule update --init --recursive --depth 1 --quiet
 # neither the forward nor the reverse check of 0018 passes. Files that already match keep
 # their timestamps, so a re-run rebuilds nothing; a changed, added or dropped patch rewrites
 # just the files it touches.
-patched_index="$(mktemp)"
-GIT_INDEX_FILE="$patched_index" git -C "$SRC" read-tree "$SDK_COMMIT"
-for patch in "$ROOT"/patches/rexglue-sdk/*.patch; do
-    if ! GIT_INDEX_FILE="$patched_index" git -C "$SRC" apply --cached "$patch"; then
-        echo "patch does not apply to $SDK_COMMIT: $(basename "$patch")" >&2
-        rm -f "$patched_index"; exit 1
+# apply_series REPO COMMIT LABEL PATCH...: that for one repository (the SDK or a submodule).
+apply_series() {
+    local repo="$1" commit="$2" label="$3"
+    shift 3
+    local patched_index changed patch
+    patched_index="$(mktemp)"
+    GIT_INDEX_FILE="$patched_index" git -C "$repo" read-tree "$commit"
+    for patch in "$@"; do
+        [ -f "$patch" ] || continue  # an empty patch folder leaves its glob as it is
+        if ! GIT_INDEX_FILE="$patched_index" git -C "$repo" apply --cached "$patch"; then
+            echo "patch does not apply to $label $commit: $(basename "$patch")" >&2
+            rm -f "$patched_index"; exit 1
+        fi
+    done
+    GIT_INDEX_FILE="$patched_index" git -C "$repo" update-index -q --refresh > /dev/null || true
+    changed="$(GIT_INDEX_FILE="$patched_index" git -C "$repo" diff-files --ignore-submodules --name-only)"
+    if [ -z "$changed" ]; then
+        echo "$label patches already applied ($#)"
+    else
+        while IFS= read -r file; do
+            GIT_INDEX_FILE="$patched_index" git -C "$repo" checkout-index -f -- "$file"
+            echo "patched: $label $file"
+        done <<< "$changed"
     fi
-done
-GIT_INDEX_FILE="$patched_index" git -C "$SRC" update-index -q --refresh > /dev/null || true
-changed="$(GIT_INDEX_FILE="$patched_index" git -C "$SRC" diff-files --ignore-submodules --name-only)"
-if [ -z "$changed" ]; then
-    echo "patches already applied ($(ls "$ROOT"/patches/rexglue-sdk/*.patch | wc -l) in patches/rexglue-sdk)"
-else
-    while IFS= read -r file; do
-        GIT_INDEX_FILE="$patched_index" git -C "$SRC" checkout-index -f -- "$file"
-        echo "patched: $file"
-    done <<< "$changed"
-fi
-rm -f "$patched_index"
+    rm -f "$patched_index"
+}
+apply_series "$SRC" "$SDK_COMMIT" SDK "$ROOT"/patches/rexglue-sdk/*.patch
+# SDL (the SDK's thirdparty/sdl3 submodule, built into the runtime): patches/rexglue-sdk/sdl3,
+# against the commit the SDK records for it.
+apply_series "$SRC/thirdparty/sdl3" "$(git -C "$SRC" rev-parse "$SDK_COMMIT:thirdparty/sdl3")" SDL \
+    "$ROOT"/patches/rexglue-sdk/sdl3/*.patch
 [ "$SOURCE_ONLY" = 0 ] || exit 0
 
 # Building the SDK needs X11/XCB and Wayland headers (its UI module and SDL3

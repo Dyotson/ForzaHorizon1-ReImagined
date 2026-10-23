@@ -1,7 +1,7 @@
 // The game's force feedback in the log, and the wheel's effects kept playing (SDK patches 0145 and
 // 0146, src/input/wheel/wheel_ff_log.h and wheel_ff_keep_playing.h, #304): a block's line when it
 // changes (not every frame), the 10 s summary of what the game sent and the wheel got, and the
-// restarts that keep an effect within the finite length SDL gives it on Windows and macOS. Build
+// restarts for a wheel that ends effects by itself (wheel_ffb_keep_playing). Build
 // against the patched SDK source (tools/build_rexglue_sdk.sh --source-only), from the repository
 // root:
 //   SDK=~/rexglue-sdk-src-forza/sdk; g++ -std=c++17 -Wall -Wextra -Werror -I $SDK/include
@@ -164,28 +164,26 @@ int main() {
                "2 device controls, device gain 255, 0 rumbles, forces at 100%"),
         "a quiet block: where it stands, and what the wheel says; the counts start again");
 
-  // Keeping the effects playing (#304): SDL's endless length is a finite 71.6 minutes on Windows and
-  // macOS, never INFINITE; the restarts every 5 s there, never on Linux unless set.
-  Check(SdlBackendDurationUs(0xFFFFFFFFu) == 4294966296u, "SDL_HAPTIC_INFINITY * 1000UL in 32 bits");
-  Check(SdlBackendDurationUs(0xFFFFFFFFu) != 0xFFFFFFFFu, "not DirectInput's INFINITE");
-  Check(SdlBackendDurationUs(0xFFFFFFFFu) / 1000u > 0xFFFFu, "past 16 bits of milliseconds");
-  Check(FfKeepPlayingSeconds(-1, true) == 5, "auto: 5 s on Windows and macOS");
-  Check(FfKeepPlayingSeconds(-1, false) == 0, "auto: off on Linux");
-  Check(FfKeepPlayingSeconds(0, true) == 0, "0: off");
-  Check(FfKeepPlayingSeconds(2, false) == 2, "a setting wins");
+  // Restarts for a wheel that ends effects by itself (#304): none by default (SDL patch 0147 sends
+  // endless effects on Windows and macOS), every N s when set; an effect the wheel says has
+  // stopped is started again unless the setting is -1.
+  Check(FfKeepPlayingSeconds(0) == 0 && FfKeepPlayingSeconds(-1) == 0, "no restarts by default");
+  Check(FfKeepPlayingSeconds(5) == 5, "every 5 s when set");
+  Check(FfRestartStopped(0) && FfRestartStopped(5) && !FfRestartStopped(-1),
+        "a stopped effect: started again unless -1");
   Check(!FfKeepPlayingDue(10.0, 14.9, 5) && FfKeepPlayingDue(10.0, 15.0, 5), "every 5 s");
   Check(!FfKeepPlayingDue(10.0, 1000.0, 0), "off: never");
-  // Over a 30 minute drive at 60 fps, an effect is never left more than 5 s (plus a frame) without a
-  // start: well inside the 32.767 s a 16-bit HID PID duration allows.
+  // Over a 30 minute drive at 60 fps with 5, an effect is never left more than 5 s (plus a frame)
+  // without a start.
   double last = 0.0, longest = 0.0;
   for (int frame = 1; frame <= 30 * 60 * 60; frame++) {
     const double now = frame / 60.0;
-    if (FfKeepPlayingDue(last, now, FfKeepPlayingSeconds(-1, true))) {
+    if (FfKeepPlayingDue(last, now, FfKeepPlayingSeconds(5))) {
       longest = std::max(longest, now - last);
       last = now;
     }
   }
-  Check(longest < 5.0 + 1.5 / 60 && longest < 32.767, "restarted within 5 s all along");
+  Check(longest < 5.0 + 1.5 / 60, "restarted within 5 s all along");
   std::printf("wheel_ff_log_test: ok\n");
   return 0;
 }
