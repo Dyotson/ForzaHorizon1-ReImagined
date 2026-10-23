@@ -34,6 +34,7 @@ import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
 import forza_world as world
+import forza_world_host as world_host
 
 MAGIC = b"RLV1"
 VERSION = 1
@@ -74,9 +75,12 @@ STATE_REFRESH = 30.0
 STATE_VERSION = 1
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
-# once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
-# a few times that. Defaults to 160 KB/s with 640 KB bursts (--rate-limit).
-RATE_LIMIT = 160 * 1024
+# once per recipient). Measured through the relay (#12): a game sends each peer one
+# datagram a frame of about 100 bytes per car it runs (its own, and in an event its share
+# of the CPU drivers), so a full world of 8 costs a player about 7 x fps x 108 bytes with
+# the relay header: 106 KB/s at 144 fps, 181 KB/s at 240. Defaults to 256 KB/s with 1 MB
+# bursts (--rate-limit).
+RATE_LIMIT = 256 * 1024
 RATE_BURST = 4 * RATE_LIMIT
 
 
@@ -88,7 +92,8 @@ MAX_ROOM = 64
 MAX_MOTD = 64  # keeps the WELCOME about as large as the HELLO that asks for it
 # Limits against abuse from the internet (every datagram is untrusted):
 MAX_PEERS_PER_IP = 16  # registered players behind one public address (a LAN, a CGNAT)
-PACKETS_PER_IP = (1500, 3000)  # datagrams/s and burst accepted from one address
+# datagrams/s and burst accepted from one address (a player in a world of 8 at 240 fps: 1680/s)
+PACKETS_PER_IP = (2500, 5000)
 HELLOS_PER_IP = (2, 20)  # new registrations/s and burst from one address
 ERRORS_PER_IP = (2, 10)  # "not registered" replies/s and burst to one address
 
@@ -464,15 +469,17 @@ class ForzaLive(asyncio.DatagramProtocol):
     # Standby records: a player in a session someone else hosts publishes it with its own
     # address as the host (op 2). Forza's game picks a new host among the remaining
     # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
-    # session id any more, its standby records stand in for it: searchers get the record
-    # of the member the game made its host (the client sees the game's host flag and
-    # sends op 4 instead of op 2), else of the oldest remaining member, with the number of
-    # members as the filled slots.
+    # session id any more (or a member reports to host it: a host whose game closed stays
+    # registered until it times out), its standby records stand in for it: searchers get
+    # the record of the member the game made its host (the client sees the game's host
+    # flag and sends op 4 instead of op 2; the latest one), else of the oldest remaining
+    # member, with the number of members as the filled slots (forza_world_host.py).
 
     def standby_sessions(self, src, key):
         """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
-        hosted = {p.match[1][:8] for p in self.peers.values()
-                  if p.room == src.room and getattr(p, "match", None)}
+        room = [p for p in self.peers.values() if p.room == src.room]
+        hosted = {p.match[1][:8] for p in room if getattr(p, "match", None)}
+        hosted -= world_host.taken_over(room, key)
         groups = {}
         for p in self.room_peers(src):
             standby = getattr(p, "standby", None)
@@ -483,7 +490,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, members in groups.items():
             if own and own[1][:8] == sid:
                 continue  # the searcher is in it already
-            members.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            members.sort(key=world_host.lead_order)
             record = bytearray(members[0].standby[1])
             if len(record) >= SESSION_INFO_SIZE + 4:
                 record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
@@ -502,6 +509,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 if host != getattr(peer, "standby_host", False):
                     log.info("match #%d %r %s the game's host of %s", peer.id, peer.name,
                              "is now" if host else "is no longer", body[5:13].hex())
+                world_host.note_host(peer, host)
                 peer.standby_host = host
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
@@ -539,9 +547,11 @@ class ForzaLive(asyncio.DatagramProtocol):
         # The client answers the game once the last datagram is in.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
+        stale = world_host.taken_over([peer] + self.room_peers(peer), key)
         found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
                  if getattr(p, "match", None) and p.match[0] == key
-                 and not (own and own[0] == key and p.match[2] >= own[2])]
+                 and not (own and own[0] == key and p.match[2] >= own[2])
+                 and p.match[1][:8] not in stale]
         found += self.standby_sessions(peer, key)
         found = [f for f in found if self.match_slots(f[1])[1] > 0]
         found.sort(key=lambda f: (-self.match_slots(f[1])[0], f[2]))
@@ -589,9 +599,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         whose host left is led by its standby host (see standby_sessions)."""
         key = lsp.WORLD_HOPPER
         worlds = {}
+        stale = world_host.taken_over(self.peers.values(), key)
         for p in self.peers.values():
             match = getattr(p, "match", None)
-            if match and match[0] == key:
+            if match and match[0] == key and match[1][:8] not in stale:
                 worlds[match[1][:8]] = (p, self.match_slots(match[1])[0])
         members = {}
         for p in self.peers.values():
@@ -599,7 +610,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             if standby and standby[0] == key and standby[1][:8] not in worlds:
                 members.setdefault(standby[1][:8], []).append(p)
         for sid, group in members.items():
-            group.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            group.sort(key=world_host.lead_order)
             worlds[sid] = (group[0], len(group))
         return worlds
 
