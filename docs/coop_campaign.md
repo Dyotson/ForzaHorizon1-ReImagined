@@ -206,7 +206,7 @@ So the first scope is the 70 festival races.
 
 - **The world.** The Horizon World places everyone into the fullest world, so strangers would
   be taken to the event too. A co-op world needs a placement the server controls: a separate
-  playlist (hopper 4, "Co-op Festival") whose search only finds sessions hosted by a friend
+  playlist ("Co-op Festival", hopper 20 as built) whose search only finds sessions hosted by a friend
   (`forza_friends.py`), or a flag on the world. This is a server change only.
 - **The pick.** The host has to choose the event. A WORLD chat command (`forza_chat.py`
   already relays the world channel), such as `/event FR05` or a short list from `/events`,
@@ -548,7 +548,7 @@ GT-R R34s; CPU Delta S4, Impreza 22B, ML 63, Lancer Evo VI) and a garage of "3 a
 
 **The Co-op Festival** (`server/forza_campaign.py`, `forza_live_server.py`, `forza_world.py`):
 
-- A playlist (hopper 4, after Playground Games) with the Horizon World's code: the same search
+- A playlist (hopper 20, after Playground Games) with the Horizon World's code: the same search
   settings, drop-in, standby hosts and world events. The client runs it as a world
   (`LiveIsWorldPlaylist`), and the server lists it only to games whose HELLO has feature 0x08,
   so an older build never sees a playlist it would run as a plain free roam.
@@ -593,20 +593,36 @@ point, the 1960s, dawn) and the street race followed in the same world.
 
 ### Phase B (2026-10-23): the ledger and the launcher's grant
 
-**Server: the ledger** (`server/forza_coop_ledger.py`). When a campaign round starts (its own
-prefetch, `forza_world.Worlds.next_round`) the server records it: the world session, the event,
-the player who asked for it (the world's host) and the humans in the world. Each human's place
-comes from its own `WriteRaceStatsEx`, cross-checked with the host's `XSessionWriteStats`
-(`cars - score`, forza_stats' `on_skill_write`). The first write after the round's start is the
-race's: the game writes again for the same session when the world's next free roam ends (the
-first two-game run found the ledger taking that write, 1 and 0 for the humans, over the race's
-4 and 0; fixed and tested). A result goes to the career when the player is the round's
-requester (milestone 1: the host's own career), finished, on the grid, and the host's write (if
-any) agrees. The launcher asks for its player's results and confirms what it applied, signed
-like the shader list upload (X-Xuid and X-Friends-Key, the friends key the XUID was bound to):
+**Server: the ledger** (`server/forza_coop_ledger.py`). A campaign round opens when the event
+round starts (its own prefetch, `forza_world.Worlds.next_round`, asked by the host's game with
+its own friends key) and closes when the world's next round starts: the world session, the
+event, its grid (the `MaxPlayers` it was served with), the player who asked for it (the
+world's host) and the humans in the world. Only calls that carry the caller's own friends key
+(`forza_live_lsp.caller_trusted`, `docs/title_services.md` "Who is calling") move a campaign
+along or report a place; a call without it gets the world's round and changes nothing. Each
+human's place is its first own `WriteRaceStatsEx` of the Co-op Festival playlist for that
+world's session while the round is open (later reports, other worlds and the public Horizon
+World's races are not taken), cross-checked with the requester's game's own
+`XSessionWriteStats` (`cars - score` with the round's grid; writes of other games are ignored,
+and only the first after the start counts: the game writes again for the session when the
+world's next free roam ends, which the first two-game run showed). A result goes to the career
+when the player is the round's requester (milestone 1: the host's own career), finished, on the
+grid, and its game's write (if any) agrees. The launcher asks for its player's results and
+confirms what it settled, signed like the shader list upload (X-Xuid and X-Friends-Key):
 `GET /coop/results`, `POST /coop/results/applied {"ids": [...]}`. Kept in
-`DATA_DIR/coop_ledger.json` for 30 days (a round is dropped once applied, or 20 minutes after
-its start without a result), at most 2000 rounds and 50 pending results per player.
+`DATA_DIR/coop_ledger.json`, written from the server's tick at most every 2 s (not per report):
+30 days, a round dropped once settled or when it closed without a result, at most 20 rounds a
+player asked for and has not settled (its `/event` is refused beyond them, and its oldest go
+first; other players' rounds are never evicted for them) and 2000 in all.
+
+The `/event` command is refused while a round runs in the world ("start the next one when you
+are back in the free roam"), and a request the host's game never takes (it has to be in the
+free roam) is dropped after 2 minutes with a notice to the world. The operator's
+`/world/event?session=all` leaves Co-op Festival worlds alone. The playlist's id is 20, not 4:
+Find Custom Game searches with the game type tab's value (Street Race 4), and the server only
+sees the key. Placement into a friend's world needs both the searcher's and the leader's XUID
+proven by their friends keys (`friends_ok`). The playlist is listed only when the server has
+events for it (the game's database, `--game-db`).
 
 **Launcher: the grant** (`launcher/forza_launcher/coop_grant.py`). After every session (the
 same place as the shader list upload, in a background thread, public or custom servers only)
@@ -623,6 +639,15 @@ end would:
   the difficulty bonus is not applied). This answers most of question 6;
 - the event's own unlock rewards (`Rewards_EventUnlock`).
 
+Which results, and into which save: the PC's Forza Live identity is shared by every save on it
+(the local profile, each Xenia copy, a custom save folder), so the launcher keeps its sessions
+(`coop_sessions.json`: the save profile, start and end, for 30 days) and applies a result only to
+the save whose session it was earned in (its time within 10 minutes of the session, for the
+server's clock). A result of another save's session waits for that save's next session (also
+when the launcher was closed before the grant ran); a result of a game the launcher did not
+start waits unapplied. A result for an event the save has not unlocked (`CareerEventUnlocks`:
+`/event` can start any festival event) waits until it is. Waiting results are not confirmed.
+
 Left to the game: `Main/WristbandLevel` (Race Central awards it, see question 1) and the unlocks
 by XP. `CTriggerEventUnlocks` runs those with the save's XP after every race, so the player's
 next race catches up; the Nemesis races there have conditions of their own: a first version that
@@ -638,7 +663,9 @@ exits after each rename followed by recovery and an idempotent retry.
 Tests: `launcher/test_coop_grant.py` (synthetic saves and database: payout and rounding,
 a new result, a better place paying the difference once, a worse or equal place changing
 nothing and making no backup, events it does not take, the wristband and XP unlocks left alone,
-a save changing during the backup, fetch-apply-confirm) and `server/test_forza_coop_ledger.py`.
+a save changing during the backup, fetch-apply-confirm, locked events and results of other
+saves' sessions waiting) and `server/test_forza_coop_ledger.py` (forged and late reports,
+other games' writes, the round's grid, unverified calls, refusals, limits, the batched file).
 
 **Acceptance, checked with two games** (local server, FR69 "Advan Asphalt Attack", level 6, R3,
 not raced in the host's save):

@@ -24,6 +24,13 @@ awards it with its own unlocks and reward. A result that does not
 improve the save changes nothing, so applying one twice is harmless. The online race already
 paid its online credits and XP; the prize here is the career's, once per improvement.
 
+Which save: a result is applied only to the save of the launcher session it was earned in (the
+launcher keeps its sessions, `coop_sessions.json`: the save profile, start and end), never to
+another career sharing the PC's Forza Live identity; results of another save's session wait for
+that save's next session, results of a game the launcher did not start wait unapplied. Only an
+event the save has unlocked (CareerEventUnlocks) takes a result: /event can start any festival
+event, and a locked one waits until the career unlocks it. Results that wait are not confirmed.
+
 The edit is the save editor's: the save lock, both files read, decoded and verified with the
 player's own keys, one backup of the save ("Before co-op results"), both files checked unchanged
 before a complete staged save replaces the directory through the save manager's recovery
@@ -38,6 +45,7 @@ import math
 import os
 import sqlite3
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -45,6 +53,10 @@ import uuid
 from . import garage, paths, save_editor, saves, shader_share
 
 FETCH_TIMEOUT = 6
+SESSIONS_NAME = 'coop_sessions.json'
+SESSION_SLACK = 600      # seconds around a session: the server's clock against this PC's
+MAX_SESSIONS = 200
+KEEP_SESSIONS = 30 * 86400  # the server keeps results as long
 MAX_RESULTS = 50
 MAX_CREDITS = save_editor.EDITABLE['Main/Credits'][2]
 MAX_XP = save_editor.EDITABLE['Main/XP'][2]
@@ -70,6 +82,7 @@ class GrantResult:
     backup: object = None
     xp: int = 0
     credits: int = 0
+    locked: tuple = ()  # ids of results for events this save has not unlocked (they wait)
 
 
 # --- the career's rules -------------------------------------------------------------------------
@@ -115,10 +128,12 @@ def event_unlocks(gamedb, db, event_id):
     return tuple(added)
 
 
-def career(gamedb, db, xp, credits, results):
+def career(gamedb, db, xp, credits, results, locked=None):
     """Applies results ([{"id", "event", "place", "places", "code"}]) to a PlayerDatabase
-    connection. Returns (changes, unchanged ids, xp, credits) after them."""
+    connection. Returns (changes, unchanged ids, xp, credits) after them; the ids of results
+    for events the save has not unlocked go to `locked` (a list) and change nothing."""
     changes, unchanged = [], []
+    locked = [] if locked is None else locked
     for result in results[:MAX_RESULTS]:
         event_id, place = result.get('event'), result.get('place')
         row = gamedb.execute('SELECT Level, CareerEventStyle, CashPrize, NumberOfDrivers, HorizonEventID '
@@ -129,6 +144,9 @@ def career(gamedb, db, xp, credits, results):
             unchanged.append(result.get('id'))
             continue
         level, style, cash, _, code = row
+        if db.execute('SELECT 1 FROM CareerEventUnlocks WHERE EventId=?', (event_id,)).fetchone() is None:
+            locked.append(result.get('id'))
+            continue
         old = db.execute('SELECT Place FROM Career_EventResults WHERE EventId=?', (event_id,)).fetchone()
         old = old[0] if old else None
         if old is not None and 1 <= old <= place:
@@ -183,9 +201,10 @@ def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: No
         try:
             source = (cfg.game_files()/'media/db/gamedb.slt').resolve()
             with closing(sqlite3.connect(source.as_uri()+'?mode=ro', uri=True)) as gamedb:
-                changes, unchanged, new_xp, new_credits = career(gamedb, db, xp, credits, results)
+                locked = []
+                changes, unchanged, new_xp, new_credits = career(gamedb, db, xp, credits, results, locked)
             if not changes:
-                return GrantResult((), tuple(unchanged))
+                return GrantResult((), tuple(unchanged), locked=tuple(locked))
             db.commit()
             edited_garage = garage.encode(garage_doc, db.serialize())
         except sqlite3.Error as exc:
@@ -226,7 +245,8 @@ def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: No
         # what the game will read back
         save_editor.decode(profile, save_editor._read(profile), ((document.aes_key, document.mac_key),))
         garage.decode(profile, garage._read(profile), ((garage_doc.aes_key, garage_doc.mac_key),))
-        return GrantResult(tuple(changes), tuple(unchanged), backup, new_xp - xp, new_credits - credits)
+        return GrantResult(tuple(changes), tuple(unchanged), backup, new_xp - xp, new_credits - credits,
+                           tuple(locked))
 
 
 # --- the server ----------------------------------------------------------------------------------
@@ -247,9 +267,47 @@ def confirm(base, identity, ids):
     return _request(base, identity, '/coop/results/applied', json.dumps({'ids': list(ids)}).encode()).get('applied', 0)
 
 
+# --- the launcher's sessions: which save a result belongs to -----------------------------------
+
+def _sessions_path(cfg):
+    return cfg.data_home() / SESSIONS_NAME
+
+
+def load_sessions(cfg):
+    try:
+        data = json.loads(_sessions_path(cfg).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    return [s for s in data.get('sessions', []) if isinstance(s, dict)
+            and isinstance(s.get('profile'), str) and all(isinstance(s.get(k), (int, float)) for k in ('start', 'end'))]
+
+
+def record_session(cfg, profile, started, ended, now=None):
+    """A game session of this launcher ended: kept so that results earned in it go to its save."""
+    if profile is None or not started:
+        return
+    now = time.time() if now is None else now
+    sessions = [s for s in load_sessions(cfg) if now - s['end'] <= KEEP_SESSIONS]
+    sessions.append({'profile': profile.key, 'start': float(started), 'end': float(ended)})
+    path = _sessions_path(cfg)
+    tmp = path.with_name(path.name + '.tmp')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps({'version': 1, 'sessions': sessions[-MAX_SESSIONS:]}), encoding='utf-8')
+        os.replace(tmp, path)
+    except OSError as e:
+        paths.log_error('record the session for co-op results', e)
+
+
+def owners(sessions, at):
+    """The save profiles of the sessions a result's time falls in."""
+    return {s['profile'] for s in sessions
+            if isinstance(at, (int, float)) and s['start'] - SESSION_SLACK <= at <= s['end'] + SESSION_SLACK}
+
+
 def after_session(cfg, profile, log=print, base=None, identity=None, request=None):
-    """Fetches the player's pending co-op results and applies them to the session's save.
-    Returns a short result (for the log)."""
+    """Fetches the player's pending co-op results and applies those earned in this save's
+    sessions to it. Returns a short result (for the log)."""
     base = shader_share.server_base(cfg) if base is None else base
     if not base:
         return 'no server'
@@ -258,17 +316,34 @@ def after_session(cfg, profile, log=print, base=None, identity=None, request=Non
         return 'no Forza Live identity yet'
     if profile is None:
         return 'no save'
-    results = fetch(base, identity)
-    if not results:
+    fetched = fetch(base, identity)
+    if not fetched:
         return 'nothing'
+    sessions = load_sessions(cfg)
+    results, waiting = [], 0
+    for r in fetched:
+        if owners(sessions, r.get('at')) == {profile.key}:
+            results.append(r)
+        else:  # another save's session, several, or a game the launcher did not start
+            waiting += 1
+    if waiting:
+        log(f'Co-op results: {waiting} result(s) from another save or a game started elsewhere wait')
+    if not results:
+        return f'applied 0, waiting {waiting}'
     result = apply(cfg, profile, results)
-    done = [r.get('id') for r in results if isinstance(r.get('id'), str)]
-    confirm(base, identity, done)
+    settled = {c.event for c in result.applied}
+    done = [r.get('id') for r in results if isinstance(r.get('id'), str)
+            and (r.get('id') in result.unchanged or r.get('event') in settled)]
+    if done:
+        confirm(base, identity, done)
+    if result.locked:
+        log(f'Co-op results: {len(result.locked)} result(s) for events this career has not unlocked wait')
     for change in result.applied:
         was = f'{change.old}' if change.old else 'not raced'
         log(f'Co-op results: {change.code} at place {change.place} (was {was}): +{change.xp} XP, '
             f'+{change.credits:,} CR' + (f', {len(change.unlocked)} event(s) unlocked' if change.unlocked else ''))
-    return f'applied {len(result.applied)}, unchanged {len(result.unchanged)}'
+    return (f'applied {len(result.applied)}, unchanged {len(result.unchanged)}, '
+            f'locked {len(result.locked)}, waiting {waiting}')
 
 
 def after_session_quietly(cfg, profile, log=print):

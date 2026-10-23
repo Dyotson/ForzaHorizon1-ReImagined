@@ -31,7 +31,7 @@
 //    teardown (sub_82CF7278) pumps the session's messages, a queued second removal ended
 //    the game again inside it and tore the session down under it, and the outer teardown
 //    read the freed session (null). The nested removal is dropped.
-// 5. Campaign rounds (#309, docs/coop_campaign.md): in a Co-op Festival world (playlist 4)
+// 5. Campaign rounds (#309, docs/coop_campaign.md): in a Co-op Festival world (playlist 20)
 //    the host's /event makes a festival event the next round (server/forza_campaign.py).
 //    The server sends every console of the world the event's own CPU skill (WORLD_EVENT
 //    op 2: its AISkillMed / AITemperamentMed rows, the career's Medium); the online AI's
@@ -187,7 +187,7 @@ uint8_t AiDifficulty(uint32_t humans, uint32_t grid) {
 // The online world game when its round is the campaign round the server described (an
 // event round on that event's track), else 0.
 uint32_t CampaignGame(uint8_t* base) {
-  constexpr uint32_t kCoopPlaylist = 4;  // server/forza_live_lsp.py COOP_HOPPER
+  constexpr uint32_t kCoopPlaylist = 20;  // server/forza_live_lsp.py COOP_HOPPER
   if (forza::LiveMatchPlaylist() != kCoopPlaylist) return 0;
   const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0;
   if (!game || !campaign_event.load() || !campaign_skill.load()) return 0;

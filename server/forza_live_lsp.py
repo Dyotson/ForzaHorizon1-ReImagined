@@ -41,6 +41,7 @@ import os
 import time
 import urllib.parse
 
+import forza_campaign as campaign
 import forza_clubs as clubs
 import forza_coop_ledger as coop_ledger
 import forza_friends as friends
@@ -78,7 +79,9 @@ PLAYGROUND_HOPPER_ID = 2
 # worlds led by a friend, where the host starts festival events with /event in WORLD chat.
 # Listed only to games that run it as a world (HELLO feature COOP_FEATURE: drop-in, events,
 # the campaign CPU drivers' skill); older games would run it as a plain free roam.
-COOP_HOPPER = 4
+# Not 4 (nor 2-9): Find Custom Game searches with the game type tab's value as the key (Street
+# Race is 4, docs/title_services.md), and the server only sees the key.
+COOP_HOPPER = 20
 COOP_FEATURE = 0x08
 WORLD_HOPPERS = (WORLD_HOPPER, COOP_HOPPER)
 # The features byte of the HELLO of the game signed in with a XUID (forza_live_server sets
@@ -313,7 +316,8 @@ def user_write_race_stats(xuid, body):
              "" if caller_trusted() else " (unverified caller)")
     if stats["hopperId"] in WORLD_HOPPERS:
         world.WORLDS.result(xuid, stats["userFinishPosition"], stats["maxPlaces"],
-                            stats["finished"])
+                            stats["finished"], session=stats["sessionId"],
+                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER)
     return x.reply()
 
 
@@ -355,9 +359,10 @@ def online_profile_update_all(xuid, body):
 
 
 def hoppers_for(xuid):
-    """The playlists offered to a player: the Co-op Festival only to games that have it."""
+    """The playlists offered to a player: the Co-op Festival only to games that have it, and
+    only when the server has events for it (the game's database, --game-db)."""
     features = client_features(xuid) if client_features else None
-    coop = features is not None and features & COOP_FEATURE
+    coop = features is not None and features & COOP_FEATURE and bool(campaign.available())
     return [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS if coop or h["id"] != COOP_HOPPER]
 
 
@@ -487,7 +492,7 @@ def hopper_get_game_options(server, xuid, body):
     hopper, round_num = params["hopperId"], params["roundNum"]
     path = os.path.join(DATA_DIR, "hoppers", "%d.xml" % hopper)
     found = server.world_of(xuid) if hopper in WORLD_HOPPERS and server else None
-    event_xml = world.WORLDS.next_round(*found) if found else None
+    event_xml = world.WORLDS.next_round(*found, trusted=caller_trusted()) if found else None
     if event_xml:
         xml = event_xml
         log.info("title: hopper %d round %d for %016X: world %s event", hopper, round_num, xuid,

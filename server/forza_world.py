@@ -187,6 +187,7 @@ class Worlds:
         self.state = {}       # session id (bytes) -> event state
         self.started = {}     # session id -> when its current free roam started
         self.members = {}     # session id -> {xuid: gamertag} (forza_live_server.world_tick)
+        self.dropped = []     # campaign requests the last tick dropped
         self.rounds = {}      # session id -> (campaign event, when it started, members)
 
     def request(self, sid, event_id=None, campaign=None, by="", by_xuid=0):
@@ -203,9 +204,16 @@ class Worlds:
                  event[3], event[4])
         return event
 
-    def next_round(self, sid, humans):
-        """GetGameOptions from the host of world sid: the event's XML, or None (world)."""
+    def next_round(self, sid, humans, trusted=True):
+        """GetGameOptions from the host of world sid: the event's XML, or None (world).
+        trusted: the call carries the host's own friends key (forza_live_lsp.caller_trusted);
+        only such calls move a campaign round along (start it in the ledger, close it)."""
         st = self.state.get(sid)
+        campaign = st.get("campaign") if st else None
+        if not trusted and (campaign is not None or ledger.LEDGER.open_round(sid)):
+            log.info("world %s: next round asked without the host's key: the world, no change",
+                     sid.hex())
+            return None
         if st and st["state"] == "pending":
             st["state"] = "next"
             campaign = st.get("campaign")
@@ -228,6 +236,8 @@ class Worlds:
                 ledger.LEDGER.start_round(sid, st["campaign"], st.get("by_xuid", 0),
                                           st.get("by", ""), members)
             del self.state[sid]
+        elif trusted:
+            ledger.LEDGER.close_round(sid)  # the world's round after a campaign round
         self.started[sid] = time.monotonic()
         return None
 
@@ -241,11 +251,13 @@ class Worlds:
         return [(sid, st["campaign"]) for sid, st in self.state.items()
                 if st.get("campaign") is not None]
 
-    def result(self, xuid, place, places, finished):
+    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False):
         """A player's race result (User.WriteRaceStatsEx): logged with the campaign round
-        of the world it was in, if one started there recently, and kept in the ledger.
+        of the world it was in, if one started there recently. The ledger takes it only from
+        the player's own game (trusted), for a Co-op Festival race in that world's session.
         Returns (sid, event) or None."""
-        ledger.LEDGER.report(xuid, place, places, finished)
+        if coop and trusted and session:
+            ledger.LEDGER.report(xuid, session, place, finished)
         now = time.monotonic()
         for sid, (campaign, since, members, by) in list(self.rounds.items()):
             if now - since > self.RESULT_WINDOW:
@@ -264,11 +276,14 @@ class Worlds:
         Co-op Festival's worlds only get the events their host asks for). Returns
         [(sid, event)] still waiting for their host."""
         now = time.monotonic()
+        self.dropped = []  # (sid, state) of the campaign requests dropped now (their host is told)
         for sid in list(self.state):
             st = self.state[sid]
             if sid not in sids or (st["state"] == "pending" and now - st["since"] > PENDING_TIMEOUT):
                 if st["state"] == "pending":
                     log.info("world %s: event %d not taken, dropped", sid.hex(), st["event"][0])
+                    if st.get("campaign") is not None:
+                        self.dropped.append((sid, st))
                 del self.state[sid]
         for sid in list(self.started):
             if sid not in sids:

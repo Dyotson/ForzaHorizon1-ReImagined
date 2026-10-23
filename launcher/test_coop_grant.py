@@ -143,11 +143,17 @@ class GrantTests(unittest.TestCase):
     def test_unlocks_by_xp_are_left_to_the_game(self):
         """The game runs them after every race with the save's XP; its Nemesis races have
         conditions of their own (a grant by XP alone unlocked five the game had not)."""
-        self.write(xp=1150, wristband=3)
+        self.write(xp=1150, wristband=3, unlocks=(4, 31, 231))
         coop_grant.apply(self.cfg, self.profile, [{'id': 'r1', 'event': 231, 'place': 1, 'places': 8}])
         after = self.state()
         self.assertEqual(after['xp'], 1150 + 225)                       # level 5, 1st
-        self.assertEqual((after['hubs'], after['unlocks']), ([], [4, 31]))
+        self.assertEqual((after['hubs'], after['unlocks']), ([], [4, 31, 231]))
+
+    def test_an_event_the_save_has_not_unlocked_waits(self):
+        before = self.originals()
+        result = coop_grant.apply(self.cfg, self.profile, [{'id': 'r1', 'event': 231, 'place': 1, 'places': 8}])
+        self.assertEqual((result.applied, result.unchanged, result.locked, result.backup), ((), (), ('r1',), None))
+        self.assertEqual(self.originals(), before)
 
     def test_the_wristband_level_is_left_to_the_game(self):
         self.write(xp=740, wristband=1)
@@ -198,20 +204,47 @@ class GrantTests(unittest.TestCase):
         self.assertEqual((changed['xp'], changed['events']), (1, {}))
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), ['ForzaProfile', 'PlayerDatabase'])
 
-    def test_after_session_fetches_applies_and_confirms(self):
-        sent = []
+    def serve(self, results):
+        """after_session against a server with these pending results; (output, requests sent,
+        lines logged)."""
+        sent, lines = [], []
 
         def request(base, identity, path, body=None, timeout=0):
             sent.append((base, identity, path, body))
-            if path == '/coop/results':
-                return {'results': [{'id': 'r1', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8},
-                                    {'id': 'r2', 'event': 4, 'code': 'FR05', 'place': 4, 'places': 8}]}
-            return {'applied': 2}
-        lines = []
+            return {'results': results} if path == '/coop/results' else {'applied': 2}
         with patch.object(coop_grant, '_request', side_effect=request):
             out = coop_grant.after_session(self.cfg, self.profile, lines.append,
                                            base='http://server:21201', identity=('0009000000001241', 'AB' * 16))
-        self.assertEqual(out, 'applied 1, unchanged 1')
+        return out, sent, lines
+
+    def test_results_go_only_to_the_save_of_the_session_they_were_earned_in(self):
+        other = saves.Profile(self.profile.home, self.root/'other', 'xenia-E030000004B490FA', 'Xenia copy')
+        coop_grant.record_session(self.cfg, other, 1000, 2000, now=2100)
+        coop_grant.record_session(self.cfg, self.profile, 5000, 6000, now=6100)
+        out, sent, lines = self.serve([
+            {'id': 'other', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8, 'at': 1500},
+            {'id': 'outside', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8, 'at': 3500},
+            {'id': 'locked', 'event': 231, 'code': 'FR50', 'place': 1, 'places': 8, 'at': 5500},
+            {'id': 'mine', 'event': 4, 'code': 'FR05', 'place': 2, 'places': 8, 'at': 5600}])
+        self.assertEqual(out, 'applied 1, unchanged 0, locked 1, waiting 2')
+        self.assertEqual(sent[-1][2:], ('/coop/results/applied', b'{"ids": ["mine"]}'))
+        self.assertEqual(self.state()['events'], {4: 2})
+        self.assertIn('Co-op results: 2 result(s) from another save or a game started elsewhere wait', lines)
+        self.assertIn('Co-op results: 1 result(s) for events this career has not unlocked wait', lines)
+        # nothing of this save's: nothing confirmed, no edit
+        out, sent, _ = self.serve([{'id': 'other', 'event': 4, 'place': 1, 'places': 8, 'at': 1500}])
+        self.assertEqual((out, [s[2] for s in sent]), ('applied 0, waiting 1', ['/coop/results']))
+
+    def test_sessions_are_kept_for_a_month(self):
+        coop_grant.record_session(self.cfg, self.profile, 1000, 2000, now=2000)
+        coop_grant.record_session(self.cfg, self.profile, 3000, 4000, now=2000 + coop_grant.KEEP_SESSIONS + 10)
+        self.assertEqual([s['start'] for s in coop_grant.load_sessions(self.cfg)], [3000])
+
+    def test_after_session_fetches_applies_and_confirms(self):
+        coop_grant.record_session(self.cfg, self.profile, 1000, 2000, now=2000)
+        out, sent, lines = self.serve([{'id': 'r1', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8, 'at': 1500},
+                                       {'id': 'r2', 'event': 4, 'code': 'FR05', 'place': 4, 'places': 8, 'at': 1600}])
+        self.assertEqual(out, 'applied 1, unchanged 1, locked 0, waiting 0')
         self.assertEqual(sent[-1][2:], ('/coop/results/applied', b'{"ids": ["r1", "r2"]}'))
         self.assertEqual(lines, ['Co-op results: FR05 at place 1 (was not raced): +100 XP, +3,000 CR, '
                                  '1 event(s) unlocked'])

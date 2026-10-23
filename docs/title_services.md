@@ -164,7 +164,7 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 `sub_82730500`) lists the first category's hoppers that every party member may join
 (`sub_82888988` -> `sub_828864D0`): with `-1` meaning no limit, races < `maxAllowedRaces`,
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
-3 "Horizon World", 1 "Races", 2 "Playground Games" and 4 "Co-op Festival", all in the one
+3 "Horizon World", 1 "Races", 2 "Playground Games" and 20 "Co-op Festival", all in the one
 category Online (a second category's hoppers would not be listed). Co-op Festival is the
 Horizon World among friends (placement only into a world a friend leads), whose host starts
 festival events with `/event` in World chat (`docs/coop_campaign.md`, "Milestone 1 progress");

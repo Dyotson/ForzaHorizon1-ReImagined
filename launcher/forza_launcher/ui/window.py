@@ -1,6 +1,7 @@
 """Play, gallery, catalogs, setup, settings, controls and saves."""
 import sys
 import threading
+import time
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon, QPixmap
@@ -379,6 +380,7 @@ class MainWindow(QMainWindow):
         self._last_start_error = None
         self.session = session
         self.session_plan = plan
+        self._session_started = time.time()  # co-op results earned now belong to this save
         self._report_context = context
         self._crash_report = None
         self.play.crash_report.hide()
@@ -510,8 +512,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             paths.log_error("start the shader list upload", e)
         try:  # co-op campaign results (#309): the host's festival event results to its save
-            coop_grant.after_session_in_background(
-                self.cfg, getattr(self.session_plan, "save_profile", None))
+            profile = getattr(self.session_plan, "save_profile", None)
+            coop_grant.record_session(self.cfg, profile, getattr(self, "_session_started", 0),
+                                      time.time())
+            coop_grant.after_session_in_background(self.cfg, profile)
         except Exception as e:
             paths.log_error("start applying co-op results", e)
         self._shader_warmup_status = None

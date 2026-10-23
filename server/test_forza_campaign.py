@@ -243,12 +243,32 @@ class CoopWorldCase(unittest.TestCase):
         return [d[5:] for addr, d in self.transport.sent
                 if addr == peer.addr and d[4] == srv.WORLD_EVENT]
 
-    def game_options(self, peer, hopper):
-        body = bytes(x.encode(x.HopperGetGameOptions_Params,
-                              {"hopperId": hopper, "roundNum": 1, "cchOptionXmlMax": 0x8000}))
-        reply = lsp.hopper_get_game_options(self.server, peer.xuid, body)
+    @staticmethod
+    def friends_key(peer):
+        """The friends key each test game signed in with (join)."""
+        return (bytes(15) + bytes([peer.xuid & 0xFF])).hex()
+
+    def title_call(self, peer, cls, method, params_type, params, key=True):
+        """A title service call from peer's game: with its own friends key, without one
+        (key=False: an older game, or someone else) or with the given one."""
+        headers = {"x-classname": "Forza.WebServices.%s, Forza.WebServices" % cls,
+                   "x-method": method, "x-userid": "0x%x" % peer.xuid}
+        if key:
+            headers["x-friends-key"] = self.friends_key(peer) if key is True else key
+        return lsp.service_call(headers, bytes(x.encode(params_type, params)), self.server)
+
+    def game_options(self, peer, hopper, key=True):
+        reply = self.title_call(peer, "Hopper", "GetGameOptions", x.HopperGetGameOptions_Params,
+                                {"hopperId": hopper, "roundNum": 1, "cchOptionXmlMax": 0x8000}, key)
         results, _ = x.decode(x.HopperGetGameOptions_Results, reply[12:])
         return ET.fromstring(results["gameOptionsXml"])
+
+    def race_report(self, peer, place, sid, finished=True, places=8, hopper=None, key=True):
+        """User.WriteRaceStatsEx at a race's end."""
+        stats = {"finished": finished, "userFinishPosition": place, "maxPlaces": places,
+                 "hopperId": lsp.COOP_HOPPER if hopper is None else hopper, "sessionId": sid}
+        return self.title_call(peer, "User", "WriteRaceStatsEx", x.UserWriteRaceStats_Head,
+                               {"id": 1, "raceStats": stats}, key)
 
     def coop_world(self):
         """A hosts a Co-op Festival world, B (A's friend) is in it."""
@@ -323,8 +343,8 @@ class CoopFestivalTest(CoopWorldCase):
         self.transport.sent.clear()
         self.server.world_tick()
         self.assertEqual(self.world_events(self.b), [])
-        # the players' results are named with the round
-        found = world.WORLDS.result(self.b.xuid, 5, 8, 1)
+        # the players' results are named with the round (and kept by the ledger)
+        found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid, trusted=True, coop=True)
         self.assertEqual((found[0], found[1].code), (sid, "FR05"))
         self.assertIsNone(world.WORLDS.result(self.c.xuid, 1, 8, 1))
 

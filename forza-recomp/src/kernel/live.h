@@ -79,9 +79,9 @@ void LiveMatchResults(const uint8_t* body, size_t size);
 // first search). Hooks use it to tell the Horizon World from other playlists.
 uint32_t LiveMatchPlaylist();
 // The playlists that run as a Horizon World (server/forza_live_lsp.py WORLD_HOPPERS): the
-// Horizon World (3) and the Co-op Festival (4, #309: the same world among friends, whose
+// Horizon World (3) and the Co-op Festival (20, #309: the same world among friends, whose
 // host starts festival events with /event in World chat).
-inline bool LiveIsWorldPlaylist(uint32_t playlist) { return playlist == 3 || playlist == 4; }
+inline bool LiveIsWorldPlaylist(uint32_t playlist) { return playlist == 3 || playlist == 20; }
 
 // Read the current title-published local activity and region together. False
 // until both XUser contexts have been received; no network request is made.

@@ -660,6 +660,12 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, event in world.WORLDS.tick(set(worlds), scheduled):
             host = worlds[sid][0]
             self.send(host.addr, WORLD_EVENT, struct.pack(">BI", 1, event[0]) + sid)
+        for sid, st in world.WORLDS.dropped:  # a campaign the host's game never took
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, "%s did not start: the world's host must be driving in "
+                                        "the free roam. Try /event again" % st["campaign"].code)
+        coop_ledger.LEDGER.maybe_save()
         world.WORLDS.members = {sid: {p.xuid: p.name for p in self.world_members(sid)}
                                 for sid in worlds}
         for sid, event in world.WORLDS.campaigns():
@@ -668,8 +674,10 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.send(p.addr, WORLD_EVENT, body)
 
     def world_request(self, session, event_id):
-        """GET /world/event?session=<id hex>|all[&event=<id>]: start an event in a world."""
+        """GET /world/event?session=<id hex>|all[&event=<id>]: start an event in a world.
+        Co-op Festival worlds are left out: their events are their host's (/event)."""
         worlds = self.world_sessions()
+        worlds = {sid: w for sid, w in worlds.items() if self.world_keys.get(sid) != lsp.COOP_HOPPER}
         sids = list(worlds) if session in ("", "all") else \
             [sid for sid in worlds if sid.hex() == session.lower()]
         return {"requested": [{"session": sid.hex(), "host": worlds[sid][0].name,
@@ -705,10 +713,17 @@ class ForzaLive(asyncio.DatagramProtocol):
 
     def coop_placement(self, peer, found):
         """Co-op Festival placement: only worlds led by one of the searcher's friends (the
-        friends list kept by forza_friends.py, accepted both ways). Without one the
-        searcher's game opens a world of its own, which its friends are then placed into."""
+        friends list kept by forza_friends.py, accepted both ways), both of them proven by
+        their friends keys (friends_ok: a HELLO's XUID alone could be anyone's). Without one
+        the searcher's game opens a world of its own, which its friends are then placed
+        into."""
         store = self.friends.store
-        kept = [f for f in found if store.relation(peer.xuid, f[0].xuid) == friends.FRIEND]
+        if not getattr(peer, "friends_ok", False):
+            log.info("match #%d %r co-op: its XUID is not proven (friends key): no world", peer.id,
+                     peer.name)
+            return []
+        kept = [f for f in found if getattr(f[0], "friends_ok", False)
+                and store.relation(peer.xuid, f[0].xuid) == friends.FRIEND]
         if len(kept) != len(found):
             log.info("match #%d %r co-op: %d of %d world(s) led by a friend", peer.id,
                      peer.name, len(kept), len(found))
@@ -743,6 +758,12 @@ class ForzaLive(asyncio.DatagramProtocol):
                              worlds[sid][0].name)
         elif world.WORLDS.state.get(sid):
             self.chat.notice(peer, "An event is already starting in this world")
+        elif coop_ledger.LEDGER.open_round(sid):
+            self.chat.notice(peer, "An event is running in this world: start the next one when "
+                                   "you are back in the free roam")
+        elif coop_ledger.LEDGER.unsettled(peer.xuid) >= coop_ledger.MAX_ROUNDS_PER_PLAYER:
+            self.chat.notice(peer, "You have %d co-op results waiting for your launcher: play a "
+                                   "session from it first" % coop_ledger.MAX_ROUNDS_PER_PLAYER)
         else:
             event = campaign.find(arg)
             if event is None:
@@ -1184,6 +1205,8 @@ async def main():
                 await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
     finally:
         server.save_state()  # a restart now keeps the players (#93)
+        if coop_ledger.LEDGER.dirty:
+            coop_ledger.LEDGER.save()
         if server.friends.store.dirty:
             server.friends.store.save()
         if discord_status.enabled():
