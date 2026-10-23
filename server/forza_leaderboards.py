@@ -125,7 +125,7 @@ def board_id(kind, sbid, stt):
 def parse_board(text):
     """(kind, sbid, stt) of a board id, or None."""
     slug, _, num = text.rpartition("-")
-    if slug not in BY_SLUG or not num.isdigit() or len(num) > 9:
+    if slug not in BY_SLUG or not num.isascii() or not num.isdigit() or len(num) > 9:
         return None
     kind, stt = BY_SLUG[slug]
     return kind, int(num), stt
@@ -274,7 +274,7 @@ def handle(method, path):
             return reply(400, {"error": "class"})
     if "limit" in query:
         text = query["limit"][0]
-        if not text.isdigit() or not 1 <= int(text) <= MAX_LIMIT:
+        if not text.isascii() or not text.isdigit() or len(text) > 3 or not 1 <= int(text) <= MAX_LIMIT:
             return reply(400, {"error": "limit 1-%d" % MAX_LIMIT})
         limit = int(text)
     key = "%s|%s|%d" % (what, class_id, limit) if board else what

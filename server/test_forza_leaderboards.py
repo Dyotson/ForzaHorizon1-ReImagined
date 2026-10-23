@@ -103,6 +103,12 @@ class LeaderboardsTest(unittest.TestCase):
         self.assertEqual(get("/leaderboards/speed-trap-230?limit=x")[0], 400)
         self.assertEqual(get("/leaderboards", "POST")[0], 405)
 
+    def test_numeric_inputs_reject_non_decimal_and_oversized_values(self):
+        for value in ("\u00b2", "9" * 5000):
+            with self.subTest(value=value[:20]):
+                self.assertEqual(get("/leaderboards/event-" + value)[0], 404)
+                self.assertEqual(get("/leaderboards/event-199?limit=" + value)[0], 400)
+
     def test_no_xuids_and_ascii(self):
         texts = [lb.handle("GET", p)[2].decode() for p in (
             "/leaderboards", "/leaderboards/snapshot", "/leaderboards/speed-trap-230",
