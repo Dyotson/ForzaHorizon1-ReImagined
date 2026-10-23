@@ -165,10 +165,10 @@ output-resolution UI inputs.
 
 ## Current-main conflict repair (2026-10-22)
 
-Integrated main `cb676f7` while retaining native-renderer source paths and all
+Integrated main `7f9a716` (including the merged #307 wheel fix) while retaining native-renderer source paths and all
 current wheel regression inputs in the release SDK cache keys. The conflict was
 limited to the Linux cache-key line; no native-renderer algorithm changed.
-All 106 SDK patches apply in numerical order to pinned SDK `bd833a2`, with unique
+All 107 SDK patches apply in numerical order to pinned SDK `bd833a2`, with unique
 numbers, and all seven standalone Windows CPU renderer tests pass. This pass did
 not rebuild/install the shared SDK or run GPU/game tests. Earlier full SDK and
 runtime results retain their recorded provenance; integrated runtime validation

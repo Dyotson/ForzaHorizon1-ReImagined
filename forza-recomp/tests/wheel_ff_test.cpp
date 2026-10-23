@@ -224,6 +224,28 @@ int main() {
   Check(fade.Step(true, 0.25f) && Near(fade.level, 0.5f), "driving again: half way in");
   Check(fade.Step(true, 5.0f) && fade.level == 1.0f, "a long step lands at full forces");
   Check(!fade.Step(true, -1.0f) && fade.level == 1.0f, "a step back in time changes nothing");
+  // #304: quick toggles (out and in within a few frames, over and over, at 60 polls a second)
+  // never leave the forces partway: half a second of driving brings them back whole.
+  FfFade toggled;
+  for (int i = 0; i < 200; i++) {
+    toggled.Step(i % 5 < 2, 1.0f / 60.0f);
+    Check(toggled.level >= 0.0f && toggled.level <= 1.0f, "toggling stays between 0 and 1");
+  }
+  for (int i = 0; i < 30; i++) {
+    toggled.Step(true, 1.0f / 60.0f);
+  }
+  Check(toggled.level == 1.0f, "toggled, then 0.5 s of driving: full forces");
+  // A toggle in the middle of a fade turns it around from where it is.
+  FfFade turn;
+  turn.Step(false, 0.125f);
+  turn.Step(true, 0.125f);
+  Check(Near(turn.level, 0.75f), "half way out, then a quarter of the way back in");
+  // A long drive: an hour of frames at 144 a second stays at full forces.
+  FfFade drive;
+  for (int i = 0; i < 3600 * 144; i++) {
+    drive.Step(true, 1.0f / 144.0f);
+  }
+  Check(drive.level == 1.0f, "an hour of driving: full forces");
   // The fade scales every force: the steering force, the spring's coefficients and the rumble.
   fade.Step(false, 0.0625f);  // 0.75
   const float faded = 0.6f * fade.level;

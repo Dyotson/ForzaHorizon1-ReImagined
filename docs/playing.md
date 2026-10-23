@@ -519,16 +519,31 @@ instead. On Linux the wheel needs read and write access to its `/dev/input/event
 wheels).
 
 **Not driving: the forces fade out (#256).** The game keeps its wheel effects going when the car is not under the
-player's control: in the pause menu it sets the centring spring to full and leaves it and the damper on, a
-rewind plays the steering force and rumble of the car going backwards, and replays keep the last spring. So the
-wheel pulled and buzzed there (a G923 owner, #4). The driver now fades all the game's forces and its rumble to
-nothing in 0.25 s while the player is not driving and back in over 0.5 s when they are. The game tells it
-(`ForzaWheelPlayerDriving`, an export of the runtime) from the car's physics: its substeps stop in the pause menu,
-rewinds, replays, menus and loading screens, and driving counts again once they have run for half a second (which
-leaves out most of the short bursts when a replay starts; the one when the rewind menu's *View replay* starts is
-1.3 s long). The game's rumble cannot tell with a wheel: it sends a wheel's rumble only through the force feedback
-calls. With a virtual G923: in the pause menu and while rewinding the spring, damper, constant force and rumble the
-wheel receives go to 0 within half a second, and come back half a second after *Resume* or *Resume from here*.
+player's control: in the pause menu it sets the centring spring to full and leaves it and the damper on, a rewind
+plays the steering force and rumble of the car going backwards, and replays keep the last spring. So the wheel
+pulled and buzzed there (a G923 owner, #4). The driver now fades all the game's forces and its rumble to nothing
+in 0.25 s while the player is not driving and back in over 0.5 s when they are. The game tells it
+(`ForzaWheelPlayerDriving`, an export of the runtime) from its own simulation state, once a frame: the pause flag
+of its world (the pause and rewind menus, replays), the time scale (negative while a rewind plays the car
+backwards), whether the world has started (loading) and whether the car's physics stepped, and the pad polls for
+menus where no world runs. Driving counts again after half a second of physics (which leaves out most of the
+burst when a replay starts; the one from the rewind menu's *View replay* is about 1.3 s long). The game's rumble
+cannot tell with a wheel: it sends a wheel's rumble only through the force feedback calls. With a virtual G923:
+in the pause menu and while rewinding the spring, damper, constant force and rumble the wheel receives go to 0
+within half a second, and come back half a second after *Resume* or *Resume from here*.
+
+**Hitches no longer fade the forces (#304).** The first version (#256) counted a quarter of a second without a
+physics step as not driving, so every frame that long or longer (a shader compiled after a crash, the window
+losing focus or streaming, for example) took the forces away for about a second: out at once, back half a second
+later, then the fade. A Simagic Alpha EVO Pro owner at 900 degrees felt the force feedback go weak after hitting
+walls, alt-tabbing and a few minutes of play, and their log showed it switching like that. The state is now
+counted in frames, so a hitch, a wall hit, a focus change or a long drive never fades anything (tested with a
+virtual Simagic at 60 and 144 fps: 0.7 s and 2 s freezes, a crash into the roadside, the window minimised, a 5
+minute drive). The log names the reason each time: `Wheel: not driving (pause)`, `(rewind)`, `(loading)`, `(menu
+or loading)`, then `Wheel: driving`, and the driver adds `the game's forces are faded out` and `the game's forces
+are back at full strength`. Back at full strength the driver also starts every effect that should be playing
+again, in case the wheel dropped one meanwhile (DirectInput stops a device's effects when it has to acquire it
+again), and a failed update or start of the game's effects is logged as a warning.
 `FORZA_WHEEL_DRIVING_GATE=0` switches the fade off.
 
 Tested with a virtual wheel (uinput) that logs what it receives, and by a G29 and a G923 owner. Wheel drivers disagree about
