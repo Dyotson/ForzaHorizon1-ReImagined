@@ -324,6 +324,17 @@ verified trigger amplitudes, routing to guest users, unsupported-device rejectio
 body rumble preservation, UI/focus/master-vibration gating and timeout. Physical
 USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.
 
+0094 adds opt-in unchanged Vulkan texture/sampler binding reuse. Adjacent draws
+reuse acquired samplers within one submission while their shaders, texture cache,
+sampled fetch constants and anisotropy override remain unchanged. Texture requests
+can skip repeated work only while their bindings remain synchronized, no texture
+is outdated, and their sampled image usages and submission still match. Exact
+ordered descriptor payload comparisons retain immutable texture/sampler sets.
+`FORZA_VK_BINDING_REUSE=1` enables the experiment; `FORZA_VK_BINDING_VERIFY=1`
+runs normal acquisition/request paths on predicted hits, and
+`FORZA_VK_BINDING_STATS=1` logs counters. All switches default off.
+See [the experiment report](vulkan_binding_reuse.md).
+
 ### Photo directory failures (#211)
 
 0097 keeps host directory-creation errors inside the existing guest filesystem
