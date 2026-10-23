@@ -300,6 +300,12 @@ add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
     "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+# A minimum steering force (patch 0131, #303).
+add("wheel_ffb_min_strength", "Minimum force (%)", "Controls", "int", 0,
+    "Gives a light car some weight in the wheel: the game's steering forces weaker than this share "
+    "of the full force are scaled up (smoothly, up to 4 times near the centre), stronger ones stay "
+    "as they are. 0 is off. Try 10 to 30. The centring spring and the rumble do not change.",
+    "Racing wheel", lo=0, hi=100, step=5)
 add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100,
     "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
     "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",

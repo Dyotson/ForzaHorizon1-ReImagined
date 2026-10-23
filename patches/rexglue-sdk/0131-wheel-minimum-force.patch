@@ -1,0 +1,108 @@
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 2d546d4..8ccda6c 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -35,6 +35,7 @@
+ #include <rex/ui/virtual_key.h>
+ 
+ #include "wheel_devices.h"
++#include "wheel_min_force.h"
+ #include "wheel_rumble.h"
+ 
+ REXCVAR_DEFINE_STRING(wheel_mode, "auto", "Input",
+@@ -145,6 +146,12 @@ REXCVAR_DEFINE_STRING(wheel_shifter_device, "", "Input",
+ REXCVAR_DEFINE_STRING(wheel_shifter_device_buttons, "", "Input",
+                       "Shifter buttons on the shifter device, e.g. 1=0,2=1,3=2,4=3,5=4,6=5,r=6 or "
+                       "up=..,down=.. (empty: a known shifter's layout)");
++REXCVAR_DEFINE_INT32(wheel_ffb_min_strength, 0, "Input",
++                     "Minimum steering force, 0 to 100 percent of the full force: the game's "
++                     "weaker steering forces are scaled up (smoothly, up to 4 times near the "
++                     "centre), stronger ones play as they are, so a light car still has weight "
++                     "(0: off; before wheel_ffb_strength; not the spring, damper or rumble)")
++    .range(0, 100);
+ 
+ namespace rex::input::wheel {
+ 
+@@ -260,6 +267,12 @@ FfStrengths Strengths() {
+   return s;
+ }
+ 
++// The game's steering force with wheel_ffb_min_strength (wheel_min_force.h).
++float MinForceLevelOf(const FfEffect& e, uint32_t device_gain, float level) {
++  const float min = std::clamp(REXCVAR_GET(wheel_ffb_min_strength), 0, 100) / 100.0f;
++  return FfMinForceLevel(e, device_gain, level, min);
++}
++
+ float Norm(int16_t v) {
+   return v < 0 ? v / 32768.0f : v / 32767.0f;
+ }
+@@ -813,8 +826,9 @@ void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
+       fx.constant.direction.type = SDL_HAPTIC_STEERING_AXIS;
+       fx.constant.length = SDL_HAPTIC_INFINITY;
+       const float sign = REXCVAR_GET(wheel_ffb_reverse) ? -kConstantToSdl : kConstantToSdl;
+-      fx.constant.level =
+-          static_cast<Sint16>(std::lround(sign * FfConstantLevel(e, scale) * 32767.0f));
++      fx.constant.level = static_cast<Sint16>(
++          std::lround(sign * MinForceLevelOf(e, game_ff_.device_gain(), FfConstantLevel(e, scale)) *
++                      32767.0f));
+       play = game_ff_.Active(block);
+     } else if (condition && (f & condition)) {
+       const FfCondition c = FfConditionOf(e, scale);
+diff --git a/src/input/wheel/wheel_min_force.h b/src/input/wheel/wheel_min_force.h
+new file mode 100644
+index 0000000..e96255b
+--- /dev/null
++++ b/src/input/wheel/wheel_min_force.h
+@@ -0,0 +1,52 @@
++/**
++ * @file        src/input/wheel/wheel_min_force.h
++ * @brief       A minimum force for the game's steering force (#303), without SDL: forces weaker
++ *              than wheel_ffb_min_strength are scaled up, so a light car still has some weight in
++ *              the wheel; stronger ones play as the game sends them.
++ *
++ * FH1's steering force (its constant force effect, wheel_ff.h) follows the car: in a light car it
++ * stays small, in a heavy one (#4: a WRX STI on a Simagic Alpha EVO Pro) it is several times
++ * stronger. The minimum lifts the weak end of the range instead of clipping it to a floor: a force
++ * x below the minimum m plays as x (1 + 3 (1 - x / m)^2), up to 4 times as strong near 0, and from
++ * m up as x. The curve starts at 0 (no step when the force changes sides at the centre), meets the
++ * line at m with the same slope, always rises (3 is the largest factor that keeps it rising) and
++ * never plays a force weaker than the game's. The centring spring, the damper and the rumble are
++ * left alone.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++#include <cstdint>
++
++#include <rex/input/wheel/wheel_ff.h>
++
++namespace rex::input::wheel {
++
++constexpr float kMinForceBoost = 3.0f;  // a force near 0 plays at 1 + kMinForceBoost times
++
++// A force of size x (0 to 1 of the wheel's full force) with the minimum `min` (0 to 1).
++inline float MinForce(float x, float min) {
++  x = std::clamp(x, 0.0f, 1.0f);
++  if (!(min > 0.0f) || x >= min) {
++    return x;
++  }
++  const float u = 1.0f - x / std::min(min, 1.0f);
++  return x * (1.0f + kMinForceBoost * u * u);
++}
++
++// The game's constant force as played (FfConstantLevel: with the player's strengths and the fade)
++// with the minimum applied to the force the game asks for: its magnitude, the effect's gain and the
++// device gain, before wheel_ffb_strength and the fade scale it.
++inline float FfMinForceLevel(const FfEffect& e, uint32_t device_gain, float level, float min) {
++  const float game = std::fabs(FfConstantLevel(e, FfScale(e, device_gain, 1.0f)));
++  if (!(game > 0.0f) || !(min > 0.0f)) {
++    return level;
++  }
++  return std::clamp(level * (MinForce(game, min) / game), -1.0f, 1.0f);
++}
++
++}  // namespace rex::input::wheel

@@ -390,6 +390,7 @@ edited by hand:
 | `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default |
 | `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_ffb_min_strength` | 0 | Minimum steering force (#303): the game's steering forces weaker than this percentage of the full force are scaled up, stronger ones stay (launcher: Minimum force; 0 is off) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
 | `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
@@ -511,6 +512,15 @@ slides, so the engine starts at 50 percent and the road at 80. With the defaults
 road at most 0.12 and the engine 0.075 of the motor's force, where classic at the old 100 percent gave 0.36. The
 style is read when the game opens the wheel: restart after changing it. Please tell us which values feel right
 on your wheel (#4).
+
+**Minimum force (#303).** The game's steering force follows the car: light cars give a light wheel, and a heavy
+one (a WRX STI on a Simagic EVO Pro in #4) several times more. `wheel_ffb_min_strength` (launcher: Minimum force,
+0 by default) lifts the weak end, SDK patch 0131: a steering force weaker than this percentage of the full force
+is scaled up, at most 4 times near the centre and less the closer it is to the minimum, and from the minimum up
+it plays as the game sends it. The curve is smooth and starts at 0, so there is no step when the force changes
+sides in the middle and no floor that flattens the road feel; it applies to the game's force before
+`wheel_ffb_strength`, and the centring spring, the damper and the rumble are not changed. With a minimum of 30, a
+force of 10 percent plays at about 23, one of 20 at 27 and one of 30 or more as it is. Try 10 to 30.
 
 The
 wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
