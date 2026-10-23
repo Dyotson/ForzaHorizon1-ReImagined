@@ -13,6 +13,9 @@ from . import gamertag, power
 from .paths import IS_WINDOWS
 
 GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+# The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
+# 120 Hz screens, so every frame stays on screen for the same number of refreshes.
+LOW_FRAME_RATES = (20, 30, 40)
 
 
 @dataclass
@@ -67,7 +70,9 @@ add("data_out_format", "Telemetry format", "Controls", "choice", "horizon",
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
-    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS.", "Frame rate")
+    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
+    "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
@@ -562,7 +567,11 @@ def coerce(setting, value):
         if setting.kind in ("int", "fps"):
             v = int(float(value))
             if setting.kind == "fps":    # 0 = Match display, resolved by the launcher at launch
-                return 0 if v == 0 else 30 if v < 60 else min(v, 240)
+                if v == 0:
+                    return 0
+                if v < 60:    # below 60 the game runs 20, 30 or 40: the highest not above v
+                    return max([r for r in LOW_FRAME_RATES if r <= v], default=LOW_FRAME_RATES[0])
+                return min(v, 240)
             lo = -(10 ** 9) if setting.lo is None else int(setting.lo)
             hi = 10 ** 9 if setting.hi is None else int(setting.hi)
             return max(lo, min(hi, v))

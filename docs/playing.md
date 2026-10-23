@@ -109,7 +109,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   players at different frame rates race together. Free roam runs 60 fps at 60, about 115
   at 120 and 112 at 144; a race with 7 AI cars 60, 76 and 70, bound by the GPU emulation
   ([`docs/framerate.md`](docs/framerate.md)). 144 needs the SDK overlay with patch 0037
-  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam.
+  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam. A PC that
+  cannot hold 30 can run 20 (`frame_rate = 20`): each frame then stays on a 60 Hz screen for
+  exactly 3 refreshes, where 22 fps alternates 2 and 3 and judders; 40 does the same on a
+  120 Hz screen (#263).
 - **Title Update 4 (default):** `play.sh` runs `forza-recomp/out/build/linux-tu4` when it
   exists (how to build it: README, Building; `FORZA_BUILD=linux-tu4`) and mounts the
   update's files (`extracted/tu4/`, or `FORZA_UPDATE`) as `update:` with
