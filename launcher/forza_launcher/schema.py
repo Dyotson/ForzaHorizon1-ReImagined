@@ -471,13 +471,15 @@ add("video_mode_height", "Guest video height", "Advanced", "int", 720,
 
 # Discord status display is opt-in. The application ID is public maintainer setup,
 # separated from the ordinary sharing switch. Never request a token or secret.
-add("discord_presence", "Share activity on Discord", "Online", "bool", False,
+add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
-    "Requires a Discord application ID in Advanced. Applies on the next game launch.", "Discord",
+    "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "
+    "Applies on the next game launch.", "Discord",
     restart=True)
-add("discord_application_id", "Discord application ID", "Advanced", "str", "",
-    "One-time Rich Presence setup: the public numeric Application ID from the Discord Developer Portal. "
-    "Leave empty to disable the connection. Never enter a bot token or client secret.", "Discord setup",
+add("discord_application_id", "Discord application ID", "Advanced", "str", "1563015276583460934",
+    "The public Application ID Discord shows as the game (the project's own, set by default). "
+    "Change it only to use another Discord application; empty disables the connection. "
+    "Never enter a bot token or client secret.", "Discord setup",
     restart=True)
 
 BY_KEY = {s.key: s for s in S}
