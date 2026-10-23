@@ -194,12 +194,16 @@ put it in the data folder (read again when it changes):
 
 ```
 python3 tools/extract_map_points.py --game extracted/game --update extracted/tu4 \
-    --out /tmp/map_points.json --names forza_live_data/leaderboard_names.json
+    --dlc ~/.local/share/forza --out /tmp/map_points.json \
+    --names forza_live_data/leaderboard_names.json
 ```
 
 The file is `{"boards": {"speed-trap-230": "Rt. 29 Speed Trap", "event-199": "..."},
 "cars": {"1398": "2012 Lamborghini Aventador LP700-4"}}` (the in-game names of the speed traps,
-speed zones and events, and the cars). The website has the same board names in
+speed zones and events, and the cars). `--dlc` is a folder with the DLC packages, installed
+(`tools/install_dlc.py`, the game's user data folder) or extracted (a Xenia `content` folder):
+the car packs' cars are in their database patches and their names in their string tables. The
+cars of the disc 2 car packs (docs/disc.md) are named only when their packages are there. The website has the same board names in
 `site/data/map_points.json`, so the page shows them either way; only the boards without a place
 on the map (monthly Rivals, events off the Colorado map) and the cars need the server's file.
 
