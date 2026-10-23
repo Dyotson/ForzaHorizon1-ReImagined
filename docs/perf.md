@@ -1048,8 +1048,7 @@ instead of 150 ms a second, the GPU 4.5 instead of 8.0 ms a frame; 1 gave two ti
 the static world (track, terrain, barriers, hills, signs) was missing: only the cars, the crowd, trees and the sky
 were drawn. So the lead holds (the tiles are most of the command processor's time, and 4x MSAA a large share of
 the GPU's), but switching the game's scenario is not enough: the world's renderer has some setup of its own for
-the tiled 4x MSAA path. Finding it, or emulating one large pass in the render target cache (beyond the 10 MB of
-EDRAM), is the next step; a non-tiled scene would cut both the CPU and the GPU time of a Deck frame.
+the tiled 4x MSAA path: its recorded command lists (found and handled in [One-pass scene](#one-pass-scene-scene_msaa-45-2026-10-23)).
 
 **Change: SDK patch 0140** (`docs/sdk_patches.md`): the packet loop skips runs of type-2 padding in one loop and
 has no stack frame on its hot path; register ranges that do not wrap the ring are written without the runtime's
@@ -1084,7 +1083,8 @@ another job on CPUs 0-3.)
 
 **Left, for a Deck:**
 
-- The EDRAM tiles (above): the largest single cost of the command processor and a large share of the GPU's.
+- The EDRAM tiles (above): the largest single cost of the command processor and a large share of the GPU's;
+  `scene_msaa` ([One-pass scene](#one-pass-scene-scene_msaa-45-2026-10-23)) removes them at the price of MSAA.
 - `UpdateBindings` and the texture bindings, 41% of the draw time: Sean's drafts #179 (dynamic constant
   descriptors) and #192 (reuse of unchanged texture and sampler bindings) measured +7.7% and +6.5% fps on a
   CPU-bound PC; both are opt-in and need game validation.
@@ -1095,6 +1095,67 @@ another job on CPUs 0-3.)
   of two worker threads.
 - On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
   with the performance overlay, would show how much of the gap they close.
+
+## One-pass scene: `scene_msaa` (#45, 2026-10-23)
+
+The three EDRAM tiles above are most of the command processor's time. The game can render
+without them: its render scenario table (`TilingScenario`) has a two-tile 2x MSAA entry, used by
+its 12- and 16-car races, and a one-pass entry without MSAA. Switching to either lost the static
+world (above). Why, found with RenderDoc captures of the benchmark (a tiled and a one-pass frame
+compared draw by draw, `qrenderdoc --python`), packet counters in the command processor and call
+counts with gdb:
+
+- The 3D scene of the one-pass frame had 918 draws against 2,989 over the three tiles, and 316
+  distinct opaque draws of the tiled frame (806 with the tile repeats) were not in it at all:
+  the game never submitted them (the command processor's early-outs counted none).
+- The track (static world) presentation, `Presentation_Unified::CTrackPresentation`, draws each
+  pass from command lists recorded per pass and layer (index pass * 3 + layer, `sub_82466418`).
+  Its scene pass depends on the tile count of the scenario (`sub_82469B18`: 4 for three tiles, 3
+  for two, 5 for one), and the game records lists for pass 4 only: in a one-pass race every pass-5
+  call found no list (68,000 a second, against 87,000 calls with a list in pass 4 tiled).
+- `sub_82466418` has a second path, chosen by its last argument: `sub_82EAF3B0` draws the same items
+  directly, without recorded lists. Taking it for passes 3 and 5 when they have no list brings the
+  world back. Replaying pass 4's lists instead does not work: they hold the tiled layout and
+  drew the sky into the bottom of the screen.
+
+**Change** (`src/hooks/scene_tiling.cpp`, `src/platform/scene_tiling.h`, launcher Display >
+Picture > "Scene anti-aliasing (MSAA)"): `scene_msaa = game` (default) keeps the game's 4x MSAA in
+three tiles; `2x` lowers the 4x scenario to the game's two-tile 2x MSAA one; `off` lowers 4x and 2x
+to its one-pass scenario without MSAA. The scenario is lowered right after the game reads it from
+the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`); the track draws
+passes 3 and 5 directly when they have no recorded list (those passes are never reached with the
+game's own scenarios in free roam and races, so `game` is unchanged). Disc build:
+`sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`. `forza-recomp/tests/scene_tiling_test.cpp` checks the
+scenario choice and the pass rule.
+
+**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark's race start
+and race, free roam at the spawn in the chase camera, the driver (cockpit) camera standing and after
+6 s of driving, in each mode: the track, terrain, barriers, signs, gantries, trees, crowd and cars
+are all there in `2x` and `off`, as in `game`; the edges are more jagged without MSAA. The same race
+moment differs only by the AI cars' positions.
+
+**Measured** (benchmark as in the 4-core section, the same build with patch 0140, two runs per mode
+and configuration, alternating, BENCH lock held, no other game; ms per frame):
+
+| Configuration | scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 cores, uncapped | game | 114.9 [112.8-116.9] | 78.8 [77.6-80.0] | 7.16 [7.00-7.31] | 3.54 | 18.2 | 5.8 |
+| 4 cores, uncapped | 2x | 138.9 [130.4-147.4] | 90.7 [89.0-92.3] | 5.90 [5.46-6.34] | 4.10 | 16.8 | 5.3 |
+| 4 cores, uncapped | off | 142.2 [135.4-149.0] | 92.6 [91.4-93.8] | 5.13 [4.82-5.44] | 3.99 | 15.7 | 4.9 |
+| 4 cores, 30 fps | game | 30.0 | 26.9 [26.5-27.2] | 6.86 [6.80-6.92] | 3.41 | 23.2 | 8.0 |
+| 4 cores, 30 fps | 2x | 30.0 | 26.9 [26.6-27.2] | 5.85 [5.39-6.31] | 4.07 | 22.9 | 7.5 |
+| 4 cores, 30 fps | off | 30.0 | 27.3 [27.3-27.3] | 4.86 [4.75-4.97] | 4.04 | 21.6 | 6.9 |
+
+- `off`: the command processor needs 29% less time a frame (6.86 to 4.86 ms at 30 fps), the Vulkan
+  submission thread 0.3 ms less, the GPU 14% less at 30 fps (16% uncapped); uncapped the benchmark
+  runs 24% faster (115 to 142 fps) with a 1% low 18% higher. The render thread does 0.45-0.65 ms more,
+  drawing the track items directly instead of running recorded lists.
+- `2x`: two tiles instead of three: the command processor 15% less (but between runs more spread),
+  the GPU 6% less at 30 fps, 21% more fps uncapped.
+- On a Deck, where the frame waits on the command processor's chain (above), the command processor's
+  2 ms a frame at 5 GHz is about 4-5 ms of a Deck frame.
+- Not tested yet: with the FSR 3, DLSS and SMAA scene paths (they look for the game's scene and HUD
+  targets), ultrawide, render scale above 1, photo mode, Windows and a Deck. It stays off by default.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
