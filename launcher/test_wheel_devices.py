@@ -97,6 +97,19 @@ class SettingsMatchTheSdk(unittest.TestCase):
 
 
 class Detection(unittest.TestCase):
+    def test_vjoy_name_across_sdl_backends(self):
+        wheel = dev("FANATEC Wheel", 0x0EB7, 0x0020, sdl_wheel=True)
+        vjoy = dev("Shaul Eizikovich vJoy - Virtual Joystick", 0x1234, 0xBEAD)
+        self.assertEqual(b.device_match("vJoy Device", vjoy), 2)
+        self.assertEqual(b.device_match("vJoy Device", wheel), 0)
+        self.assertEqual(b.device_match("vJoy Device", dev(vjoy.name, 0x1234, 1)), 0)
+        s = settings(wheel_pedal_device="vJoy Device", wheel_shifter_device="vJoy Device",
+                     wheel_handbrake_device="vJoy Device")
+        pick = b.pick_aux([wheel, vjoy], s)
+        self.assertEqual((pick.pedals, pick.shifter), (1, 1))
+        self.assertEqual(b.pick_handbrake([wheel, vjoy], s), 1)
+        self.assertEqual(b.primary_wheel([vjoy, wheel], s), 1)
+
     def test_roles(self):
         self.assertEqual(b.detect_aux_role(0x0483, 0x0525, ""), "pedals")
         self.assertEqual(b.detect_aux_role(0x0EB7, 0x1A92, ""), "shifter")
@@ -228,6 +241,96 @@ class Bindings(unittest.TestCase):
         self.assertEqual(out["wheel_pedal_axes"], "throttle=2,brake=1,clutch=0")
         self.assertEqual(out["wheel_axes"], "steer=0")
         self.assertFalse(out["wheel_invert_throttle"])
+
+
+class LiveView(unittest.TestCase):
+    """The Controls graph combines a wheel with the pedal, shifter and handbrake devices the game
+    reads (#306). No hardware: snapshots stand in for the devices."""
+    def wheel(self, axes=(10, 20, 30, 40), buttons=(False, True), hat=4):
+        return b.Snapshot(tuple(axes), tuple(buttons), (hat,))
+
+    def test_no_auxiliary_device_leaves_the_wheel_alone(self):
+        wheel = self.wheel()
+        self.assertIsNone(b.live_inputs(settings(), wheel))
+        self.assertIsNone(b.live_inputs(settings(), wheel, {}, {}))
+        # A pedal device the wheel's own axes replace is not graphed.
+        s = settings(wheel_axes="throttle=1,brake=2,clutch=3")
+        pedals = b.Snapshot((-32768, 0, 32767))
+        self.assertIsNone(b.live_inputs(s, wheel, {"pedals": P1000}, {"pedals": pedals}))
+        # A shifter device does nothing while the shifter is off, and a handbrake set on the wheel
+        # stays on the wheel's own axis.
+        self.assertIsNone(b.live_inputs(settings(), wheel, {"shifter": DS8X},
+                                        {"shifter": b.Snapshot((), (True,) * 11)}))
+        tbrs = b.AuxInfo("SIMAGIC TB-RS Handbrake", 0x3670, 0x0A04, 1, 0)
+        self.assertIsNone(b.live_inputs(settings(wheel_axes="handbrake=2"), wheel,
+                                        {"handbrake": tbrs}, {"handbrake": b.Snapshot((9,))}))
+        self.assertIsNone(b.live_inputs(settings(wheel_axes="handbrake=99"), wheel,
+                                        {"handbrake": tbrs}, {"handbrake": b.Snapshot((9,))}))
+
+    def test_known_pedals_and_shifter_on_their_rows(self):
+        wheel = self.wheel()
+        pedals = b.Snapshot((-32768, 1000, 32767))  # P1000: clutch, brake, throttle
+        shifter = b.Snapshot((), (True,) + (False,) * 10)
+        s = settings(wheel_shifter="h")
+        live = b.live_inputs(s, wheel, {"pedals": P1000, "shifter": DS8X},
+                             {"pedals": pedals, "shifter": shifter})
+        self.assertEqual(live.axes, (
+            ("Axis 0", 10), ("Axis 1", 20), ("Axis 2", 30), ("Axis 3", 40),
+            ("Throttle", 32767), ("Brake", 1000), ("Clutch", -32768)))
+        self.assertEqual(live.buttons[:2], (("0", False), ("1", True)))
+        self.assertEqual(live.buttons[2:], tuple(
+            (label, label == "1") for label in ("1", "2", "3", "4", "5", "6", "7", "R")))
+        self.assertEqual(live.hats, (4,))
+        # wheel_axes keeps the brake on the wheel; wheel_pedal_axes wins over it and the model.
+        s = settings(wheel_axes="brake=3", wheel_pedal_axes="throttle=0")
+        live = b.live_inputs(s, wheel, {"pedals": P1000}, {"pedals": pedals})
+        self.assertEqual([a[0] for a in live.axes[4:]], ["Throttle", "Clutch"])
+        self.assertEqual(live.axes[4][1], -32768)  # the pedal device's axis 0, not the model's 2
+        # Cleared on the pedal device: that row goes, the others stay.
+        s = settings(wheel_pedal_axes="throttle=99")
+        live = b.live_inputs(s, wheel, {"pedals": P1000}, {"pedals": pedals})
+        self.assertEqual([a[0] for a in live.axes[4:]], ["Brake", "Clutch"])
+
+    def test_vjoy_pedals_handbrake_and_shifter_are_one_device(self):
+        # SimHub feeds all three through one vJoy. The saved "vJoy Device" name is the caller's
+        # concern (device_match); here the picked device's axes land on the rows the game reads.
+        vjoy = b.AuxInfo("Shaul Eizikovich vJoy - Virtual Joystick", 0x1234, 0xBEAD, 8, 12)
+        snap = b.Snapshot((11, 22, 33, 44, 55), (False, True, False, False, False, True))
+        s = settings(wheel_pedal_device="vJoy Device",
+                     wheel_pedal_axes="throttle=0,brake=1,clutch=2",
+                     wheel_handbrake_device="vJoy Device", wheel_handbrake_axis=3,
+                     wheel_shifter_device="vJoy Device", wheel_shifter="sequential",
+                     wheel_shifter_device_buttons="up=5,down=1")
+        live = b.live_inputs(s, self.wheel(buttons=()), {"pedals": vjoy, "handbrake": vjoy,
+                                                         "shifter": vjoy},
+                             {"pedals": snap, "handbrake": snap, "shifter": snap})
+        self.assertEqual(live.axes[4:], (
+            ("Throttle", 11), ("Brake", 22), ("Clutch", 33), ("Handbrake", 44)))
+        self.assertEqual(live.buttons, (("Up", True), ("Down", True)))
+        # Combined pedals: one row, the throttle axis, and no brake row.
+        s = settings(wheel_pedals="combined", wheel_pedal_axes="throttle=1,clutch=2")
+        live = b.live_inputs(s, self.wheel(buttons=()), {"pedals": vjoy}, {"pedals": snap})
+        self.assertEqual(live.axes[4:], (("Throttle", 22), ("Clutch", 33)))
+        # Nothing mapped yet: every axis and button of the device, so a pedal still moves the graph.
+        bare = b.Snapshot((-32768, 0, 32767), (False, True))
+        live = b.live_inputs(settings(wheel_shifter="h"), self.wheel(axes=(0,), buttons=()),
+                             {"pedals": vjoy, "shifter": vjoy}, {"pedals": bare, "shifter": bare})
+        self.assertEqual(live.axes[1:], (("Axis 0", -32768), ("Axis 1", 0), ("Axis 2", 32767)))
+        self.assertEqual(live.buttons, (("0", False), ("1", True)))
+        # A missing reading is a resting row, not a missing one.
+        s = settings(wheel_pedal_axes="throttle=5,brake=1,clutch=2")
+        live = b.live_inputs(s, self.wheel(axes=(), buttons=()), {"pedals": vjoy}, {})
+        self.assertEqual(live.axes, (("Throttle", 0), ("Brake", 0), ("Clutch", 0)))
+
+    def test_handbrake_device_axis(self):
+        tbrs = b.AuxInfo("SIMAGIC TB-RS Handbrake", 0x3670, 0x0A04, 1, 0)
+        live = b.live_inputs(settings(), self.wheel(buttons=()), {"handbrake": tbrs},
+                             {"handbrake": b.Snapshot((16000,))})
+        self.assertEqual(live.axes[4:], (("Handbrake", 16000),))
+        s = settings(wheel_handbrake_device="SIMAGIC TB-RS Handbrake", wheel_handbrake_axis=0)
+        live = b.live_inputs(s, self.wheel(buttons=()), {"handbrake": tbrs},
+                             {"handbrake": b.Snapshot((16000,))})
+        self.assertEqual(live.axes[-1], ("Handbrake", 16000))
 
 
 class Evdev(unittest.TestCase):
@@ -481,6 +584,23 @@ class EditorWithThreeDevices(unittest.TestCase):
         self.assertEqual(st["wheel_pedal_device"], "SIMAGIC P1000")
         self.assertEqual(st["wheel_pedal_axes"], "throttle=2,brake=1,clutch=0")
         self.assertEqual(st["wheel_axes"], "steer=0")
+
+    def test_live_view_follows_the_pedal_and_shifter(self):
+        self.cfg.settings["wheel_shifter"] = "h"
+        self.pedals.axis(2, 32767)  # P1000 throttle
+        self.shifter.button(0, True)  # gear 1
+        self.step()
+        live = self.ed.view.inputs
+        self.assertEqual([a[0] for a in live.axes[:4]], ["Axis 0", "Axis 1", "Axis 2", "Axis 3"])
+        self.assertEqual(live.axes[4:], (("Throttle", 32767), ("Brake", -32768), ("Clutch", -32768)))
+        self.assertIn(("1", True), live.buttons)
+        self.assertNotIn("Up", [label for label, _down in live.buttons])
+        self.assertEqual(len(self.ed.view.snap.axes), 4)  # the wheel's own reading
+        self.cfg.settings["wheel_pedal_device"] = "none"
+        self.cfg.settings["wheel_shifter_device"] = "none"
+        self.step()
+        self.assertIsNone(self.ed.view.inputs)
+        self.assertEqual(len(self.ed.view.snap.axes), 4)
 
 
 if __name__ == "__main__":

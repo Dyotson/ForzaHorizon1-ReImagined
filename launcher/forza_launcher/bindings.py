@@ -426,6 +426,10 @@ def device_match(setting, device):
     s = _squash(setting)
     if not s:
         return 0
+    # SDL2's vJoy name differs from SDL3's Windows HID product name (#306).
+    # Preserve existing saved bindings, restricted to the device's reported USB id.
+    if s == "vjoy device" and (device.vid, device.pid) == (0x1234, 0xBEAD):
+        return 2
     if s in (_squash(device.name), _squash(device.guid), f"{device.vid:04x}:{device.pid:04x}"):
         return 2
     return 1 if s in _squash(device.name) else 0
@@ -798,6 +802,124 @@ def split(parts, kind, number):
             return i, number
         number -= count
     return None, None
+
+
+# --- the live view (#306) ---------------------------------------------------------------------
+# The Controls page graphs one device. Pedals, a shifter or a handbrake on their own device are
+# read with the wheel (the same choice as the game: pick_aux, pick_handbrake, PlanPedals), and a
+# pedal moving has to show on that row or it looks unbound. With none of those devices contributing,
+# the view stays the wheel's own axes and buttons.
+_LIVE_AXIS = {"throttle": "Throttle", "brake": "Brake", "clutch": "Clutch"}
+_LIVE_GEAR = {**{str(g): str(g) for g in range(1, 8)}, "r": "R", "up": "Up", "down": "Down"}
+_GEAR_KEY = {**{str(g): f"gear{g}" for g in range(1, 8)}, "r": "gearr", "up": "seq_up",
+             "down": "seq_down"}
+_LIVE_FIELDS = {"h": [str(g) for g in range(1, 8)] + ["r"], "sequential": ["up", "down"]}
+
+
+def _snap_axis(snap, number):
+    if snap is None or number is None or number < 0 or number >= len(snap.axes):
+        return 0
+    return snap.axes[number]
+
+
+def _snap_button(snap, number):
+    if snap is None or number is None or number < 0 or number >= len(snap.buttons):
+        return False
+    return bool(snap.buttons[number])
+
+
+def _pedal_from_device(settings, field):
+    """Whether the game reads this pedal from the pedal device while one is connected (PlanPedals):
+    a wheel_pedal_axes number, otherwise the device unless wheel_axes gives the pedal."""
+    pedal = parse_kv(settings.get("wheel_pedal_axes", "")).get(field, -1)
+    wheel = parse_kv(settings.get("wheel_axes", "")).get(field, -1)
+    return pedal >= 0 or wheel < 0
+
+
+@dataclass(frozen=True)
+class LiveInputs:
+    """Axis bars `(label, raw)` and button lamps `(label, down)` for a wheel that also reads a
+    pedal, shifter or handbrake device. The wheel's own axes and buttons come first; hats are the
+    wheel's."""
+    axes: tuple
+    buttons: tuple
+    hats: tuple = ()
+
+
+def live_inputs(settings, wheel_snap, aux=None, snaps=None):
+    """The Controls page's live view of a wheel, with its auxiliary devices combined in.
+
+    `aux` is {"pedals": AuxInfo, "shifter": AuxInfo, "handbrake": AuxInfo} for the devices the
+    game reads with the wheel (leave a role out when it is not connected). `snaps` is the same
+    keys to Snapshots. None when nothing is read from those devices, so the view stays the wheel's
+    own axes and buttons. Otherwise those, then Throttle, Brake, Clutch, Handbrake and the
+    shifter's gears, from the device the game uses for each."""
+    aux, snaps = aux or {}, snaps or {}
+    if wheel_snap is None:
+        wheel_snap = Snapshot()
+    actions = {a.key: a for a in WHEEL_ACTIONS}
+    axes = [(f"Axis {n}", raw) for n, raw in enumerate(wheel_snap.axes)]
+    buttons = [(str(n), bool(down)) for n, down in enumerate(wheel_snap.buttons)]
+    added = False
+
+    device = aux.get("pedals")
+    if device is not None:
+        snap = snaps.get("pedals")
+        combined = combined_pedals(settings)
+        named, unmapped = [], False
+        for field in PEDAL_KEYS:
+            if combined and field == "brake":
+                continue  # combined pedals: brake is the throttle axis's other side
+            if not _pedal_from_device(settings, field):
+                continue
+            number, default = aux_binding(actions[field], settings, device)
+            if number is not None:
+                named.append((_LIVE_AXIS[field], number))
+            elif default:
+                unmapped = True  # the game detects this pedal when it starts
+        if unmapped:
+            labels = {}
+            for label, number in named:
+                labels.setdefault(number, label)
+            count = len(snap.axes) if snap is not None else 0
+            if named:
+                count = max(count, max(number for _, number in named) + 1)
+            for i in range(count):
+                axes.append((labels.get(i, f"Axis {i}"), _snap_axis(snap, i)))
+            added = added or count > 0
+        elif named:
+            axes.extend((label, _snap_axis(snap, number)) for label, number in named)
+            added = True
+
+    if "handbrake" in aux:
+        axis, where, _ = handbrake_axis(settings, aux)
+        if where is not None and axis is not None:
+            axes.append(("Handbrake", _snap_axis(snaps.get("handbrake"), axis)))
+            added = True
+
+    device = aux.get("shifter")
+    fields = _LIVE_FIELDS.get(settings.get("wheel_shifter", "off"))
+    if device is not None and fields:
+        snap = snaps.get("shifter")
+        model = find_aux_model(device.vid, device.pid)
+        known = model is not None and model.role == _S and model.first_gear >= 0
+        mapped = False
+        for field in fields:
+            number, _default = aux_binding(actions[_GEAR_KEY[field]], settings, device)
+            if number is None:
+                continue
+            buttons.append((_LIVE_GEAR[field], _snap_button(snap, number)))
+            mapped = True
+        if mapped:
+            added = True
+        elif not known and snap is not None and snap.buttons:
+            # No gear map yet: show the shifter's buttons so a press is visible.
+            buttons.extend((str(i), bool(down)) for i, down in enumerate(snap.buttons))
+            added = True
+
+    if not added:
+        return None
+    return LiveInputs(tuple(axes), tuple(buttons), tuple(wheel_snap.hats))
 
 
 # --- controller remap --------------------------------------------------------------------------

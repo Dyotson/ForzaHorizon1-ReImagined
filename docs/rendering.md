@@ -406,6 +406,43 @@ ghost); stills 1.6 s apart do not show shimmering either way. Not covered: trans
 
 ## NVIDIA car reflection sampling (2026-10-15)
 
+### Fractional display raster and off-screen views (#330)
+
+Patch 0150 applies the existing display-viewport classification to fractional
+raster scaling as well. A screen pitch alone is insufficient: FH1 also uses
+screen-pitched EDRAM for square reflection faces and shadow maps. These passes
+need integer viewport, scissor and VPOS scaling to match resolve storage.
+Display and cinematic viewports retain their fractional display scale; software
+viewports require the explicitly bounded 1280x720 display rectangle.
+
+Windows / RTX 5060 Ti, driver 617.14, TU4, offline copied saves: #330's green
+race-intro reflections reproduce at the reporter's exact saved 1080p/2x/off
+settings both after a completed benchmark and in a fresh run without one.
+Active graphics flags match before/after the benchmark return. A RenderDoc
+capture shows a generated 512x512 reflection face with only its upper-left
+384x384 area rendered correctly and striped right/bottom bands, matching the
+0.75 fractional display factor. The NVIDIA implicit cubemap LOD workaround is
+enabled; this case has corrupted source texture data.
+
+`tools/test_fh1_screen_raster.cpp` covers display/downsample/cinematic views,
+square reflections and shadow maps with either Y sign, and software viewports.
+It passes locally on Windows and runs in both SDK CI jobs. In the corrected
+live/captured Recaro intro, the same car's reflections and headlights are clean
+and the complete 512x512 reflection face contains valid scene data. In face 0's
+previously corrupt edge bands, pixels with any channel at least 192 drop from
+17,611 to zero (PNG exports; this is a scene-specific comparison). The capture
+uses non-sparse shared memory and non-threaded submission for replay fidelity;
+the symptom also reproduced without those capture settings.
+
+Final ordinary-runtime validation repeats the actual Windows launcher Session
+benchmark/relaunch/return flow with the reporter's exact saved settings: 15 s
+settling and 1,800 measured frames over 60 s complete normally; inspected active
+flags restore byte-for-byte and the subsequent Recaro intro/car menu remain
+clean. Live 1080p/1440p switches also complete. Source save hashes are unchanged.
+The exact transient car-shadow symptom in #329 did not reproduce before the
+change; it remains unconfirmed rather than being claimed fixed. Other GPU
+vendors have not been runtime-tested here.
+
 **Reproduced.** Traffic cars on the Windows RTX 5060 Ti showed a colored checker
 pattern that bloom turned into a white/cyan/magenta glow. It occurs with DLSS off
 as well. Clamping the 7e3 output range before blending did not fix it and that
@@ -691,6 +728,27 @@ capture used `vulkan_sparse_shared_memory=false` and
 `vulkan_threaded_submission=false`; ordinary live validation retained defaults.
 
 ## Filter supersampled car thumbnails (#50)
+
+### Scaled storage layout correction (#336)
+
+Patch 0149 corrects the RGBA8 box filter introduced by 0066. Scaled resolve
+storage expands each 16-byte guest quad into scaled host quads. The old filter
+instead averaged consecutive words as though each guest pixel owned a contiguous
+sample block, mixing neighboring pixels and losing detail. Only the thumbnail
+box-filter path changes; ordinary point/center readbacks retain their policy.
+
+Windows / RTX 5060 Ti, TU4, offline copied save: at 1440p with 2x Game MSAA,
+an identical Mustang auto-upgrade regenerated a visibly striped/jagged garage
+tile before the fix and a clean tile/card atlas after it. Display samplers were
+already linear. Existing saved thumbnails require regeneration through a normal
+paint/upgrade change; this patch does not rewrite profiles.
+
+`tools/test_vulkan_thumbnail_readback.py --header SDK/src/graphics/shaders/vulkan_spirv/resolve_downscale_cs.h`
+dispatches the embedded shader against independently packed physical quad data:
+scales 1–3 on both axes, offsets 0/16/256, one/two tiles and output guards.
+The corrected shader passes 27/27; the pre-fix shader fails 18/27 with
+`--original-control`. The earlier 81-case test used pixel-contiguous source data
+and therefore did not validate the renderer's actual storage layout.
 
 Patch 0066 averages the RGBA8 samples in each supersampled guest pixel when
 reading back a known car-thumbnail surface. The old shader chose one corner

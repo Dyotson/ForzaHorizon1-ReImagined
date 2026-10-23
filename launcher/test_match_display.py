@@ -66,7 +66,7 @@ class ConfigTests(unittest.TestCase):
     def test_zero_survives_coerce_and_a_save(self):
         setting = schema.BY_KEY["frame_rate"]
         self.assertEqual(schema.coerce(setting, 0), 0)
-        self.assertEqual(schema.coerce(setting, 45), 30)
+        self.assertEqual(schema.coerce(setting, 45), 40)
         self.cfg.settings["frame_rate"] = 0
         self.cfg.save()
         self.assertEqual(Config(self.cfg.path).settings["frame_rate"], 0)
@@ -131,8 +131,10 @@ class ControlTests(unittest.TestCase):
         control.setCurrentIndex(3)
         control.setCurrentIndex(0)
         self.assertEqual(values[-1], 0)
-        control.setCurrentIndex(2)
+        control.setCurrentIndex(control.findData(60))
         self.assertEqual(values[-1], 60)
+        control.setCurrentIndex(1)
+        self.assertEqual(values[-1], 20)
         self.assertIsNotNone(app)
 
 

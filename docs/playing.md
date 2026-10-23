@@ -109,7 +109,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   players at different frame rates race together. Free roam runs 60 fps at 60, about 115
   at 120 and 112 at 144; a race with 7 AI cars 60, 76 and 70, bound by the GPU emulation
   ([`docs/framerate.md`](docs/framerate.md)). 144 needs the SDK overlay with patch 0037
-  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam.
+  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam. A PC that
+  cannot hold 30 can run 20 (`frame_rate = 20`): each frame then stays on a 60 Hz screen for
+  exactly 3 refreshes, where 22 fps alternates 2 and 3 and judders; 40 does the same on a
+  120 Hz screen (#263).
 - **Title Update 4 (default):** `play.sh` runs `forza-recomp/out/build/linux-tu4` when it
   exists (how to build it: README, Building; `FORZA_BUILD=linux-tu4`) and mounts the
   update's files (`extracted/tu4/`, or `FORZA_UPDATE`) as `update:` with
@@ -163,7 +166,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
 - **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
-  what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
+  what the game was doing, and a game database query of 50 ms or more a `FORZA_SQL` line; attach
+  them to an issue ([details](perf.md#long-frames-forza_stall)). Title Update 4 builds up to
+  0.1.31 had two or three such frames (0.1-0.3 s) in the first seconds after every load, from
+  the update's car list query (#167, [details](perf.md#hitches-after-loads-title-update-4s-car-view-167-2026-10-23)).
 - **No sound:** when the sound output cannot be opened (another program holds it in exclusive
   mode, Windows refuses its format, no audio server on Linux), the game runs on without sound and
   `forza.log` says `No audio output could be opened (<reason>)`. It asks for the output again every
@@ -182,13 +188,35 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 ## Steam Deck
 
 The launcher detects the Deck and applies its preset: Vulkan, render scale 1, AMD FSR 1, `frame_rate = 30`,
-background shader compilation and the shader cache on. Keep these: render scale 2 and `frame_rate = 60` only
-make it slower. Play a session or two on a warm shader cache before judging the speed. Reported speed on a
-Steam Deck OLED (#45): 17 to 25 fps. We have no Deck; with a PC restricted to 4 cores that each give the game a
-fifth of a core, a race runs 22 to 24 fps (`docs/perf.md`, "Steam Deck approximation"), so the limit is the
-game's main thread and the graphics command thread, and none of the settings (MSAA, readback, submission thread,
-thread priorities) changes it. Cutscene audio that does not match the picture comes with the low frame rate;
-it has not been reproduced here.
+background shader compilation and the shader cache on (the PC check asks for the same: 30 fps for its CPU,
+render scale 1 for its graphics). Keep these: render scale 2 and `frame_rate = 60` only make it slower. Play a
+session or two on a warm shader cache before judging the speed. Reported speed on a Steam Deck OLED (#45,
+0.1.27): 17 to 25 fps, 8 in an 8-car race. Since then the game needs less CPU on few cores (#286): waits wake only
+their own threads, and the render thread sleeps while it waits for the GPU (`gpu_wait_blocking`, on by default
+on Linux; nothing to set). We have no Deck. This PC limited to four cores holds 30 fps in free roam and in a race,
+and the Deck's graphics, about a quarter of this card's compute units at half its clock, may well be what limits
+it (`docs/perf.md`, "Low-end CPUs"); a log from a Deck with Steam's performance overlay at level 4 in a race would
+tell. Cutscene audio that does not match the picture comes with the low frame rate; it has not been reproduced
+here.
+
+**Battery saver** (Settings > Display > Frame rate, Linux): On, or *Auto on battery (Steam Deck)*, starts the
+game on the lightest settings: 30 fps, render scale 1 with AMD FSR 1 (AMD FSR 3 and SMAA off) and the render
+thread sleeping while it waits for the GPU. Your own settings are not changed: the next start on mains power uses
+them again, so a docked setup at 60 fps and render scale 2 comes back by itself. Auto looks at the power source
+when the game starts, not while it runs. It is off by default; on the Deck's own preset it only undoes a frame
+rate, render scale or filter you raised.
+
+**Suspend and resume** (#140). The game should carry on where it was when the Deck wakes up: a suspend stops
+the clock the game runs on, so the game itself sees no gap. A game that was paused while that clock ran on (as
+`kill -STOP` does) does not count the time away either: the race clock did not count a 3 s or a 10 s stop.
+Signed in to Forza Live, the game says hello to the server as soon as it runs again. The server forgets a player
+after 30 s without one; from this version it gives a game that comes back its old player id, so the session it
+hosts and its address stay the same (an older server gives it a new id). Other players in your session see you
+leave after their own timeout, as on a console that lost its connection. `forza.log` has a `FORZA_RESUME:` line
+for each stop or sleep. Tested on Linux by stopping the game for 3 s, 10 s, 45 s, 2 and 10 minutes, offline in a
+race and signed in to a local server (free roam and a hosted Horizon World); not on a Deck yet: that the sound
+comes back (the game plays on the system's default output, which SDL follows when it changes), that the GPU
+survives the sleep without a "device lost", and that the Deck's controls come back.
 
 ## Keyboard and mouse
 
@@ -445,6 +473,7 @@ edited by hand:
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
 | `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
+| `wheel_ffb_keep_playing` | 0 | For a wheel that ends force feedback effects by itself (#304): start every effect that plays again every this many seconds. 0: never (an effect the wheel says has stopped is still started again); -1: not even that |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
@@ -625,6 +654,30 @@ force feedback. The actual combined wheel adapter compiles against Windows
 SDK/SDL3 headers. No physical force-feedback device or game/GPU session was used;
 DirectInput acquisition, force feel and real Fanatec/vJoy ordering remain hardware
 validation gates.
+**The steering force no longer stops about 30 s after a pause (#304).** The same Simagic Alpha EVO Pro owner
+(Windows) then felt the wheel go light about 30 s after every pause or fast travel, often around an autosave:
+the reactive force gone, only a centring spring left, until the next pause. The driver gives every effect SDL's
+endless length, but SDL's DirectInput (Windows) and macOS backends turn it into 4294966296 microseconds (the
+length times 1000 in 32 bits), about 71 minutes and not DirectInput's endless value, and a HID PID wheel's
+duration field (16 bits of milliseconds) cannot hold that. The game starts its steering force and damper once
+(the driver starts them again only when the forces come back to full strength after a pause), but stops and
+starts its centring spring whenever the spring's gain passes 0 with the speed, every few seconds: a wheel that
+ends effects after about half a minute keeps only the spring, which is what the report describes (not yet
+confirmed on the wheel itself). SDL patch 0147 now sends endless effects as endless on Windows and macOS. For a
+wheel that still ends effects by itself, every 10 seconds the driver asks the wheel whether the game's effects
+still play (where SDL can ask: DirectInput, macOS, SDL's own Logitech driver): one that stopped is logged (`Wheel: "..." says the game's effect block 5
+(constant) has stopped ...; started again`) and started again, and `wheel_ffb_keep_playing` (0 by default)
+starts every effect again every so many seconds (5 is a good start; some wheels may feel each restart as a
+slight bump). Reproduced in free roam with a virtual Simagic (uinput) that ends each effect 32.767 s after its
+start: without restarts the steering force and damper ended 32.8 s after the forces came back to full strength,
+while the spring went on; with restarts every 5 seconds nothing ended over a drive of several minutes with a
+pause. The autosave itself (the profile is written every minute or so while driving) changes nothing
+the game sends. To see it in a log, the driver now also logs what the game sends and what the wheel gets
+(SDK patch 0145): a block's line when it changes (`Wheel: the game's effect block 4 is now ...`), the game's
+effect operations and device controls, and every 10 seconds a summary: `Wheel: the last 10 s: block 5
+constant: game 300 updates, gain 255, force -62..48, playing; wheel 208 updates, 2 restarts, level
+-7431..9598, running | ...`.
+
 **An effect the wheel refuses (#308).** A TMX on Windows refused the game's steering force ("Haptic error
 Unable to create effect"), and the driver tried again every frame: 86,000 warnings in one log. Now an effect is
 created on SDL's steering axis, else as a Cartesian or polar direction (SDK patch 0136); a type the wheel refuses

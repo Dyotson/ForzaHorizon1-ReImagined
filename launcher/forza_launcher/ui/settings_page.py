@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -139,10 +139,11 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         w = Combo()
         w.setEditable(True)
         w.addItem(display.label(monitor), 0)
-        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
+        for v in (*schema.LOW_FRAME_RATES, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
         w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
-        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
+        w.setToolTip("Pick a rate or type your own (20, 30, 40, or 60 to 240), such as your display's "
+                     "refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
@@ -653,6 +654,9 @@ class SettingsPage(QWidget):
         for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
             if w.key and w.key not in vendor_keys:
                 found.setdefault(w.key, []).append(w.text)
+        saver = power.setting_warning(self.cfg.settings.get("battery_saver", power.OFF))
+        if saver:
+            found.setdefault("battery_saver", []).append(saver)
         for key, row in self.rows.items():
             if key == "discord_presence":
                 continue  # its setup warning is managed by _apply_dependencies

@@ -81,6 +81,16 @@ screens can log long frames too. A player who sees a hitch can attach these line
 issue: the chains are guest return addresses (look them up in Ghidra). `FORZA_STALL_TEST=1`
 makes the main loop sleep 500 ms once, 90 s after the first frame, to check the lines.
 
+## Slow database queries (FORZA_SQL)
+
+Always on (`src/hooks/database_query.cpp`, #167): the game runs its SQLite queries on the
+thread that asks, the main loop included. A query that takes 50 ms or more logs
+`FORZA_SQL: <ms> ms (lock <ms> ms) on thread <handle>: <the SQL>` (at most 100 lines a
+session); `lock` is the time outside the statements, mostly waiting for another thread's query
+(the game's cached copy calls the plain one on a miss; only the outer one is timed). `FORZA_SQL_LOG=1`
+logs every query with its time (about 200 a second in free roam). A FORZA_STALL chain in
+`sub_83146F20` / `sub_83146E30` (TU4 `sqlite3_step`) is a query; the FORZA_SQL line says which.
+
 ## Scenarios
 
 `tools/perf_scenario.sh SCENARIO DIR [cold|warm] [flags]` drives the game through the
@@ -892,6 +902,199 @@ in either build (the save slot screen stays; same with the base runtime), so it 
   compilations (#226) and an old driver; frame rate 60 at 1080p is a lot for a Vega 8.
 - Only a Deck can tell whether it is bound by the GPU: Steam's performance overlay at level 4 (GPU and CPU load
   and clocks) in a race, and a log with the frame-time graph.
+
+## Hitches after loads: Title Update 4's car view (#167, 2026-10-23)
+
+**The report.** A player's log (RX 6700 XT, Windows, 0.1.31, Title Update 4, 21 DLC packages; the prebuilt
+shader cache loaded all 1,165 pipelines and about 5 were new) had 17 frames of 200-323 ms. 13 of them came in
+twos and threes in the first two seconds after a load (fast travel, back to free roam after an event, joining a
+session), e.g. 313, 297 and 280 ms, and one (278 ms) while driving. The FORZA_STALL chains (one dump per
+group) put the main loop thread in the game's SQLite each time (TU4 addresses): `sqlite3_step` (`sub_83146F20`;
+chain entries 83146F50 and 83146E30, its `sqlite3Step` calling the VDBE), the VDBE's loop and helpers (83141024,
+831415FC, 83141854, 831438A4, 83122B90 numeric affinity), the b-tree (8310E954 a cell insert, 83131CF0), under
+the database's query method (`sub_82CD8FD8`, base `sub_82C19130`: lock, run every statement of the string, copy
+all rows into a recordset in `sub_82CD8778`). The query is
+`SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId` (`sub_8253D9E0`, string
+0x82010FB0), the car list a game state builds when it is entered (`sub_82742D98` <- `sub_827431B0` <-
+`sub_825CB940` <- the state machine `sub_82F111F0`). The other 3 long frames were the render
+thread's (the main loop ran 9-12 frames meanwhile).
+
+**What it is.** The game keeps its data in an in-memory SQLite 3.6.19 database (`:memory:`, the tables copied
+from `gamedb.slt` and patched by each DLC's `*_merge.slt`) and runs queries synchronously on the thread that asks.
+Title Update 4 (the Rally Expansion) creates the view `Restrictions_Data_Car`: every drivable car (`Data_Car`)
+with `CarValue`, `IsRally` and `CouldRally`, LEFT JOINed to three derived tables: the level 4 springs, the level 5
+tyres, and the level 4 transmissions joined to their drivetrain. 3.6.19 has no automatic indexes (3.7.0) and
+does not flatten a derived table on the right of a LEFT JOIN, so it materializes the three and scans each one for
+every car: with all DLC, 251 cars x about 250 rows x 3, plus the transmissions' own join (986 x 251) without an
+index. The disc version has no such view (its `Drivable_Data_Car` is a plain filter). The main loop runs the query
+twice after every load into free roam. Signing up for an event runs three others on the view on another thread
+(F80013AC: the career garage's qualification, at the event card, the car select and the upgrade prompt); the main
+loop waits for the database lock meanwhile when it queries too. The queries are CPU-bound game code; nothing on
+our side waits or reads files.
+
+**The fix** (`src/hooks/database_query.cpp`). When the game creates the view (the statement is recognized by its
+text's length and hash), the query method gets a rewrite instead: the same columns (names, order, declared types)
+and rows, from joins on the tables themselves (the springs and tyres with their level in the ON clause; the
+transmissions through the car's drivetrains that have a level 4 transmission, `EXISTS`, then those
+transmissions), followed by indexes on the four joined columns (the game itself indexes the springs' `Ordinal`
+later, `i_5`). Each join becomes an index lookup. When the game rebuilds its database (its vtable+88, TU4
+`sub_82CD4C50`), it copies the tables without their indexes and runs each view's SQL from `sqlite_master` again
+through the query method; the hook knows its own view's stored text too and gives the indexes again (without
+them each join of the rewrite scans its whole table, slower than the game's view). `FORZA_GAME_CAR_VIEW=1` keeps the game's
+view. The statements and their recognition are in `src/platform/car_view.h` (unit test
+`forza-recomp/tests/car_view_test.cpp`).
+
+Checked equal: `tools/check_car_view.py` (the game's statement from the update's default.xex, the rewrite from
+the hook, TU4's gamedb plain, with the 17 database patches of the update and all DLC, and with edge cases: parts
+missing, duplicate level 4 parts, extra drivetrains with and without a level 4 transmission, no drivetrain, cars
+not drivable): columns and rows identical (PASS x3); it fails on a variant without the `EXISTS`. It also replays
+the rebuild (the stored view text is the hook's statement; the 4 indexes come back; the rows stay the same). In the game, a
+debug build hashed every value the recordsets read (type, integer, double, text): the 251 rows of the main loop's
+query hash the same with either view, and so does every other statement of the session except reads of
+`sqlite_master` (the schema lists 4 more indexes). The other game queries on the four tables look rows up by `Id`
+or by one `Ordinal` / `DrivetrainID` and return at most one row, so the new indexes do not change their order.
+
+**Measured** (TU4, Ryzen 7 7800X3D, RX 9060 XT, Linux, the test save with all 23 DLC packages, 30 fps, no other
+game running; 2 runs per view, interleaved; the route: boot to free roam, sign up for the festival race at the
+spawn, quit from the race intro back to free roam, drive 10 s):
+
+| | Game's view | Indexed view |
+| --- | --- | --- |
+| Main loop query after a load (8 runs) | 129-133 ms | 16.2-17.7 ms |
+| The frame that holds it | 155-193 ms | 32-74 ms |
+| Longest frame within 1 s of it | 155-193 ms | 66-75 ms |
+| Event sign-up: the 3 garage queries on the view (6 runs, thread F80013AC) | 103-105 ms | 6.2-7.5 ms |
+| A main loop query waiting for the lock meanwhile (car select) | 104-105 ms (both runs) | none over 50 ms |
+| Time in queries on the view, per run | about 830 ms | about 90 ms |
+
+The creation of the view and its indexes takes 6 ms once at start. On the player's PC the query took about 0.3 s;
+at the same ratio it takes about 40 ms there. Frames of 60-75 ms remain in the first seconds after a load on this
+PC with either view; they are not the database's (no query took 50 ms with the indexed view).
+## Steam Deck and 4-core CPUs: the built-in benchmark (#45, 2026-10-23)
+
+A Deck with every shader prebuilt (0.1.30) runs the built-in benchmark (docs/benchmark.md) at 19.7 fps, 1% low
+10.9 fps, 591 of 1,182 frames over 50 ms; an i5-1135G7 (4 cores, 8 threads) about 22 fps (#263).
+
+**The approximation and how far it goes.** This PC (Ryzen 7 7800X3D) has no SMT
+(`/sys/devices/system/cpu/smt/control` is `notsupported`), so four cores are four hardware threads, not a Deck's
+four cores with eight. The game ran on CPUs 0-3 (`taskset`, again after the threads it makes later); the samplers
+on 4-7. Three configurations:
+
+- **p4 at 30 fps**: four 5 GHz Zen 4 cores, the shipped frame cap. Each thread is 2-2.5 times faster than on a Deck
+  (Zen 2, 2.4-3.5 GHz, in a 15 W budget shared with the GPU), so this shows how the CPU time divides, not the
+  Deck's frame rate.
+- **p4 at 240 fps** (`--frame_rate=240`): the same four cores without the cap. The frame rate is then bounded by
+  the CPU side (the GPU emulation's command processor, below), so it moves with the CPU time that thread needs.
+- **p4h1 at 30 fps**: one busy loop per core at the same priority from the benchmark's settling time, so a game
+  thread gets about half a core: a "2x slower core". Unlike a slower clock it also delays every wakeup (the
+  threads wait 3-50% of the time in the run queue), which a Deck does not.
+
+The Deck's GPU is not approximated (this RX 9060 XT spends 5.7-8.1 ms per benchmark frame, `drm-engine-gfx`), and
+it is not what limits the Deck: Steam's performance overlay in the player's free-roam video (0.1.28) shows the GPU
+50-74% busy at 700-950 MHz, not boosting, while all eight CPU threads run at 35-45% at 3.35-3.5 GHz, also at 15-18
+fps. No single CPU thread is shown full either: the frame waits on the chain of a few busy threads (the command
+processor and the threads waiting for it), spread by the scheduler over the eight logical CPUs. So the command
+processor's time per frame, below, is the number that matters for the Deck and the 4-core laptops.
+
+Method: TU4 build with `-DFORZA_CPU_TARGET=x86-64-v3` (as the launcher builds it for these CPUs), the patched
+SDK of main plus the change below, the benchmark started directly (`benchmark-request.txt` in a scratch
+`--user_data_root` holding a copy of the Xenia save), `--present_effect=fsr --resolution_scale=1`, offline,
+audio muted, warm scratch shader cache, BENCH lock held, no other game. Per-thread CPU from `/proc` once a second
+(`tools/thread_stats.py`) over the measured minute; hot functions from `PERF_CPUPROF=1`; guest entry functions
+from `eu-stack`; packet and section counts from a temporary counting build of the GPU plugin (not committed).
+
+**Where the time goes** (p4, 30 fps, three runs; ms of CPU per frame; all threads 23.1-24.5; one run on all eight
+cores: 25.1, the same split):
+
+| Thread (guest entry) | ms per frame | What it does |
+| --- | --- | --- |
+| GPU command processor | 7.1-7.7 | PM4 parsing and register writes, then per draw: bindings, textures, render targets, pipeline lookups |
+| Audio mixer (`sub_83075D18`) | 4.1-4.5 | the game's mixer and DSP (`sub_830CE6C0`, `sub_8306F2E8`, `sub_83087D70`, ...): 4.4 ms a frame at 30 fps is 13% of a core, fixed per second |
+| Render thread (`sub_8261E178`) | 3.3-3.5 | D3D command building (`sub_824701B8`, `sub_82446860`, ...), plus its waits' yield phase (`sched_yield` 9% of its samples) and write-watch faults (`mprotect`, the fault handler) |
+| Main loop (`sub_825CEC88`) | 2.6 | simulation, physics, AI |
+| Vulkan submission | 1.3-1.4 | the driver (`ioctl`, the deferred command buffer's replay) |
+| `sub_82C6BD58`, `sub_82CCC368`, `sub_82EE37A0` (game workers) | 1.0, 0.75, 0.74 | game code |
+| XMA decoder | 0.3-0.4 | 2,500-3,000 wakeups a second |
+
+Uncapped (p4 at 240) the benchmark runs 109-116 fps with the command processor busy 82% of the time (7.1-7.6 ms
+a frame), the render thread 39%, the main loop 25%: the command processor is what the frame waits for. At 2-2.5
+times this time per instruction that alone caps a Deck near 50-60 fps, lower where a busy SMT sibling shares its
+core.
+
+Synchronization costs little now (#286): `sched_yield` 1.4% of all samples, `mprotect` 1.1% (950-2,100 calls and
+240-360 write-watch faults a second), futex lock and wake 0.6%, about 11,000 voluntary switches a second.
+
+**The command processor.** A flat profile (top self time: `ExecutePacket` 8.5%, `UpdateBindings` 6.2%,
+`WriteRegistersFromMem` 5.4%, `WriteRegister` 4.5%, `IssueDraw` 3.3%; the shader hash `XXH3` plus `LoadShader`
+3.1%), because of how much it is fed. Each second of the race at 30 fps: 2.0-2.8 million type-0 packets (27-38
+million register words), 1.7-2.6 million type-2 padding packets, 1.4-2.2 million type-3 packets: about 4,200 draws
+a frame (`PM4_DRAW_INDX` 125,000-195,000 a second), as many `PM4_IM_LOAD` shader loads, 20,000-34,000
+`SET_BIN_MASK` packets, 7,700 predicated packets skipped and about 100 resolves a frame. With section timers, per
+1,000 draws: 1.95 ms of busy time, 1.12 of it in the draws (bindings 27% of that, textures 14%, shader
+modifications, translations and samplers 13%, render targets 12%), 0.23 in register ranges, 0.04 in shader loads
+and 0.50 in the rest of the packet loop.
+
+**The EDRAM tiles (the VR study's lead, #335).** Free roam and the 8-car and festival races draw the scene with
+4x MSAA in three predicated EDRAM tiles; the command processor runs the scene's command buffer once per tile. Its
+time per bin select (`SET_BIN_SELECT`, three tile passes a frame) at 30 fps: the tile passes took 146-158 ms a
+second of its 260 busy (56-60%), with 70,000 of its 126,000 draws a second (tiles 1,320, 540 and 520 draws a
+frame). The game itself can render with less tiling: its render scenarios (`media/renderscenarios.zip`) set
+`TilingScenario`, an index into a table in the executable: 0 "4xMSAA" (free roam, 8-car and festival races, car
+menus), 1 "2xMSAA" (two tiles: Global.xml, 12- and 16-car races, Autocross, Bowling), 2 "NonTiling", 3
+"Small2xMSAA", 4 "SplitScreen_NonTiling2xMSAA". A test hook (not committed) set the value after the game reads
+it (`sub_82E40028`, the integer setting's XML read, for the setting whose name function is `sub_82E42F98`). In the
+benchmark, 2 gave one pass: 2,300-2,800 draws a frame instead of 4,200, the command processor's draw time 84
+instead of 150 ms a second, the GPU 4.5 instead of 8.0 ms a frame; 1 gave two tiles, 6.2 ms of GPU. But in both
+the static world (track, terrain, barriers, hills, signs) was missing: only the cars, the crowd, trees and the sky
+were drawn. So the lead holds (the tiles are most of the command processor's time, and 4x MSAA a large share of
+the GPU's), but switching the game's scenario is not enough: the world's renderer has some setup of its own for
+the tiled 4x MSAA path. Finding it, or emulating one large pass in the render target cache (beyond the 10 MB of
+EDRAM), is the next step; a non-tiled scene would cut both the CPU and the GPU time of a Deck frame.
+
+**Change: SDK patch 0140** (`docs/sdk_patches.md`): the packet loop skips runs of type-2 padding in one loop and
+has no stack frame on its hot path; register ranges that do not wrap the ring are written without the runtime's
+`BeginRead`/`EndRead`; the Vulkan backend stores the registers without side effects of a range itself; `PM4_IM_LOAD`
+keeps the shader of each guest address while the address holds the same words (`memcmp`), instead of hashing the
+microcode for every draw. The same commands and register values reach the backend. With the section timers, per
+1,000 draws: busy 1.95 to 1.79 ms (-8%), register ranges 0.23 to 0.18, shader loads 0.044 to 0.032, the rest of the
+packet loop 0.50 to 0.40; the draws unchanged.
+
+Benchmark, A = main's SDK (with 0138), B = with 0140, same game binary, alternating, BENCH lock held:
+
+| Configuration | Build | Runs | fps | 1% low fps | p99 ms | All threads, ms/frame | Command processor, ms/frame |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| p4, 240 | A | 6 | 112.6 [108.6-115.5] | 74.8 [68.8-77.6] | 12.4 [11.7-13.2] | 18.3 [17.9-18.6] | 7.35 [7.07-7.61] |
+| p4, 240 | B | 6 | 119.0 [114.9-122.1] | 78.9 [76.7-84.2] | 11.7 [11.0-12.1] | 17.7 [17.3-18.2] | 6.85 [6.68-7.15] |
+| p4, 30 | A | 5 | 30.0 | 26.9 [26.4-27.6] | 35.8 [35.3-36.0] | 23.9 [23.1-24.5] | 7.41 [7.11-7.60] |
+| p4, 30 | B | 4 | 30.0 | 26.8 [26.4-27.2] | 35.9 [35.7-36.1] | 23.6 [22.8-24.1] | 7.02 [6.64-7.32] |
+| p4h1, 30 | A | 4 | 30.0 | 23.1 [22.8-23.3] | 41.3 [41.0-41.6] | 23.4 [22.5-24.9] | 7.59 [7.10-8.45] |
+| p4h1, 30 | B | 2 | 30.0 | 23.2 [22.9-23.5] | 41.5 [41.1-41.8] | 22.2 [21.9-22.4] | 6.66 [6.55-6.77] |
+
+(Some runs use the series before 0138, which changes nothing on this discrete GPU: A at 240 115.5, 112.1, 111.2 and
+114.7 fps without it, 113.2 and 108.6 with it; B 114.9, 119.4 and 120.0 without, 120.0, 117.3 and 122.1 with. Left
+out: one A run at 240 that another job's signal hit, one B run it ended, and one run of each at 30 fps with
+another job on CPUs 0-3.)
+
+- Uncapped, the frame rate rises 6% (112.6 to 119.0 fps) and the 1% low 5%: the command processor needs 7% less
+  time a frame, and the game 3% less in all.
+- At 30 fps the frame rate is capped and the frame times do not move (also on half-speed cores, p4h1, where the
+  1% low stays at 23 fps: that configuration is bound by the run-queue delays the busy loops add); the command
+  processor's time falls 5-12%.
+- Rendering: the benchmark's race completes in both builds (the same validity checks), screenshots of the race match.
+
+**Left, for a Deck:**
+
+- The EDRAM tiles (above): the largest single cost of the command processor and a large share of the GPU's.
+- `UpdateBindings` and the texture bindings, 41% of the draw time: Sean's drafts #179 (dynamic constant
+  descriptors) and #192 (reuse of unchanged texture and sampler bindings) measured +7.7% and +6.5% fps on a
+  CPU-bound PC; both are opt-in and need game validation.
+- For the guest code generation (#176, #220): the Deck build already uses x86-64-v3. In the audio mixer `ppc_fma`
+  (now the inline `vfmadd`) is still 3.2% of its samples, the byte-swapping vector loads and stores
+  (`simde_mm_load_si128`, `simde_mm_shuffle_epi8`, `simde_mm_store_si128`) 12%, and the MXCSR flush-mode switches
+  between VMX and FPU code (`enableFlushMode`/`disableFlushMode`, an `ldmxcsr` each) 0.5% of all samples and 1.3-1.4%
+  of two worker threads.
+- On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
+  with the performance overlay, would show how much of the gap they close.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 

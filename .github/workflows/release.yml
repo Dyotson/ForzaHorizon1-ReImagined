@@ -77,6 +77,21 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/driving_gate_test.cpp -o "$RUNNER_TEMP/driving-gate-test"
           "$RUNNER_TEMP/driving-gate-test"
+      - if: runner.os == 'Linux'
+        name: The frame after a stopped game
+        run: |
+          g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/resume_gap_test.cpp -o "$RUNNER_TEMP/resume-gap-test"
+          "$RUNNER_TEMP/resume-gap-test"
+      - if: runner.os == 'Linux'
+        name: Frame pacing at 20 and 40 fps
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/frame_pacing_test.cpp -o "$RUNNER_TEMP/frame-pacing-test"
+          "$RUNNER_TEMP/frame-pacing-test"
+      - if: runner.os == 'Linux'
+        name: Title Update 4 car view statements
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/car_view_test.cpp -o "$RUNNER_TEMP/car-view-test"
+          "$RUNNER_TEMP/car-view-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
@@ -91,7 +106,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'forza-recomp/src/platform/native_renderer/**', 'tools/build_rexglue_sdk.sh', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('forza-recomp/src/platform/native_renderer/**', 'patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_shader_load_memo.cpp', 'forza-recomp/tests/wheel_ff_log_test.cpp', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_vulkan_memory_placement.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -111,9 +126,18 @@ jobs:
           clang++ -std=c++20 -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             tools/test_pipeline_store.cpp -o "$RUNNER_TEMP/pipeline-store-test"
           "$RUNNER_TEMP/pipeline-store-test"
+          clang++ -std=c++20 -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            tools/test_fh1_screen_raster.cpp -o "$RUNNER_TEMP/fh1-screen-raster-test"
+          "$RUNNER_TEMP/fh1-screen-raster-test"
           clang++ -std=c++17 -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics/vulkan" \
             tools/test_render_target_trim.cpp -o "$RUNNER_TEMP/render-target-trim-test"
           "$RUNNER_TEMP/render-target-trim-test"
+          clang++ -std=c++17 -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics/vulkan" \
+            tools/test_vulkan_memory_placement.cpp -o "$RUNNER_TEMP/vulkan-memory-placement-test"
+          "$RUNNER_TEMP/vulkan-memory-placement-test"
+          clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics/vulkan" \
+            tools/test_shader_load_memo.cpp -o "$RUNNER_TEMP/shader-load-memo-test"
+          "$RUNNER_TEMP/shader-load-memo-test"
           clang++ -std=c++17 -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/sdl" \
             tools/test_gamepad_remap.cpp -o "$RUNNER_TEMP/gamepad-remap-test"
           "$RUNNER_TEMP/gamepad-remap-test"
@@ -130,9 +154,10 @@ jobs:
           "$RUNNER_TEMP/wheel-rumble-test"
           # #303: the minimum force, the H-pattern gear on lever moves (and the shifter it sits
           # on), the analog handbrake and which device is the wheel (patches 0131-0134, #306);
-          # #308: Thrustmaster wheels and refused effects (0135, 0136).
+          # #308: Thrustmaster wheels and refused effects (0135, 0136); #304: the force feedback
+          # in the log and the effects kept playing (0145, 0146).
           for t in wheel_shifter wheel_min_force wheel_gear_request wheel_handbrake \
-                   wheel_primary wheel_thrustmaster wheel_ff_reject; do
+                   wheel_primary wheel_thrustmaster wheel_ff_reject wheel_ff_log; do
             clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
               -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/wheel" \
               "forza-recomp/tests/${t}_test.cpp" -o "$RUNNER_TEMP/${t}-test"
@@ -203,7 +228,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-windows-amd64.tar.gz
-          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'forza-recomp/src/platform/native_renderer/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/tests/sdk-filesystem/**', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-windows-${{ hashFiles('forza-recomp/src/platform/native_renderer/**', 'patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/tests/sdk-filesystem/**', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -251,6 +276,9 @@ jobs:
           clang++ -std=c++20 -I"$SRC/include" tools/test_pipeline_store.cpp \
             -o "$RUNNER_TEMP/pipeline-store-test.exe"
           "$RUNNER_TEMP/pipeline-store-test.exe"
+          clang++ -std=c++20 -I"$SRC/include" tools/test_fh1_screen_raster.cpp \
+            -o "$RUNNER_TEMP/fh1-screen-raster-test.exe"
+          "$RUNNER_TEMP/fh1-screen-raster-test.exe"
           clang++ -std=c++20 -I"$SRC/include" tools/test_pipeline_prebuild.cpp \
             -o "$RUNNER_TEMP/pipeline-prebuild-test.exe"
           "$RUNNER_TEMP/pipeline-prebuild-test.exe"
