@@ -112,6 +112,25 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
 
 ## Status log
 
+- 2026-10-23: **Internal heap stop in the NVIDIA-labelled crash #299.** Read-only
+  disassembly identifies TU4 `sub_82423000` (base `sub_823F3048`) as the memory
+  manager's allocation loop. When no allocator succeeds, it compares heap `+0x154`
+  minus bytes in use (`+0x44`) with the request. With the heap's stop flag (`+0x174`)
+  enabled, it deliberately stores to guest address 4 if capacity is insufficient,
+  or address 5 if capacity is sufficient but no suitable block was returned. The
+  stores are TU4 `0x824230C0/C8`, base `0x823F3108/10`.
+  The #299 registers identify a 16,384-byte request (`r29=0x4000`), alignment 32
+  (`r27=0x20`), and final heap `r30=0x83396AF0`: category `0x21`, arena 1's high
+  heap, from table `0x8339664C` plus `0x314 + 0x190`. This is distinct from the
+  movie allocator's guest-address-6 stop (#262). The local crash explanation and
+  report now recognize the matching fault, thread, saved link register and register
+  state, preserving the raw fault and call chain. Synthetic base/TU4 logs and the
+  original report's log tail validate recognition; unrelated/incomplete faults
+  remain generic. This classifies an internal heap allocation failure, not an
+  NVIDIA device loss or proof of exhausted system RAM/VRAM. The cause of the
+  unsuitable free blocks and a safe runtime fix remain unproven; no game/GPU
+  reproduction was performed for this change.
+
 - 2026-10-10: project started. Game extracted from the GOD container (base version, see
   above). Codegen of `default.xex` + both facade DLLs succeeds: 76,788 functions in
   `default.xex`, 248 MB of C++. Hints needed so far:
