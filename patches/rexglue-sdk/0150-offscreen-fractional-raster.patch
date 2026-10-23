@@ -1,0 +1,66 @@
+Subject: [PATCH] Keep square off-screen passes out of fractional display raster
+
+diff --git a/include/rex/graphics/vulkan/fh1_screen_raster.h b/include/rex/graphics/vulkan/fh1_screen_raster.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/vulkan/fh1_screen_raster.h
+@@ -0,0 +1,15 @@
++#pragma once
++
++namespace rex::graphics::vulkan::fh1 {
++// Screen-pitched EDRAM is reused for square reflection and shadow views.
++// Their pixel coordinates must retain the integer resolve storage scale.
++constexpr bool IsDisplayViewport(bool x_enabled, bool y_enabled,
++                                 float x_scale, float y_scale,
++                                 unsigned scissor_width, unsigned scissor_height) {
++  if (!x_enabled || !y_enabled)
++    return scissor_width == 1280 && scissor_height == 720;
++  const float x = x_scale < 0.0f ? -x_scale : x_scale;
++  const float y = y_scale < 0.0f ? -y_scale : y_scale;
++  return x != y || x == 0.0f;
++}
++}  // namespace rex::graphics::vulkan::fh1
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -1,2 +1,3 @@
+ #pragma once
++#include <rex/graphics/vulkan/fh1_screen_raster.h>
+ /**
+@@ -114,4 +115,12 @@
+     const auto pitch = register_file().Get<reg::RB_SURFACE_INFO>().surface_pitch;
+-    return (pitch == 1280 || pitch == 640 || pitch == 320 || pitch == 160 || pitch == 80) &&
+-        (raster_scale_x_ != 1.0f || raster_scale_y_ != 1.0f);
++    if (!(pitch == 1280 || pitch == 640 || pitch == 320 || pitch == 160 || pitch == 80) ||
++        (raster_scale_x_ == 1.0f && raster_scale_y_ == 1.0f)) return false;
++    const auto& regs = register_file();
++    const auto vte = regs.Get<reg::PA_CL_VTE_CNTL>();
++    const auto tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
++    const auto br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
++    return fh1::IsDisplayViewport(vte.vport_x_scale_ena, vte.vport_y_scale_ena,
++        regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE),
++        regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE),
++        br.br_x - tl.tl_x, br.br_y - tl.tl_y);
+   }
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -154,12 +154,8 @@
+   const auto vte = regs.Get<reg::PA_CL_VTE_CNTL>();
+-  if (!vte.vport_x_scale_ena || !vte.vport_y_scale_ena) {
+-    // Software viewports used by clears and off-screen copies have unbounded
+-    // scissors. Only the explicitly bounded display UI needs native scaling.
+-    const auto tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
+-    const auto br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
+-    return br.br_x - tl.tl_x == 1280 && br.br_y - tl.tl_y == 720;
+-  }
+-  const float x = std::abs(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE));
+-  const float y = std::abs(regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE));
+-  return x != y || x == 0.0f;
++  const auto tl = regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>();
++  const auto br = regs.Get<reg::PA_SC_WINDOW_SCISSOR_BR>();
++  return fh1::IsDisplayViewport(vte.vport_x_scale_ena, vte.vport_y_scale_ena,
++      regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_XSCALE),
++      regs.Get<float>(XE_GPU_REG_PA_CL_VPORT_YSCALE),
++      br.br_x - tl.tl_x, br.br_y - tl.tl_y);
+ }
