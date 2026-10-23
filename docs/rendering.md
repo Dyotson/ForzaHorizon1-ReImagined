@@ -426,8 +426,22 @@ enabled; this case has corrupted source texture data.
 
 `tools/test_fh1_screen_raster.cpp` covers display/downsample/cinematic views,
 square reflections and shadow maps with either Y sign, and software viewports.
-It passes locally on Windows and runs in both SDK CI jobs. Live validation of
-the corrected renderer is pending.
+It passes locally on Windows and runs in both SDK CI jobs. In the corrected
+live/captured Recaro intro, the same car's reflections and headlights are clean
+and the complete 512x512 reflection face contains valid scene data. In face 0's
+previously corrupt edge bands, pixels with any channel at least 192 drop from
+17,611 to zero (PNG exports; this is a scene-specific comparison). The capture
+uses non-sparse shared memory and non-threaded submission for replay fidelity;
+the symptom also reproduced without those capture settings.
+
+Final ordinary-runtime validation repeats the actual Windows launcher Session
+benchmark/relaunch/return flow with the reporter's exact saved settings: 15 s
+settling and 1,800 measured frames over 60 s complete normally; inspected active
+flags restore byte-for-byte and the subsequent Recaro intro/car menu remain
+clean. Live 1080p/1440p switches also complete. Source save hashes are unchanged.
+The exact transient car-shadow symptom in #329 did not reproduce before the
+change; it remains unconfirmed rather than being claimed fixed. Other GPU
+vendors have not been runtime-tested here.
 
 **Reproduced.** Traffic cars on the Windows RTX 5060 Ti showed a colored checker
 pattern that bloom turned into a white/cyan/magenta glow. It occurs with DLSS off
