@@ -386,16 +386,16 @@ refreshes the reported velocity from the state after each teleport: the same tes
 nothing (`TELEPORT: car ... its reported speed 146.5 km/h is now 0.0 km/h` in the log),
 and traps and zones driven through still record (Rt. 29 on both builds; on TU4 the Rt. 20
 speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). For games without the fix
-the server keeps no speed above 470 km/h on any trap or zone (logged: "... is more than any
-car reaches (470 km/h); not kept"), and it logs a speed above the trap's estimated limit
-(`SPEED_TRAP_LIMIT_KMH`: "speed trap N: ... km/h is above its estimated limit", with the
-player's public leaderboard id) but keeps it unless the server runs with
-`--enforce-trap-limits`. The limits come from a model of the roads around each trap (the
-sat-nav graph's straights, corners and grades, generous grip and power for the fastest
-tuned cars, plus a margin) that was not validated in the game: no hypercar drove the
-approaches, and ordinary players on the live leaderboard reach 175-200 km/h on the Sth
-Rt. 38 trap (board 210), where the model says 132 km/h (limit 175). Corner-limited traps
-are underestimated until the model is calibrated against driven runs.
+the server keeps no speed trap score above the trap's record (`SPEED_TRAP_LIMIT_KMH`, all
+22 traps): the best known Xbox 360 result on that trap, from the Forza Horizon speed trap
+charts on cyberscore.me.uk (charts 230405-230426), with no margin, compared at 0.1 km/h.
+Such a score is logged with the player's public leaderboard id ("speed trap N: ... km/h is
+above the trap's record (... km/h); not kept"). `--no-trap-limits` (tests, local servers)
+only logs them. Speed zones and any other trap board keep at most 470 km/h, always
+enforced ("... is more than any car reaches (470 km/h); not kept"). A road-layout model of
+each trap's reachable speed (corners, straights, grades, generous grip) was tried first and
+dropped: it was not validated in the game and ordinary players beat it on corner-limited
+traps (175-200 km/h on Sth Rt. 38, board 210, where it said 132).
 
 Not done: an event board (type 3) was not driven again with the new board keys
 (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.

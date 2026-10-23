@@ -50,29 +50,36 @@ GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap 
 FRIENDS_AND_CLUB = 5
 # Speeds no car reaches (#349), km/h. A fast travel onto a trap recorded the speed the car had
 # before the fast travel (fixed in the game by src/hooks/teleport_velocity.cpp); older games
-# still send such speeds. Any trap or zone: SPEED_CEILING_KMH, enforced (the speed is logged
-# and not kept). Per trap, SPEED_TRAP_LIMIT_KMH: the highest speed reachable there by driving,
-# estimated from the roads around it (the straights, corners and grades of every way in, from
-# the game's sat-nav graph) for the fastest tuned cars, plus a margin (max(estimate + 40,
-# estimate x 1.2)). The estimates are not validated in the game and ordinary players beat
-# some of them (175-200 km/h on board 210), so a speed above one is only logged unless
-# --enforce-trap-limits (ENFORCE_TRAP_LIMITS) is given. Traps not listed: the ceiling only.
+# still send such speeds. A speed trap score above its trap's SPEED_TRAP_LIMIT_KMH is logged
+# and not kept: the best known Xbox 360 result on that trap (Cyberscore's Forza Horizon speed
+# trap charts, cyberscore.me.uk charts 230405-230426), with no margin. --no-trap-limits
+# (ENFORCE_TRAP_LIMITS False, for tests and local servers) only logs them. Speed zones and
+# boards without a limit of their own: SPEED_CEILING_KMH, always enforced.
 SPEED_CEILING_KMH = 470.0   # fastest results on long straights: about 435-442 km/h
-ENFORCE_TRAP_LIMITS = False  # --enforce-trap-limits
+ENFORCE_TRAP_LIMITS = True  # --no-trap-limits turns it off
 SPEED_TRAP_LIMIT_KMH = {
-    202: 380.0,   # C-987
-    206: 190.0,   # Red Rock
-    209: 360.0,   # C-203
-    210: 175.0,   # Sth Rt. 38
-    212: 455.0,   # Rt. 38
-    214: 455.0,   # Rt. 25
-    215: 465.0,   # Beaumont
-    216: 255.0,   # West Rt. 27
-    220: 405.0,   # C-642
-    226: 250.0,   # C-201
-    228: 435.0,   # Rt. 6
-    229: 345.0,   # Rt. 33
-    230: 445.0,   # Rt. 29
+    201: 423.1,   # Gladstone
+    202: 350.8,   # C-987
+    203: 412.6,   # East Rt. 20
+    205: 390.3,   # Carson
+    206: 233.0,   # Red Rock
+    209: 229.1,   # C-203
+    210: 267.7,   # Sth Rt. 38
+    211: 362.3,   # East Rt. 27
+    212: 354.5,   # Rt. 38
+    213: 411.2,   # Finley Dam
+    214: 340.3,   # Rt. 25
+    215: 371.5,   # Beaumont
+    216: 275.3,   # West Rt. 27
+    218: 436.8,   # I-70
+    220: 298.8,   # C-642
+    224: 436.9,   # I-76
+    225: 439.6,   # Rt. 20
+    226: 241.3,   # C-201
+    227: 372.9,   # Rt. 27
+    228: 348.9,   # Rt. 6
+    229: 260.4,   # Rt. 33
+    230: 348.3,   # Rt. 29
 }
 MAX_BOARDS = 4096   # boards on the server (the game has about 160)
 
@@ -175,9 +182,9 @@ def implausible_speed(xuid, kind, sbid, score):
                     SPEED_CEILING_KMH)
         return True
     limit = SPEED_TRAP_LIMIT_KMH.get(sbid) if kind == SPEED_TRAP else None
-    if limit is not None and kmh > limit:
-        log.warning("title: score %s: speed trap %d: %.1f km/h is above its estimated limit "
-                    "(%.0f km/h)%s", public_id(xuid), sbid, kmh, limit,
+    if limit is not None and round(kmh, 1) > limit:   # at the records' precision, 0.1 km/h
+        log.warning("title: score %s: speed trap %d: %.1f km/h is above the trap's record "
+                    "(%.1f km/h)%s", public_id(xuid), sbid, kmh, limit,
                     "; not kept" if ENFORCE_TRAP_LIMITS else "")
         return ENFORCE_TRAP_LIMITS
     return False

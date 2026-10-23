@@ -142,10 +142,10 @@ def add_arguments(parser):
                         help="offer the server's Monthly Rivals time trials "
                              "(forza_scores.TIME_TRIALS; a trial needs a score on its board "
                              "to have a rival)")
-    parser.add_argument("--enforce-trap-limits", action="store_true",
-                        help="drop speed trap scores above the trap's estimated limit "
-                             "(forza_scores.SPEED_TRAP_LIMIT_KMH); without it they are only "
-                             "logged. 470 km/h on any trap or zone is always enforced")
+    parser.add_argument("--no-trap-limits", action="store_true",
+                        help="keep speed trap scores above the trap's record "
+                             "(forza_scores.SPEED_TRAP_LIMIT_KMH), only logging them; for tests "
+                             "and local servers. 470 km/h on any trap or zone is always enforced")
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -159,7 +159,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
-    scores.ENFORCE_TRAP_LIMITS = args.enforce_trap_limits
+    scores.ENFORCE_TRAP_LIMITS = not args.no_trap_limits
     TEST_NOTIFICATIONS["on"] = args.test_notifications
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]

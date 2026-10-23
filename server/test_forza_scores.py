@@ -161,50 +161,61 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual(self.rows(A_XUID, scores.EVENT_TIME, 199)[0],
                          [("DriverB", 107.228), ("DriverA", 115.13)])
 
-    def test_speed_above_the_trap_limit_logged(self):
-        # #349: a fast travel onto the Red Rock trap (board 206, estimated at most 190 km/h by
-        # driving) sent the 440 km/h the car had on a freeway before it. By default the
-        # estimate is only a warning (with the player's public id), and the score is kept.
+    def test_speed_above_the_trap_record_not_kept(self):
+        # #349: a fast travel onto the Red Rock trap (board 206, Xbox record 233.0 km/h) sent
+        # the 440 km/h the car had on a freeway before it.
         import forza_leaderboards
         who = forza_leaderboards.player_id("%016X" % A_XUID)
-        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)            # 147.6 km/h
-        with self.assertLogs("forza-live", "WARNING") as logs:
-            self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("score %s: speed trap 206: 439.9 km/h is above its estimated limit "
-                      "(190 km/h)" % who, logs.output[0])
-        self.assertNotIn("not kept", logs.output[0])
-        self.assertNotIn("%016X" % A_XUID, logs.output[0])
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
-
-    def test_speed_above_the_trap_limit_enforced(self):
-        scores.ENFORCE_TRAP_LIMITS = True
-        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", False)
-        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)
+        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)            # 147.6 km/h: kept
         with self.assertLogs("forza-live", "WARNING") as logs:
             self.assertFalse(self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)["uploadFiles"])
-        self.assertIn("(190 km/h); not kept", logs.output[0])
-        self.submit(B_XUID, scores.SPEED_TRAP, 206, 53.0)            # 190.8 km/h: not kept
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 41.0)])
-        # The same speed on a trap at the end of a long straight (no limit of its own) is kept.
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("score %s: speed trap 206: 439.9 km/h is above the trap's record "
+                      "(233.0 km/h); not kept" % who, logs.output[0])
+        self.assertNotIn("%016X" % A_XUID, logs.output[0])
+        self.submit(B_XUID, scores.SPEED_TRAP, 206, 233.0 / 3.6)     # the record itself: kept
+        with self.assertLogs("forza-live", "WARNING"):
+            self.submit(C_XUID, scores.SPEED_TRAP, 206, 233.1 / 3.6)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0],
+                         [("DriverB", round(233.0 / 3.6, 3)), ("DriverA", 41.0)])
+        # The same 440 km/h is beyond the I-70 trap's record too (436.8 km/h); just under it is kept.
         self.submit(A_XUID, scores.SPEED_TRAP, 218, 122.2)
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverA", 122.2)])
+        self.submit(B_XUID, scores.SPEED_TRAP, 218, 121.3)           # 436.7 km/h
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverB", 121.3)])
+
+    def test_trap_limits_off(self):
+        # --no-trap-limits (tests, local servers): logged and kept; the ceiling still holds.
+        scores.ENFORCE_TRAP_LIMITS = False
+        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", True)
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)
+            self.submit(B_XUID, scores.SPEED_TRAP, 206, 131.0)       # 471.6 km/h
+        self.assertIn("(233.0 km/h)", logs.output[0])
+        self.assertNotIn("not kept", logs.output[0])
+        self.assertIn("more than any car reaches (470 km/h); not kept", logs.output[1])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
 
     def test_speed_ceiling(self):
-        # Any trap or zone: at most 470 km/h, always enforced; event times have no limit.
-        self.submit(A_XUID, scores.SPEED_TRAP, 201, 130.0)           # 468 km/h
+        # Speed zones and trap boards without a record: at most 470 km/h; event times have no
+        # limit.
+        self.submit(A_XUID, scores.SPEED_TRAP, 299, 130.0)           # 468 km/h
         with self.assertLogs("forza-live", "WARNING") as logs:
-            self.submit(B_XUID, scores.SPEED_TRAP, 201, 131.0)       # 471.6 km/h
-            self.submit(A_XUID, scores.SPEED_TRAP, 206, 140.0)       # 504 km/h on a limited trap
+            self.submit(B_XUID, scores.SPEED_TRAP, 299, 131.0)       # 471.6 km/h
             self.submit(A_XUID, scores.SPEED_ZONE, 101, 140.0)
-        self.assertEqual(len(logs.output), 3)
+        self.assertEqual(len(logs.output), 2)
         self.assertTrue(all("more than any car reaches (470 km/h); not kept" in line
                             for line in logs.output))
+        self.submit(B_XUID, scores.SPEED_ZONE, 101, 60.0)
         self.submit(A_XUID, scores.EVENT_TIME, 201, 1000.0, ex=True)
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 201)[0], [("DriverA", 130.0)])
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [])
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_ZONE, 101)[0], [])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 299)[0], [("DriverA", 130.0)])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_ZONE, 101)[0], [("DriverB", 60.0)])
         self.assertEqual(self.rows(C_XUID, scores.EVENT_TIME, 201)[0], [("DriverA", 1000.0)])
+
+    def test_every_trap_has_its_record(self):
+        # The 22 speed traps (Colorado/speed_camera.xml), Cyberscore charts 230405-230426.
+        self.assertEqual(sorted(scores.SPEED_TRAP_LIMIT_KMH),
+                         [201, 202, 203, 205, 206, 209, 210, 211, 212, 213, 214, 215, 216, 218,
+                          220, 224, 225, 226, 227, 228, 229, 230])
 
     def test_online_race_and_unknown_types_not_kept(self):
         self.submit(A_XUID, scores.ONLINE_XP_TYPE, -1, 1100.0)
