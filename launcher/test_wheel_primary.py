@@ -156,6 +156,28 @@ class Editor(unittest.TestCase):
         ed.use_wheel.click()
         self.assertEqual(self.label(self.vjoy), "vJoy - Virtual Joystick (wheel)")
 
+    def test_live_view_reads_vjoy_pedals(self):
+        # The reported setup: a wheel, and pedals (plus a handbrake and a shifter) through vJoy,
+        # saved under SDL2's "vJoy Device" name. The graph follows the vJoy, not only the wheel.
+        self.cfg.settings.update(wheel_pedal_device="vJoy Device",
+                                 wheel_pedal_axes="throttle=1,brake=2,clutch=3",
+                                 wheel_handbrake_device="vJoy Device", wheel_handbrake_axis=4,
+                                 wheel_shifter_device="vJoy Device", wheel_shifter="sequential",
+                                 wheel_shifter_device_buttons="up=5,down=6")
+        self.choose(self.wheel)
+        self.vjoy.axis(1, 21000)
+        self.vjoy.axis(2, -21000)
+        self.vjoy.axis(3, 1000)
+        self.vjoy.axis(4, 30000)
+        self.vjoy.button(5, True)
+        self.step()
+        live = self.ed.view.inputs
+        self.assertEqual(live.axes[4:], (
+            ("Throttle", 21000), ("Brake", -21000), ("Clutch", 1000), ("Handbrake", 30000)))
+        self.assertEqual([lamp for lamp in live.buttons if lamp[0] in ("Up", "Down")],
+                         [("Up", True), ("Down", False)])
+        self.assertEqual(len(self.ed.view.snap.axes), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
