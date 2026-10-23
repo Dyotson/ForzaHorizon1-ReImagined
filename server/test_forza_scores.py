@@ -161,6 +161,30 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual(self.rows(A_XUID, scores.EVENT_TIME, 199)[0],
                          [("DriverB", 107.228), ("DriverA", 115.13)])
 
+    def test_speed_above_the_trap_limit_not_kept(self):
+        # #349: a fast travel onto the Red Rock trap (board 206, at most 190 km/h by driving)
+        # sent the 440 km/h the car had on a freeway before it.
+        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)            # 147.6 km/h: kept
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            self.assertFalse(self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)["uploadFiles"])
+        self.assertIn("board 206 type 1: 439.9 km/h is more than a car can reach there (190 km/h)",
+                      logs.output[0])
+        self.submit(B_XUID, scores.SPEED_TRAP, 206, 53.0)            # 190.8 km/h: not kept
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 41.0)])
+        # The same speed on a trap at the end of a long straight is kept.
+        self.submit(A_XUID, scores.SPEED_TRAP, 218, 122.2)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverA", 122.2)])
+
+    def test_speed_ceiling(self):
+        # Any trap or zone: at most 470 km/h; event times have no limit.
+        self.submit(A_XUID, scores.SPEED_TRAP, 201, 130.0)           # 468 km/h
+        self.submit(B_XUID, scores.SPEED_TRAP, 201, 131.0)           # 471.6 km/h
+        self.submit(A_XUID, scores.SPEED_ZONE, 101, 140.0)
+        self.submit(A_XUID, scores.EVENT_TIME, 201, 1000.0, ex=True)
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 201)[0], [("DriverA", 130.0)])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_ZONE, 101)[0], [])
+        self.assertEqual(self.rows(C_XUID, scores.EVENT_TIME, 201)[0], [("DriverA", 1000.0)])
+
     def test_online_race_and_unknown_types_not_kept(self):
         self.submit(A_XUID, scores.ONLINE_XP_TYPE, -1, 1100.0)
         self.submit(A_XUID, 9, 5, 10.0)

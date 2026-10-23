@@ -371,8 +371,27 @@ id, the same for every round of the lobby) and both consoles read their row
 restarts. The game shows no skill anywhere seen (the lobby's yellow number is the online
 wristband; `hideTrueSkill` false changed nothing visible).
 
-Not done: a speed zone (type 2) and an event board (type 3) were not driven again with
-the new board keys (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
+**Fast travel onto a speed trap (#349).** A trap takes its speed when the car enters it
+(`sub_828BB140`, at least `minimumSpeed` 30 mph) from the car's velocity getter (vfunc 83,
+`sub_82D1CE18`), which reads the copy of the velocity the car's physics step makes
+(car+0xB10). The vehicle teleport `sub_824B87A8` (fast travel, the car reset, an event's
+start) zeroes the velocity in the physics state only (vfunc 84, car-0xA10), so until the
+car's next physics step (a fast travel holds it behind the loading screen, about 0.7 s
+here) the car still reports the speed it had when the map paused the game. Fast travelling
+onto a trap recorded that speed while the car stood on the trap: TU4, the car paused at
+151.1 km/h, the fast travel's destination pointed at the Rt. 6 trap (Fast Travel Anywhere
+costs 5 Tokens, which the local profile has none of), the car arrived at 0 km/h and the
+game sent `SubmitScore(type 1, board 228, 41.976 m/s)`. `src/hooks/teleport_velocity.cpp`
+refreshes the reported velocity from the state after each teleport: the same test sent
+nothing (`TELEPORT: car ... its reported speed 146.5 km/h is now 0.0 km/h` in the log),
+and traps and zones driven through still record (Rt. 29 on both builds; on TU4 the Rt. 20
+speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). The server keeps no speed
+above what a car can reach at that trap by driving (`SPEED_TRAP_LIMIT_KMH`; 470 km/h on
+any trap or zone), for games without the fix: it logs "... is more than a car can reach
+there (... km/h); not kept".
+
+Not done: an event board (type 3) was not driven again with the new board keys
+(unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
 
 ### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
 

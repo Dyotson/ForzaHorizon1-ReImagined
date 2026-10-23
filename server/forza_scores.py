@@ -48,6 +48,30 @@ KEPT_TYPES = {SPEED_TRAP, SPEED_ZONE, EVENT_TIME}  # submissions kept on a board
 GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap has none)
 # GetRows view 5 ("Friends & Club"): what the speed traps and zones read at the trap.
 FRIENDS_AND_CLUB = 5
+# The fastest a car can be at a speed trap by driving (#349), in km/h. A fast travel onto a
+# trap recorded the speed the car had before the fast travel (fixed in the game by
+# src/hooks/teleport_velocity.cpp); older games still send such speeds. Each limit is the
+# highest speed reachable at that trap, worked out from the roads around it (the straights,
+# corners and grades of every way in, from the game's sat-nav graph) for the fastest tuned
+# cars, plus a margin: max(estimate + 40, estimate x 1.2). Traps not listed (long straights,
+# where the car's top speed is the limit) and the speed zones have SPEED_CEILING_KMH. A
+# speed above the limit is logged and not kept.
+SPEED_CEILING_KMH = 470.0   # fastest results on long straights: about 435-442 km/h
+SPEED_TRAP_LIMIT_KMH = {
+    202: 380.0,   # C-987
+    206: 190.0,   # Red Rock
+    209: 360.0,   # C-203
+    210: 175.0,   # Sth Rt. 38
+    212: 455.0,   # Rt. 38
+    214: 455.0,   # Rt. 25
+    215: 465.0,   # Beaumont
+    216: 255.0,   # West Rt. 27
+    220: 405.0,   # C-642
+    226: 250.0,   # C-201
+    228: 435.0,   # Rt. 6
+    229: 345.0,   # Rt. 33
+    230: 445.0,   # Rt. 29
+}
 MAX_BOARDS = 4096   # boards on the server (the game has about 160)
 
 
@@ -137,6 +161,15 @@ def better(new, old, bigger):
     return new > old if bigger else new < old
 
 
+def speed_limit_kmh(kind, sbid):
+    """The highest believable speed on a speed trap or zone board, km/h (None: not a speed)."""
+    if kind == SPEED_TRAP:
+        return SPEED_TRAP_LIMIT_KMH.get(sbid, SPEED_CEILING_KMH)
+    if kind == SPEED_ZONE:
+        return SPEED_CEILING_KMH
+    return None
+
+
 def submit(xuid, gamertag, kind, data, extra=None):
     """Keeps a submission if it is the player's best; returns the reply (scoreId, and
     uploadFiles when we want its ghost)."""
@@ -146,6 +179,12 @@ def submit(xuid, gamertag, kind, data, extra=None):
              xuid, gamertag, sbid, " (time trial)" if stt else "", kind, score, data["carId"],
              data["carClassId"], data["carPerformanceIndex"],
              " passed %d" % extra if extra is not None else "")
+    limit = speed_limit_kmh(kind, sbid)
+    if limit is not None and score * 3.6 > limit:
+        log.warning("title: score %016X '%s': board %d type %d: %.1f km/h is more than a car can "
+                    "reach there (%.0f km/h); not kept", xuid, gamertag, sbid, kind, score * 3.6,
+                    limit)
+        return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
     # Online races submit board -1 (type 4, the XP of the game): not kept.
     board = STORE.board(kind, sbid, stt, create=True) if kind in KEPT_TYPES and sbid >= 0 \
         and 0 < score < 1e9 else None
