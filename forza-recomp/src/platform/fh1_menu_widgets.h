@@ -260,6 +260,21 @@ public:
       Call(text ? 0x82F37BE0 : 0x82F37C40,{binding,rgb});
     }
   }
+  bool CropImage(uint32_t material_node,float u,float v,float width,float height) {
+    const auto wrapper=material_node?Read(base,material_node+4):0;
+    const auto material=wrapper?Read(base,wrapper):0;
+    if(!material||width<=0||height<=0)return false;
+    const auto begin=Read(base,material+0xDC),end=Read(base,material+0xE0);
+    if(!begin||end<=begin||end-begin>64||(end-begin)%4)return false;
+    const auto image=Read(base,begin);if(!image)return false;
+    const float pu=u/width,pv=(1-v-height)/height;
+    Write(base,image+0xB4,std::bit_cast<uint32_t>(pu));Write(base,image+0xB8,std::bit_cast<uint32_t>(pv));
+    Write(base,image+0xBC,std::bit_cast<uint32_t>(width));Write(base,image+0xC0,std::bit_cast<uint32_t>(height));
+    ctx.f1.f64=Float(base,image+0xB0);ctx.f2.f64=pu;ctx.f3.f64=pv;
+    ctx.f4.f64=width;ctx.f5.f64=height;ctx.f6.f64=Float(base,image+0xC4);ctx.f7.f64=Float(base,image+0xC8);
+    Call(0x82F1C600,{scratch+640,Read(base,image+0xCC)});
+    std::copy_n(GuestPtr(base,scratch+640),64,GuestPtr(base,image+0x70));return true;
+  }
   // Width/height are native normalized text-box units, not screen pixels.
   // The caller must use a text node and an access interface for this presentation.
   bool TextStyle(uint32_t access, uint32_t presentation, uint32_t node,

@@ -318,7 +318,8 @@ void DefaultPausePages() {
   const auto& car_card = pages[1].tiles[0];
   assert(car_card.id == "current_car" && car_card.action.empty());
   assert(!Focusable(car_card));
-  assert(menu.FocusTile("car_tuning"));
+  menu.FocusTile("car_tuning");
+  assert(menu.focused_tile_id()=="car_tuning");
   assert(menu.Activate() == "car_tuning");
   menu.Suspend();
   menu.SetPages(MakePausePages(all));

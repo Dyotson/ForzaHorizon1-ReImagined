@@ -46,12 +46,14 @@ struct Card {
   Donor donor;
   uint32_t title = 0, paper = 0, material = 0, caption = 0, grain = 0, grain_material = 0;
   uint32_t progress_fill = 0, progress_track = 0;
+  uint32_t icon=0,icon_material=0;std::string icon_action;
 };
 struct Car {
   uint32_t root = 0, name = 0, make = 0, image = 0, material = 0;
   uint32_t stats = 0, controller = 0, logo = 0, logo_material = 0;
   bool logo_ready = false;
   fh1_logo_layout::Fit logo_fit;
+  uint32_t badge=0,badge_controller=0;uint64_t badge_value=0;bool badge_ready=false;
   std::array<uint32_t, 5> rows{}, labels{}, values{};
   uint32_t owned = 0, model = 0;
   bool bound = false;
@@ -222,6 +224,10 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   valid = Require("card", "HIGHLIGHT.BigPane01", card.paper) && valid;
   if (!valid) return false;
   card.material = Named(ui, card.paper, "Material866");
+  if(!tab && &card!=&state.cards[0]){
+    card.icon=Named(ui,Named(ui,card.donor.root,"CAR_STATS"),"LOGO");
+    card.icon_material=Named(ui,card.icon,"Material_Car_Logo");
+  }
   if(tab){const auto grain=Descendants(ui.base,tape,0x43a6b655);
     card.grain=grain.empty()?0:grain.front();card.grain_material=Named(ui,card.grain,"Material90");
     PaperUV(ui,card.donor,card.grain_material);}
@@ -232,7 +238,7 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
 }
 const char* Description(std::string_view id) {
   if (id == "world_map") return "Explore Colorado";
-  if (id == "my_cars" || id == "change_car") return "Choose from your owned cars";
+  if (id == "my_cars" || id == "change_car") return "Choose an owned car";
   if (id == "garage") return "Fast travel for car upgrades";
   if (id == "autoshow") return "Fast travel to buy cars";
   if (id == "settings") return "Audio, graphics, controls and difficulty";
@@ -246,6 +252,34 @@ const char* Description(std::string_view id) {
   if (id == "hud") return "Driving display and notifications";
   if (id == "video") return "Brightness and subtitles";
   return "";
+}
+void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
+  struct Art {const char* id;const char* path;float w,h,l,t,bw,bh;};
+  static constexpr Art art[]{
+    {"change_car","UI4\\Common\\BUTTON_ICON_CAR.tga",164,164,10,37,144,89},
+    {"car_tuning","UI4\\MyStore\\tuning_icon.tga",220,116,79,29,60,60},
+    {"garage","UI4\\Common\\Icon_Home.tga",220,123,61,13,97,97},
+    {"autoshow","UI4\\Common\\Icon_Grid.tga",220,123,61,13,98,97},
+  };
+  const Art* image=nullptr;for(const auto& a:art)if(tile.id==a.id){image=&a;break;}
+  if(!card.icon)return;
+  const auto& d=card.donor;ui.Show(d.presentation,card.icon,image!=nullptr);
+  if(!image)return;
+  if(card.icon_action!=tile.id){
+    const auto binding=ui.scratch+832;ui.Call(0x82664A38,{binding});
+    Write(ui.base,binding+4,card.icon_material);Write(ui.base,binding+8,d.presentation);
+    ui.Call(0x82F38E80,{binding,ui.String(std::string("GAME:\\Media\\UI\\Textures\\")+image->path),0,8});
+    card.icon_action=tile.id;
+  }
+  // Clip the final quarter in UV space; the quad stays completely inside the
+  // tile, so artwork cannot bleed into the neighboring action or footer.
+  const float fit=180/std::max(image->bw,image->bh);
+  const float w=image->bw*.75f*fit,h=image->bh*.75f*fit;
+  Normalize(ui,d,card.icon);Point(ui,d,card.icon,tile.bounds.x+tile.bounds.width-w/2,tile.bounds.y+tile.bounds.height-h/2);
+  ui.Scale(d.presentation,card.icon,w/100,h/100);Depth(ui,d,card.icon,1);
+  ui.Color(d.presentation,card.icon_material,0xffffff);ui.Opacity(d.presentation,card.icon,14);
+  ui.CropImage(card.icon_material,image->l/image->w,image->t/image->h,image->bw*.75f/image->w,image->bh*.75f/image->h);
+  Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?0xffffff:0xaaaaaa);
 }
 bool BindHeader(Native& ui) {
   const auto& d = state.header;
@@ -396,6 +430,12 @@ bool BindCar(Native& ui) {
   car.image = Named(ui, car.root, "Car_Thumb_");
   car.stats = Named(ui, car.root, "STATS");
   car.controller = d.ControllerByVtable(ui, 0x82074f4c);
+  car.badge=Named(ui,car.root,"CLASS_SM");
+  const auto pi=Named(ui,car.badge,"TEXT_PI");
+  const auto manager=d.Components(ui),begin=manager?Read(ui.base,manager+0x28):0,end=manager?Read(ui.base,manager+0x2C):0;
+  if(begin&&end>=begin&&end-begin<=8192&&(end-begin)%8==0)
+    for(auto item=begin;item<end;item+=8){const auto controller=Read(ui.base,item+4);
+      if(controller&&Read(ui.base,controller)==0x8207513C&&Read(ui.base,controller+0xA8)==pi)car.badge_controller=controller;}
   for (size_t i = 0; i < car.rows.size(); ++i) {
     const auto suffix = i ? std::to_string(i + 1) : std::string{};
     car.rows[i] = Named(ui, car.stats, ("CAR_STATS_PERFORMANCE_BARS" + suffix).c_str());
@@ -411,7 +451,7 @@ bool BindCar(Native& ui) {
   for (const auto& [name, node] : std::initializer_list<std::pair<const char*, uint32_t>>{
       {"CAR_STATS", car.root}, {"TEXT_CAR_NAME", car.name}, {"TEXT_MANUFACTURER", car.make},
       {"Car_Thumb_", car.image}, {"Material_Car_Ima", car.material}, {"STATS", car.stats},
-      {"CAR_STATS controller", car.controller}})
+      {"CAR_STATS controller", car.controller},{"CLASS_SM",car.badge},{"Class badge controller",car.badge_controller}})
     valid = Require("car", name, node) && valid;
   return valid;
 }
@@ -419,6 +459,7 @@ void CarData(Native& ui) {
   auto& car = state.car;
   auto& d = state.cards[0].donor;
   const auto current = fh1_current_car::ReadCurrentCar(ui);
+  car.badge_ready=current&&fh1_current_car::BindCurrentClass(ui,car.badge_controller,current.model_id,&car.badge_value);
   if (!current || (car.bound && current.owned_id == car.owned && current.model_id == car.model))
     return;
   const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id, car.logo_material, &car.logo_ready,true,&car.logo_fit);
@@ -446,11 +487,15 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   Point(ui, d, car.name, content.name.x+78, content.name.y + 12);
   Point(ui, d, car.make, content.name.x+78, content.name.y + 35);
   ui.TextStyle(d.access, d.presentation, car.name, 23,
-               float((content.name.width-78) / 1200), .045f, 0);
+               float((content.name.width-168) / 1200), .045f, 0);
   ui.TextStyle(d.access, d.presentation, car.make, 18,
                float((content.name.width-78) / 1200), .035f, 0);
   ui.Color(d.presentation, car.name, 0xffffff, true);
   ui.Color(d.presentation, car.make, 0xe2dce2, true);
+  ui.Show(d.presentation,car.badge,car.badge_ready);
+  if(car.badge_ready){Normalize(ui,d,car.badge);Depth(ui,d,car.badge,-3);
+    Point(ui,d,car.badge,bounds.x+bounds.width-51,content.name.y+12);
+    ui.Scale(d.presentation,car.badge,.9f,.9f);ui.RotationZ(d.presentation,car.badge,0);}
   Normalize(ui, d, car.image);
   Depth(ui, d, car.name, -3); Depth(ui, d, car.make, -3);
   Depth(ui, d, car.image, -1);
@@ -723,11 +768,12 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       std::vector<uint32_t> retained{card.paper, card.title};
       if (card.caption) retained.push_back(card.caption);
       if (i == 0) {
-        retained.insert(retained.end(), {state.car.name, state.car.make, state.car.image, state.car.logo});
+        retained.insert(retained.end(), {state.car.name, state.car.make, state.car.image, state.car.logo,state.car.badge});
         for (unsigned row = 0; row < 5; ++row) {
           retained.push_back(state.car.labels[row]); retained.push_back(state.car.values[row]);
         }
       }
+      if(card.icon)retained.push_back(card.icon);
       if (i == 4) {
         retained.push_back(card.progress_fill); retained.push_back(card.progress_track);
       }
@@ -808,6 +854,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     const auto& tile = page->tiles[i];
     card.donor.Tick(ui, [&] {
       StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
+      ActionArtwork(ui,card,tile);
       if (card.caption) {
         const bool compact = tile.bounds.height < 100;
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
@@ -830,7 +877,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
                  focus && tile.id == *focus ? 0xff007a : 0xffffff, true);
       }
       if (i == 0) {
-        for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats, state.car.logo})
+        for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats, state.car.logo,state.car.badge})
           ui.Show(card.donor.presentation, node, car);
         if (car) CarLayout(ui, tile.bounds);
       }

@@ -70,10 +70,10 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
       }},
       {"cars", "CARS", {
           {"current_car", "CURRENT CAR", {64, 166, 560, 404}, ""},
-          {"change_car", "CHANGE CAR", {640, 166, 576, 94}, "change_car", true, caps.world_map},
-          {"car_tuning", "TUNE CAR", {640, 270, 576, 94}, "car_tuning", true, caps.world_map && caps.car_tuning},
-          {"garage", "GO TO GARAGE", {640, 374, 576, 94}, "garage", true, caps.world_map && caps.garage},
-          {"autoshow", "GO TO AUTOSHOW", {640, 478, 576, 92}, "autoshow", true, caps.world_map && caps.autoshow},
+          {"change_car", "CHANGE CAR", {640, 166, 280, 194}, "change_car", true, caps.world_map},
+          {"car_tuning", "TUNE CAR", {936, 166, 280, 194}, "car_tuning", true, caps.world_map && caps.car_tuning},
+          {"garage", "GO TO GARAGE", {640, 376, 280, 194}, "garage", true, caps.world_map && caps.garage},
+          {"autoshow", "GO TO AUTOSHOW", {936, 376, 280, 194}, "autoshow", true, caps.world_map && caps.autoshow},
       }, true, caps.world_map},
       {"settings", "SETTINGS", {
           {"difficulty", "DIFFICULTY", {64, 166, 374, 194}, "difficulty"},
