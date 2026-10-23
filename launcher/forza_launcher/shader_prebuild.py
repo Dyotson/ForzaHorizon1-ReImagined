@@ -210,7 +210,7 @@ def game_sources(cfg, game, plan) -> list:
     return out
 
 
-def write_files(cfg, game, plan, status_cb=None, cancelled=None) -> dict:
+def write_files(cfg, game, plan, status_cb=None, cancelled=None, log=print) -> dict:
     """Rebuild the listed shaders from the player's files and write the SDK's prebuild files."""
     paths.ensure_tools_importable()
     import pipeline_list
@@ -221,6 +221,8 @@ def write_files(cfg, game, plan, status_cb=None, cancelled=None) -> dict:
     problems = pipeline_list.check_list(lst)
     if problems:
         raise PrebuildError(f"The pipeline list is damaged ({problems[0]}): reinstall the launcher.")
+    from . import shader_share
+    lst = shader_share.community_list(cfg, lst, log)  # the server's list too (#276), else the shipped one
     srcs = game_sources(cfg, game, plan)
     try:
         return pipeline_list.write_prebuild(lst, srcs, str(prebuild_dir(plan)), status_cb, cancelled)
@@ -372,7 +374,7 @@ def prebuild(cfg, game, status_cb=None, progress=None, cancelled=None, log=print
     def files_progress(i, n, name):
         if progress:
             progress(0.08 * i / max(n, 1), os.path.basename(str(name)))
-    files = write_files(cfg, game, plan, files_progress, cancelled)
+    files = write_files(cfg, game, plan, files_progress, cancelled, log)
     log(f"Shader prebuild: {files['shaders']} shaders rebuilt from your game files, "
         f"{files['pipelines']} of {files['pipelines_listed']} listed pipelines")
     if status_cb:

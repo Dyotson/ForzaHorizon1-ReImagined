@@ -10,6 +10,8 @@ from pathlib import Path
 from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, paths, schema, specs
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
+# Settings of the launcher itself: not game cvars, never written to forza.toml.
+LAUNCHER_ONLY = ("share_shader_list",)
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
 FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
@@ -266,7 +268,8 @@ def render_toml(cfg: Config) -> str:
              "# keys added under 'Other settings' (Advanced) are kept."]
     settings = cfg.effective_settings()
     for s in schema.S:
-        if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution", "forza_antialiasing"):
+        if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution", "forza_antialiasing") \
+                or s.key in LAUNCHER_ONLY:
             continue
         v = schema.coerce(s, settings.get(s.key, s.default))
         if v != s.default:
