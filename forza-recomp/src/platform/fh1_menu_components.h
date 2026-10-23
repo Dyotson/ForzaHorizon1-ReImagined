@@ -31,6 +31,20 @@ inline std::optional<size_t> SliderNeighbor(std::span<const float> choices,
   return next==first?selected:size_t((next-1)-choices.begin());
 }
 struct Rect { float x=0,y=0,w=0,h=0; };
+// tan(15 degrees). One screen-space shear for the whole pause composition.
+inline constexpr float kMenuShear = .2679491924f;
+inline constexpr float kMenuScaleX = (1152.f - kMenuShear * (570.f - 32.f)) / 1152.f;
+inline constexpr float kMenuTranslateX = 576.f * (kMenuScaleX - 1.f) + 210.f * kMenuShear;
+struct ShearFactors { float outer_radians, scale_x, scale_y, inner_radians; };
+// Two native TRS groups can retain the same affine matrix through animation
+// rebuilds: R(outer) * Scale * R(inner), followed by the canvas translation.
+inline ShearFactors MenuShearFactors() {
+  const double a=kMenuScaleX,b=kMenuShear;
+  const double v=.5*std::atan2(2*a*b,a*a-b*b-1);
+  const double x=a*std::cos(v)+b*std::sin(v),y=std::sin(v);
+  const double scale=std::hypot(x,y);
+  return {float(std::atan2(y,x)),float(scale),float(a/scale),float(-v)};
+}
 inline Rect BackdropBounds(uint32_t width,uint32_t height) {
   if(!width||!height){width=1280;height=720;}
   const float scale=std::min(float(width)/1280,float(height)/720);
@@ -50,6 +64,7 @@ class TabBar {
   Rect motion_from_{};
   mutable Rect visual_{};
   mutable bool visual_valid_=false;
+  mutable size_t first_visible_=0, visible_count_=0;
   size_t Index(std::string_view id) const {
     auto found=std::find_if(tabs_.begin(),tabs_.end(),[&](const Tab& tab){return tab.id==id;});
     return size_t(found-tabs_.begin());
@@ -67,6 +82,7 @@ public:
     std::unordered_set<std::string> ids;
     for(const auto& tab:tabs)if(tab.id.empty()||tab.label.empty()||!ids.insert(tab.id).second)return false;
     tabs_=std::move(tabs);
+    first_visible_=std::min(first_visible_,tabs_.size()-1);
     if(Index(selected_)==tabs_.size()){selected_=tabs_.front().id;visual_valid_=false;motion_seconds_=kSelectionSeconds;}
     if(Index(focused_)==tabs_.size())focused_=selected_;
     return true;
@@ -92,11 +108,20 @@ public:
   }
   bool ActivateFocused(){return Select(focused_);}
   bool SelectNeighbor(int direction){focused_=selected_;return MoveFocus(direction)&&ActivateFocused();}
+  bool MoreBefore()const{return visible_count_&&first_visible_>0;}
+  bool MoreAfter()const{return visible_count_&&first_visible_+visible_count_<tabs_.size();}
   // A bounded viewport supports variable page counts; focus scrolls into view.
   std::vector<TabCell> Layout(Rect bounds,size_t capacity=9)const {
-    if(tabs_.empty()||!capacity||!std::isfinite(bounds.w)||bounds.w<=0)return {};
-    auto count=std::min(capacity,tabs_.size());auto focused=Index(focused_);
-    auto first=focused<count?0:std::min(focused-count+1,tabs_.size()-count);
+    if(tabs_.empty()||!capacity||!std::isfinite(bounds.w)||bounds.w<=0){visible_count_=0;return {};}
+    const auto fitting=size_t(std::max(0.f,std::floor((bounds.w+3.f)/123.f)));
+    auto count=std::min({capacity,tabs_.size(),fitting});
+    if(!count){visible_count_=0;return {};}
+    auto focused=Index(focused_);
+    first_visible_=std::min(first_visible_,tabs_.size()-count);
+    if(focused<first_visible_)first_visible_=focused;
+    else if(focused>=first_visible_+count)first_visible_=focused-count+1;
+    visible_count_=count;
+    const auto first=first_visible_;
     float gap=3, width=std::min(220.f,(bounds.w-gap*float(count-1))/float(count));
     if(width<24)return {};
     std::vector<TabCell> cells;

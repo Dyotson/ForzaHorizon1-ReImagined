@@ -398,8 +398,11 @@ void NativeLayoutContract() {
     assert(layout::Supports(pages));
   }
   auto too_many_pages = defaults;
-  too_many_pages.push_back(MakePage("extension"));
+  for(size_t i=too_many_pages.size();i<=layout::kPageCapacity;++i)
+    too_many_pages.push_back(MakePage("extension"+std::to_string(i)));
   assert(!layout::Supports(too_many_pages));
+  too_many_pages.pop_back();
+  assert(layout::Supports(too_many_pages));
   auto too_many_tiles = defaults;
   too_many_tiles.front().tiles.push_back(MakeTile("extension"));
   assert(!layout::Supports(too_many_tiles));

@@ -7,7 +7,9 @@ namespace forza::native_pause_layout {
 // A bounded native backend, independent of the arbitrary-sized menu model.
 // Reject unsupported pages before hiding stock controls.
 inline constexpr size_t kTileCapacity = 6;
+// Four reusable scene donors form a scrolling window over up to 64 pages.
 inline constexpr size_t kTabCapacity = 4;
+inline constexpr size_t kPageCapacity = 64;
 inline bool Valid(const menu::Rect& r) {
   return std::isfinite(r.x) && std::isfinite(r.y) &&
       std::isfinite(r.width) && std::isfinite(r.height) &&
@@ -15,7 +17,7 @@ inline bool Valid(const menu::Rect& r) {
       r.x + r.width <= 1280 && r.y + r.height <= 720;
 }
 inline bool Supports(const std::vector<menu::Page>& pages) {
-  if (pages.empty() || pages.size() > kTabCapacity) return false;
+  if (pages.empty() || pages.size() > kPageCapacity) return false;
   for (const auto& page : pages) {
     if (page.tiles.size() > kTileCapacity) return false;
     for (const auto& tile : page.tiles) if (!Valid(tile.bounds)) return false;

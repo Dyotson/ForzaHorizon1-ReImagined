@@ -43,6 +43,21 @@ defaults to the existing pause behavior. Pause tabs now use the reusable
 `fh1_menu_components::TabBar` renderer while the pause controller retains input
 and capability ownership.
 
+Pause panels, artwork, labels and the native map quad share a 15-degree shear
+with horizontal top and bottom edges. The 720p composition fits within the
+existing safe area. FH1's layer nodes are render boundaries, so the shared
+matrix is composed onto their drawable children rather than the layer itself;
+camera and light nodes retain their authored transforms.
+
+The four tab donors now form a scrolling window over up to 64 logical pages.
+Shoulder navigation keeps the current window until selection crosses its edge,
+then reveals the next tab. Edge arrows indicate hidden pages; wraparound brings
+the selected first or last page into view. The normal menu still has four pages.
+A private seven-page staged build at 1280x720 verified both hidden-edge hints,
+scrolling in both directions, and wraparound. The temporary extra pages are not
+part of the shipped menu or its scene assets. Affine reconstruction and viewport
+tests cover the shared transform, stable windows and bounded page capacity.
+
 The Cars composition uses a larger full-width photo with five specification
 columns underneath. Both menus bind real controller icons through the shared
 native footer model API. The resource manifest now prepares the pause and tuning
@@ -63,13 +78,14 @@ filename is not used because the corresponding texture is absent in FH1.
 Both tuning and library use the same header identity. Platform, fallback and extended lifetime checks remain
 limited as detailed below.
 
-The shared tab bar uses compact spacing, upright native labels and angled FH1
-paper. Selection commits immediately while the active paper moves for150ms;
+The shared tab bar uses compact spacing and angled FH1 paper. Pause labels
+follow the composition's shear; tuning labels retain their own layout.
+Selection commits immediately while the active paper moves for220ms;
 interrupted motion continues from the displayed location, wrapping snaps, and
 large elapsed times settle immediately. This visual state belongs to the shared
 component and is preserved through tuning/library view snapshots. The pause
-header retains its native player/car/credits bindings over one continuous paper
-strip. Only the dim backdrop bleeds outside the safe area, sized from the output
+header retains its native player/car/credits bindings with separate paper
+containers and no continuous header background. Only the dim backdrop bleeds outside the safe area, sized from the output
 viewport so the donor texture's transparent perimeter is outside the frame.
 
 The shared UI polish was checked at1280x720 in a copied offline profile:

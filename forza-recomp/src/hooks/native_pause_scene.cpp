@@ -773,7 +773,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     }
     valid = state.header.Isolate(ui, {state.header_paper,state.player_bar,state.credits_display, state.username, state.username_paper,
         state.status, state.footer, state.bumpers[0], state.bumpers[1]}) && valid;
-    for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title,tab.grain}) && valid;
+    for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title,tab.grain,tab.caption}) && valid;
     for (size_t i = 0; i < state.cards.size(); ++i) {
       auto& card = state.cards[i];
       std::vector<uint32_t> retained{card.paper, card.title};
@@ -901,10 +901,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     Release(ui, true); return;
   }
   state.tab_bar.Advance(elapsed);
-  // TabShear moves the bottom edge left by half the 0.28*height shear.
-  // Inset the strip by that amount so its bottom-left meets the tile column.
-  constexpr float tab_inset = .14f * 42.f;
-  const fh1_menu_components::Rect tab_bounds{64 + tab_inset, 112, 768 - tab_inset, 42};
+  const fh1_menu_components::Rect tab_bounds{64, 112, 768, 42};
   const auto cells = state.tab_bar.Layout(tab_bounds, layout::kTabCapacity);
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
@@ -915,9 +912,8 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         tab.donor.Tick(ui, [&] {
           StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
           ui.Color(tab.donor.presentation, tab.material, color);
-          ui.TabShear(tab.donor.presentation,tab.paper,r.w,r.h);
           Normalize(ui,tab.donor,tab.grain);Point(ui,tab.donor,tab.grain,r.x+r.w/2,r.y+r.h/2);
-          Depth(ui,tab.donor,tab.grain,2);ui.TabShear(tab.donor.presentation,tab.grain,r.w,r.h);
+          Depth(ui,tab.donor,tab.grain,2);ui.Scale(tab.donor.presentation,tab.grain,r.w/100,r.h/100);
           ui.Color(tab.donor.presentation,tab.grain_material,0xffffff);ui.Opacity(tab.donor.presentation,tab.grain,18);
         });
       },
@@ -928,6 +924,19 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         Label(ui, tab.donor, tab.title, {r.x,r.y,r.w,r.h}, size, text, color, 1);
       }, 20.f);
   state.header.Tick(ui, [&] { HeaderLayout(ui); });
+  for(size_t slot=0;slot<cells.size();++slot){
+    auto& tab=state.tabs[slot];
+    const bool before=slot==0&&state.tab_bar.MoreBefore();
+    const bool after=slot+1==cells.size()&&state.tab_bar.MoreAfter();
+    ui.Show(tab.donor.presentation,tab.caption,before||after);
+    if(before||after)Label(ui,tab.donor,tab.caption,
+        {after?838.:38.,114,22,38},20,after?">":"<",0xffffff,1);
+  }
+  for(auto& card:state.cards)if(card.donor.visible)
+    ui.MenuComposition(card.donor.presentation,card.donor.root);
+  for(auto& tab:state.tabs)if(tab.donor.visible)
+    ui.MenuComposition(tab.donor.presentation,tab.donor.root);
+  ui.MenuComposition(state.header.presentation,state.header.root);
   bool map_visible = false, map_selected = false;
   if (page->id == "home") {
     const auto map = std::find_if(page->tiles.begin(), page->tiles.end(),

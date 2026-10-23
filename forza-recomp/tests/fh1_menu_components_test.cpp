@@ -4,6 +4,14 @@
 using namespace forza::fh1_menu_components;
 void Check(bool condition,const char* message){if(!condition){std::cerr<<message<<'\n';std::exit(1);}}
 int main(){
+  const auto shear=MenuShearFactors();
+  const double u=shear.outer_radians,v=shear.inner_radians;
+  const double cu=std::cos(u),su=std::sin(u),cv=std::cos(v),sv=std::sin(v);
+  Check(std::fabs(cu*shear.scale_x*cv-su*shear.scale_y*sv-kMenuScaleX)<1e-6&&
+        std::fabs(cu*shear.scale_x*-sv-su*shear.scale_y*cv-kMenuShear)<1e-6&&
+        std::fabs(su*shear.scale_x*cv+cu*shear.scale_y*sv)<1e-6&&
+        std::fabs(su*shear.scale_x*-sv+cu*shear.scale_y*cv-1)<1e-6,
+        "Native map TRS groups must reproduce the shared shear without tilting horizontal edges");
   const auto grid=SliderGridStart(188.55,0,.1);
   Check(std::fabs(grid-188.6)<1e-8,"Choice grid must align to display precision, not raw minimum");
   Check(std::fabs((grid+489*1.3)-824.3)<1e-8,"Spring choices must avoid half-decimal rounding midpoints");
@@ -29,7 +37,17 @@ int main(){
   tabs.SetTabs(many);tabs.Select("11");auto cells=tabs.Layout({44,120,1192,48},9);
   Check(cells.size()==9&&cells.back().index==11&&cells.back().selected,"Viewport did not expose selected page");
   Check(cells.front().bounds.x>=44&&cells.back().bounds.x+cells.back().bounds.w<=1236.01,"Viewport exceeded supplied bounds");
+  Check(tabs.MoreBefore()&&!tabs.MoreAfter(),"Last page must indicate earlier hidden tabs");
+  tabs.Select("10");cells=tabs.Layout({44,120,1192,48},9);
+  Check(cells.front().index==3,"Moving within the visible window must not scroll it");
+  tabs.Select("2");cells=tabs.Layout({44,120,1192,48},9);
+  Check(cells.front().index==2&&tabs.MoreBefore()&&tabs.MoreAfter(),"Crossing the left edge must scroll one tab");
+  tabs.Select("11");cells=tabs.Layout({0,0,500,42},9);
+  Check(cells.size()==4&&cells.back().selected,"Width must bound tab count and keep selection visible");
+  tabs.Select("0");cells=tabs.Layout({0,0,500,42},9);
+  Check(cells.front().index==0&&!tabs.MoreBefore()&&tabs.MoreAfter(),"Wrap to first must restore the first window");
   Check(tabs.Layout({0,0,2,48},9).empty(),"Unsupported narrow layout must fail closed");
+  Check(!tabs.MoreBefore()&&!tabs.MoreAfter(),"Empty viewport must hide overflow indicators");
   TabBar community;community.SetTabs({{"community","COMMUNITY",true,"Coming soon"}});
   std::string unavailable;
   community.Paint({0,0,220,48},9,[](size_t,Rect,uint32_t){},

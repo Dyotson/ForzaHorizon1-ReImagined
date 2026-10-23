@@ -1,5 +1,6 @@
 #pragma once
 #include "guest_addr.h"
+#include "fh1_menu_components.h"
 
 #if FORZA_TU4
 #include "guest_memory.h"
@@ -232,10 +233,40 @@ public:
     Scale(presentation,node,width/100,height/100);
     Call(0x82FE4368,{instance+0x3C,instance+0xC,instance+0x18,
         instance+0x24,instance+0x30,GuestPtr(base,instance+0xF9)[0],GuestPtr(base,instance+0xF8)[0]});
-    Write(base,instance+0x3C+0x10,std::bit_cast<uint32_t>(.28f*height/100));
+    Write(base,instance+0x3C+0x10,std::bit_cast<uint32_t>(fh1_menu_components::kMenuShear*height/100));
     // Keep our local matrix; request only the native world-matrix update.
     GuestPtr(base,instance+0xFB)[0]=(GuestPtr(base,instance+0xFB)[0]&~0x20)|0x10;
     Dirty(presentation,node);return true;
+  }
+  bool MenuShear(uint32_t presentation,uint32_t node) {
+    const auto instance=node?Read(base,node+4):0;
+    if(!instance||Read(base,instance+4)!=node)return false;
+    using namespace fh1_menu_components;
+    Call(0x82FE4368,{instance+0x3C,instance+0xC,instance+0x18,
+        instance+0x24,instance+0x30,GuestPtr(base,instance+0xF9)[0],GuestPtr(base,instance+0xF8)[0]});
+    // Compose with the authored local transform. Layer (kind 8) is a render
+    // boundary, so its matrix does not propagate to its drawable children.
+    for(unsigned column=0;column<4;++column){
+      const auto address=instance+0x3C+column*16;
+      const float x=kMenuScaleX*Float(base,address)+kMenuShear*Float(base,address+4)
+          +(column==3?kMenuTranslateX:0.f);
+      Write(base,address,std::bit_cast<uint32_t>(x));
+    }
+    GuestPtr(base,instance+0xFB)[0]=(GuestPtr(base,instance+0xFB)[0]&~0x20)|0x10;
+    Dirty(presentation,node);return true;
+  }
+  void MenuComposition(uint32_t presentation,uint32_t root) {
+    std::vector<uint32_t> pending;
+    unsigned siblings=0;
+    if(root)for(auto child=Read(base,root+20);child&&siblings++<1024;child=Read(base,child+16))pending.push_back(child);
+    for(unsigned count=0;!pending.empty()&&count<8192;++count){
+      const auto node=pending.back();pending.pop_back();
+      const auto name=Read(base,node),instance=Read(base,node+4);
+      if(name==Hash("Camera")||name==Hash("Light")||!instance)continue;
+      if(GuestPtr(base,instance+0xA)[0]!=8){MenuShear(presentation,node);continue;}
+      unsigned siblings=0;
+      for(auto child=Read(base,node+20);child&&siblings++<1024;child=Read(base,child+16))pending.push_back(child);
+    }
   }
   void Opacity(uint32_t presentation, uint32_t node, float percent) {
     if (!node || !std::isfinite(percent) || Scalar(presentation,node,"opacity",percent)) return;
