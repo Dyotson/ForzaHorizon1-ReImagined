@@ -168,6 +168,7 @@ struct Row {
 };
 std::atomic<bool> screen{false};
 std::atomic<bool> toggle_request{false}, chat_request{false};
+std::atomic<int> page_request{-1};
 Tab tab = kFriends;
 // The Chat tab: where a message goes (0 session, 1 world, 2.. a friend online), the text.
 size_t chat_to = 0;
@@ -898,6 +899,14 @@ void LiveOpenFriends(bool chat) {
   if (chat) chat_request = true;
   else toggle_request = true;
 }
+void LiveOpenFriendsPage(LiveFriendsPage page) {
+  const auto value=static_cast<int>(page);
+  if(value>=0&&value<kTabs)page_request=value;
+}
+LiveChatPreview LiveGetChatPreview() {
+  std::lock_guard<std::mutex> lock(mutex);
+  return {unread,chat_log.empty()?std::string{}:ChatLineText(chat_log.back())};
+}
 
 void InstallFriendsKey() {
   if (const std::string key = REXCVAR_GET(live_friends_key); !key.empty()) {
@@ -920,7 +929,13 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
   const int64_t now = NowMs();
   const bool toggle = toggle_request.exchange(false);
   const bool chat_key = chat_request.exchange(false);
+  const int requested=busy?-1:page_request.exchange(-1);
   if (screen) {
+    if(requested>=0){
+      tab=static_cast<Tab>(requested);menu=false;osk.open=false;dirty=true;
+      idle_until=now+kIdleMs;
+      REXLOG_INFO("FORZA_LIVE: requested friends page {}",TabName(tab));
+    }
     if (toggle || (chat_key && tab == kChat)) {
       CloseScreenLocked(buttons, "key");
       return latched;
@@ -955,10 +970,14 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
   } else {
     ls_since = 0;
   }
-  if (!busy && (toggle || chat_key ||
+  if (!busy && (toggle || chat_key || requested>=0 ||
                 (ls_since && now - ls_since >= kHoldMs && !(latched & kLS)))) {
     ls_since = 0;
     OpenScreenLocked(now, chat_key);
+    if(requested>=0){
+      tab=static_cast<Tab>(requested);
+      REXLOG_INFO("FORZA_LIVE: requested friends page {}",TabName(tab));
+    }
     ShowScreenLocked(now);
     latched |= buttons;
     block_all = true;

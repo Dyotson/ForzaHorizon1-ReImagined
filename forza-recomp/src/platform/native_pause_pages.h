@@ -16,7 +16,7 @@ inline constexpr double kPauseCanvasHeight = 720;
 enum class PauseAction {
   WorldMap, SettingsPage, ChangeCar, FestivalProgress, PhotoMode, MyProfile,
   Garage, Autoshow, TuneCar, Difficulty, Graphics, Audio, Controls, Hud, Video,
-  Friends, Chat, SocialStats, FreeRoam, CreateGame,
+  Friends, Chat, SocialStats, FreeRoam, CreateGame, FriendRequests, ConnectionGuide, SocialRoot,
 };
 
 struct PauseActionBinding {
@@ -45,6 +45,9 @@ inline constexpr std::array kPauseActions{
     PauseActionBinding{"social_stats", PauseAction::SocialStats},
     PauseActionBinding{"free_roam", PauseAction::FreeRoam},
     PauseActionBinding{"create_game", PauseAction::CreateGame},
+    PauseActionBinding{"friend_requests", PauseAction::FriendRequests},
+    PauseActionBinding{"social_connection", PauseAction::ConnectionGuide},
+    PauseActionBinding{"social_back", PauseAction::SocialRoot},
 };
 
 inline std::optional<PauseAction> FindPauseAction(std::string_view id) {
@@ -67,8 +70,8 @@ struct PauseCapabilities {
   bool create_game = false;
 };
 
-inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
-  return {
+inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool social_help=false) {
+  std::vector<Page> pages{
       {"home", "HOME", {
           {"world_map", "WORLD MAP", {64, 166, 560, 282}, "world_map", true, caps.world_map},
           {"my_cars", "MY CARS", {640, 166, 280, 282}, "change_car", true, caps.world_map},
@@ -85,11 +88,12 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
           {"autoshow", "GO TO AUTOSHOW", {936, 376, 280, 194}, "autoshow", true, caps.world_map && caps.autoshow},
       }, true, caps.world_map},
       {"social", "SOCIAL", {
-          {"friends", "FORZA LIVE FRIENDS", {64, 166, 560, 194}, "friends", true, caps.friends},
-          {"free_roam", "ONLINE FREE ROAM", {640, 166, 576, 194}, "free_roam", true, caps.free_roam},
-          {"create_game", "CREATE GAME", {64, 376, 374, 194}, "create_game", true, caps.create_game},
-          {"chat", "CHAT", {454, 376, 372, 194}, "chat", true, caps.friends},
-          {"social_stats", "STATISTICS", {842, 376, 374, 194}, "social_stats"},
+          {"friends", "FRIENDS", {64, 166, 560, 282}, "friends"},
+          {"free_roam", "HORIZON WORLD", {640, 166, 280, 194}, "free_roam", true, caps.free_roam},
+          {"create_game", "CREATE GAME", {936, 166, 280, 194}, "create_game", true, caps.create_game},
+          {"friend_requests", "REQUESTS", {640, 376, 280, 194}, "friend_requests"},
+          {"chat", "CHAT", {936, 376, 280, 194}, "chat"},
+          {"social_connection", "CONNECTION & HELP", {64, 464, 560, 106}, "social_connection"},
       }},
       {"settings", "SETTINGS", {
           {"difficulty", "DIFFICULTY", {64, 166, 374, 194}, "difficulty"},
@@ -100,6 +104,13 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
           {"video", "VIDEO", {842, 376, 374, 194}, "video"},
       }},
   };
+  if(social_help)pages[2].tiles={
+      {"social_account","CONNECTION",{64,166,560,282},""},
+      {"social_help","FORZA LIVE SETUP",{640,166,576,282},""},
+      {"social_stats","CAREER STATISTICS",{64,464,560,106},"social_stats"},
+      {"social_back","BACK TO SOCIAL",{640,464,576,106},"social_back"},
+  };
+  return pages;
 }
 
 } // namespace forza::menu

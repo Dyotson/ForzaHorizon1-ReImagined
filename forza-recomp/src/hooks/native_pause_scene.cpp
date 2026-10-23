@@ -85,6 +85,10 @@ struct State {
   std::array<uint32_t, 2> bumpers{};
   std::string gamertag, connection;
   std::string friends_summary;
+  std::string requests_summary,chat_summary,connection_summary,account_summary;
+  bool social_help=false,footer_social_help=false;
+  bool online_entry_available=false;
+  std::string social_return="social_connection";
   std::optional<float> completion;
   bool recovery = false;
   std::unordered_map<uint32_t, std::string> text;
@@ -95,6 +99,8 @@ State state;
 struct ReturnBookmark {
   uint32_t context = 0;
   std::string page, tile;
+  bool social_help=false;
+  std::string social_return="social_connection";
 };
 std::optional<ReturnBookmark> return_bookmark;
 struct OnlineIntent {
@@ -146,6 +152,7 @@ menu::PauseCapabilities Capabilities(Native& ui) {
   const bool online_entry=LiveConnected()&&ActionAvailable(ui.base,2)&&
       Read(ui.base,state.screen+0x1e4)&&LiveLocalActivity(presence,region)&&
       presence==1&&region==0;
+  state.online_entry_available=online_entry;
   return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
@@ -261,11 +268,19 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
 }
 std::string Description(std::string_view id) {
   if (id == "world_map") return "Explore Colorado";
-  if (id == "friends") return LiveConnected() ? state.friends_summary : "Connect to Forza Live to edit friends";
-  if (id == "chat") return LiveConnected() ? "World, session and private chat" : "Connect to Forza Live to chat";
-  if (id == "social_stats") return "Your Horizon career in numbers";
-  if (id == "free_roam") return LiveConnected() ? "Find Horizon World and public games" : "Connect to Forza Live to play online";
-  if (id == "create_game") return LiveConnected() ? "Set up a custom game with friends" : "Connect to Forza Live to host a game";
+  if (id == "friends") return state.friends_summary;
+  if (id == "chat") return state.chat_summary;
+  if (id == "friend_requests") return state.requests_summary;
+  if (id == "social_connection") return state.connection_summary;
+  if (id == "social_account") return state.account_summary;
+  if (id == "social_help") return "1. Close the game and open the launcher.\n2. Online: choose Public server, This PC\n   or My own server.\n3. Launch the game again.\n\nNo answer? Check the server address,\navailability and your firewall.";
+  if (id == "social_back") return "Return to friends, requests and online play";
+  if (id == "social_stats") return "Single-player career and festival progress";
+  if (id == "free_roam" || id == "create_game") {
+    if(!LiveConnected())return "Requires Forza Live\nSee Connection & Help";
+    if(!state.online_entry_available)return "Start from single-player\nColorado free roam";
+    return id=="free_roam"?"Public free roam\nChoose a playlist":"Custom lobby\nSet rules and invite friends";
+  }
   if (id == "my_cars" || id == "change_car") return "Choose an owned car";
   if (id == "garage") return "Fast travel for car upgrades";
   if (id == "autoshow") return "Fast travel to buy cars";
@@ -346,6 +361,17 @@ bool BindHeader(Native& ui) {
     valid = Require("header", name, node) && valid;
   return valid;
 }
+std::string SocialLine(std::string text,size_t limit=48) {
+  for(auto& c:text)if(static_cast<unsigned char>(c)<32)c=' ';
+  size_t count=0,end=0;
+  while(end<text.size()&&count<limit){
+    ++end;
+    while(end<text.size()&&(static_cast<unsigned char>(text[end])&0xc0)==0x80)++end;
+    ++count;
+  }
+  if(end<text.size())text=text.substr(0,end)+"...";
+  return text;
+}
 void RefreshData(Native& ui) {
   ui.ctx.r3.u64 = 0; ui.ctx.r4.u64 = ui.scratch + 1800; ui.ctx.r5.u64 = 16;
   __imp__XamUserGetName(ui.ctx, ui.base);
@@ -369,9 +395,37 @@ void RefreshData(Native& ui) {
       ++friends;if(player.state&1)++online;
     }
     state.friends_summary=std::to_string(online)+" ONLINE / "+std::to_string(friends)+" FRIENDS\n";
-    if(active)state.friends_summary+=std::to_string(incoming)+" INCOMING / "+std::to_string(sent)+" SENT\n";
-    state.friends_summary+="Manage friends, requests and blocks";
-  }else state.friends_summary.clear();
+    unsigned shown=0;
+    for(const auto& player:LiveFriendsList()){
+      if(!(player.state&1)||shown==3)continue;
+      state.friends_summary+=SocialLine(player.gamertag+" - "+(player.status.empty()?"Online":player.status))+"\n";
+      ++shown;
+    }
+    if(!shown)state.friends_summary+="No friends online right now.\n";
+    if(online>shown)state.friends_summary+="+ "+std::to_string(online-shown)+" more online\n";
+    state.friends_summary+="Select to add, message or manage friends.";
+    state.requests_summary=active?std::to_string(incoming)+" INCOMING\n"+std::to_string(sent)+" SENT\nAccept, decline or cancel":"List not received yet.\nSelect to refresh requests.";
+    const auto chat=LiveGetChatPreview();
+    state.chat_summary=std::to_string(chat.unread)+" UNREAD\n";
+    state.chat_summary+=chat.latest.empty()?"No messages yet.\nSelect to start chatting.":SocialLine(chat.latest,24)+"\nSelect to open chat.";
+    const auto room_players=LiveRoster().size()+1;
+    state.connection_summary=(LiveSessionIds().empty()?"ONLINE / ":"SESSION ACTIVE / ")+std::to_string(room_players)+
+        (room_players==1?" PLAYER IN ROOM":" PLAYERS IN ROOM");
+  }else{
+    const bool configured=NetworkOn();
+    state.friends_summary=configured?"Waiting for the Forza Live server.\nYour friends list is unavailable.\nSelect for connection help.":"Play Horizon World or host a custom game.\nAdd friends and use world or private chat.\n\nForza Live is off for this game session.\nSelect to see how to connect.";
+    state.requests_summary="Connect to Forza Live.\nSelect for setup help.";
+    state.chat_summary="Connect to Forza Live.\nSelect for setup help.";
+    state.connection_summary=configured?"WAITING FOR SERVER / SELECT FOR HELP":"OFFLINE / SELECT FOR SETUP HELP";
+  }
+  state.account_summary="PLAYER: "+SocialLine(state.gamertag,15)+"\n";
+  state.account_summary+=LiveConnected()?"SERVER CONNECTED\n":"NO LIVE SERVER CONNECTION\n";
+  uint32_t ip=0;uint16_t port=0;
+  if(LiveServerHttp(ip,port)){
+    char endpoint[80];std::snprintf(endpoint,sizeof(endpoint),"Title service: %u.%u.%u.%u:%u\n",ip>>24,(ip>>16)&255,(ip>>8)&255,ip&255,unsigned(port));
+    state.account_summary+=endpoint;
+  }
+  state.account_summary+="\nFriends and chat use your launcher identity.\nPublic games and custom lobbies use FH1's\noriginal multiplayer menus.";
   state.recovery = Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
       fh1_car_recovery::Available(ui.ctx, ui.base);
   // Same completion getter used by the original Statistics General page.
@@ -413,11 +467,12 @@ void HeaderLayout(Native& ui) {
   Label(ui, d, state.status, {996, 652, 220, 32}, 14, state.connection, 0xffffff, 2);
   for (auto node : {state.footer,state.bumpers[0],state.bumpers[1]})
     ui.Show(d.presentation,node,false);
-  if (!state.footer_bound || state.footer_recovery!=state.recovery) {
+  if (!state.footer_bound || state.footer_recovery!=state.recovery || state.footer_social_help!=state.social_help) {
     state.footer_bound=FooterButtons(ui,state.screen,
-        {{0,"SELECT"},{1,"RESUME"},{8,"PREV TAB"},{9,"NEXT TAB"},
+        {{0,"SELECT"},{1,state.social_help?"BACK":"RESUME"},{8,"PREV TAB"},{9,"NEXT TAB"},
          {14,state.recovery?"RESET CAR POSITION":""}});
     state.footer_recovery=state.recovery;
+    state.footer_social_help=state.social_help;
   }
 }
 void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
@@ -633,6 +688,14 @@ void Resume(Native& ui) {
   if (!fh1_pause_actions::Resume(ui.ctx, ui.base, state.screen))
     Page(ui.ctx, ui.base, state.screen, true);
 }
+void SocialHelp(Native& ui,bool show) {
+  if(show)state.social_return=state.controller.focused_tile_id().value_or("social_connection");
+  state.social_help=show;
+  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),show));
+  state.controller.SelectPage("social");
+  state.controller.FocusTile(show?"social_back":state.social_return);
+  state.controller.Resume();state.previous_pad=0xffff;
+}
 void Activate(Native& ui, const std::string& id) {
   const auto action = menu::FindPauseAction(id);
   if (!action) return;
@@ -640,8 +703,13 @@ void Activate(Native& ui, const std::string& id) {
     state.controller.SelectPage("settings");
     return;
   }
-  if (*action == menu::PauseAction::Friends || *action == menu::PauseAction::Chat) {
-    if (LiveConnected()) LiveOpenFriends(*action == menu::PauseAction::Chat);
+  if(*action==menu::PauseAction::ConnectionGuide||*action==menu::PauseAction::SocialRoot){
+    SocialHelp(ui,*action==menu::PauseAction::ConnectionGuide);return;
+  }
+  if (*action == menu::PauseAction::Friends || *action == menu::PauseAction::Chat || *action==menu::PauseAction::FriendRequests) {
+    if (!LiveConnected())SocialHelp(ui,true);
+    else LiveOpenFriendsPage(*action==menu::PauseAction::Chat?LiveFriendsPage::Chat:
+        *action==menu::PauseAction::FriendRequests?LiveFriendsPage::Requests:LiveFriendsPage::Friends);
     return;
   }
   // Revalidate gates immediately before transitions, not just on pause entry.
@@ -655,7 +723,7 @@ void Activate(Native& ui, const std::string& id) {
   const auto screen = state.screen;
   return_bookmark = ReturnBookmark{Read(ui.base, screen + 0x10c),
       state.controller.page_id().value_or("home"),
-      state.controller.focused_tile_id().value_or("")};
+      state.controller.focused_tile_id().value_or(""),state.social_help,state.social_return};
   if (*action == menu::PauseAction::Graphics) {
     // The native graphics adapter hides its parent only after creating the
     // child. Failed allocation must leave this page interactive.
@@ -734,7 +802,11 @@ void PollInput(Native& ui, double elapsed) {
   const auto result = state.controller.Update(mapped, elapsed);
   const bool reset = (held & 0x40) && !(state.previous_pad & 0x40);
   state.previous_pad = held;
-  if (result.back) { Resume(ui); return; }
+  if (result.back) { if(state.social_help)SocialHelp(ui,false);else Resume(ui); return; }
+  if(state.social_help&&state.controller.page_id()!="social"){
+    state.social_help=false;
+    state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+  }
   if (reset && Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
       fh1_car_recovery::Request(ui.ctx, ui.base)) { Resume(ui); return; }
   if (result.action) Activate(ui, *result.action);
@@ -933,6 +1005,9 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     ui.Call(0x82f1ec20, {state.header.owner, Hash("SHOW_PLAYER_BAR") & 0x7fffffff});
     state.controller.Enter();
     if (return_bookmark && return_bookmark->context == Read(base, screen + 0x10c)) {
+      state.social_help=return_bookmark->social_help;
+      state.social_return=return_bookmark->social_return;
+      state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help));
       state.controller.SelectPage(return_bookmark->page);
       state.controller.FocusTile(return_bookmark->tile);
     }
@@ -946,7 +1021,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   StockVisibility(ui, false);
   if (!state.visible) return;
   if (std::chrono::duration<double>(now - state.refreshed).count() >= 1) {
-    state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+    state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help));
     CarData(ui);
     RefreshData(ui);
     state.refreshed = now;
@@ -968,13 +1043,19 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     card.donor.Tick(ui, [&] {
       StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
       ActionArtwork(ui,card,tile);
+      const bool social=page->id=="social";
+      if(social){
+        if(!tile.enabled)ui.Opacity(card.donor.presentation,card.paper,85);
+        Label(ui,card.donor,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},
+            tile.bounds.width<300?21:23,tile.label,tile.enabled?kTextColor:kDisabledTextColor);
+      }
       if (card.caption) {
-        const bool compact = tile.bounds.height < 100;
+        const bool compact = tile.bounds.height <= 106;
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
-               tile.bounds.width - 48, tile.id=="friends"?112.:compact ? 26. : 32.},
-              compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
+               tile.bounds.width - 48, social?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
+              social?(state.social_help?14:16):compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";

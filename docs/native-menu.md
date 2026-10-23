@@ -9,12 +9,37 @@ runtime adapters and build configuration have been retired.
 
 ## Structure
 
-The pause strip has Home, Cars, Social and Settings. Social's Friends and Chat
-tiles queue the existing Forza Live editor, including requests, removal,
-blocking and chat; they require a live server connection. Friends also shows
-live online/friend counts and incoming/sent request counts from the server's
-relations snapshot. Statistics opens FH1's original statistics screen and
-returns to Social.
+The pause strip has Home, Cars, Social and Settings. Social uses a larger
+Friends activity panel, Horizon World/Create Game actions, direct Requests and
+Chat entries, and Connection & Help. Friends shows server-supplied counts and
+up to three online friends with their actual presence; selecting it opens the
+existing friends editor on Friends. Requests opens Requests directly, with
+incoming/sent counts; Chat shows a read-only unread count and latest-line
+preview before opening Chat. Reading the preview never marks messages read or
+sends anything. These editor entries use the input thread's queued request
+path, including its invite/keyboard ownership, rather than mutating overlay
+state from the guest UI thread.
+
+Offline, Friends explains the available features and opens setup help. Requests
+and Chat also lead to help instead of becoming dead controls. Online play's
+native gates still disable Horizon World/Create Game, with readable panels and
+an explicit connection requirement. Waiting for server contact has its own
+guidance; no disconnected friend counts or chat previews are displayed. The
+connection strip shows actual server-room population only while connected.
+An active local party/game session is identified separately; room population
+is not presented as a count of players in that session. Disabled online-entry
+tiles explain when Colorado single-player free roam is required.
+
+Connection & Help keeps the same Social tab selected. It shows the player,
+connection state and title-service endpoint when supplied by the server, plus
+the launcher's actual Online server choices and troubleshooting instructions.
+It does not pretend to reconnect or modify launcher settings from inside the
+game. Career Statistics is a secondary action here, alongside Back to Social;
+native Back restores the previous root selection. Statistics returns to the
+help view and its selected action. Shoulder navigation leaves the help view and
+continues through the normal tabs. Neither the friends editor nor its public
+API currently exposes a verified per-friend join action; no synthetic Join or
+Invite button is presented. Native custom lobbies retain their own invites.
 
 Online Free Roam enters the original multiplayer flow and opens Find Game's
 playlist picker, where Horizon World can be selected. Create Game enters the
@@ -62,7 +87,20 @@ and then the party without repeating the shortcut. No public server, friend
 request, chat message or external invite was used. This was a single-client
 entry-flow check; joining a friend's game and multi-client racing were not
 retested. Model checks cover losing the server while an online tile is focused,
-keeping Social selected and moving focus to local Statistics.
+keeping Social selected, connection/help focus, secondary Statistics and all
+root action navigation.
+
+The Social usability pass was captured at 1280x720 both offline and against a
+private loopback server with an empty friends list. Offline help, native
+Statistics and return, root selection restoration, and shoulder navigation
+were exercised. Stopping the owned local server verified the waiting/error
+guidance, cleared stale social summaries and disabled online entry. Connected
+logs verify direct Friends, Requests and Chat tab
+entry/close; native render-target captures omit the SDK overlay itself. No
+requests, messages or invites were sent. The test runtime used a private silent
+audio backend because Windows had no default playback device; neither this
+backend nor any SDK changes ship in the PR. Populated friend lists, nonzero
+unread chat and multi-client/session controls still need a further live pass.
 
 The combined WIP includes the native tuning workspace described in
 [car-tuning.md](car-tuning.md). Cars exposes `car_tuning` through its native

@@ -158,6 +158,14 @@ uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_al
 bool LiveFriendsScreenOpen();
 // Queue the existing friends editor/chat through its input-thread request path.
 void LiveOpenFriends(bool chat = false);
+enum class LiveFriendsPage { Friends, Requests, AddFriend, Blocked, Chat };
+void LiveOpenFriendsPage(LiveFriendsPage page);
+struct LiveChatPreview {
+  size_t unread = 0;
+  std::string latest;
+};
+// Read-only copy under the friends/chat lock. Does not mark messages read.
+LiveChatPreview LiveGetChatPreview();
 // ForzaApp::OnCreateDialogs: registers the keyboard bindings.
 void InstallFriendsKey();
 

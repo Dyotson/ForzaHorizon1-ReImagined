@@ -281,7 +281,7 @@ void DefaultPausePages() {
   assert(!FindPauseAction("unknown_extension_action"));
 
   // Losing the server while Social is selected must remove online actions
-  // without stranding focus or preventing access to the local statistics view.
+  // without stranding focus. Connection help stays actionable offline.
   Controller social;
   social.SetPages(pages);
   assert(social.SelectPage("social"));
@@ -291,12 +291,23 @@ void DefaultPausePages() {
   disconnected.friends=disconnected.free_roam=disconnected.create_game=false;
   social.SetPages(MakePausePages(disconnected));
   assert(social.page_id()=="social");
-  for(const auto* id:{"friends","chat","free_roam","create_game"})
+  for(const auto* id:{"free_roam","create_game"})
     assert(!social.FocusTile(id));
-  assert(social.focused_tile_id()=="social_stats");
-  assert(social.Activate()=="social_stats");
+  for(const auto* id:{"friends","chat","friend_requests","social_connection"}){
+    social.FocusTile(id);assert(social.focused_tile_id()==id);
+  }
+  assert(social.Activate()=="social_connection");
+  const auto help_pages=MakePausePages(disconnected,true);
+  assert(forza::native_pause_layout::Supports(help_pages));
+  social.SetPages(help_pages);
+  assert(social.page_id()=="social");
+  assert(social.FocusTile("social_back")&&social.Activate()=="social_back");
+  assert(social.FocusTile("social_stats")&&social.Activate()=="social_stats");
+  assert(!social.FocusTile("social_account")&&!social.FocusTile("social_help"));
+  for(const auto& tile:help_pages[2].tiles)
+    if(!tile.action.empty())used_actions.insert(tile.action);
   social.SetPages(pages);
-  assert(social.FocusTile("friends") && social.Activate()=="friends");
+  social.FocusTile("friends");assert(social.Activate()=="friends");
 
   // Walk the actual navigation graph from every starting tile. This catches
   // layouts whose directional rules strand a tile even though it can be
