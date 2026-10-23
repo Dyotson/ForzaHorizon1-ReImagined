@@ -82,6 +82,11 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/frame_pacing_test.cpp -o "$RUNNER_TEMP/frame-pacing-test"
           "$RUNNER_TEMP/frame-pacing-test"
+      - if: runner.os == 'Linux'
+        name: Title Update 4 car view statements
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/car_view_test.cpp -o "$RUNNER_TEMP/car-view-test"
+          "$RUNNER_TEMP/car-view-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.

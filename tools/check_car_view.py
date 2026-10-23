@@ -6,16 +6,18 @@ Usage: tools/check_car_view.py [--update DIR] [--dlc DIR]
   --update  the Title Update 4 folder (default.xex, media.zip; default extracted/tu4)
   --dlc     a folder with DLC packages (searched for Media/DLCZips/*.zip); optional
 
-The game's CREATE VIEW statement is read from the update's default.xex, the rewrite from the
-hook's source. Both views are made on TU4's gamedb.slt (from media.zip), first as it is, then
-with the database patches (*_merge.slt) of the update and the DLC merged in numeric order as
-the game does (INSERT OR REPLACE of every table both have), then again with edge cases (a car
-without level 4 springs or level 5 tyres, a second level 4 spring, a drivetrain without a level
-4 transmission, a drivetrain with two, a second drivetrain per car with and without one, a car
-without a drivetrain, cars not drivable). For each: the view's columns (names and declared
-types) and the rows of a few queries, in order, must be the same. One PASS/FAIL line each;
-exit status = failures. SQLite here is newer than the game's 3.6.19; the statements use only
-what 3.6.19 has. Standard library only (LZX through tools/lzx_delta.py, slow: about a minute).
+The game's CREATE VIEW statement is read from the update's default.xex, the rewrite from
+src/platform/car_view.h. Both views are made on TU4's gamedb.slt (from media.zip), first as it
+is, then with the database patches (*_merge.slt) of the update and the DLC merged in numeric
+order as the game does (INSERT OR REPLACE of every table both have), then again with edge cases
+(a car without level 4 springs or level 5 tyres, a second level 4 spring, a drivetrain without a
+level 4 transmission, a drivetrain with two, a second drivetrain per car with and without one,
+a car without a drivetrain, cars not drivable). For each: the view's columns (names and declared
+types) and the rows of a few queries, in order, must be the same. Last, the game's rebuild of
+its database (the tables copied without indexes, each view's stored SQL run again through the
+hook): the stored text must be the statement the hook knows, and the indexes must come back.
+One PASS/FAIL line each; exit status = failures. SQLite here is newer than the game's 3.6.19;
+the statements use only what 3.6.19 has. Standard library only (LZX via tools/lzx_delta.py).
 """
 import argparse
 import glob
@@ -32,7 +34,7 @@ sys.path.insert(0, HERE)
 import extract_map_points  # noqa: E402  (read_member: zip members, method 21 too)
 import xex_image  # noqa: E402
 
-HOOK = os.path.join(ROOT, "forza-recomp", "src", "hooks", "database_query.cpp")
+HOOK = os.path.join(ROOT, "forza-recomp", "src", "platform", "car_view.h")
 QUERIES = [
     "SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId",
     "SELECT * FROM Restrictions_Data_Car",
@@ -144,6 +146,38 @@ def compare(label, path, game, hook, edges):
     return 1 if problems else 0
 
 
+def rebuild(label, path, game, hook):
+    """The game's database rebuild: the tables only, then each view's SQL from sqlite_master
+    through the query method, where the hook gives its whole string for its own view."""
+    statement = hook[:hook.index(";")]
+    c = open_db(path, hook, False)
+    stored = c.execute("SELECT sql FROM sqlite_master WHERE type='view' AND "
+                       "name='Restrictions_Data_Car'").fetchone()[0]
+    views = c.execute("SELECT sql FROM sqlite_master WHERE type='view'").fetchall()
+    for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type IN ('index', 'view') "
+                             "AND sql IS NOT NULL").fetchall():
+        kind = c.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()[0]
+        c.execute("DROP %s [%s]" % (kind.upper(), name))
+    for (sql,) in views:
+        c.executescript(hook if sql == statement else sql)
+    indexes = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='index' "
+                                       "AND name LIKE 'forza_%'")]
+    plan = " ".join(r[-1] for r in c.execute("EXPLAIN QUERY PLAN " + QUERIES[0]))
+    a = open_db(path, game, False)
+    same = all(a.execute(q).fetchall() == c.execute(q).fetchall() for q in QUERIES)
+    problems = []
+    if stored != statement:
+        problems.append("SQLite keeps another text than the hook's statement")
+    if len(indexes) != 4 or "USING INDEX forza_" not in plan:
+        problems.append("indexes after the rebuild: %s" % indexes)
+    if not same:
+        problems.append("rows differ after the rebuild")
+    print("%s %s: stored view text is the hook's, %d indexes again%s" % (
+        "FAIL" if problems else "PASS", label, len(indexes),
+        "; " + "; ".join(problems) if problems else ""))
+    return 1 if problems else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--update", default=os.path.join(ROOT, "extracted", "tu4"))
@@ -163,6 +197,7 @@ def main():
         merged = database(gamedb, patches, os.path.join(tmp, "merged"))
         fails += compare("with %d database patches" % len(patches), merged, game, hook, False)
         fails += compare("with the patches and edge cases", merged, game, hook, True)
+        fails += rebuild("database rebuild", merged, game, hook)
     return fails
 
 

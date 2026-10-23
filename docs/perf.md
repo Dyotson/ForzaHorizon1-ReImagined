@@ -86,7 +86,8 @@ makes the main loop sleep 500 ms once, 90 s after the first frame, to check the 
 Always on (`src/hooks/database_query.cpp`, #167): the game runs its SQLite queries on the
 thread that asks, the main loop included. A query that takes 50 ms or more logs
 `FORZA_SQL: <ms> ms (lock <ms> ms) on thread <handle>: <the SQL>` (at most 100 lines a
-session); `lock` is the time spent waiting for another thread's query. `FORZA_SQL_LOG=1`
+session); `lock` is the time outside the statements, mostly waiting for another thread's query
+(the game's cached copy calls the plain one on a miss; only the outer one is timed). `FORZA_SQL_LOG=1`
 logs every query with its time (about 200 a second in free roam). A FORZA_STALL chain in
 `sub_83146F20` / `sub_83146E30` (TU4 `sqlite3_step`) is a query; the FORZA_SQL line says which.
 
@@ -936,12 +937,18 @@ text's length and hash), the query method gets a rewrite instead: the same colum
 and rows, from joins on the tables themselves (the springs and tyres with their level in the ON clause; the
 transmissions through the car's drivetrains that have a level 4 transmission, `EXISTS`, then those
 transmissions), followed by indexes on the four joined columns (the game itself indexes the springs' `Ordinal`
-later, `i_5`). Each join becomes an index lookup. `FORZA_GAME_CAR_VIEW=1` keeps the game's view.
+later, `i_5`). Each join becomes an index lookup. When the game rebuilds its database (its vtable+88, TU4
+`sub_82CD4C50`), it copies the tables without their indexes and runs each view's SQL from `sqlite_master` again
+through the query method; the hook knows its own view's stored text too and gives the indexes again (without
+them each join of the rewrite scans its whole table, slower than the game's view). `FORZA_GAME_CAR_VIEW=1` keeps the game's
+view. The statements and their recognition are in `src/platform/car_view.h` (unit test
+`forza-recomp/tests/car_view_test.cpp`).
 
 Checked equal: `tools/check_car_view.py` (the game's statement from the update's default.xex, the rewrite from
 the hook, TU4's gamedb plain, with the 17 database patches of the update and all DLC, and with edge cases: parts
 missing, duplicate level 4 parts, extra drivetrains with and without a level 4 transmission, no drivetrain, cars
-not drivable): columns and rows identical (PASS x3); it fails on a variant without the `EXISTS`. In the game, a
+not drivable): columns and rows identical (PASS x3); it fails on a variant without the `EXISTS`. It also replays
+the rebuild (the stored view text is the hook's statement; the 4 indexes come back; the rows stay the same). In the game, a
 debug build hashed every value the recordsets read (type, integer, double, text): the 251 rows of the main loop's
 query hash the same with either view, and so does every other statement of the session except reads of
 `sqlite_master` (the schema lists 4 more indexes). The other game queries on the four tables look rows up by `Id`
