@@ -1,0 +1,234 @@
+{
+  "main": "56e814dbe9f20cfed9b6d19e253cfdc0e27c6cae",
+  "sdk_base": "bd833a2ab69d305f99ddf57418fc38ffec8af93d",
+  "main_series": {
+    "passed": true,
+    "count": 66,
+    "tree": "d9a2f160940cff2645222c3473da3d745ea20868"
+  },
+  "ours": "0092-vulkan-dynamic-constant-descriptors.patch",
+  "with_ours": {
+    "passed": true,
+    "count": 67,
+    "tree": "b48210df38a82a2a462ae8c27e6b9b9c4240a3e2"
+  },
+  "prs": [
+    {
+      "number": 170,
+      "head": "30b6d7cba4003793b4c4ad116cc9e89d010d5f6d",
+      "sdk_patches": [
+        "0091-hdr-scrgb-presenter.patch"
+      ],
+      "shared_sdk_targets": [
+        "include/rex/graphics/vulkan/command_processor.h",
+        "src/graphics/vulkan/command_processor.cpp"
+      ],
+      "without_ours": {
+        "passed": true,
+        "count": 67,
+        "tree": "a0c7967d8f07064c7572c6b638fb512e4f13ace4"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 68,
+        "tree": "53e376faca0cb25977c01d0016c7476190c32d99"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 68,
+        "tree": "53e376faca0cb25977c01d0016c7476190c32d99"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 169,
+      "head": "e089a1039592b8b4e8b8f82775d97c6a89e703e0",
+      "sdk_patches": [
+        "0079-codegen-register-functions-from-mapping-table.patch",
+        "0080-spirv-rectangle-loop-program-counter-phi.patch",
+        "0081-vulkan-optional-base-mip-filtering-workaround.patch",
+        "0082-spirv-apple-color-shader-contraction.patch",
+        "0083-macos-visible-window-fullscreen.patch",
+        "0084-macos-metalfx-gpu-reconstruction.patch",
+        "0085-fh1-packed-cross-scale-resolve-copy.patch"
+      ],
+      "shared_sdk_targets": [
+        "include/rex/graphics/vulkan/command_processor.h",
+        "src/graphics/vulkan/command_processor.cpp"
+      ],
+      "without_ours": {
+        "passed": true,
+        "count": 73,
+        "tree": "9f0e10d3793250ff2c603fcd90af548cded05c45"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 74,
+        "tree": "09feb3dc5a94f384fc76f044cf2c57a7b1e13463"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 74,
+        "tree": "09feb3dc5a94f384fc76f044cf2c57a7b1e13463"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 163,
+      "head": "a800fb5185133c8e67b2ed400987427472d7a412",
+      "sdk_patches": [
+        "0086-startup-shader-warmup-and-driver-cache.patch"
+      ],
+      "shared_sdk_targets": [],
+      "without_ours": {
+        "passed": true,
+        "count": 67,
+        "tree": "7b65f3eeecae921c560179cd6910a1e600209d7e"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 68,
+        "tree": "75bd4ce8ab159f662c5c7e45373782caf16bb9e8"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 68,
+        "tree": "75bd4ce8ab159f662c5c7e45373782caf16bb9e8"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 157,
+      "head": "6d9309f6b1f789e48016b6a2d3e560dca129780b",
+      "sdk_patches": [
+        "0079-native-depth-motion-bridge.patch",
+        "0080-native-attachment-storage-output.patch",
+        "0081-native-rgba8-resolve.patch",
+        "0082-native-owned-rgba8-resolve.patch",
+        "0083-native-resolve-half-pixel-fill.patch",
+        "0084-native-rigid-geometry-bridge.patch",
+        "0085-combine-validated-native-renderer-passes.patch",
+        "0087-native-world-color-composition.patch",
+        "0088-native-scene-transfer.patch",
+        "0089-native-scene-cached-output.patch"
+      ],
+      "shared_sdk_targets": [
+        "include/rex/graphics/vulkan/command_processor.h",
+        "src/graphics/vulkan/command_processor.cpp"
+      ],
+      "without_ours": {
+        "passed": true,
+        "count": 76,
+        "tree": "4ac5a388cdfb3d37e3ea5b776aff0ce5694d02de"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 77,
+        "tree": "dd7287b8ca77dc7723da92008a4eb3722183f881"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 77,
+        "tree": "dd7287b8ca77dc7723da92008a4eb3722183f881"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 136,
+      "head": "3f75403740a673f478528b680c390615aeb63200",
+      "sdk_patches": [
+        "0090-xbox-impulse-triggers.patch"
+      ],
+      "shared_sdk_targets": [],
+      "without_ours": {
+        "passed": true,
+        "count": 67,
+        "tree": "36660f05b5d70938953c3b54a8bd1dd2cfcc732c"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 68,
+        "tree": "a5d3669d539bc4c88db1251bc8980496504cea42"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 68,
+        "tree": "a5d3669d539bc4c88db1251bc8980496504cea42"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 133,
+      "head": "8029f4ee2894963019f0f55e4cd775e28b21fc79",
+      "sdk_patches": [
+        "0078-passive-telemetry-overlay.patch"
+      ],
+      "shared_sdk_targets": [],
+      "without_ours": {
+        "passed": true,
+        "count": 67,
+        "tree": "9eba517a100a54edf56b8f53ebd89f71b66af3ec"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 68,
+        "tree": "0c3a3229f3194584d0769f6e7883a71275420e69"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 68,
+        "tree": "0c3a3229f3194584d0769f6e7883a71275420e69"
+      },
+      "identical_tree_in_either_order": true
+    },
+    {
+      "number": 116,
+      "head": "d7e25992376de729902232ed173146c182ed9141",
+      "sdk_patches": [],
+      "shared_sdk_targets": [],
+      "without_ours": {
+        "passed": true,
+        "count": 66,
+        "tree": "d9a2f160940cff2645222c3473da3d745ea20868"
+      },
+      "with_ours": {
+        "passed": true,
+        "count": 67,
+        "tree": "b48210df38a82a2a462ae8c27e6b9b9c4240a3e2"
+      },
+      "ours_before_pr_patches": {
+        "passed": true,
+        "count": 67,
+        "tree": "b48210df38a82a2a462ae8c27e6b9b9c4240a3e2"
+      },
+      "identical_tree_in_either_order": true
+    }
+  ],
+  "date": "2026-10-19",
+  "scope": "Each SDK-changing open PR independently; 0092 applied before/after PR additions. All other PR combinations are outside this audit.",
+  "source_compile": {
+    "passed": true,
+    "target": "rexgpu-xenos (including rexruntime dependency)",
+    "configuration": "Windows x64 Release; Vulkan and D3D12 enabled",
+    "source_matches_patched_tree": true,
+    "binary_sha256": {
+      "rexgpu-xenos.dll": "8ed3ca1354fd717e816fc345cfd6b1a4abef8692403705f8cd529ed3aec39965",
+      "rexruntime.dll": "9b92ab20327555ac657d2f4007955ce899fd40a59f2ba85e0e90fca79426e30e"
+    },
+    "log_sha256": "10fa13085e1e1678e44c425b91fdf812fa77eb23542d7a610d95ce3e76cc4526",
+    "toolchain": "clang-cl 23.1.3; CMake 4.4.4; Ninja 1.13.2",
+    "reuses_benchmark_runtime": false,
+    "game_runtime_validation": false,
+    "benchmark_rerun": false
+  },
+  "runner_cli_smoke": {
+    "passed": true,
+    "checks": [
+      "alternating modes and warmups",
+      "unchanged resume",
+      "reject changed constants mode",
+      "reject changed counters",
+      "reject changed validation"
+    ]
+  }
+}
