@@ -48,15 +48,15 @@ KEPT_TYPES = {SPEED_TRAP, SPEED_ZONE, EVENT_TIME}  # submissions kept on a board
 GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap has none)
 # GetRows view 5 ("Friends & Club"): what the speed traps and zones read at the trap.
 FRIENDS_AND_CLUB = 5
-# Speeds no car reaches (#349), km/h. A fast travel onto a trap recorded the speed the car had
-# before the fast travel (fixed in the game by src/hooks/teleport_velocity.cpp); older games
-# still send such speeds. A speed trap score above its trap's SPEED_TRAP_LIMIT_KMH is logged
-# and not kept: the best known Xbox 360 result on that trap (Cyberscore's Forza Horizon speed
-# trap charts, cyberscore.me.uk charts 230405-230426), with no margin. --no-trap-limits
-# (ENFORCE_TRAP_LIMITS False, for tests and local servers) only logs them. Speed zones and
-# boards without a limit of their own: SPEED_CEILING_KMH, always enforced.
-SPEED_CEILING_KMH = 470.0   # fastest results on long straights: about 435-442 km/h
-ENFORCE_TRAP_LIMITS = True  # --no-trap-limits turns it off
+# Speed trap limits (#349), km/h. A fast travel onto a trap recorded the speed the car had
+# before the fast travel (fixed in the game by src/hooks/teleport_velocity.cpp). The public
+# server sets no limit: players drive modified and modded cars. With --trap-limits a speed
+# trap score above its trap's SPEED_TRAP_LIMIT_KMH (the best known Xbox 360 result on that
+# trap: Cyberscore's Forza Horizon speed trap charts, cyberscore.me.uk charts 230405-230426)
+# or any trap/zone speed above SPEED_CEILING_KMH is not kept, and such kept speeds are
+# removed at load. Without it they are only logged.
+SPEED_CEILING_KMH = 470.0   # fastest stock results on long straights: about 435-442 km/h
+ENFORCE_TRAP_LIMITS = False  # --trap-limits turns it on
 SPEED_TRAP_LIMIT_KMH = {
     201: 423.1,   # Gladstone
     202: 350.8,   # C-987
@@ -176,12 +176,12 @@ def better(new, old, bigger):
 
 def speed_over_limit(kind, sbid, score):
     """(limit in km/h, enforced) when a speed on a trap or zone board is above a limit: the
-    trap's record (enforced with ENFORCE_TRAP_LIMITS) or SPEED_CEILING_KMH (always); else None."""
+    trap's record or SPEED_CEILING_KMH, enforced with ENFORCE_TRAP_LIMITS; else None."""
     if kind not in (SPEED_TRAP, SPEED_ZONE):
         return None
     kmh = score * 3.6
     if kmh > SPEED_CEILING_KMH:
-        return SPEED_CEILING_KMH, True
+        return SPEED_CEILING_KMH, ENFORCE_TRAP_LIMITS
     limit = SPEED_TRAP_LIMIT_KMH.get(sbid) if kind == SPEED_TRAP else None
     if limit is not None and round(kmh, 1) > limit:   # at the records' precision, 0.1 km/h
         return limit, ENFORCE_TRAP_LIMITS
@@ -195,9 +195,9 @@ def implausible_speed(xuid, kind, sbid, score):
         return False
     limit, enforced = over
     if limit == SPEED_CEILING_KMH:
-        log.warning("title: score %s: board %d type %d: %.1f km/h is more than any car "
-                    "reaches (%.0f km/h); not kept", public_id(xuid), sbid, kind, score * 3.6,
-                    limit)
+        log.warning("title: score %s: board %d type %d: %.1f km/h is more than any stock car "
+                    "reaches (%.0f km/h)%s", public_id(xuid), sbid, kind, score * 3.6,
+                    limit, "; not kept" if enforced else "")
     else:
         log.warning("title: score %s: speed trap %d: %.1f km/h is above the trap's record "
                     "(%.1f km/h)%s", public_id(xuid), sbid, score * 3.6, limit,

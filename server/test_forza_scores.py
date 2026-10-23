@@ -106,6 +106,9 @@ class BoardsTest(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         scores.configure(self.dir.name)
         self.svc = scores.services(lambda xuid: TAGS.get(xuid, "%016X" % xuid))
+        # The limit tests run with --trap-limits; the public server keeps every speed.
+        scores.ENFORCE_TRAP_LIMITS = True
+        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", False)
 
     def tearDown(self):
         self.dir.cleanup()
@@ -184,16 +187,17 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverB", 121.3)])
 
     def test_trap_limits_off(self):
-        # --no-trap-limits (tests, local servers): logged and kept; the ceiling still holds.
+        # Without --trap-limits (the public server: modified and modded cars): logged and kept.
         scores.ENFORCE_TRAP_LIMITS = False
-        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", True)
         with self.assertLogs("forza-live", "WARNING") as logs:
             self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)
             self.submit(B_XUID, scores.SPEED_TRAP, 206, 131.0)       # 471.6 km/h
         self.assertIn("(233.0 km/h)", logs.output[0])
         self.assertNotIn("not kept", logs.output[0])
-        self.assertIn("more than any car reaches (470 km/h); not kept", logs.output[1])
-        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
+        self.assertIn("more than any stock car reaches (470 km/h)", logs.output[1])
+        self.assertNotIn("not kept", logs.output[1])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0],
+                         [("DriverB", 131.0), ("DriverA", 122.2)])
 
     def test_speed_ceiling(self):
         # Speed zones and trap boards without a record: at most 470 km/h; event times have no
@@ -203,7 +207,7 @@ class BoardsTest(unittest.TestCase):
             self.submit(B_XUID, scores.SPEED_TRAP, 299, 131.0)       # 471.6 km/h
             self.submit(A_XUID, scores.SPEED_ZONE, 101, 140.0)
         self.assertEqual(len(logs.output), 2)
-        self.assertTrue(all("more than any car reaches (470 km/h); not kept" in line
+        self.assertTrue(all("more than any stock car reaches (470 km/h); not kept" in line
                             for line in logs.output))
         self.submit(B_XUID, scores.SPEED_ZONE, 101, 60.0)
         self.submit(A_XUID, scores.EVENT_TIME, 201, 1000.0, ex=True)
@@ -295,16 +299,14 @@ class BoardsTest(unittest.TestCase):
                          [("DriverA", 60.0), ("DriverB", 55.0)])
 
     def test_no_cleanup_with_trap_limits_off(self):
-        # --no-trap-limits: speeds above a trap's record stay; the 470 km/h ceiling still goes.
+        # Without --trap-limits nothing is removed at load, not even above 470 km/h.
         self.legacy_store({"1:206:0": {A_XUID: 122.2}, "1:299:0": {B_XUID: 140.0}})
         scores.ENFORCE_TRAP_LIMITS = False
-        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", True)
         scores.configure(self.dir.name)
-        with self.assertLogs("forza-live", "WARNING") as logs:
+        with self.assertNoLogs("forza-live", "WARNING"):
             scores.STORE.load()
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("from board 299 type 1, above 470.0 km/h", logs.output[0])
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 299)[0], [("DriverB", 140.0)])
 
     def test_board_limit(self):
         old = scores.MAX_BOARDS
