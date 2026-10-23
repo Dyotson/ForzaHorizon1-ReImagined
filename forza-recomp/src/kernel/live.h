@@ -79,6 +79,10 @@ void LiveMatchResults(const uint8_t* body, size_t size);
 // first search). Hooks use it to tell the Horizon World from other playlists.
 uint32_t LiveMatchPlaylist();
 
+// Read the current title-published local activity and region together. False
+// until both XUser contexts have been received; no network request is made.
+bool LiveLocalActivity(uint32_t& presence, uint32_t& region);
+
 // Called about every second by the network thread: reports host changes of the
 // matchmaking session we joined (live_xmsg.cpp).
 void LiveMatchTick();
