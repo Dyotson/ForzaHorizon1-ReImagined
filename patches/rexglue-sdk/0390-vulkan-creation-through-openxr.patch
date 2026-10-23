@@ -1,0 +1,204 @@
+diff --git a/src/ui/vulkan/vulkan_creation_hooks.h b/src/ui/vulkan/vulkan_creation_hooks.h
+new file mode 100644
+index 0000000..b389da8
+--- /dev/null
++++ b/src/ui/vulkan/vulkan_creation_hooks.h
+@@ -0,0 +1,36 @@
++/**
++ * Vulkan instance and device creation through a client (Forza Horizon patch 0390).
++ *
++ * An OpenXR runtime with XR_KHR_vulkan_enable2 has to create the Vulkan instance and device
++ * itself (it adds the extensions it needs) and pick the physical device (the GPU the headset
++ * is connected to). A client registers these callbacks before the graphics provider exists,
++ * through the C export rexui_SetVulkanCreationHooks. No public header declares them: clients
++ * compiled against the stock SDK headers declare the same structure and find the export at run
++ * time; the structure starts with its size so it can grow.
++ */
++#pragma once
++
++#include <cstdint>
++
++#include <rex/ui/vulkan/api.h>
++
++extern "C" {
++struct RexVulkanCreationHooks {
++  uint32_t size;  // sizeof(RexVulkanCreationHooks)
++  void* user;
++  // Replaces vkCreateInstance (null: the SDK's call).
++  VkResult (*create_instance)(void* user, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
++                              const VkInstanceCreateInfo* create_info, VkInstance* instance);
++  // The physical device to try first and alone (VK_NULL_HANDLE: the SDK chooses as usual).
++  VkPhysicalDevice (*physical_device)(void* user, VkInstance instance);
++  // Replaces vkCreateDevice (null: the SDK's call).
++  VkResult (*create_device)(void* user, PFN_vkGetInstanceProcAddr get_instance_proc_addr,
++                            VkPhysicalDevice physical_device, const VkDeviceCreateInfo* create_info,
++                            VkDevice* device);
++};
++}
++
++namespace rex::ui::vulkan {
++// The registered hooks, or null.
++const RexVulkanCreationHooks* GetVulkanCreationHooks();
++}  // namespace rex::ui::vulkan
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 37ee195..0b80bf6 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -22,6 +22,8 @@
+ #include <rex/string.h>
+ #include <rex/ui/vulkan/device.h>
+ 
++#include "vulkan_creation_hooks.h"
++
+ REXCVAR_DEFINE_BOOL(vulkan_require_fragment_stores_and_atomics, true, "UI/Vulkan",
+                     "Deprecated and ignored for parity; fragmentStoresAndAtomics is always "
+                     "required for Vulkan GPU emulation")
+@@ -778,8 +780,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+ 
+   // Create the device.
+ 
++  // patch 0390: a client (an OpenXR runtime) may create the device with its own extensions.
++  const RexVulkanCreationHooks* const creation_hooks = GetVulkanCreationHooks();
+   const VkResult device_create_result =
+-      ifn.vkCreateDevice(physical_device, &device_create_info, nullptr, &device->device_);
++      creation_hooks && creation_hooks->create_device
++          ? creation_hooks->create_device(creation_hooks->user, ifn.vkGetInstanceProcAddr,
++                                          physical_device, &device_create_info, &device->device_)
++          : ifn.vkCreateDevice(physical_device, &device_create_info, nullptr, &device->device_);
+   if (device_create_result != VK_SUCCESS) {
+     REXLOG_ERROR(
+         "Failed to create a Vulkan logical device from the physical device "
+diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
+index 9c295b1..bbb5788 100644
+--- a/src/ui/vulkan/vulkan_instance.cpp
++++ b/src/ui/vulkan/vulkan_instance.cpp
+@@ -9,6 +9,8 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <algorithm>
++#include <cstring>
+ #include <sstream>
+ #include <string>
+ #include <unordered_map>
+@@ -24,6 +26,7 @@
+ #if REX_PLATFORM_MAC
+ #include "vulkan_moltenvk.h"
+ #endif
++#include "vulkan_creation_hooks.h"
+ 
+ REXCVAR_DEFINE_BOOL(vulkan_log_debug_messages, true, "UI/Vulkan", "Log Vulkan debug messages");
+ 
+@@ -31,6 +34,16 @@ namespace rex {
+ namespace ui {
+ namespace vulkan {
+ 
++namespace {
++// patch 0390: set once by a client before the graphics provider is created.
++RexVulkanCreationHooks creation_hooks;
++bool creation_hooks_set = false;
++}  // namespace
++
++const RexVulkanCreationHooks* GetVulkanCreationHooks() {
++  return creation_hooks_set ? &creation_hooks : nullptr;
++}
++
+ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+                                                        const bool try_enable_validation) {
+   std::unique_ptr<VulkanInstance> vulkan_instance(new VulkanInstance());
+@@ -363,8 +376,16 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+   instance_create_info.ppEnabledLayerNames = enabled_layers.data();
+   instance_create_info.enabledExtensionCount = uint32_t(enabled_extensions.size());
+   instance_create_info.ppEnabledExtensionNames = enabled_extensions.data();
+-  VkResult instance_create_result =
+-      ifn.vkCreateInstance(&instance_create_info, nullptr, &vulkan_instance->instance_);
++  // patch 0390: a client (an OpenXR runtime) may create the instance with its own extensions.
++  const RexVulkanCreationHooks* const hooks = GetVulkanCreationHooks();
++  const auto create_instance = [&]() {
++    if (hooks && hooks->create_instance) {
++      return hooks->create_instance(hooks->user, ifn.vkGetInstanceProcAddr, &instance_create_info,
++                                    &vulkan_instance->instance_);
++    }
++    return ifn.vkCreateInstance(&instance_create_info, nullptr, &vulkan_instance->instance_);
++  };
++  VkResult instance_create_result = create_instance();
+ 
+   if (instance_create_result == VK_ERROR_LAYER_NOT_PRESENT ||
+       instance_create_result == VK_ERROR_EXTENSION_NOT_PRESENT) {
+@@ -377,8 +398,7 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+     }
+     instance_create_info.enabledLayerCount = 0;
+     instance_create_info.enabledExtensionCount = uint32_t(enabled_implementation_extension_count);
+-    instance_create_result =
+-        ifn.vkCreateInstance(&instance_create_info, nullptr, &vulkan_instance->instance_);
++    instance_create_result = create_instance();
+   }
+ 
+   if (instance_create_result != VK_SUCCESS) {
+@@ -634,3 +654,22 @@ VkBool32 VulkanInstance::DebugUtilsMessengerCallback(
+ }  // namespace vulkan
+ }  // namespace ui
+ }  // namespace rex
++
++// patch 0390: registers (or, with null, removes) the Vulkan creation hooks; copied, so the
++// caller's structure need not outlive the call. Call before the graphics provider is created.
++#ifdef _WIN32
++extern "C" __declspec(dllexport)
++#else
++extern "C" __attribute__((visibility("default")))
++#endif
++void rexui_SetVulkanCreationHooks(const RexVulkanCreationHooks* hooks) {
++  using namespace rex::ui::vulkan;
++  creation_hooks = {};
++  creation_hooks_set = false;
++  if (!hooks || hooks->size < sizeof(uint32_t) + sizeof(void*)) {
++    return;
++  }
++  std::memcpy(&creation_hooks, hooks, std::min<size_t>(hooks->size, sizeof(creation_hooks)));
++  creation_hooks.size = sizeof(creation_hooks);
++  creation_hooks_set = true;
++}
+diff --git a/src/ui/vulkan/vulkan_provider.cpp b/src/ui/vulkan/vulkan_provider.cpp
+index 3f6f526..69120ce 100644
+--- a/src/ui/vulkan/vulkan_provider.cpp
++++ b/src/ui/vulkan/vulkan_provider.cpp
+@@ -19,6 +19,8 @@
+ #include <rex/ui/vulkan/presenter.h>
+ #include <rex/ui/vulkan/provider.h>
+ 
++#include "vulkan_creation_hooks.h"
++
+ REXCVAR_DEFINE_BOOL(vulkan_validation_enabled, false, "UI/Vulkan",
+                     "Enable Vulkan validation layers")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+@@ -83,7 +85,29 @@ std::unique_ptr<VulkanProvider> VulkanProvider::Create(const bool with_gpu_emula
+     REXLOG_WARN("* {}: {}", physical_device_index, physical_device_properties.deviceName);
+   }
+ 
+-  if (REXCVAR_GET(vulkan_device) >= 0 &&
++  // patch 0390: a client (an OpenXR runtime) may name the GPU; it is tried first and alone.
++  if (const RexVulkanCreationHooks* hooks = GetVulkanCreationHooks();
++      hooks && hooks->physical_device) {
++    const VkPhysicalDevice wanted =
++        hooks->physical_device(hooks->user, provider->vulkan_instance_->instance());
++    if (wanted != VK_NULL_HANDLE) {
++      VkPhysicalDeviceProperties wanted_properties;
++      ifn.vkGetPhysicalDeviceProperties(wanted, &wanted_properties);
++      REXLOG_INFO("Vulkan device chosen by the creation hook (OpenXR runtime): {}",
++                  wanted_properties.deviceName);
++      if (REXCVAR_GET(vulkan_device) >= 0 || !REXCVAR_GET(gpu_vendor).empty()) {
++        REXLOG_WARN("vulkan_device / gpu_vendor are ignored: the OpenXR runtime picks the GPU");
++      }
++      provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
++          provider->vulkan_instance_.get(), wanted, with_gpu_emulation, with_presentation);
++      if (!provider->vulkan_device_) {
++        REXLOG_WARN("The OpenXR runtime's Vulkan device '{}' cannot run the game; choosing another",
++                    wanted_properties.deviceName);
++      }
++    }
++  }
++
++  if (!provider->vulkan_device_ && REXCVAR_GET(vulkan_device) >= 0 &&
+       uint32_t(REXCVAR_GET(vulkan_device)) < physical_devices.size()) {
+     provider->vulkan_device_ = VulkanDevice::CreateIfSupported(
+         provider->vulkan_instance_.get(), physical_devices[REXCVAR_GET(vulkan_device)],

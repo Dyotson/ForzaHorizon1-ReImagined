@@ -13,6 +13,8 @@
 
 #define sub_823E22C8 sub_82412260
 #define __imp__sub_823E22C8 __imp__sub_82412260
+#define sub_823EB7A0 sub_8241B860  // check
+#define __imp__sub_823EB7A0 __imp__sub_8241B860
 #define sub_823ED888 sub_8241D948  // check
 #define __imp__sub_823ED888 __imp__sub_8241D948
 #define sub_823FD208 sub_8242D1A0

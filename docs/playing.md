@@ -47,6 +47,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   driver in the torque cut (down to 0.19 of their torque) and the first reached the finish,
   about 5 km on, after 182 s; Off had no cut, and six of seven finished after 150-159 s.
   Details in `src/hooks/ai_catchup.cpp`.
+- **VR headset (experimental, #333):** launcher Display, VR, VR headset (OpenXR): Virtual
+  screen or Cockpit (`vr_mode = "screen"` / `"cockpit"`). Start the OpenXR runtime (WiVRn,
+  Monado, SteamVR) and connect the headset first; Home or both sticks held for a second
+  recentre. What works and how to test it: [vr.md](vr.md#testing-on-a-quest-3-with-wivrn).
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Mouse cursor:** the game hides it after three seconds without movement and shows it

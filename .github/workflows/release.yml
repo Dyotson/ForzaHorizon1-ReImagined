@@ -138,6 +138,15 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/mod_archive_test.cpp -o "$RUNNER_TEMP/mod-archive-test"
           "$RUNNER_TEMP/mod-archive-test"
+      - if: runner.os == 'Linux'
+        name: VR head pose, OpenXR maths and frame pairing
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror forza-recomp/tests/vr_head_pose_math_test.cpp -o "$RUNNER_TEMP/vr-head-pose-test"
+          "$RUNNER_TEMP/vr-head-pose-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_math_test.cpp -o "$RUNNER_TEMP/xr-math-test"
+          "$RUNNER_TEMP/xr-math-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_frame_tags_test.cpp -o "$RUNNER_TEMP/xr-frame-tags-test"
+          "$RUNNER_TEMP/xr-frame-tags-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.

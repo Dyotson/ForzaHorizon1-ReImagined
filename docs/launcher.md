@@ -654,6 +654,12 @@ a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
+
+Display > VR > **VR headset (OpenXR)** (`vr_mode`: off, screen, cockpit; experimental, #333)
+and **Seat height (cm)** (`vr_seat_height_cm`): Play adds `--gpu_backend=vulkan` on Windows, and
+inside the Flatpak names the host's `~/.config/openxr/1/active_runtime.json` in `XR_RUNTIME_JSON`
+(the sandbox's `XDG_CONFIG_HOME` is the app's own folder) (`vr.py`;
+[vr.md](vr.md#openxr-session-and-cockpit-milestones-1-and-2)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

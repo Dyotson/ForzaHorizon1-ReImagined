@@ -1,6 +1,6 @@
-// forza - VR step 1 (#333, docs/vr.md): a test head pose on the in-car camera, without a
-// headset. Off unless the cvar vr_head_pose_test is on; normal play never reaches the code
-// below the cvar check.
+// forza - the head pose on the in-car camera (#333, docs/vr.md): from the headset in the VR
+// cockpit mode (src/platform/xr.h), or a test pose without a headset (vr_head_pose_test). Off
+// unless one of them is on; normal play never reaches the code below that check.
 //
 // The camera system: each split-screen view (CSplitView, manager + 244 + 172 * n; the
 // manager is *(*(*0x832DF024 + 4) + 4)) points at +8 to its player's camera director. The
@@ -32,9 +32,17 @@
 //                                          what each one feeds); a FIFO line "skip view",
 //                                          "skip frustum" or "skip none" changes it
 //   FORZA_VR_POSE_TRACE=1                  log the calling thread every 300th call
+//
+// VR cockpit mode: the view hook asks the OpenXR thread for the predicted head pose and the
+// field of view to draw with (the headset's plus a margin, written into the director's FOV at
+// +304 for both readers like the matrix) and remembers the posed matrix with a frame tag; the
+// render-side camera's SetViewTransform (sub_823EB7A0, CPresentationCamera: the matrix lands at
+// +16) finds the tag again on the render thread, and VdSwap puts it into the swap packet
+// (debug/frame_dump.cpp) so the OpenXR thread knows which pose each picture was drawn with.
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/vr_head_pose_math.h"
+#include "../platform/xr.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -63,7 +71,18 @@ namespace {
 using forza::vr::HeadPose;
 
 constexpr uint32_t kViewMatrix = 240;  // director: world-to-camera matrix, 4x4 floats
+constexpr uint32_t kFov = 304;  // director: vertical field of view, radians
 constexpr uint32_t kActiveCamera = 20;
+constexpr uint32_t kRenderCameraMatrix = 16;  // CPresentationCamera: the view matrix
+
+// The VR cockpit's pose for the frame being built: set by the view hook, reused by the frustum
+// hook of the same frame (both on the main loop thread).
+struct XrView {
+  forza::vr::HeadTransform head;
+  float fov = 0;
+  bool valid = false;
+};
+XrView xr_view;
 
 std::mutex pose_mutex;
 HeadPose pose;
@@ -149,9 +168,9 @@ void InitOnce() {
   });
 }
 
-bool InCar(uint8_t* base, uint32_t camera) {
+bool InCar(uint8_t* base, uint32_t camera, bool xr) {
   static const bool all = std::getenv("FORZA_VR_POSE_ALL") != nullptr;
-  if (all) return true;
+  if (all && !xr) return true;
   const uint32_t vtable = Load32(base, camera);
   return vtable == FORZA_ADDR(0x82075DD4)     // Camera::CCamDriver (the cockpit view)
          || vtable == FORZA_ADDR(0x82075CD4);  // Camera::CCamCockpit
@@ -171,21 +190,45 @@ void Trace(const char* hook, uint32_t director) {
   REXLOG_INFO("VR head pose trace: {} director {:08X} thread {}", hook, director, tid);
 }
 
-// Swaps the posed view matrix into the director for the length of one guest call.
+void PutFloat(uint8_t* q, float f) {
+  uint32_t bits;
+  std::memcpy(&bits, &f, 4);
+  q[0] = uint8_t(bits >> 24), q[1] = uint8_t(bits >> 16), q[2] = uint8_t(bits >> 8), q[3] = uint8_t(bits);
+}
+
+// Swaps the posed view matrix (and in the VR cockpit the field of view) into the director for
+// the length of one guest call.
 class PosedView {
  public:
   PosedView(uint8_t* base, uint32_t director, const char* hook) {
-    if (!REXCVAR_GET(vr_head_pose_test)) return;
-    InitOnce();
-    Trace(hook, director);
-    if (skip_hook && skip_hook == SkipCode(hook)) return;
-    if (!pose_set || !Valid(director)) return;
+    const bool xr = forza::xr::CockpitActive();
+    if (!xr && !REXCVAR_GET(vr_head_pose_test)) return;
+    const bool view_hook = std::strcmp(hook, "view") == 0;
+    if (xr && view_hook) xr_view.valid = false;
+    forza::vr::HeadTransform head;
+    float fov = 0;
+    uint32_t tag = 0;
+    if (!xr) {
+      InitOnce();
+      Trace(hook, director);
+      if (skip_hook && skip_hook == SkipCode(hook)) return;
+      if (!pose_set) return;
+    }
+    if (!Valid(director)) return;
     const uint32_t camera = Load32(base, director + kActiveCamera);
-    if (!Valid(camera) || !InCar(base, camera)) return;
-    HeadPose p;
-    {
+    if (!Valid(camera) || !InCar(base, camera, xr)) return;
+    if (xr) {
+      if (view_hook) {
+        if (!forza::xr::CockpitView(head, fov, tag)) return;
+        xr_view = {head, fov, true};
+      } else {
+        if (!xr_view.valid) return;
+        head = xr_view.head;
+        fov = xr_view.fov;
+      }
+    } else {
       std::lock_guard lock(pose_mutex);
-      p = pose;
+      head = forza::vr::ToTransform(pose);
     }
     matrix_ = forza::GuestPtr(base, director + kViewMatrix);
     std::memcpy(original_, matrix_, sizeof(original_));
@@ -195,22 +238,26 @@ class PosedView {
       const uint32_t bits = uint32_t(q[0]) << 24 | uint32_t(q[1]) << 16 | uint32_t(q[2]) << 8 | q[3];
       std::memcpy(&view[i], &bits, 4);
     }
-    forza::vr::ApplyHeadPose(view, p);
-    for (int i = 0; i < 16; ++i) {
-      uint32_t bits;
-      std::memcpy(&bits, &view[i], 4);
-      uint8_t* q = posed_ + 4 * i;
-      q[0] = uint8_t(bits >> 24), q[1] = uint8_t(bits >> 16), q[2] = uint8_t(bits >> 8), q[3] = uint8_t(bits);
-    }
+    forza::vr::ApplyHeadTransform(view, head);
+    for (int i = 0; i < 16; ++i) PutFloat(posed_ + 4 * i, view[i]);
+    if (tag) forza::xr::RememberPosedView(tag, posed_);
     std::memcpy(matrix_, posed_, sizeof(posed_));
+    if (fov > 0) {
+      fov_ = forza::GuestPtr(base, director + kFov);
+      std::memcpy(original_fov_, fov_, 4);
+      PutFloat(posed_fov_, fov);
+      std::memcpy(fov_, posed_fov_, 4);
+    }
     static std::atomic<bool> logged{false};
     if (!logged.exchange(true))
-      REXLOG_INFO("VR head pose: first posed view (director {:08X}, camera {:08X})", director, camera);
+      REXLOG_INFO("VR head pose: first posed view (director {:08X}, camera {:08X}, {})", director,
+                  camera, xr ? "headset" : "test pose");
   }
   ~PosedView() {
     // The game may have computed the next view meanwhile (another thread): keep that one.
     if (matrix_ && std::memcmp(matrix_, posed_, sizeof(posed_)) == 0)
       std::memcpy(matrix_, original_, sizeof(original_));
+    if (fov_ && std::memcmp(fov_, posed_fov_, 4) == 0) std::memcpy(fov_, original_fov_, 4);
   }
   PosedView(const PosedView&) = delete;
   PosedView& operator=(const PosedView&) = delete;
@@ -219,6 +266,9 @@ class PosedView {
   uint8_t* matrix_ = nullptr;
   uint8_t original_[64];
   uint8_t posed_[64];
+  uint8_t* fov_ = nullptr;
+  uint8_t original_fov_[4];
+  uint8_t posed_fov_[4];
 };
 
 // View 0's director, found as sub_829A4860 finds it.
@@ -244,6 +294,17 @@ extern "C" REX_FUNC(sub_825A9D20) {
 // View 0's frustum for the game-side visibility.
 extern "C" REX_FUNC(__imp__sub_829A4860);
 extern "C" REX_FUNC(sub_829A4860) {
-  PosedView posed(base, REXCVAR_GET(vr_head_pose_test) ? FirstViewDirector(base) : 0, "frustum");
+  const bool posing = REXCVAR_GET(vr_head_pose_test) || forza::xr::CockpitActive();
+  PosedView posed(base, posing ? FirstViewDirector(base) : 0, "frustum");
   __imp__sub_829A4860(ctx, base);
+}
+
+// CPresentationCamera::SetViewTransform(camera, matrix by value) on the render thread: the
+// matrix is stored at camera + 16. In the VR cockpit, a posed matrix names the frame's tag.
+extern "C" REX_FUNC(__imp__sub_823EB7A0);
+extern "C" REX_FUNC(sub_823EB7A0) {
+  const uint32_t camera = ctx.r3.u32;
+  __imp__sub_823EB7A0(ctx, base);
+  if (forza::xr::CockpitActive() && Valid(camera))
+    forza::xr::OnRenderView(camera, forza::GuestPtr(base, camera + kRenderCameraMatrix));
 }

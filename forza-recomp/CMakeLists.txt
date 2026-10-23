@@ -200,6 +200,7 @@ set(FORZA_SOURCES
     src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
     src/platform/wheel_bridge.cpp
+    src/platform/xr.cpp
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
@@ -259,10 +260,22 @@ forza_configure_cpu_target(forza)
 if(TARGET rex::renderdoc)
     target_link_libraries(forza PRIVATE rex::renderdoc)
 endif()
+# VR (src/platform/xr.cpp) also includes them, and the vendored OpenXR headers; the OpenXR
+# loader is opened at run time only when vr_mode is on, so the game neither links it nor needs
+# it to start.
+set(_forza_xr_includes "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openxr/include")
 if(UNIX AND NOT APPLE)
     set_source_files_properties(src/platform/vulkan_hooks.cpp PROPERTIES
         INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wsi_stubs")
+    list(APPEND _forza_xr_includes "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wsi_stubs")
 endif()
+set_source_files_properties(src/platform/xr.cpp PROPERTIES INCLUDE_DIRECTORIES "${_forza_xr_includes}")
+add_custom_command(TARGET forza POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:forza>/licenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openxr/LICENSE-Apache-2.0.txt"
+        "$<TARGET_FILE_DIR:forza>/licenses/openxr-sdk.txt"
+    VERBATIM)
 
 # The stock SDK Xenos plugin has rendering bugs (e.g. it reads the texture-fetch
 # exponent bias from the wrong fetch-constant word, which darkens textures 256x).

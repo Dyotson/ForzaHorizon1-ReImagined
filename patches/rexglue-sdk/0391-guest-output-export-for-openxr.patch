@@ -1,0 +1,185 @@
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 69f91c2..7b38a30 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -125,6 +125,9 @@ REXCVAR_DEFINE_BOOL(sync_pipeline_creation, false, "GPU",
+                     "the skipped draws for good.")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++// Patch 0391 (src/ui/vulkan/vulkan_presenter.cpp, the runtime): the next guest output's tag.
++extern "C" void rexui_SetNextGuestOutputTag(uint32_t tag);
++
+ namespace rex::graphics {
+ 
+ using namespace rex::graphics::xenos;
+@@ -1091,9 +1094,19 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(memory::RingBuffer* reader, ui
+   uint32_t frontbuffer_ptr = reader->ReadAndSwap<uint32_t>();
+   uint32_t frontbuffer_width = reader->ReadAndSwap<uint32_t>();
+   uint32_t frontbuffer_height = reader->ReadAndSwap<uint32_t>();
+-  reader->AdvanceRead((count - 4) * sizeof(uint32_t));
++  // Patch 0391: a client may lengthen the packet by one dword, a tag for the frame (the game's
++  // OpenXR path pairs each guest output with the head pose it was drawn with).
++  uint32_t frame_tag = 0;
++  if (count >= 5) {
++    frame_tag = reader->ReadAndSwap<uint32_t>();
++    reader->AdvanceRead((count - 5) * sizeof(uint32_t));
++  } else {
++    reader->AdvanceRead((count - 4) * sizeof(uint32_t));
++  }
+ 
++  rexui_SetNextGuestOutputTag(frame_tag);
+   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
++  rexui_SetNextGuestOutputTag(0);
+ 
+   ++counter_;
+   return true;
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+index 73fb4dd..c1daccd 100644
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -17,6 +17,7 @@
+ #include <cmath>
+ #include <cstring>
+ #include <memory>
++#include <mutex>
+ #include <filesystem>
+ #include <fstream>
+ #include <utility>
+@@ -116,10 +117,38 @@ REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_fifo_latest_ready, true, "UI/Vulka
+                     "tearing, but a frame queued while an older one waits for the vblank "
+                     "replaces it instead of being shown after it. false keeps plain FIFO");
+ 
++// Patch 0391: the newest guest output image for a second consumer on another thread (the
++// game's OpenXR thread), with the tag the guest's swap packet carried. No public header: the
++// client declares the same structure and finds the C exports at the end of this file.
++extern "C" {
++struct RexGuestOutputFrame {
++  uint32_t size;  // sizeof(RexGuestOutputFrame), set by the caller
++  uint32_t handle;  // held until rexui_ReleaseGuestOutputFrame(handle)
++  uint64_t serial;  // grows with every refresh
++  uint32_t tag;  // the swap's frame tag (0: none)
++  uint32_t width;
++  uint32_t height;
++  // VK_FORMAT_A2B10G10R10_UNORM_PACK32 in VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL. Readers on the
++  // graphics and compute queue 0 order themselves against later refreshes like the presenter does:
++  // reads in VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, or a barrier back to that stage and layout.
++  VkImage image;
++  VkImageView view;
++};
++}
++
+ namespace rex {
+ namespace ui {
+ namespace vulkan {
+ 
++namespace guest_output_export {
++std::atomic<bool> enabled{false};
++std::atomic<uint32_t> next_tag{0};
++std::mutex mutex;
++std::shared_ptr<void> latest;  // keeps the image alive while it is the newest
++RexGuestOutputFrame latest_frame = {};
++std::shared_ptr<void> held[8];  // what the consumer holds, by handle - 1
++}  // namespace guest_output_export
++
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ namespace {
+ 
+@@ -290,6 +319,16 @@ VulkanPresenter::~VulkanPresenter() {
+   // just one sleep will likely be needed.
+   ui_submission_tracker_.Shutdown();
+   guest_output_image_refresher_submission_tracker_.Shutdown();
++  // Patch 0391: the exported guest output images go with the presenter (a consumer still
++  // holding one stopped its GPU work before the presenter is destroyed).
++  {
++    guest_output_export::enabled.store(false, std::memory_order_relaxed);
++    std::lock_guard<std::mutex> lock(guest_output_export::mutex);
++    guest_output_export::latest.reset();
++    for (auto& hold : guest_output_export::held) {
++      hold.reset();
++    }
++  }
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+   DestroyTemporalUpscalerContext();
+ #endif
+@@ -1199,6 +1238,19 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
+   bool refresher_succeeded = refresher(context);
+   if (refresher_succeeded) {
+     image_instance.ever_successfully_refreshed = true;
++    // Patch 0391: the refresher's commands are in the queue now; a consumer that submits to the
++    // same queue after this point reads the finished image.
++    if (guest_output_export::enabled.load(std::memory_order_relaxed)) {
++      std::lock_guard<std::mutex> lock(guest_output_export::mutex);
++      guest_output_export::latest = image_instance.image;
++      RexGuestOutputFrame& frame = guest_output_export::latest_frame;
++      ++frame.serial;
++      frame.tag = guest_output_export::next_tag.load(std::memory_order_relaxed);
++      frame.width = image_instance.image->extent().width;
++      frame.height = image_instance.image->extent().height;
++      frame.image = image_instance.image->image();
++      frame.view = image_instance.image->view();
++    }
+   }
+   // Even if the refresher has returned false, it still might have submitted
+   // some commands referencing the image. It's better to put an excessive
+@@ -3294,3 +3346,61 @@ VkPipeline VulkanPresenter::CreateGuestOutputPaintPipeline(GuestOutputPaintEffec
+ }  // namespace vulkan
+ }  // namespace ui
+ }  // namespace rex
++
++// Patch 0391 exports (see RexGuestOutputFrame above).
++#ifdef _WIN32
++#define REX_GUEST_OUTPUT_EXPORT extern "C" __declspec(dllexport)
++#else
++#define REX_GUEST_OUTPUT_EXPORT extern "C" __attribute__((visibility("default")))
++#endif
++
++// Starts or stops publishing the newest guest output (off: nothing is kept or held).
++REX_GUEST_OUTPUT_EXPORT void rexui_SetGuestOutputExport(int enabled) {
++  namespace e = rex::ui::vulkan::guest_output_export;
++  e::enabled.store(enabled != 0, std::memory_order_relaxed);
++  if (!enabled) {
++    std::lock_guard<std::mutex> lock(e::mutex);
++    e::latest.reset();
++    for (auto& hold : e::held) {
++      hold.reset();
++    }
++  }
++}
++
++// The tag of the frame the next IssueSwap refreshes (the command processor, before and after it).
++REX_GUEST_OUTPUT_EXPORT void rexui_SetNextGuestOutputTag(uint32_t tag) {
++  rex::ui::vulkan::guest_output_export::next_tag.store(tag, std::memory_order_relaxed);
++}
++
++// The newest guest output if its serial is above newer_than: 1 and the frame, held (the image
++// stays alive) until released; 0 when there is nothing newer or every hold is taken.
++REX_GUEST_OUTPUT_EXPORT int rexui_AcquireGuestOutputFrame(RexGuestOutputFrame* frame,
++                                                          uint64_t newer_than) {
++  namespace e = rex::ui::vulkan::guest_output_export;
++  if (!frame || frame->size < sizeof(RexGuestOutputFrame)) {
++    return 0;
++  }
++  std::lock_guard<std::mutex> lock(e::mutex);
++  if (!e::latest || e::latest_frame.serial <= newer_than) {
++    return 0;
++  }
++  for (uint32_t i = 0; i < std::size(e::held); ++i) {
++    if (!e::held[i]) {
++      e::held[i] = e::latest;
++      *frame = e::latest_frame;
++      frame->size = sizeof(RexGuestOutputFrame);
++      frame->handle = i + 1;
++      return 1;
++    }
++  }
++  return 0;
++}
++
++// Drops a hold once the consumer's GPU work on the image has completed.
++REX_GUEST_OUTPUT_EXPORT void rexui_ReleaseGuestOutputFrame(uint32_t handle) {
++  namespace e = rex::ui::vulkan::guest_output_export;
++  std::lock_guard<std::mutex> lock(e::mutex);
++  if (handle >= 1 && handle <= std::size(e::held)) {
++    e::held[handle - 1].reset();
++  }
++}

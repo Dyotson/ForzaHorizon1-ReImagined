@@ -31,6 +31,9 @@ headset. Addresses are the disc executable's, with Title Update 4's in brackets.
 - **The HUD is already separable:** the SDK (patch 0046) finds the frame's scene/UI split
   from the front buffer's formats and can draw the UI into its own target, which a
   cockpit-fixed or head-locked panel needs.
+- **Built: an OpenXR session with a virtual screen and a head-tracked mono cockpit**
+  (`vr_mode`, launcher Display > VR > VR headset (OpenXR)), tested without a headset; [what it
+  does, how, and the test steps for a Quest 3 with WiVRn](#openxr-session-and-cockpit-milestones-1-and-2).
 - **Recommended plan** (with the integration research, merged below): (a) an OpenXR session
   with a virtual screen, then the head-tracked mono cockpit (the prototype's hook fed by
   the headset, the HUD on a quad, the game at its own rate under the runtime's
@@ -211,6 +214,200 @@ Off, or to handle later:
   priority or sound are candidates); posing it is harmless and keeps it consistent.
 - Not tried: a full lap with continuous head motion, night (headlights), rain, other cars'
   interiors, the photo mode and replays (FORZA_VR_POSE_ALL applies to every camera).
+
+## OpenXR session and cockpit (milestones 1 and 2)
+
+Built on top of the study (plan step (a)1 and the head-tracking part of (a)2). Code:
+`src/platform/xr.{h,cpp}` (loader, instance, session, the OpenXR thread),
+`src/platform/xr_math.h` (poses and fields of view), `src/platform/xr_frame_tags.h` (frame
+pairing), the camera hooks in `src/hooks/vr_head_pose.cpp`, SDK patches 0390 and 0391
+([sdk_patches.md](sdk_patches.md)), the launcher's `forza_launcher/vr.py`. The OpenXR headers
+are vendored (`thirdparty/openxr`, OpenXR-SDK 1.1.62, Apache-2.0 or MIT); the loader is opened at
+run time, never linked.
+
+### What it does
+
+| Setting (cvar) | Default | What |
+| --- | --- | --- |
+| VR headset (OpenXR) (`vr_mode`) | `off` | `off`: nothing VR runs, no OpenXR library is loaded. `screen`: virtual screen. `cockpit`: virtual screen plus the head-tracked in-car view |
+| Seat height (cm) (`vr_seat_height_cm`) | 0 | Cockpit: raises or lowers the eye from the driver's position |
+| `vr_recenter_key` | `Home` | Recentres the view (both sticks pressed for a second do the same) |
+| `vr_fov_margin` | 5 | Degrees drawn beyond the headset's field of view on each side |
+| `vr_screen_width`, `vr_screen_distance` | 3.2, 2.5 | The virtual screen in metres |
+| `vr_runtime_timeout` | 20 | Seconds to wait for the runtime at start |
+
+- **Virtual screen** (both modes): the newest game picture on an OpenXR quad layer 3.2 m wide
+  (height from the picture's aspect) 2.5 m in front of the recentred head, at its height, in
+  `LOCAL` space, redrawn at the headset's rate whatever the game's frame rate. The desktop
+  window keeps showing the game as before (it is the mirror).
+- **Cockpit:** while the active camera is the in-car one (`CCamDriver`, or `CCamCockpit`), the
+  camera hook takes the head pose from the headset instead of `FORZA_VR_POSE`: rotation and
+  position relative to the recentred head, plus the seat height. The game draws with a vertical
+  field of view that covers both eyes plus the margin (with a Quest 3-like headset about 114
+  degrees vertical, 140 horizontal at 16:9), written into the director's FOV (+304) for both
+  readers, like the matrix. That picture goes to a projection layer with the pose and field of
+  view it was drawn with, the same image for both eyes (mono, no depth); the runtime reprojects
+  head motion between game frames. Other cameras, menus, loading and cut scenes show on the
+  virtual screen.
+- **HUD:** it stays in the game's picture. In the cockpit picture the speedometer and map sit in
+  its corners, at the edge of or outside the headset's view; the car's own gauges are in the
+  cockpit (`cockpit_gauges_lit` keeps them lit). A HUD on its own quad needs the scene/HUD split
+  per frame (SDK patch B of the plan): not done here.
+- **Recentre:** at the session's first tracked frame, with `vr_recenter_key` (Home), both sticks
+  held for a second, and when the runtime recentres its own space (Quest: hold the Meta button).
+  It keeps the heading only, so the horizon stays level.
+- **Failures** log one line that starts with `VR:` and ends with `- playing flat`: no loader
+  (`libopenxr_loader.so.1` / `openxr_loader.dll`), no runtime installed or active, the runtime
+  did not start (its server not running), no answer within `vr_runtime_timeout` (WiVRn's
+  `xrCreateInstance` waits until a headset connects, so the probe runs on its own thread), no
+  headset, a runtime without `XR_KHR_vulkan_enable2`, an SDK without patches 0390/0391, a
+  renderer other than Vulkan, a Vulkan device not created through the runtime, a failed session,
+  a lost session (the game goes on flat from there).
+- Not done: stereo, the HUD quad, comfort switches (camera shake, G-force head motion, motion
+  blur and depth of field still on), the guest vblank locked to the headset (patch C), Windows
+  packaging of the loader (below), D3D12.
+
+### How it works
+
+1. `ForzaApp::OnPreSetup`, before the GPU plugin creates the Vulkan provider: `xr::Prepare` opens
+   the loader and, on a thread it waits for up to `vr_runtime_timeout`, creates the instance
+   (`XR_KHR_vulkan_enable2`, `XR_KHR_convert_timespec_time` or the Win32 counterpart), finds the
+   head-mounted display and reads its Vulkan requirements. Then it registers the Vulkan creation
+   hooks (patch 0390): the runtime creates the `VkInstance` (`xrCreateVulkanInstanceKHR`), picks
+   the physical device (`xrGetVulkanGraphicsDevice2KHR`) and creates the `VkDevice`
+   (`xrCreateVulkanDeviceKHR`), each with the extensions it needs on top of the SDK's.
+2. `OnCreateDialogs` (the provider exists): `xr::Start` checks that the device is the one the
+   runtime made, turns on the guest output export (patch 0391) and starts the "Forza OpenXR"
+   thread: session on graphics queue 0 of the game's device, `LOCAL` and `VIEW` spaces, an 8-bit
+   sRGB swapchain the size of the guest output, then the frame loop: `xrWaitFrame`,
+   `xrBeginFrame`, the newest guest output if there is a new one, `xrEndFrame`. The device's queue
+   lock (`AcquireQueue`) is held around `xrBeginFrame`, `xrEndFrame`, swapchain acquire and
+   release and the copy's submission, the calls `XR_KHR_vulkan_enable2` says use the queue.
+3. The copy: the guest output (A2B10G10R10, gamma-encoded) is blitted to an 8-bit UNORM image and
+   copied bit for bit into the sRGB swapchain image (a blit into sRGB would encode the gamma a
+   second time). Barriers as the presenter's own guest output capture: the guest output leaves and
+   returns to `SHADER_READ_ONLY` in the fragment shader stage, so a later refresh of the same
+   image waits for the copy (same queue). The frame is held (patch 0391) until the copy's fence.
+4. Frame pairing (`xr_frame_tags.h`): the view hook (main loop thread) asks for the head pose
+   predicted for now plus the measured latency (camera built to picture shown, an average of 5 to
+   50 ms), poses the matrix and remembers its 64 bytes with a new tag. On the render thread the
+   hook on `CPresentationCamera::SetViewTransform` (`sub_823EB7A0`, TU4 `sub_8241B860`; the matrix
+   lands at camera + 16) finds the tag by the bytes; VdSwap writes the frame's tag into the swap
+   packet (one more dword in `PM4_XE_SWAP`, which a stock command processor skips); the command
+   processor hands it to the presenter with the guest output (patch 0391); the OpenXR thread looks
+   the pose and field of view up. The render thread also swaps frames without a new view (it draws
+   the camera's last view again), so the tag stays with the render-side camera until it gets an
+   unposed matrix (another camera). A tag more than 300 ms old at display time means the game
+   stopped building in-car views: the picture goes back on the screen.
+5. Every 10 s a line `VR: N Hz headset, N game frames/s copied; shown as cockpit N / screen N
+   frames; swaps tagged N/N (dropped views N, repeated N); latency N ms (predicting N); cockpit
+   FOV N deg; xrEndFrame max N ms`. Dropped views: the render thread skipped a main loop frame;
+   repeated: it drew the last one again.
+
+### Tested without a headset (Linux, TU4, RX 9060 XT, RADV)
+
+- **VR off:** no OpenXR library mapped, no `VR:` line, frame rate as before (the off paths are
+  one relaxed atomic load per camera call, swap and guest output refresh).
+- **No runtime** (`vr_mode=cockpit`, no `active_runtime.json`): `VR: no OpenXR runtime is
+  installed or active (XR_ERROR_RUNTIME_UNAVAILABLE) ... - playing flat`, the loader unloaded.
+- **WiVRn selected (`XR_RUNTIME_JSON` = the Flatpak's `openxr_wivrn.json`), server not running:**
+  WiVRn's client cannot connect to `$XDG_RUNTIME_DIR/wivrn/comp_ipc`; `xrCreateInstance` fails:
+  `VR: the OpenXR runtime did not start (XR_ERROR_RUNTIME_UNAVAILABLE) ... - playing flat`.
+- **WiVRn server running (user space: `flatpak run --command=wivrn-server io.github.wivrn.wivrn
+  --no-manage-active-runtime --no-publish-service`), no headset:** WiVRn's `xrCreateInstance`
+  blocks until a headset connects (the first build hung at start). Now: `VR: waiting up to 20 s
+  for the OpenXR runtime`, then `VR: the OpenXR runtime did not answer in 20 s (WiVRn waits until
+  the headset connects ...) - playing flat`; the game starts flat and exits cleanly.
+- **A mock OpenXR runtime** (a scratch test library, not in the repository: `XR_KHR_vulkan_enable2`
+  that adds instance and device extensions as Monado does, a 90 Hz frame clock, a head that
+  turns 25 degrees left and right every 6 s, checks of every call and layer, dumps of the shown
+  image): screen mode put a 3.2 x 1.8 m quad at 2.5 m with the game's picture (colours as on the
+  desktop, so the gamma is right); in cockpit mode (free roam, the in-car view) the window showed
+  the view turning with the simulated head inside the car at 114 x 140 degrees, the runtime got
+  projection layers with that field of view, all swaps were tagged in 10 s windows spent in the
+  car (281/281, 278/278), the submitted pose was within 0.1 degree of the head at display (the
+  mock's prediction is exact; a real runtime's is not), switching to the hood camera went back to
+  the screen, both sticks recentred, a session loss and no headset fell back to flat, and closing
+  the game ended the session (`xrRequestExitSession`, stopping, idle, exiting, destroyed). The
+  mock's checks found no error. The game held its 28-30 fps; `xrEndFrame max` read about 230 ms
+  there because the mock waits for the GPU while it dumps a picture every 3 s.
+- **Packaging:** the loader built as `tools/build_rexglue_sdk.sh` builds it (OpenXR-SDK 1.1.62)
+  works with the game; in a freedesktop 26.08 Flatpak sandbox with the manifest's new permissions
+  that loader found the WiVRn Flatpak's runtime and connected to its server (`xrCreateInstance`
+  waiting for the headset); without `xdg-run/wivrn` the connection fails.
+- **Unit tests:** `tests/xr_math_test.cpp` (OpenXR to game axes against the test pose's yaw,
+  pitch and roll, recentring, seat height, the covering field of view, the latency estimate),
+  `tests/xr_frame_tags_test.cpp` (tags, matrix matching, the swap tagger, layer choice, the swap
+  packet), `tests/vr_head_pose_math_test.cpp`; all three run in CI.
+- **Windows:** the game's and the patched SDK's changed sources compile for Windows (syntax
+  check with the cross toolchain); not run.
+
+Only the headset can tell: WiVRn creating the Vulkan instance and device for the game's device
+and its session starting; the screen's size and sharpness; the colours; smoothness at the
+headset's rate with the game at 30 fps; whether holding the queue lock in `xrEndFrame` stalls the
+game (`xrEndFrame max` in the 10 s line); how far the head prediction is off and whether the
+5 degree margin hides the picture's edge when the head turns; the HUD's place; comfort.
+
+### Packaging
+
+- **Linux package and Flatpak:** `tools/build_rexglue_sdk.sh` builds `libopenxr_loader.so.1` from
+  OpenXR-SDK 1.1.62 (pinned SHA-256) into the overlay's `lib/`, `tools/package_sdk_overlay.sh`
+  packs it, and the launcher copies it next to the game (`builder.stage_runtime`;
+  `tools/package_linux.sh` for a hand-made package). The game's `LD_LIBRARY_PATH` holds the game
+  folder, so it is found first; without it the system's loader is used (Fedora `openxr-libs`,
+  Ubuntu/Debian `libopenxr-loader1`, Arch `openxr`). The freedesktop 26.08 runtime has none.
+- **Flatpak permissions** (manifest): `xdg-config/openxr:ro` (the active runtime manifest),
+  `/var/lib/flatpak/app/io.github.wivrn.wivrn:ro` (the runtime library of a system-wide WiVRn
+  Flatpak; a user install is under the home folder, already readable), `xdg-run/wivrn:ro` and
+  `xdg-run/monado_comp_ipc` (the compositor sockets). Inside the sandbox `XDG_CONFIG_HOME` is the
+  app's own folder, so the launcher sets `XR_RUNTIME_JSON` to the host's
+  `~/.config/openxr/1/active_runtime.json`. Runtimes installed on the host in `/usr` (Monado,
+  WiVRn from distribution packages) cannot be loaded in the sandbox (its `/usr` is the runtime's);
+  SteamVR's Linux runtime lives under the home folder but was not tried.
+- **Windows (not done):** no runtime installs the loader; `openxr_loader.dll` must sit next to
+  `forza.exe`. The launcher already copies every DLL of the overlay's `bin/` there, so the
+  sdk-windows job (or `tools/build_windows.sh`) should put it there from
+  `openxr_loader_windows-1.1.62.zip` of the KhronosGroup/OpenXR-SDK-Source release (SHA-256
+  `800ec772e2f9448a26ab9f579f4914d984346dd9d0d7c007841abe21d2c8ff2f`, `x64/bin/openxr_loader.dll`,
+  Apache-2.0). Until then VR on Windows logs `VR: no OpenXR loader (openxr_loader.dll) - playing
+  flat` (a player can drop the DLL next to `forza.exe`). The launcher forces `--gpu_backend=vulkan`
+  when the setting is on.
+
+## Testing on a Quest 3 with WiVRn
+
+1. **Build** this branch: the SDK overlay with patches 0390 and 0391
+   (`tools/build_rexglue_sdk.sh`, which also builds the OpenXR loader) and the game as usual, or
+   let the launcher build it. `libopenxr_loader.so.1` is also installed on this PC
+   (`/usr/lib64`), so the loader is there either way.
+2. **Start WiVRn** on the PC (the WiVRn app from the Flatpak `io.github.wivrn.wivrn`), put the
+   Quest 3 on, open WiVRn on the Quest and connect to the PC. Wait until the Quest shows that it
+   is connected and waiting for an application. While it runs, WiVRn makes itself the active
+   OpenXR runtime (`~/.config/openxr/1/active_runtime.json`). Connect first, then start the
+   game: WiVRn makes the game wait until a headset is there (20 s, then the game starts flat).
+3. **Launcher:** Settings > Display > VR > **VR headset (OpenXR)**: **Virtual screen**. Press Play.
+4. **What you should see:** the game in its window on the desktop as always, and in the headset a
+   large screen (3.2 m wide) 2.5 m in front of you at eye height with the game on it, smooth when
+   you move your head. Press **Home** on the keyboard, or hold **both sticks pressed** for a
+   second, to bring the screen in front of you again.
+5. **Cockpit:** close the game, set **VR headset (OpenXR)** to **Cockpit**, Play, sit as you would
+   drive. Load into free roam, press **Home** (or hold both sticks) once while looking straight
+   ahead, then switch to the in-car view (**RB** cycles the cameras; the one with the driver's
+   hands on the wheel). You should be inside the car: turning and moving your head looks around
+   the interior (door, pillars, mirrors, the roof); the world outside updates at the game's frame
+   rate while the head motion stays smooth. Both eyes see the same picture, so there is no depth:
+   the cockpit looks large and flat. The speed and map HUD sit at the edge of the picture,
+   mostly out of view. Other cameras, the map and menus are on the screen. **Seat height (cm)**
+   moves the eye up or down; recentre after changing it. Try a short drive.
+6. **Send back** `forza.log` (launcher: Play page > Open log folder; by default
+   `~/.local/share/forza/forza.log`), or at least `grep -n "VR:\|Vulkan device\|rror" forza.log`.
+   The useful lines: `VR: OpenXR runtime WiVRn ...`, `VR: headset ...`, `Vulkan device chosen by
+   the creation hook (OpenXR runtime): ...`, `VR: session created ...`, `VR: session focused`,
+   `VR: eye fields of view ... the cockpit view is drawn at N deg vertical`, `VR: swapchain ...`,
+   the `VR: N Hz headset, ...` line every 10 s (in the car: cockpit frames, swaps tagged N/N,
+   latency, xrEndFrame max), and a `... - playing flat` line if VR gave up. If the session did not
+   start, WiVRn's own log (the WiVRn app) too. And what you saw: the screen's size, sharpness and
+   colours; stutter; in the cockpit whether the view followed the head the right way round and
+   how it felt; black edges when turning the head quickly; where the HUD was.
 
 ## HUD and menus
 
@@ -653,6 +850,8 @@ loop: xrPollEvent -> READY: xrBeginSession(STEREO) / STOPPING: xrEndSession / LO
   - Its ratification status is unclear. Re-check before relying on it.
 
 #### Packaging
+
+**Checked** (and partly done): [Packaging](#packaging) under the OpenXR session.
 
 - **Loader:** ship `openxr_loader` (`.dll`, `libopenxr_loader.so.1`).
 - **Flatpak:** add the following, which match WiVRn's instructions for Flatpak apps:

@@ -266,6 +266,20 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
     "An SDR screenshot cannot show the physical brightness.", "HDR",
     choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
 
+# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333).
+add("vr_mode", "VR headset (OpenXR)", "Display", "choice", "off",
+    "Play on a VR headset through an OpenXR runtime, which must be running before the game "
+    "starts: WiVRn, Monado or SteamVR on Linux; SteamVR, Meta Quest Link or Virtual Desktop on "
+    "Windows. Virtual screen shows the game on a large screen in front of you. Cockpit also turns "
+    "the in-car camera with your head (one image for both eyes, no 3D depth yet; other cameras "
+    "and menus stay on the screen). Recentre with the Home key or by holding both sticks pressed. "
+    "The desktop window keeps showing the game. Without a runtime or headset the game starts "
+    "normally. Experimental; Vulkan only.", "VR",
+    choices=[("off", "Off"), ("screen", "Virtual screen"), ("cockpit", "Cockpit")], restart=True)
+add("vr_seat_height_cm", "Seat height (cm)", "Display", "float", 0.0,
+    "Cockpit: raises (positive) or lowers your eye from the driver's position. Recentre while "
+    "sitting as you drive.", "VR", lo=-30, hi=30, step=1)
+
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
     "Keys stand in for a controller (the bindings below).", "Keyboard")

@@ -958,6 +958,13 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
         tmp = rt / ("." + name + ".new")
         shutil.copy2((sdk / "lib" / name).resolve(), tmp)
         os.replace(tmp, rt / name)
+    # The OpenXR loader for the VR setting, when the overlay carries one (docs/vr.md, Packaging);
+    # without it the game uses the system's libopenxr_loader.so.1.
+    loader = sdk / "lib" / "libopenxr_loader.so.1"
+    if loader.exists():
+        tmp = rt / ".libopenxr_loader.so.1.new"
+        shutil.copy2(loader.resolve(), tmp)
+        os.replace(tmp, rt / loader.name)
     # the plugin comes out of the SDK's build tree, whose runpath points into that tree
     script = rt / ".rpath.cmake"
     script.write_text(f'file(RPATH_SET FILE "{(rt / "librexgpu-xenos.so").as_posix()}" NEW_RPATH "$ORIGIN")\n')
