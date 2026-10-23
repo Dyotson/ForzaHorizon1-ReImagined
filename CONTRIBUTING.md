@@ -47,6 +47,8 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
 
 ## Testing
 
+- Launcher link-preservation tests require file and directory symlink support in the temporary
+  folder. They skip when the filesystem or Windows account lacks it; copy-fallback tests still run.
 - `tools/prerelease.sh` runs the local checks in one go: SDK overlay, both builds, unit
   tests, booting to the main menu with each upscaling filter, a local Forza Live server and
   the launcher's disc check (`--only <check>`, `--skip-build`, `docs/PROJECT.md`).

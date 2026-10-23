@@ -55,8 +55,10 @@ class NativeMenuInstall(unittest.TestCase):
         self.assertEqual(cwd, self.root)
         self.assertIn(self.tu, cmd)
         output = cmd[cmd.index("--output") + 1]
-        self.assertTrue(output.is_relative_to(builder.build_dir(self.root)))
-        self.assertFalse(output.is_relative_to(self.tu))
+        # The builder resolves its workspace; Windows CI's TEMP can use an 8.3
+        # alias (RUNNER~1) for the same long path returned by resolve().
+        self.assertTrue(output.resolve().is_relative_to(builder.build_dir(self.root).resolve()))
+        self.assertFalse(output.resolve().is_relative_to(self.tu.resolve()))
         self.assertFalse(output.exists())
         shutil.copytree(self.tu, output)
         (output / "media.zip").write_bytes(b"prepared synthetic resources")
@@ -101,6 +103,14 @@ class NativeMenuInstall(unittest.TestCase):
         with mock.patch.object(builder, "run", side_effect=incomplete):
             self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
         self.assertEqual(snapshot(self.target), self.original)
+
+    def test_preparation_uses_resolved_workspace_for_aliased_root(self):
+        (self.root / "lexical-parent").mkdir()
+        self.root = self.root / "lexical-parent" / ".."
+        self.opts = builder.Options(self.root, jobs=1)
+        with mock.patch.object(builder, "run", side_effect=self.prepare):
+            self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        self.assertEqual((self.target / "media.zip").read_bytes(), b"prepared synthetic resources")
 
     def test_invalid_manifest_is_not_published(self):
         for report in ("invalid JSON", "[]", '{"schema": 9}'):
@@ -272,6 +282,27 @@ class NativeMenuDistribution(unittest.TestCase):
         for name in builder.NATIVE_MENU_FILES:
             self.assertEqual((output / "project" / "tools" / name).read_bytes(),
                              (self.project / "tools" / name).read_bytes())
+
+    def test_linux_tar_keeps_package_name_after_staging_nested_resources(self):
+        import tarfile
+        package = runpy.run_path(str(HERE / "packaging" / "make_package.py"))
+        package["main"].__globals__["REPO"] = self.project
+        (self.project / "LICENSE").write_text("synthetic license")
+        logo = self.project / "docs" / "images" / "logo.png"
+        logo.parent.mkdir(parents=True)
+        logo.write_bytes(b"synthetic image")
+        frozen = self.root / "frozen"
+        frozen.mkdir()
+        (frozen / "forza-launcher").write_text("synthetic launcher")
+        output = self.root / "dist"
+        with mock.patch.object(sys, "argv", ["make_package.py", "--platform", "linux", "--tar",
+                                            "--pyinstaller-dist", str(frozen), "--out", str(output)]):
+            package["main"]()
+        archive = output / "ForzaHorizon1-ReImagined-linux-x86_64.tar.gz"
+        with tarfile.open(archive) as tar:
+            names = set(tar.getnames())
+        for resource in builder.NATIVE_MENU_FILES:
+            self.assertIn("ForzaHorizon1-ReImagined/project/tools/" + resource, names)
 
 
 if __name__ == "__main__":

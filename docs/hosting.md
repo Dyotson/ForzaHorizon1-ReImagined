@@ -105,6 +105,21 @@ that was requested but not taken.
 
 Players are not authenticated (the XUID is whatever the client claims).
 
+### Names are plain ASCII
+
+A name of combining marks, foreign scripts or emoji would be drawn on every other player's
+screen, so only ASCII reaches the game. `forza_limits.clean_gamertag` keeps letters, digits
+and single spaces (at most 15, like an Xbox 360 gamertag) after transliterating accents
+(`José` becomes `Jose`); when nothing is left the name is `Driver` plus 4 hex digits of
+the XUID. It runs on the HELLO name, the sign-in (Logon2) name and every name read back
+from the data files, and again when a name is written into a reply (`forza_xtsw.py`), so
+stored names can never reach the game unclean. Club tags (4), names (20), descriptions (128)
+and photo titles and descriptions are printable ASCII (0x20-0x7E; an empty club name
+becomes `Club <id>`). Text chat drops control characters, bidi overrides, zero-width
+characters and combining marks and is at most 200 characters. The launcher's Gamertag
+setting and the game apply the same rule. Names the game puts inside its own peer-to-peer
+session data are not seen by the server.
+
 Game invites (#90) are delivered only between games that let their player pick whom to
 invite and ask the invited player before joining (v0.1.13 and later; they say so in their
 HELLO). Games up to v0.1.12 invite every player online with one press of Invite Friends and

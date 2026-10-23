@@ -197,3 +197,29 @@ gamertag behavior. Fourteen SDK-free model/archive CTest cases, 59 focused
 launcher/menu/bindings/gamertag tests and syntax checks of four enabled TU4 menu
 hooks passed after that merge. The game captures above predate this integration;
 no post-merge game session or full rebuilt SDK/game validation was performed.
+
+### Current-main conflict and packaging repair (2026-10-22)
+
+Integrated main `7f9a716` in an isolated checkout of combined checkpoint `3711096`.
+The resolution retains both benchmark and pause/tuning includes, all catalog and
+menu packaging tools, and current-main ASCII gamertag filtering alongside menu
+setting-length/coercion behavior. Active menu/tuning worktrees were not changed.
+
+Fixed Linux release tar naming: the native-resource loop had overwritten the
+package name with `native_menu/fh1_donors.json`, so `--tar` attempted to write a
+nonexistent nested archive path. A synthetic Linux-package regression checks the
+release filename and all nested preparation resources.
+
+Windows validation after integration: 618 launcher tests passed with 37 skips;
+20 distribution/install tests and 23 resource-staging tests passed. All 14 menu
+model/archive, three tuning/component/setup and two disc/TU4 disabled-hook CTests
+passed. The actual graphics, pause, scene, map and two tuning hook sources compile
+with TU4/native-pause enabled against the installed Windows SDK headers. No game
+or GPU session, full game link, shared SDK installation or gameplay claim was made
+in this conflict-repair pass. The draft/runtime-opt-in gates above remain.
+
+The first CI rerun exposed a Windows-only test-path mismatch: the runner's TEMP
+path used `RUNNER~1`, while the builder deliberately resolved the workspace to its
+long spelling. The preparation mock now compares resolved paths, retaining its
+workspace/TU containment assertions. A lexical-alias regression exercises that
+normalization on every host; the full Windows suite was rerun successfully.

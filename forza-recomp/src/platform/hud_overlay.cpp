@@ -3,6 +3,7 @@
 #include "hud_overlay.h"
 #include "performance_history.h"
 #include "sdk_import.h"
+#include "benchmark.h"
 #include <rex/cvar.h>
 #include <string_view>
 
@@ -34,6 +35,15 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 ImFont* performance_font = nullptr;
+
+// UI thread only. Removal forgets the hint, so restore it on each registration.
+void AddPassiveDialog(rex::ui::ImGuiDrawer* drawer, rex::ui::ImGuiDialog* dialog) {
+  drawer->AddDialog(dialog);
+  using SetRepaint = void (*)(const void*, bool);
+  static const auto set_repaint = reinterpret_cast<SetRepaint>(
+      SdkSymbol("rexui_SetDialogContinuousRepaint"));
+  if (set_repaint) set_repaint(dialog, false);
+}
 
 class HudDialog final : public rex::ui::ImGuiDialog {
  public:
@@ -191,13 +201,7 @@ class PerformanceDialog final : public rex::ui::ImGuiDialog {
     }
     context_.CallInUIThread([this] {
       if (mode_.load()) {
-        drawer_->AddDialog(this);
-        // Optional C extension: Linux builds use the stock nightly class layouts.
-        // RemoveDialog forgets the hint, so restore it on every registration.
-        using SetRepaint = void (*)(const void*, bool);
-        static const auto set_repaint = reinterpret_cast<SetRepaint>(
-            SdkSymbol("rexui_SetDialogContinuousRepaint"));
-        if (set_repaint) set_repaint(this, false);
+        AddPassiveDialog(drawer_, this);
       } else {
         drawer_->RemoveDialog(this);
       }
@@ -269,6 +273,157 @@ class PerformanceDialog final : public rex::ui::ImGuiDialog {
 };
 PerformanceDialog* performance = nullptr;
 
+class BenchmarkDialog final : public rex::ui::ImGuiDialog {
+public:
+  BenchmarkDialog(rex::ui::ImGuiDrawer *drawer,
+                  rex::ui::WindowedAppContext &context)
+      : ImGuiDialog(drawer), drawer_(drawer), context_(context) {
+    drawer_->RemoveDialog(this);
+  }
+  void Update() {
+    const bool visible =
+        benchmark::Snapshot().screen != benchmark::Screen::hidden;
+    if (visible_.exchange(visible) == visible)
+      return;
+    context_.CallInUIThread([this] {
+      if (visible_.load())
+        AddPassiveDialog(drawer_, this);
+      else
+        drawer_->RemoveDialog(this);
+    });
+  }
+
+protected:
+  void OnDraw(ImGuiIO &io) override {
+    const auto view = benchmark::Snapshot();
+    if (view.screen == benchmark::Screen::hidden)
+      return;
+    const bool running = view.screen == benchmark::Screen::running;
+    const bool results = view.screen == benchmark::Screen::results;
+    if (results) {
+      // The native pause menu stops the race; cover its choices while displaying
+      // the benchmark report so they cannot compete with the report's actions.
+      ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+                                                   IM_COL32(10, 10, 13, 255));
+    }
+    const float scale = std::clamp(io.DisplaySize.y / 1080.f, 0.75f, 2.f);
+    ImGui::SetNextWindowPos(
+        ImVec2(io.DisplaySize.x * 0.5f,
+               io.DisplaySize.y * (running ? 0.055f : 0.5f)),
+        ImGuiCond_Always, ImVec2(0.5f, running ? 0.f : 0.5f));
+    ImGui::SetNextWindowSize(ImVec2((running ? 520 : 830) * scale, 0),
+                             ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(running ? 0.8f : 0.96f);
+    const auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                       ImGuiWindowFlags_NoSavedSettings |
+                       ImGuiWindowFlags_NoNav |
+                       ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(30 * scale, 24 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(18 * scale, 18 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.035f, 0.045f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.93f, 0, 0.32f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 0.08f, 0.4f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.93f, 0, 0.32f, 0.65f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1, 1, 1, 0.16f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.12f, 1));
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.93f, 0, 0.32f, 1));
+    if (performance_font)
+      ImGui::PushFont(performance_font);
+    if (ImGui::Begin("##benchmark", nullptr, flags)) {
+      ImGui::SetWindowFontScale((performance_font ? 1.f : 2.1f) * scale);
+      ImGui::TextColored(ImVec4(1, 0.05f, 0.38f, 1),
+                         results ? "BENCHMARK RESULTS" : "BENCHMARK");
+      ImGui::Separator();
+      if (running) {
+        ImGui::TextUnformatted(view.status.c_str());
+        if (view.elapsed > 0) {
+          ImGui::SetWindowFontScale((performance_font ? 0.7f : 1.6f) * scale);
+          ImGui::ProgressBar(
+              float(std::clamp(view.elapsed / view.duration, 0.0, 1.0)),
+              ImVec2(-1, 8 * scale), "");
+          ImGui::Text("%.0f / %.0f seconds", view.elapsed, view.duration);
+        }
+        ImGui::SetWindowFontScale((performance_font ? 0.65f : 1.5f) * scale);
+        ImGui::TextDisabled("B  CANCEL");
+      } else if (results) {
+        ImGui::SetWindowFontScale((performance_font ? 0.7f : 1.6f) * scale);
+        ImGui::TextWrapped("%s", view.status.c_str());
+        ImGui::TextDisabled("%s", view.settings.c_str());
+        if (view.valid) {
+          ImGui::Spacing();
+          ImGui::Columns(3, nullptr, false);
+          ImGui::TextDisabled("AVERAGE");
+          ImGui::Text("%.1f FPS", view.stats.fps);
+          ImGui::NextColumn();
+          ImGui::TextDisabled("1%% LOW");
+          ImGui::Text("%.1f FPS", view.stats.low1);
+          ImGui::NextColumn();
+          ImGui::TextDisabled("P99 FRAME TIME");
+          ImGui::Text("%.1f ms", view.stats.p99_ms);
+          ImGui::Columns(1);
+          ImGui::Spacing();
+          ImGui::TextDisabled("FRAME TIME / MILLISECONDS");
+          ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1, 0.06f, 0.36f, 1));
+          ImGui::PlotLines("##benchmark-frames", view.frame_ms.data(),
+                           int(view.frame_ms.size()), 0, nullptr, 0,
+                           float(std::max(33.3, view.stats.worst_ms * 1.05)),
+                           ImVec2(-1, 125 * scale));
+          ImGui::PopStyleColor();
+          ImGui::Text("%.1f seconds  |  %zu frames  |  %zu stalls over 50 ms",
+                      view.stats.seconds, view.stats.frames,
+                      view.stats.stalls50);
+          ImGui::TextWrapped(
+              "Reports saved in benchmarks/%s",
+              std::filesystem::path(view.folder).filename().string().c_str());
+        }
+      } else {
+        ImGui::SetWindowFontScale((performance_font ? 0.8f : 1.8f) * scale);
+        ImGui::TextUnformatted("RECARO RUSH");
+        ImGui::TextDisabled("%s", view.settings.c_str());
+        ImGui::SetWindowFontScale((performance_font ? 0.65f : 1.5f) * scale);
+        ImGui::TextWrapped("The game's AI drives a fixed festival race using "
+                           "your current car and graphics settings.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("15 seconds settling  /  60 seconds measured");
+        ImGui::TextWrapped("Career progress stays in a separate save copy. Run "
+                           "once to warm shaders before comparing results.");
+        ImGui::TextWrapped("Use the same car, camera and difficulty for "
+                           "comparisons. AI traffic and collisions can vary.");
+        if (view.status != "Recaro Rush")
+          ImGui::TextWrapped("%s", view.status.c_str());
+      }
+      if (!running) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::SetWindowFontScale((performance_font ? 0.7f : 1.6f) * scale);
+        if (ImGui::Button(results ? "A  RUN AGAIN" : "A  RUN BENCHMARK",
+                          ImVec2(280 * scale, 50 * scale)))
+          benchmark::Run();
+        ImGui::SameLine();
+        if (ImGui::Button("B  BACK", ImVec2(160 * scale, 50 * scale)))
+          benchmark::Close();
+      }
+    }
+    ImGui::End();
+    if (performance_font)
+      ImGui::PopFont();
+    ImGui::PopStyleColor(8);
+    ImGui::PopStyleVar(4);
+  }
+
+private:
+  rex::ui::ImGuiDrawer *drawer_;
+  rex::ui::WindowedAppContext &context_;
+  std::atomic<bool> visible_{false};
+};
+BenchmarkDialog *benchmark_dialog = nullptr;
+
 // Lives for the whole run (the drawer keeps a raw pointer while it is registered).
 HudDialog* hud = nullptr;
 
@@ -301,6 +456,8 @@ void InstallHud(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext& app_c
   hud = new HudDialog(drawer, app_context, window);
   performance = new PerformanceDialog(drawer, app_context);
   performance->Update();
+  benchmark_dialog=new BenchmarkDialog(drawer,app_context);
+  benchmark_dialog->Update();
 }
 
 void HudShow(const std::string& title, const std::string& body, double seconds, bool log) {
@@ -309,7 +466,10 @@ void HudShow(const std::string& title, const std::string& body, double seconds, 
 }
 
 void PerformanceOverlayFrame() { if (performance) performance->Frame(); }
-void UpdatePerformanceOverlay() { if (performance) performance->Update(); }
+void UpdatePerformanceOverlay() {
+  if (performance) performance->Update();
+  if (benchmark_dialog) benchmark_dialog->Update();
+}
 
 void HudClear() {
   if (hud) hud->Clear();

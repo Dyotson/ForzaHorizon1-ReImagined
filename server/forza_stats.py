@@ -357,7 +357,7 @@ def read(xuid, body, gamertag_of=None, now=None):
             rank, rating = ranks.get(key, (0, 0))
             if v is None and is_skill_view(view):
                 rating = skill_of(MU0, SIGMA0)
-            tagb = tag.encode()[:15]
+            tagb = limits.clean_gamertag(tag, x).encode()
             row = struct.pack(">QIqB", x, rank, rating, len(tagb)) + tagb + bytes([len(cols)])
             for col in cols:
                 kind, value = column(v, col, view)

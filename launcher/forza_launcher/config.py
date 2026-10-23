@@ -70,6 +70,7 @@ class Config:
         self.path = path or paths.config_dir() / "launcher.json"
         self.d = _default()
         self.loaded = False
+        self.gamertag_cleaned = None
         self.load()
 
     # --- persistence ---
@@ -97,8 +98,12 @@ class Config:
         except (TypeError, ValueError, OverflowError):
             keep = 10
         self.d['save_manager'] = dict(automatic=prefs.get('automatic', True) is True, keep_automatic=keep)
+        saved_tag = self.d["settings"].get("gamertag")
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
+        self.gamertag_cleaned = None  # (saved, cleaned) when the saved Gamertag was not plain ASCII
+        if isinstance(saved_tag, str) and saved_tag.strip() != self.d["settings"]["gamertag"]:
+            self.gamertag_cleaned = (saved_tag, self.d["settings"]["gamertag"])
         online = self.d["online"]
         if online.get("mode") == "custom" and online.get("custom_server", "").strip() in OLD_PUBLIC_SERVERS:
             online["mode"], online["custom_server"] = "public", ""
