@@ -318,6 +318,17 @@ or `wheel_invert_brake`; `wheel_axes` and `wheel_buttons` still override the pro
 as described below. A pedal is also ignored until it has been seen at rest once, so a pedal that reads 0 for a
 moment when the game opens it (or is held down at start) no longer presses itself.
 
+**Thrustmaster wheels (#308)** have their axes and buttons built in too, by product id (SDK patch 0135): TMX
+(044f:b67f), TX (b669), TS-XW (b692), TS-PC Racer (b689), T300 RS (b66e), T150 (b677) and T-GT (b684), from
+Project Motor Racing's device maps. Steering on X, brake on Y, throttle on Rz and clutch on the slider (SDL axes
+0, 1, 2 and 3; on the T-GT 0, 1, 5 and 6), the paddles on the bumpers (they shift), the face buttons where
+each wheel has them (the TMX: A 4, B 8, X 2, Y 9). Where the pedals rest is read from the wheel. A TMX on
+Windows has no name (the log calls it `"44F B67F"`) and read 0 on every axis until its first report, so the
+detection found no pedal and the steering needed a quarter turn before anything happened (#308): now any wheel
+whose axes all read exactly 0 when the game opens it has their rest read from its first report (the log says
+`axis N rests at ... (first report)`). The T248 is not built in: no source gives its axes, so bind it (or
+calibrate it) under Bindings.
+
 **Setting a wheel up (#279).** Open **Controls** in the launcher and pick the wheel under **Bindings**. The live
 view shows its axes as bars and its buttons lighting up while pressed, by the numbers the game uses. Each game
 action has a row with its current input (and whether that is the default): **Bind** asks you to turn the wheel,
