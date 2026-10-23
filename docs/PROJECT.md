@@ -897,6 +897,22 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   Start: **SAVE SUCCESSFUL** and `photo/Max! 7/` in the save; a second prompt cancelled with B
   on the empty name returned to the slot picker. Unit test: `forza-recomp/tests/osk_test.cpp`.
 
+- 2026-10-23: **Hitches after loads on Title Update 4: the car view query (#167).** In a player's
+  log, 14 of 17 long frames (0.27-0.32 s, two or three after every load) had the main loop in the
+  game's SQLite 3.6.19 by their `FORZA_STALL` chains (TU4 `sqlite3_step` `sub_83146F20`), running
+  `SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId` through the
+  database's query method (`sub_82CD8FD8`, base `sub_82C19130`). That view is TU4's (the Rally
+  Expansion): LEFT JOINs to three derived tables, which 3.6.19 materializes and scans once per
+  car (no automatic indexes). 131 ms per query here with all DLC (251 cars), twice after every
+  load into free roam; an event's sign-up runs three more (103-105 ms) on another thread while
+  the main loop waits for the lock. `src/hooks/database_query.cpp` creates the view with the same
+  columns and rows from joins on the tables plus four indexes: 16-18 ms and 6-7 ms; the frames
+  that held the query went from 155-193 to 32-74 ms (2 runs each, docs/perf.md).
+  `tools/check_car_view.py` compares both views on the local game files (PASS with the 17 DLC
+  database patches and edge cases); in the game every value read back was the same.
+  `FORZA_GAME_CAR_VIEW=1` keeps the game's view. Every query of 50 ms or more now logs a
+  `FORZA_SQL` line (`FORZA_SQL_LOG=1`: all of them).
+
 ## Debugging recipes
 
 - Find a codegen hint's target: `tools/ppcdis.sh 0x82F76188 +0x80`.

@@ -131,6 +131,12 @@
 #define __imp__sub_82A6D7D8 __imp__sub_82B2A848
 #define sub_82A6F2D8 sub_82B2C348
 #define __imp__sub_82A6F2D8 __imp__sub_82B2C348
+#define sub_82C188D0 sub_82CD8778
+#define __imp__sub_82C188D0 __imp__sub_82CD8778
+#define sub_82C18D00 sub_82CD8BA8
+#define __imp__sub_82C18D00 __imp__sub_82CD8BA8
+#define sub_82C19130 sub_82CD8FD8
+#define __imp__sub_82C19130 __imp__sub_82CD8FD8
 #define sub_82C76508 sub_82D37380
 #define __imp__sub_82C76508 __imp__sub_82D37380
 #define sub_82C8FE60 sub_82D50EA0

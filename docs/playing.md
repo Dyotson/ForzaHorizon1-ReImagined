@@ -166,7 +166,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
 - **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
-  what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
+  what the game was doing, and a game database query of 50 ms or more a `FORZA_SQL` line; attach
+  them to an issue ([details](perf.md#long-frames-forza_stall)). Title Update 4 builds up to
+  0.1.31 had two or three such frames (0.1-0.3 s) in the first seconds after every load, from
+  the update's car list query (#167, [details](perf.md#hitches-after-loads-title-update-4s-car-view-167-2026-10-23)).
 - **No sound:** when the sound output cannot be opened (another program holds it in exclusive
   mode, Windows refuses its format, no audio server on Linux), the game runs on without sound and
   `forza.log` says `No audio output could be opened (<reason>)`. It asks for the output again every

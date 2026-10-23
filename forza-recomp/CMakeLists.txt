@@ -126,6 +126,7 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
+    src/hooks/database_query.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
     src/hooks/movie_memory.cpp
