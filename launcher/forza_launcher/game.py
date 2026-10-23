@@ -611,6 +611,51 @@ def exit_is_crash(plan: "LaunchPlan", code, stopped=False) -> bool:
 CPU_EXIT_CODE = 76
 
 
+def heap_failure_summary(tail):
+    """Recognize the memory manager's deliberate stops, not arbitrary low-address faults.
+
+    Base sub_823F3048 / TU4 sub_82423000 write to 4 (capacity) or 5 (a block
+    could not be allocated despite aggregate capacity). Their preserved registers
+    identify the request and final heap; see docs/PROJECT.md, issue #299.
+    """
+    text = "\n".join(tail)
+    faults = list(re.finditer(
+        r"Unhandled guest access violation: (read|write) of guest 0x([0-9A-Fa-f]+)\b[^\n]*"
+        r"on thread 0x([0-9A-Fa-f]+)\b", text))
+    if not faults:
+        return None
+    fault = faults[-1]
+    if fault[1] != "write" or int(fault[2], 16) not in (4, 5):
+        return None
+    thread = int(fault[3], 16)
+    for match in re.finditer(
+            r"Guest thread ([0-9A-Fa-f]+) registers \(lr=([0-9A-Fa-f]+) ctr=[^\n]*\):"
+            r"([^\[]*)", text[fault.end():]):
+        if int(match[1], 16) != thread:
+            continue
+        arenas = {0x823F30B4: 0x832AAC24, 0x8242306C: 0x8339664C}.get(int(match[2], 16))
+        registers = {int(n): int(v, 16) for n, v in re.findall(
+            r"\br(\d+)=([0-9A-Fa-f]{8})\b", match[3])}
+        if arenas is None or any(registers.get(n) != 0 for n in (3, 6, 31)):
+            return None
+        if not all(n in registers for n in (27, 29, 30)):
+            return None
+        size, alignment, heap = (registers.get(n, 0) for n in (29, 27, 30))
+        offset = heap - arenas
+        arena, kind = divmod(offset, 0x314)
+        if not size or not 0 <= arena < 8 or kind not in (0x10, 0x190):
+            return None
+        category = (0x10 if kind == 0x10 else 0x20) + arena
+        detail = ("The heap had aggregate capacity, but could not provide a suitable block "
+                  "(fragmentation or allocation constraints)." if int(fault[2], 16) == 5 else
+                  "The heap had insufficient remaining capacity for this request.")
+        return (f"The game's internal heap 0x{category:02X} could not allocate {size:,} bytes "
+                f"(alignment {alignment} bytes). {detail} This does not establish that system "
+                "RAM or video memory is exhausted. Include what you were doing and how long "
+                "the game had been running in the crash report.")
+    return None
+
+
 def crash_reason(plan: "LaunchPlan", code) -> str:
     """A readable text for a game that stopped early: its exit code, the last error lines of its
     log and, for the usual causes, what to do."""
@@ -618,10 +663,14 @@ def crash_reason(plan: "LaunchPlan", code) -> str:
         from . import builder
         return builder.CPU_TOO_OLD
     log = log_path_of(plan)
-    errors = last_errors(_log_tail(plan))
+    tail = _log_tail(plan)
+    errors = last_errors(tail)
     text = f"The game stopped (exit code {code})."
     joined = " ".join(errors)
-    if "Vulkan" in joined:
+    heap_failure = heap_failure_summary(tail)
+    if heap_failure:
+        text += " " + heap_failure
+    elif "Vulkan" in joined:
         text += (" It needs a graphics card with Vulkan support and an up-to-date graphics driver; none was "
                  "found (a virtual machine or a remote desktop session usually has none).")
     elif "memory" in joined.lower() or "alloc" in joined.lower():
