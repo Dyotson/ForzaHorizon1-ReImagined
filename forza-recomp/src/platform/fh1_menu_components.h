@@ -46,7 +46,7 @@ struct TabCell { size_t index=0; Rect bounds; bool selected=false,focused=false;
 class TabBar {
   std::vector<Tab> tabs_;
   std::string selected_, focused_;
-  double motion_seconds_=.15;
+  double motion_seconds_=.22;
   Rect motion_from_{};
   mutable Rect visual_{};
   mutable bool visual_valid_=false;
@@ -55,7 +55,7 @@ class TabBar {
     return size_t(found-tabs_.begin());
   }
 public:
-  static constexpr double kSelectionSeconds=.15;
+  static constexpr double kSelectionSeconds=.22;
   void Advance(double seconds) {
     if(!std::isfinite(seconds)||seconds<0)return;
     motion_seconds_=std::min(kSelectionSeconds,motion_seconds_+seconds);
@@ -97,8 +97,7 @@ public:
     if(tabs_.empty()||!capacity||!std::isfinite(bounds.w)||bounds.w<=0)return {};
     auto count=std::min(capacity,tabs_.size());auto focused=Index(focused_);
     auto first=focused<count?0:std::min(focused-count+1,tabs_.size()-count);
-    // Overlap the transparent paper fringe; only the outside edges remain exposed.
-    float gap=-2, width=std::min(220.f,(bounds.w-gap*float(count-1))/float(count));
+    float gap=3, width=std::min(220.f,(bounds.w-gap*float(count-1))/float(count));
     if(width<24)return {};
     std::vector<TabCell> cells;
     for(size_t i=0;i<count;++i)cells.push_back({first+i,{bounds.x+float(i)*(width+gap),bounds.y,width,bounds.h},tabs_[first+i].id==selected_,tabs_[first+i].id==focused_});

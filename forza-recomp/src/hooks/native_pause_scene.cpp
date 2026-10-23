@@ -44,13 +44,14 @@ using Clock = std::chrono::steady_clock;
 namespace layout = native_pause_layout;
 struct Card {
   Donor donor;
-  uint32_t title = 0, paper = 0, material = 0, caption = 0;
+  uint32_t title = 0, paper = 0, material = 0, caption = 0, grain = 0, grain_material = 0;
   uint32_t progress_fill = 0, progress_track = 0;
 };
 struct Car {
   uint32_t root = 0, name = 0, make = 0, image = 0, material = 0;
   uint32_t stats = 0, controller = 0, logo = 0, logo_material = 0;
   bool logo_ready = false;
+  fh1_logo_layout::Fit logo_fit;
   std::array<uint32_t, 5> rows{}, labels{}, values{};
   uint32_t owned = 0, model = 0;
   bool bound = false;
@@ -71,7 +72,8 @@ struct State {
   bool footer_bound=false, footer_recovery=false;
   Car car;
   uint32_t player_bar = 0, credits = 0, username = 0, username_paper = 0;
-  uint32_t header_paper=0,header_material=0;
+  uint32_t header_paper=0,header_material=0,credits_text=0,credits_display=0,username_material=0;
+  uint64_t credits_hash=0;
   uint32_t status = 0, footer = 0;
   std::array<uint32_t, 2> bumpers{};
   std::string gamertag, connection;
@@ -220,6 +222,9 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   valid = Require("card", "HIGHLIGHT.BigPane01", card.paper) && valid;
   if (!valid) return false;
   card.material = Named(ui, card.paper, "Material866");
+  if(tab){const auto grain=Descendants(ui.base,tape,0x43a6b655);
+    card.grain=grain.empty()?0:grain.front();card.grain_material=Named(ui,card.grain,"Material90");
+    PaperUV(ui,card.donor,card.grain_material);}
   PaperUV(ui, card.donor, card.material);
   if (card.progress_fill) PaperUV(ui, card.donor, card.progress_fill);
   if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
@@ -252,11 +257,13 @@ bool BindHeader(Native& ui) {
   state.player_bar = Named(ui, d.root, "PlayerBar");
   if (!state.player_bar) state.player_bar = Named(ui, d.root, "PLAYER_BAR");
   state.credits = Named(ui, state.player_bar, "BottomRow");
+  state.credits_text=Named(ui,state.credits,"TEXT_CR");
+  state.credits_display=Named(ui,Named(ui,d.root,"CAR_STATS"),"TEXT_CAR_NAME");
   state.username = Named(ui, d.root, "TEXT_TIME");
-  const auto papers = state.username ? Descendants(ui.base,
-      Read(ui.base, state.username + 12), 0xa17e639e) : std::vector<uint32_t>{};
+  const auto papers=Descendants(ui.base,Named(ui,d.root,"TitleTape"),0x43a6b655);
   state.username_paper = papers.empty() ? 0u : papers.front();
-  if (state.username_paper) PaperUV(ui, d, state.username_paper);
+  state.username_material=Named(ui,state.username_paper,"Material90");
+  if (state.username_material) PaperUV(ui, d, state.username_material);
   state.status = Named(ui, d.root, "TEXT_STATUS");
   for (unsigned i = 0; i < 3; ++i) {
     const auto button = Named(ui, d.root, ("HelpButton" + std::to_string(i)).c_str());
@@ -266,8 +273,10 @@ bool BindHeader(Native& ui) {
   }
   bool valid = true;
   for (const auto& [name, node] : std::initializer_list<std::pair<const char*, uint32_t>>{
-      {"PlayerBar", state.player_bar}, {"PlayerBar.BottomRow", state.credits},
+      {"PlayerBar", state.player_bar}, {"PlayerBar.BottomRow", state.credits}, {"TEXT_CR",state.credits_text},
+      {"Credits display",state.credits_display},
       {"TEXT_TIME", state.username}, {"Time.Pill_white", state.username_paper},
+      {"Username.Material90",state.username_material},
       {"TEXT_STATUS", state.status}, {"HelpButton0.Text_BUTTON", state.footer},
       {"HelpButton1.Text_BUTTON", state.bumpers[0]}, {"HelpButton2.Text_BUTTON", state.bumpers[1]}})
     valid = Require("header", name, node) && valid;
@@ -298,19 +307,28 @@ void RefreshData(Native& ui) {
 }
 void HeaderLayout(Native& ui) {
   const auto& d = state.header;
-  const auto r=fh1_menu_components::Header{}.bounds;
+  const fh1_menu_components::Rect r{1034,65,182,27};
   Normalize(ui,d,state.header_paper);
   Point(ui,d,state.header_paper,r.x+r.w/2,r.y+r.h/2);
   ui.Scale(d.presentation,state.header_paper,r.w/100,r.h/100);
   ui.RotationZ(d.presentation,state.header_paper,0);Depth(ui,d,state.header_paper,3);
   ui.Opacity(d.presentation,state.header_paper,100);
-  ui.Color(d.presentation,state.header_material,0x302b30);
+  ui.Color(d.presentation,state.header_material,0x171517);
   // Preserve PlayerBar's native wristband/class/car bindings on the left.
-  ui.Position(d.presentation, state.credits, 647, -34);
+  // Keep the native localized currency binding active, then mirror its text
+  // into an independent right-aligned label. Native credits auto-layout must
+  // not reposition our display when the balance changes.
+  ui.Show(d.presentation,state.credits,false);
+  ui.Show(d.presentation,state.credits_display,ui.CopyText(d.presentation,state.credits_text,state.credits_display,state.credits_hash));
+  Normalize(ui,d,state.credits_display);Point(ui,d,state.credits_display,1204,78);
+  ui.Scale(d.presentation,state.credits_display,1,1);
+  ui.TextStyle(d.access,d.presentation,state.credits_display,18,158.f/1200,27.f/720,2);
+  ui.Color(d.presentation,state.credits_display,0xffffff,true);Depth(ui,d,state.credits_display,-5);
   Normalize(ui, d, state.username_paper);
-  Point(ui, d, state.username_paper, 1086, 51);
+  Point(ui, d, state.username_paper, 1086, 50);
   ui.Scale(d.presentation, state.username_paper, 2.6f, .36f);
-  Label(ui, d, state.username, {976, 33, 220, 36}, 18, state.gamertag, 0x302b30, 1);
+  ui.Color(d.presentation,state.username_material,0x171517);
+  Label(ui, d, state.username, {976, 33, 228, 34}, 18, state.gamertag, 0xffffff, 2);
   Label(ui, d, state.status, {996, 652, 220, 32}, 14, state.connection, 0xffffff, 2);
   for (auto node : {state.footer,state.bumpers[0],state.bumpers[1]})
     ui.Show(d.presentation,node,false);
@@ -403,7 +421,7 @@ void CarData(Native& ui) {
   const auto current = fh1_current_car::ReadCurrentCar(ui);
   if (!current || (car.bound && current.owned_id == car.owned && current.model_id == car.model))
     return;
-  const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id, car.logo_material, &car.logo_ready);
+  const bool names = fh1_current_car::BindNames(ui, d.presentation, car.name, car.make, current.model_id, car.logo_material, &car.logo_ready,true,&car.logo_fit);
   const bool specs = fh1_current_car::BindPerformance(ui, car.controller, current.owned_id);
   if (!current.thumbnail.empty()) {
     // This operation is synchronous. Retain no host-allocated binding across
@@ -437,14 +455,15 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
   Depth(ui, d, car.name, -3); Depth(ui, d, car.make, -3);
   Depth(ui, d, car.image, -1);
   Point(ui, d, car.image, content.photo.x + content.photo.width / 2,
-        content.photo.y + content.photo.height / 2);
+        content.photo.y + content.photo.height / 2-14);
   ui.Show(d.presentation,car.logo,car.logo_ready);
   if(car.logo_ready){Normalize(ui,d,car.logo);Depth(ui,d,car.logo,-3);
-    Point(ui,d,car.logo,content.name.x+32,content.name.y+23);
-    ui.Scale(d.presentation,car.logo,.72f,.44f);ui.RotationZ(d.presentation,car.logo,0);
+    Point(ui,d,car.logo,content.name.x+32+car.logo_fit.dx,content.name.y+23+car.logo_fit.dy);
+    ui.Scale(d.presentation,car.logo,car.logo_fit.sx,car.logo_fit.sy);ui.RotationZ(d.presentation,car.logo,0);
     ui.Opacity(d.presentation,car.logo,100);ui.Color(d.presentation,car.logo_material,0xffffff);}
   // Keep the native thumbnail's aspect ratio, rather than stretching a car.
-  const float scale = float(std::min(content.photo.width / 608,
+  // The native thumbnail includes a generous transparent frame around the car.
+  const float scale = 1.45f*float(std::min(content.photo.width / 608,
                                      content.photo.height / 289));
   ui.Scale(d.presentation, car.image, scale, scale);
   for (size_t i = 0; i < car.rows.size(); ++i) {
@@ -460,6 +479,9 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
     ui.TextStyle(d.access, d.presentation, car.values[i], 16,
                  float((width - 8) / 1200), .035f, 1);
   }
+  // This authored image branch keeps a fixed vertical extent. Enlarge its
+  // dedicated parent as well, preserving the visible car's proportions.
+  ui.Scale(d.presentation,Read(ui.base,car.image+12),1,1.45f);
 }
 void StockVisibility(Native& ui, bool restore) {
   if (!state.stock_captured) return;
@@ -693,9 +715,9 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       DumpNodes(ui, state.header, "header");
       Release(ui, true); return;
     }
-    valid = state.header.Isolate(ui, {state.header_paper,state.player_bar, state.username, state.username_paper,
+    valid = state.header.Isolate(ui, {state.header_paper,state.player_bar,state.credits_display, state.username, state.username_paper,
         state.status, state.footer, state.bumpers[0], state.bumpers[1]}) && valid;
-    for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title}) && valid;
+    for (auto& tab : state.tabs) valid = tab.donor.Isolate(ui, {tab.paper, tab.title,tab.grain}) && valid;
     for (size_t i = 0; i < state.cards.size(); ++i) {
       auto& card = state.cards[i];
       std::vector<uint32_t> retained{card.paper, card.title};
@@ -827,10 +849,14 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   state.tab_bar.Paint({64, 112, 580, 42}, layout::kTabCapacity,
       [&](size_t slot, fh1_menu_components::Rect r, uint32_t color) {
         auto& tab = state.tabs[slot];
+        tab.donor.Layer(ui,Read(ui.base,state.screen+0x110)+(color==0xff007a?3:2));
         tab.donor.Tick(ui, [&] {
           StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
           ui.Color(tab.donor.presentation, tab.material, color);
           ui.TabShear(tab.donor.presentation,tab.paper,r.w,r.h);
+          Normalize(ui,tab.donor,tab.grain);Point(ui,tab.donor,tab.grain,r.x+r.w/2,r.y+r.h/2);
+          Depth(ui,tab.donor,tab.grain,2);ui.TabShear(tab.donor.presentation,tab.grain,r.w,r.h);
+          ui.Color(tab.donor.presentation,tab.grain_material,0xffffff);ui.Opacity(tab.donor.presentation,tab.grain,18);
         });
       },
       [&](size_t slot, unsigned index, fh1_menu_components::Rect r, float size,

@@ -18,21 +18,20 @@ struct View {
   unsigned category=0;
   std::vector<Row> rows; std::array<Metric,7> metrics{};
   std::string status,help,range; bool dirty=false;
-  bool library=false,keyboard=false;unsigned key=0;std::string entry;
+  bool library=false,keyboard=false,calculating=false,preview_failed=false;unsigned key=0;std::string entry;
   std::vector<std::string> keys;
 };
 class Workspace {
   struct Piece {
-    Donor donor; uint32_t paper=0,ink=0,track=0,fill=0,tick=0,thumb=0; bool panel=false, plain_labels=false;
+    Donor donor; uint32_t paper=0,ink=0,track=0,fill=0,tick=0,thumb=0,grain=0,grain_ink=0;
+    uint32_t badge=0,badge_controller=0;uint64_t badge_value=0;bool badge_ready=false;
+    bool panel=false, plain_labels=false;
     std::vector<uint32_t> text;
   };
   std::array<Piece,22> pieces;
   Donor footer;uint32_t named_model=0;
-  uint32_t class_badge=0,class_controller=0;
   uint32_t manufacturer_logo=0,logo_material=0;
   bool logo_ready=false;
-  bool class_ready=false;
-  uint64_t bound_class=0;
   std::chrono::steady_clock::time_point class_refresh{};
   uint32_t screen=0,engine=0,stock_root=0; uint8_t suppression=0,visibility=0;
   bool ready=false,failed=false;
@@ -103,19 +102,26 @@ class Workspace {
     if(&p==&pieces[20]){
       const auto stats_root=Named(ui,d.root,"CAR_STATS");
       p.text[9]=Named(ui,stats_root,"TEXT_MANUFACTURER");p.text[10]=Named(ui,stats_root,"TEXT_CAR_NAME");
-      class_controller=0;
-      class_badge=Named(ui,stats_root,"CLASS_SM");const auto pi=Named(ui,class_badge,"TEXT_PI");
       manufacturer_logo=Named(ui,stats_root,"LOGO");
       logo_material=Named(ui,manufacturer_logo,"Material_Car_Logo");
+    }
+    if(&p==&pieces[19]||&p==&pieces[20]){
+      p.badge=Named(ui,Named(ui,d.root,"CAR_STATS"),"CLASS_SM");const auto pi=Named(ui,p.badge,"TEXT_PI");
       const auto manager=d.Components(ui);const auto begin=manager?Read(ui.base,manager+0x28):0,end=manager?Read(ui.base,manager+0x2c):0;
       if(begin&&end>=begin&&end-begin<=8192&&(end-begin)%8==0)
         for(auto item=begin;item<end;item+=8){auto controller=Read(ui.base,item+4);
-          if(controller&&Read(ui.base,controller)==0x8207513C&&Read(ui.base,controller+0xA8)==pi)class_controller=controller;}
-      if(!class_badge||!pi||!class_controller||!manufacturer_logo||!logo_material)return false;
+          if(controller&&Read(ui.base,controller)==0x8207513C&&Read(ui.base,controller+0xA8)==pi)p.badge_controller=controller;}
+      if(!p.badge||!pi||!p.badge_controller)return false;
     }
     Uncrop(ui,d,p.ink);Uncrop(ui,d,p.track);Uncrop(ui,d,p.fill);Uncrop(ui,d,p.tick);Uncrop(ui,d,p.thumb);
     auto retain=p.text;retain.insert(retain.end(),{p.paper,p.track,p.fill,p.tick,p.thumb});
-    if(&p==&pieces[20]){retain.push_back(class_badge);retain.push_back(manufacturer_logo);}
+    if(p.badge)retain.push_back(p.badge);
+    if(&p==&pieces[20])retain.push_back(manufacturer_logo);
+    if(&p<&pieces[9]){
+      auto grain=Descendants(ui.base,tape,0x43a6b655);p.grain=grain.empty()?0:grain.front();
+      p.grain_ink=Named(ui,p.grain,"Material90");if(!p.grain||!p.grain_ink)return false;
+      Uncrop(ui,d,p.grain_ink);retain.push_back(p.grain);
+    }
     return d.Isolate(ui,retain);
   }
   void Restore(Native& ui) {
@@ -137,10 +143,9 @@ public:
   void Release(Native& ui) {
     Restore(ui);
     if(parent_root){ui.Call(0x82FEB480,{parent_engine,parent_suppression});GuestPtr(ui.base,parent_root+0xfc)[0]=parent_visibility;parent_root=parent_engine=0;}
-    for(auto& p:pieces){p.donor.Release(ui);p.text.clear();p.paper=p.ink=p.track=p.fill=p.tick=p.thumb=0;}
+    for(auto& p:pieces){p.donor.Release(ui);p.text.clear();p.paper=p.ink=p.track=p.fill=p.tick=p.thumb=p.grain=p.grain_ink=0;p.badge=p.badge_controller=0;p.badge_value=0;p.badge_ready=false;}
     screen=engine=0;ready=failed=false;cache.clear();footer=Donor{};named_model=0;
-    class_badge=class_controller=0;class_ready=false;class_refresh={};
-    bound_class=0;
+    class_refresh={};
     manufacturer_logo=logo_material=0;logo_ready=false;
   }
   void Tick(Native& ui,const View& view) {
@@ -150,7 +155,7 @@ public:
         // Native 82F1F2B0 sorts context*100 + owner layer. Separate the
         // backdrop below the original blur/footer layer, then panel and foreground.
         loaded=p.donor.Poll(ui,screen,[i,&ui](uint32_t,uint32_t controller){
-          return i==20 && controller && Read(ui.base,controller)==0x8207513C;
+          return (i==19||i==20) && controller && Read(ui.base,controller)==0x8207513C;
         },i==21?-1:i==19?1:2)&&loaded;
         failed|=p.donor.status==Donor::Status::Failed;}
       if(failed||std::chrono::steady_clock::now()-started>std::chrono::seconds(12)){failed=true;Release(ui);failed=true;return;}
@@ -174,7 +179,7 @@ public:
     // Each donor contributes isolated artwork and twelve independent text anchors.
     // Hide every unused anchor explicitly, avoiding inherited animated row grids.
     for(auto& p:pieces){for(auto n:p.text)ui.Show(p.donor.presentation,n,false);
-      for(auto n:{p.paper,p.track,p.fill,p.tick,p.thumb})ui.Show(p.donor.presentation,n,false);}
+      for(auto n:{p.paper,p.track,p.fill,p.tick,p.thumb,p.grain})ui.Show(p.donor.presentation,n,false);}
     const auto label=[&](Piece& p,unsigned i,Rect r,float size,const std::string& s,uint32_t c=0xffffff,unsigned a=0){
       ui.Show(p.donor.presentation,p.text[i],true);Text(ui,p,i,r,size,s,c,a);};
     auto& backing=pieces[21];
@@ -188,23 +193,20 @@ public:
     const auto native_name=[&](unsigned index,Rect r,float size){auto n=header.text[index];auto& d=header.donor;
       ui.Show(d.presentation,n,true);Normalize(ui,d,n);ui.Scale(d.presentation,n,1,1);Depth(ui,d,n,-5);
       Point(ui,d,n,index==9?r.x+r.w:r.x,r.y+r.h/2);ui.TextStyle(d.access,d.presentation,n,size,r.w/1200,r.h/720,index==9?2:0);ui.Color(d.presentation,n,0xc9c2c9,true);ui.Opacity(d.presentation,n,100);};
-    heading.Paint([&](Rect r,uint32_t c){Mesh(ui,header,header.paper,r,c,header.ink);},
+    heading.Paint([&](Rect r,uint32_t c){Mesh(ui,header,header.paper,r,c,header.ink);ui.TabShear(header.donor.presentation,header.paper,r.w,r.h);},
       [&](unsigned i,Rect r,float z,const std::string& text,uint32_t color,unsigned align){label(header,i,r,z,text,color,align);},
       [&](Rect make,Rect name,float size){native_name(9,make,size);native_name(10,name,size);
         if(named_model!=view.model_id){fh1_current_car::BindNames(ui,header.donor.presentation,header.text[10],header.text[9],view.model_id);named_model=view.model_id;}});
     ui.Show(header.donor.presentation,manufacturer_logo,false);
-    const auto class_bounds=heading.CurrentClassBounds();
     if(std::chrono::steady_clock::now()>=class_refresh){
-      class_ready=fh1_current_car::BindCurrentClass(ui,class_controller,view.model_id,&bound_class);
+      for(auto i:{19,20}){auto& p=pieces[i];p.badge_ready=fh1_current_car::BindCurrentClass(ui,p.badge_controller,view.model_id,&p.badge_value);}
       class_refresh=std::chrono::steady_clock::now()+std::chrono::seconds(1);
     }
-    label(header,11,{class_bounds.x,class_bounds.y,126,class_bounds.h},12,class_ready?"CURRENT CLASS":"CLASS UNAVAILABLE",0xc9c2c9);
-    ui.Show(header.donor.presentation,class_badge,class_ready);
-    if(class_ready){Normalize(ui,header.donor,class_badge);Depth(ui,header.donor,class_badge,-5);
-      Point(ui,header.donor,class_badge,class_bounds.x+176,class_bounds.y+class_bounds.h/2);
-      ui.Scale(header.donor.presentation,class_badge,.8f,.8f);ui.RotationZ(header.donor.presentation,class_badge,0);}
     view.tabs.Paint({44,120,1192,48},9,
-      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];Mesh(ui,p,p.paper,r,color,p.ink);ui.TabShear(p.donor.presentation,p.paper,r.w,r.h);},
+      [&](size_t slot,Rect r,uint32_t color){auto& p=pieces[slot];p.donor.Layer(ui,Read(ui.base,screen+0x110)+(color==0xff007a?3:2));
+        Mesh(ui,p,p.paper,r,color,p.ink);ui.TabShear(p.donor.presentation,p.paper,r.w,r.h);
+        Mesh(ui,p,p.grain,r,0xffffff,p.grain_ink);Depth(ui,p.donor,p.grain,2);
+        ui.TabShear(p.donor.presentation,p.grain,r.w,r.h);ui.Opacity(p.donor.presentation,p.grain,18);},
       [&](size_t slot,unsigned index,Rect r,float size,const std::string& text,uint32_t color){label(pieces[slot],index,r,size,text,color,1);});
     const auto category=view.tabs.tabs().empty()?std::string{}:view.tabs.tabs()[view.tabs.selected_index()].label;
     Mesh(ui,header,header.track,{48,191,726,36},0x302b30,Named(ui,header.track,"Material100"));
@@ -235,17 +237,20 @@ public:
     Mesh(ui,metrics2,metrics2.paper,{802,195,434,361},0x302b30,metrics2.ink);
     label(metrics,0,{822,203,390,31},21,"PERFORMANCE SIMULATION");
     label(metrics,1,{822,236,390,24},13,view.status,0xc9c2c9);
+    if(view.calculating){label(pieces[16],11,{1188,235,24,24},22,"*",0xff83bf,1);
+      const auto seconds=std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      ui.RotationZ(pieces[16].donor.presentation,pieces[16].text[11],float(std::fmod(seconds*240,360)));}
     label(pieces[17],8,{949,270,119,25},13,"BEFORE",0xc9c2c9,2);label(pieces[17],9,{1080,270,134,25},13,"AFTER",0xff83bf,2);
     // Normalized setup adjustments retain the installed upgrade parts. Their
     // homologated PI is the current native rating on both sides; performance
     // metrics below are evaluated independently on the saved/draft clones.
-    std::string pi="N/A";
-    if(class_ready){ui.ctx.f1.f64=std::bit_cast<float>(uint32_t(bound_class));
-      const auto table=Read(ui.base,0x8352EE3C);
-      if(table)pi=std::to_string(ui.Call(0x82C9F6A0,{table}));}
-    label(pieces[16],8,{821,303,136,29},14,"PI");
-    label(pieces[16],9,{961,303,107,29},15,pi,0xc9c2c9,2);
-    label(pieces[16],10,{1080,303,134,29},15,pi,0xffffff,2);
+    label(pieces[16],8,{821,303,136,29},14,"CLASS / PI");
+    for(unsigned column=0;column<2;++column){auto& p=pieces[column?19:20];
+      const bool show=p.badge_ready&&(!column||!view.preview_failed);ui.Show(p.donor.presentation,p.badge,show);
+      if(show){Normalize(ui,p.donor,p.badge);Depth(ui,p.donor,p.badge,-5);
+        Point(ui,p.donor,p.badge,column?1187:1041,317);ui.Scale(p.donor.presentation,p.badge,.8f,.8f);ui.RotationZ(p.donor.presentation,p.badge,0);}
+      else label(pieces[16],9+column,{column?1080.f:961.f,303,column?134.f:107.f,29},15,"N/A",0xc9c2c9,2);
+    }
     for(unsigned i=0;i<7;++i){auto& p=i<3?metrics:metrics2;unsigned index=i<3?2+i*3:(i-3)*3;
       float y=335+i*29.f;const auto& m=view.metrics[i];
       label(p,index,{821,y,136,29},14,m.label);label(p,index+1,{961,y,107,29},15,m.saved,0xc9c2c9,2);

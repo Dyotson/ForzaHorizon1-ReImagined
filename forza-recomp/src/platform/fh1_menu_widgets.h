@@ -161,6 +161,20 @@ public:
     Call(0x82F3A728, {Binding(presentation, node), scratch});
     Call(0x824CEAB0, {scratch}); return true;
   }
+  // Mirror native localized text without adopting its controller's layout.
+  // 82F3A490 owns the UTF-16 string at text-object+84 (8-unit small buffer).
+  bool CopyText(uint32_t presentation,uint32_t source,uint32_t target,uint64_t& last) {
+    const auto wrapper=source?Read(base,source+4):0;
+    if(!wrapper||Read(base,wrapper+4)!=source||GuestPtr(base,wrapper+0xA)[0]!=5)return false;
+    const auto object=Read(base,wrapper);if(!object)return false;
+    const auto length=Read(base,object+0x94),capacity=Read(base,object+0x98);
+    if(!length||length>240||length>capacity)return false;
+    const auto chars=capacity<8?object+0x84:Read(base,object+0x84);if(!chars)return false;
+    uint64_t hash=14695981039346656037ull;
+    for(unsigned i=0;i<length*2;++i){hash^=GuestPtr(base,chars+i)[0];hash*=1099511628211ull;}
+    if(hash!=last){Call(0x82F3A490,{Binding(presentation,target),chars});last=hash;}
+    return true;
+  }
   bool Scalar(uint32_t presentation, uint32_t node, std::string_view name, float value) {
     if (!node || !presentation || !std::isfinite(value)) return false;
     const auto hash = PropertyHash(name);
@@ -375,6 +389,12 @@ struct Donor {
     status=Status::Ready; SetVisible(ui,false); return true;
   }
   uint32_t Find(Native& ui, std::string_view path) const { return ui.Find(access,root,path); }
+  void Layer(Native& ui,uint32_t layer) {
+    if(!owner||Read(ui.base,owner+0x110)==layer)return;
+    Write(ui.base,owner+0x110,layer);
+    const auto manager=Read(ui.base,0x833CAAC0);
+    if(manager)GuestPtr(ui.base,manager+0x5D)[0]=1;
+  }
   void SetVisible(Native& ui, bool show) {
     visible=show && Ready();
     if (render_root) GuestPtr(ui.base,render_root+0xFC)[0]=uint8_t(visible);

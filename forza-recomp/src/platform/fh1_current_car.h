@@ -4,6 +4,7 @@
 
 #include "guest_addr.h"
 #include "guest_memory.h"
+#include "fh1_logo_layout.h"
 #include <cstdint>
 #include <cstring>
 #include <cmath>
@@ -69,8 +70,10 @@ bool BindCurrentClass(UI& ui,uint32_t controller,uint32_t expected_model,uint64_
 template <typename UI>
 bool BindNames(UI& ui, uint32_t presentation, uint32_t model_node,
                uint32_t manufacturer_node, uint32_t model_id,
-               uint32_t logo_material=0, bool* logo_bound=nullptr) {
+               uint32_t logo_material=0, bool* logo_bound=nullptr, bool large_logo=false,
+               fh1_logo_layout::Fit* logo_fit=nullptr) {
   if (logo_bound) *logo_bound=false;
+  if(logo_fit)*logo_fit={};
 #if FORZA_TU4
   if (!presentation || !model_id || (!model_node && !manufacturer_node))
     return false;
@@ -137,7 +140,12 @@ bool BindNames(UI& ui, uint32_t presentation, uint32_t model_node,
       path.push_back(char(c));
     }
     ui.Call(0x82441428,{key,1,0});
-    // Use the database's standard logo resource, never the donor's default.
+    // Fit the artwork inside the larger texture's transparent canvas. Brands
+    // without a native LG resource retain their original database image.
+    if(large_logo){const auto folder=path.find("Manufacturer_Logos_I");
+      if(folder!=std::string::npos)if(const auto fit=fh1_logo_layout::Large(path)){
+        path.replace(folder,20,"Manufacturer_Logos_LG");if(logo_fit)*logo_fit=*fit;}}
+    // Use the database's logo resource, never the donor's default.
     if (!path.empty() && path.size()<512) {
       const auto binding=temporary+48;
       ui.Call(0x82664A38,{binding});

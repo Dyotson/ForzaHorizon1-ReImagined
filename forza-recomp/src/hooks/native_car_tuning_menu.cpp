@@ -620,7 +620,10 @@ void DrawWorkspace(UI& ui) {
     view.metrics[i]={Utf8(labels[i]),format(form.saved_metrics_ready?form.saved_metrics[i]:form.preview_is_saved?form.preview.metrics[i]:form.saved_preview.metrics[i],!form.saved_metrics_ready && (form.preview_is_saved?form.preview.failed:form.saved_preview.failed)),format(form.preview.metrics[i],form.preview.failed)};
   }
   auto units_label=Utf8(FormatUnit(ui,{13,0},26.8224f));auto space=units_label.find(' ');
-  view.status=std::string(form.preview.failed?"UNAVAILABLE":form.preview.complete?"READY":"CALCULATING")+"  |  Tests in "+(space==std::string::npos?units_label:units_label.substr(space+1));
+  view.calculating=(!form.preview.complete&&!form.preview.failed)||
+      (!form.saved_metrics_ready&&form.saved_preview.model&&!form.saved_preview.complete&&!form.saved_preview.failed);
+  view.preview_failed=form.preview.failed||!form.edit.open();
+  view.status=std::string(form.preview.failed?"UNAVAILABLE":view.calculating?"CALCULATING":"READY")+"  |  Tests in "+(space==std::string::npos?units_label:units_label.substr(space+1));
   view.help=form.visible.empty()?"Install adjustable parts to unlock this category.":std::string(kFields[form.visible[std::min<size_t>(form.selected,form.visible.size()-1)]].label)+": "+kCategoryHelp[form.category];
   if(!form.visible.empty() && form.edit.open()){
     auto field=Field(form.visible[std::min<size_t>(form.selected,form.visible.size()-1)]);const auto& range=*form.edit.schema()[size_t(field)];
