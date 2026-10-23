@@ -109,6 +109,11 @@ void LiveStatsRows(const uint8_t* body, size_t size);
 // game (hooks/world_drop_in.cpp).
 int OnlineGameIsHost();
 
+// The machine slept for `seconds` (src/platform/resume.cpp, #140): sign in to the Forza Live
+// server again now, as it forgets a player it has not heard from for 30 s. (A game that was
+// stopped is noticed by the network thread itself: it did not run either.)
+void LiveResumed(double seconds);
+
 // Called by the network thread when the roster changed (live_xmsg.cpp): tells the
 // game its friends' presence changed, or that friends came or went.
 void LiveRosterChanged(bool membership_changed);

@@ -127,7 +127,7 @@ class ProxyTest(unittest.TestCase):
         a = self.join((PROXY, 40001), 1)
         self.join(("203.0.113.9", 5555), 2)
         big = srv.MAGIC + bytes([srv.BROADCAST]) + b"\0\0\0\0" + bytes(1400)
-        for _ in range(600):
+        for _ in range(srv.RATE_BURST // len(big) + 50):  # the burst, then over it
             self.server.datagram_received(big, a.addr)
         self.assertGreater(self.server.dropped_packets, 0)
 

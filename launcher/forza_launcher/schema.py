@@ -9,10 +9,13 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
-from . import gamertag
+from . import gamertag, power
 from .paths import IS_WINDOWS
 
 GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+# The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
+# 120 Hz screens, so every frame stays on screen for the same number of refreshes.
+LOW_FRAME_RATES = (20, 30, 40)
 
 
 @dataclass
@@ -52,10 +55,17 @@ def add(*a, **k):
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
-    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS.", "Frame rate")
+    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
+    "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
+add("battery_saver", "Battery saver", "Display", "choice", "off",
+    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off), the "
+    "lightest settings, without changing yours: they apply again at the next start on mains "
+    "power. Auto applies it when a Steam Deck runs on its battery as the game starts.",
+    "Frame rate", choices=list(power.MODES), platform="linux", restart=True)
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
 add("video_mode_refresh_rate", "Guest refresh rate (Hz)", "Display", "float", 0.0,
@@ -242,6 +252,12 @@ add("wheel_mode", "Racing wheel", "Controls", "choice", "auto",
     "Auto: a controller SDL reports as a wheel (or named like one) is used as the 360 racing "
     "wheel. On: every controller without a gamepad mapping counts as a wheel.", "Racing wheel",
     choices=[("auto", "Auto"), ("on", "On"), ("off", "Off")], restart=True)
+# The primary wheel (patch 0134, #306).
+add("wheel_device", "Wheel device", "Controls", "str", "",
+    "The wheel the first player drives with, and the one pedals, a shifter or a handbrake on their "
+    "own USB device are read with. Empty picks one with force feedback first (a wheel base before "
+    "a vJoy or button box); a device name as Bindings lists it (Use as the wheel), SDL GUID or "
+    "vid:pid picks that one, and makes it a wheel.", "Racing wheel", restart=True)
 add("wheel_rotation", "Wheel rotation (degrees)", "Controls", "int", 900,
     "Lock to lock, as set in the wheel's own driver.", "Racing wheel", lo=90, hi=2520, step=10)
 add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
@@ -274,7 +290,8 @@ add("wheel_brake_curve", "Brake curve", "Controls", "float", 1.0,
 add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty uses the built-in profile of a "
     "known Logitech wheel (G25, G27, G29, G920, G923, Driving Force GT), else detects them from "
-    "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
+    "where each axis rests when the wheel is plugged in (pedals released). handbrake=3 reads an "
+    "analog handbrake plugged into the wheel (99: none).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
     "left=14,right=15. The hat is the d-pad unless a direction is set here (-1 turns it off). "
@@ -291,6 +308,17 @@ add("wheel_pedal_axes", "Pedal device axes", "Controls", "str", "",
     "Axis numbers on the pedal device, e.g. throttle=0,brake=1,clutch=2. Empty uses known pedals' "
     "layout, else detects them from where each axis rests when the game starts (pedals "
     "released).", "Racing wheel")
+# An analog handbrake (patch 0133, #303): the game's 360 wheel handbrake axis, next to the B button.
+add("wheel_handbrake_device", "Handbrake device", "Controls", "str", "",
+    "An analog handbrake on its own USB device, read with the wheel. Empty finds known handbrakes "
+    "(Simagic TB-1 and TB-RS, Fanatec ClubSport Handbrake, Thrustmaster TSS) or a device named "
+    "like one; a device name as Bindings lists it picks one (also the pedal or shifter device); "
+    "none reads none. Binding the Handbrake row by pulling the handbrake sets it.",
+    "Racing wheel")
+add("wheel_handbrake_axis", "Handbrake device axis", "Controls", "int", 0,
+    "The handbrake's axis number on the handbrake device.", "Racing wheel", lo=0, hi=99)
+add("wheel_invert_handbrake", "Invert handbrake", "Controls", "bool", False,
+    "Turn on when the analog handbrake works backwards.", "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "The game's own wheel forces: the car's steering force, a centring spring that grows with "
     "speed, a light damper, and its rumble as a vibration. They fade out while you are not "
@@ -301,6 +329,12 @@ add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
     "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+# A minimum steering force (patch 0131, #303).
+add("wheel_ffb_min_strength", "Minimum force (%)", "Controls", "int", 0,
+    "Gives a light car some weight in the wheel: the game's steering forces weaker than this share "
+    "of the full force are scaled up (smoothly, up to 4 times near the centre), stronger ones stay "
+    "as they are. 0 is off. Try 10 to 30. The centring spring and the rumble do not change.",
+    "Racing wheel", lo=0, hi=100, step=5)
 add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100,
     "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
     "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
@@ -342,6 +376,12 @@ add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
 add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
     "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
     lo=0.1, hi=1, step=0.05)
+# H-pattern: the lever's slot, or gears on lever moves (patch 0132, #303).
+add("wheel_shifter_follow_slot", "Gear follows the lever's slot", "Controls", "bool", True,
+    "H-pattern. On (default, as on the Xbox): the game takes the gear the lever sits in whenever it "
+    "sets the gear itself, at race and event starts and finishes. Off, for switching to the "
+    "paddles: a gear engages only when the lever moves into a slot or out to neutral, so the "
+    "paddles keep the gear they chose and a race start keeps the game's.", "Shifter and clutch")
 # A shifter on its own USB device (patch 0128, #272): read with the wheel.
 add("wheel_shifter_device", "Shifter device", "Controls", "str", "",
     "A shifter on its own USB device, read with the wheel. Empty finds known shifters (Simagic "
@@ -478,15 +518,25 @@ add("video_mode_width", "Guest video width", "Advanced", "int", 1280,
 add("video_mode_height", "Guest video height", "Advanced", "int", 720,
     "Overridden by the resolution preset.", "GPU", lo=480, hi=4095, restart=True)
 
+# Launcher only (never written to forza.toml): see shader_share.py, #276.
+add("share_shader_list", "Share shader list", "Online", "bool", True,
+    "After a game session, send the shader hashes and render settings from your pipeline cache to the "
+    "server you play on (the public server or your own), once per entry. No game data and nothing "
+    "personal is sent, only pipeline descriptions: which shaders were used and how. The server publishes "
+    "the entries several players reported, and Prebuild shaders builds that list from your own game files, "
+    "so new places and cars stop compiling shaders while you drive. Nothing is sent offline or to a "
+    "server on this PC.", "Shader prebuild")
 # Discord status display is opt-in. The application ID is public maintainer setup,
 # separated from the ordinary sharing switch. Never request a token or secret.
-add("discord_presence", "Share activity on Discord", "Online", "bool", False,
+add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
-    "Requires a Discord application ID in Advanced. Applies on the next game launch.", "Discord",
+    "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "
+    "Applies on the next game launch.", "Discord",
     restart=True)
-add("discord_application_id", "Discord application ID", "Advanced", "str", "",
-    "One-time Rich Presence setup: the public numeric Application ID from the Discord Developer Portal. "
-    "Leave empty to disable the connection. Never enter a bot token or client secret.", "Discord setup",
+add("discord_application_id", "Discord application ID", "Advanced", "str", "1563015276583460934",
+    "The public Application ID Discord shows as the game (the project's own, set by default). "
+    "Change it only to use another Discord application; empty disables the connection. "
+    "Never enter a bot token or client secret.", "Discord setup",
     restart=True)
 
 BY_KEY = {s.key: s for s in S}
@@ -510,7 +560,11 @@ def coerce(setting, value):
         if setting.kind in ("int", "fps"):
             v = int(float(value))
             if setting.kind == "fps":    # 0 = Match display, resolved by the launcher at launch
-                return 0 if v == 0 else 30 if v < 60 else min(v, 240)
+                if v == 0:
+                    return 0
+                if v < 60:    # below 60 the game runs 20, 30 or 40: the highest not above v
+                    return max([r for r in LOW_FRAME_RATES if r <= v], default=LOW_FRAME_RATES[0])
+                return min(v, 240)
             lo = -(10 ** 9) if setting.lo is None else int(setting.lo)
             hi = 10 ** 9 if setting.hi is None else int(setting.hi)
             return max(lo, min(hi, v))

@@ -475,6 +475,8 @@ void HudClear() {
   if (hud) hud->Clear();
 }
 
+bool HudReady() { return hud != nullptr; }
+
 void HudWantKeys(bool on) {
   if (hud) hud->WantKeys(on);
 }

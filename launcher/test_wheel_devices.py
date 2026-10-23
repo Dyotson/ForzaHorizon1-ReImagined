@@ -97,6 +97,19 @@ class SettingsMatchTheSdk(unittest.TestCase):
 
 
 class Detection(unittest.TestCase):
+    def test_vjoy_name_across_sdl_backends(self):
+        wheel = dev("FANATEC Wheel", 0x0EB7, 0x0020, sdl_wheel=True)
+        vjoy = dev("Shaul Eizikovich vJoy - Virtual Joystick", 0x1234, 0xBEAD)
+        self.assertEqual(b.device_match("vJoy Device", vjoy), 2)
+        self.assertEqual(b.device_match("vJoy Device", wheel), 0)
+        self.assertEqual(b.device_match("vJoy Device", dev(vjoy.name, 0x1234, 1)), 0)
+        s = settings(wheel_pedal_device="vJoy Device", wheel_shifter_device="vJoy Device",
+                     wheel_handbrake_device="vJoy Device")
+        pick = b.pick_aux([wheel, vjoy], s)
+        self.assertEqual((pick.pedals, pick.shifter), (1, 1))
+        self.assertEqual(b.pick_handbrake([wheel, vjoy], s), 1)
+        self.assertEqual(b.primary_wheel([vjoy, wheel], s), 1)
+
     def test_roles(self):
         self.assertEqual(b.detect_aux_role(0x0483, 0x0525, ""), "pedals")
         self.assertEqual(b.detect_aux_role(0x0EB7, 0x1A92, ""), "shifter")
@@ -182,7 +195,9 @@ class Bindings(unittest.TestCase):
         ch = b.set_row_on_wheel(s, ACT["gear2"], 13, AUX)
         self.assertEqual(ch, {"wheel_shifter_buttons": "2=13", "wheel_shifter_device": "none"})
         self.assertEqual(set(b.RESET_ALL_WHEEL), {"wheel_axes", "wheel_buttons",
-                                                  "wheel_shifter_buttons", *KEYS})
+                                                  "wheel_shifter_buttons", *KEYS,
+                                                  "wheel_handbrake_device", "wheel_handbrake_axis",
+                                                  "wheel_invert_handbrake"})
 
     def test_conflicts_per_device(self):
         # Button 0 is A on the wheel and reverse on the DS-8X: no conflict, other devices; gears 1

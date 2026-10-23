@@ -24,20 +24,21 @@ REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
 std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
 
 // The game's vblank callback wakes its main loop every second guest vblank (every vblank
-// with its mainthread30fps option off), and the main loop times its simulation in real
-// time, so the frame rate follows the guest vblank rate. Above 30 the frame time comes from
-// the guest tick clock instead of the kernel's millisecond tick (src/hooks/frame_time.cpp,
-// docs/framerate.md).
+// with its mainthread30fps option off, every third at 20 and 40 fps), and the main loop
+// times its simulation in real time, so the frame rate follows the guest vblank rate. Away
+// from 30 the frame time comes from the guest tick clock instead of the kernel's millisecond
+// tick (src/hooks/frame_time.cpp, docs/framerate.md).
 REXCVAR_DEFINE_INT32(frame_rate, 30, "Display",
-                     "Frame rate: 30 (the console's), or 60 to 240 (60, 120, 144, ...). The "
-                     "game times its simulation in real time (docs/framerate.md)")
+                     "Frame rate: 30 (the console's), 20 or 40 (even frames on 60 and 120 Hz "
+                     "screens for PCs that cannot hold 30 or 60), or 60 to 240 (60, 120, 144, "
+                     "...). The game times its simulation in real time (docs/framerate.md)")
     .validator([](std::string_view v) {
       int fps = 0;
       for (char c : v) {
         if (c < '0' || c > '9' || fps > 1000) return false;
         fps = fps * 10 + (c - '0');
       }
-      return fps == 30 || (fps >= 60 && fps <= 240);
+      return fps == 20 || fps == 30 || fps == 40 || (fps >= 60 && fps <= 240);
     })
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
 
@@ -72,10 +73,10 @@ void ApplyForzaCvarDefaults() {
   // flip model shows the newest finished frame at each refresh instead.
   SetSdkCvarDefault("d3d12_allow_variable_refresh_rate_and_tearing", "false");
 #endif
-  // frame_rate above 30: the guest vblank at twice the frame rate, or at the frame rate when
-  // twice is past the SDK's limit (src/hooks/frame_time.cpp). A video_mode_refresh_rate set
-  // in forza.toml or on the command line wins.
-  if (REXCVAR_GET(frame_rate) > 30) {
+  // frame_rate other than 30: the guest vblank at three times 20 or 40, twice a higher frame
+  // rate, or the frame rate when twice is past the SDK's limit (src/hooks/frame_time.cpp). A
+  // video_mode_refresh_rate set in forza.toml or on the command line wins.
+  if (REXCVAR_GET(frame_rate) != 30) {
     SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
   }
 }

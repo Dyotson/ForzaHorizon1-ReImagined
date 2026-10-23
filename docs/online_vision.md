@@ -169,6 +169,10 @@ next round is the server's choice). Players (host or not) can QUIT at any time.
   (`the game made us the host of the session we joined`, server: `DriverB is now the
   game's host of ...`), and A was placed into B's world. With three players: see "Three
   players" below.
+- A host whose game was closed stays registered until it times out (30 s); the game moves
+  the host after about 16 s. A session that a member reports to host (op 4) is then no
+  longer advertised under the player that published it, and the latest member to report
+  it leads (`server/forza_world_host.py`; see "Three and four players").
 - `XSessionMigrateHost` (0xB001E) is handled anyway (the SDK left the info untouched): the
   new host gets its own address in the info and publishes the session as its own.
 
@@ -647,6 +651,9 @@ of the first run), hence X is taken from the game only with a car ahead.
   follow-up: a server test option for one fixed destination (a point on the Millennia path,
   which autodrive can follow from the festival) or an image-based follower of the minimap's
   green GPS line (the minimap is a perspective view, heading up, the route green).
+  A circuit has its own AI route now (`tools/track_path.py`, #13: Cat & Mouse driven to its
+  end, `docs/title_services.md`); a landmark needs a chain of road routes (`route_NNN.owt`,
+  as the opening drive in `docs/rendering.md` follows two of them).
 
 - Not tested with real driving to a landmark: scripted driving goes straight and hits
   the festival's barriers (in the first run A was stuck against the grandstand). The
@@ -789,7 +796,62 @@ Open questions, to fill in as the reverse engineering finds them:
 - XAM app 0xFE message `0x2B003` is sent once when the single-player game starts
   (Xenia answers success, "Games used in: 4D5309C9").
 
-## Three players (#12, checked 2026-10-16)
+## Three and four players (#12)
+
+### Checked 2026-10-22: four games
+
+Method: four TU4 games (DriverA-D: copies of one Xenia save, each with its own
+`XDG_DATA_HOME` and `live_identity.txt`), headless gamescope at 960x540 and 30 fps (D at 144
+for the relay), all through the server's relay (`FORZA_SERVER_RELAY=1`), against a local
+server (`--world-event-laps 1`; for the challenges `--challenge-range 3000
+--challenge-any-direction --challenge-test-finish 60 --challenge-finish-radius 20`).
+
+| Check | Result |
+| --- | --- |
+| Placement and JUMP IN for the 3rd and 4th player | Pass. C was placed `(2/8)`, D `(3/8)`, both pressed JUMP IN, and all four drove in the world with the other three in the HUD list (`screenshots/2026-10-22_world_4_players.jpg`). B and C picking Horizon World in the same second were both placed into D's new world. |
+| The host leaves with three others | Pass in the game, fixed on the server. The game made B its host 16 s after A's game was closed (`is now the game's host`); B, C and D kept driving, B with the host's HUD. But a gone host stays registered until it times out (30 s), and a searcher in that time was placed with its record: D searched 0.1 s after C became the host of a world whose standby host B had been closed, was sent to B (`first ... from #2950 'DriverB'`), the join failed and D opened a world of its own. Fixed (below); after the fix, B and later A searched less than a second after the game's new host took over (once after a standby host was closed, once after the player that had published the world), were placed with the new host and jumped in. |
+| A world event with 3 humans | Pass, led by the standby host B: the 30 s wait lobby (INTERMISSION, 3 humans and 5 CPU drivers, 1 lap), `3 human(s) of 8: CPU drivers Medium` (server: `AI Medium`), the grid and the race with 8 cars, the results, and the same world's free roam again (`screenshots/2026-10-22_world_event_race_3_humans.jpg`). Also with 4 humans: 4 CPU drivers, Medium, each console running one. |
+| Joining during an event race | A, placed into the world during the race, waited (GAME IN PROGRESS, WAITING FOR PLAYERS TO FINISH GAME) and came into the free roam with the others after it. Seen: the host's AI fill ran at A's join and one CPU car left the running race (PLACE x/8 became x/7). |
+| Head-to-head with others nearby | Pass, two at once in a world of four: D challenged A and B challenged C 2 s apart; both accepted, both races ran (countdown, GPS route) and ended (`C wins in 0:13.7`, `D wins in 1:03.5`), and nobody else got a prompt (`screenshots/2026-10-22_world_4_players_two_h2h.jpg`). A challenge not answered in 10 s expired. |
+| Server restart with four in a world | Pass: `restored 4 player(s)`, the world with its 4 humans and its host. |
+| Relay budget | Nothing dropped in any run. Measured below; the budget is raised for 240 fps. |
+
+What the server relayed per player (payload, KB/s, over 17-25 s):
+
+| Case | Per sender | Per peer | Bytes per datagram |
+| --- | --- | --- | --- |
+| 3 players, free roam, 30 fps | 5.9 | 3.0 | 100 |
+| 4 players, free roam, 30 fps | 8.9 | 3.0 | 100 |
+| 4 players, free roam, D at about 120 fps | D 36.6 | 12.2 | 100 |
+| 4 players, event race (4 CPU drivers), 30 fps | 17.5-17.8 | 5.9 | 192 |
+| 4 players, event race, D at about 140 fps | D 81.2 | 27.1 | 192 |
+| 4 players, the event's wait lobby | 0.4-1.5 | | |
+
+A game sends each peer about one datagram a frame, about 100 bytes per car it runs: its own
+car, and in an event its share of the CPU drivers (one each with four humans and four CPU
+drivers). Driving or standing made no difference. So a player in a full world of 8 (7 peers,
+one car each) makes the server send about 7 x fps x 108 bytes (with the relay header): 22 KB/s
+at 30 fps, 106 KB/s at 144, 181 KB/s and 1680 datagrams a second at 240. The old limits (160
+KB/s per player, 1500 datagrams/s per address) held up to about 200 fps; the defaults are now
+256 KB/s (`--rate-limit`) and 2500 datagrams/s. Only players without a direct path to each
+other use the relay. D, set to 144, ran at 115-140 fps with four games (and two more) on this
+8-core machine.
+
+Fixed (server, `server/forza_world_host.py`): a session that one of its members reports to
+host (op 4) is no longer the session of the player that published it, and among the members
+that report it, the latest to become the host leads. Searchers and world events reach that
+player at once instead of after the gone host's timeout. Left: the game itself takes about
+16 s to notice that its host is gone; a player who searches in that time is still placed with
+the gone host, fails to join and opens a world of its own.
+
+Tests: `server/test_forza_world_players.py` (a closed host's record and two hosts in a row
+give way to the game's latest host, a claim in another world changes nothing, a minute of a
+full world at 240 fps through the relay loses nothing).
+
+Not checked: 5 to 8 players (this machine holds four games), a grid full of humans starting
+early, a player at 240 fps.
+
+### Checked 2026-10-16: three games
 
 Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_HOME` each,
 30 fps, scale 1) against a local server (`--world-event-laps 1`). Public server, last 24 h of
@@ -818,6 +880,25 @@ Method: three TU4 games (DriverA, B, C; copies of one Xenia save, own `XDG_DATA_
   "Server restart" below), 4 to 8 players, 144 fps with three players.
 - `server/test_forza_world_players.py`: placement of the third player, fullest world first,
   full worlds not offered, the standby host after the host left, AI level per human count.
+
+## A game that went silent (#140)
+
+A suspended Steam Deck, or a game process stopped for a while, sends no HELLO; the server
+drops it after `PEER_TIMEOUT` (30 s). Before, its next HELLO registered it under a NEW id
+(log: `leave #479 (timed out)`, then `join #480`; the game: `lost the server ...;
+reconnecting`, `server error 1: not registered`, `signed in ... (player #480)`), so its
+XNADDR changed under the session it hosted, as after a restart without the state file
+(below). Now the server keeps the token, XUID and id of a player it dropped for silence
+(`GONE_KEEP`, 12 hours, at most 5,000) and gives the id back when that token and XUID say
+HELLO again, from any address (`back  #479`); the id is not handed to anyone else
+meanwhile. A player that said BYE, a new game process (new token) or another XUID gets a
+new id. The game says HELLO at once instead of within 5 s when its network thread did not run
+for 2 s or more (the game was stopped) or, on Linux, when `src/platform/resume.cpp` finds that
+the machine slept: `FORZA_LIVE: back after 45 s; signing in to ... again`, then `signed in ...
+(player #484)` with the same id. Tested with a hosted Horizon World on a local server, the game
+stopped (SIGSTOP) for 10 s, 45 s and 2 minutes: after the two that outlasted the timeout the
+server logged `back  #484` and had the world's record again at once (same session, 1/8), and
+the game drove on in the world. `server/test_forza_live_resume.py`.
 
 ## Server restart in a lobby or a world (#93)
 

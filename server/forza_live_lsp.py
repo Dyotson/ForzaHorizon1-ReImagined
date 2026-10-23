@@ -41,10 +41,12 @@ import urllib.parse
 
 import forza_clubs as clubs
 import forza_limits as limits
+import forza_leaderboards as leaderboards
 import forza_market as market
 import forza_notifications as notifications
 import forza_photos as photos
 import forza_scores as scores
+import forza_shader_lists as shader_lists
 import forza_stats as stats
 import forza_world as world
 import forza_xtsw as x
@@ -167,6 +169,8 @@ def configure(args):
     clubs.configure(DATA_DIR, load_player)
     notifications.configure(DATA_DIR)
     photos.configure(DATA_DIR)
+    shader_lists.configure(DATA_DIR)
+    leaderboards.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -304,7 +308,10 @@ def online_profile_update_all(xuid, body):
     for key in ("onlineXP", "onlineWristbandLevel"):
         if key in profile:
             profile[key] = max(profile[key], stored.get(key, 0))
+    # An upload carries only the tables that changed: after a Playground Games round without
+    # credits won there is no playerHistory, and the stored credits read 0 (#13).
     if profile:
+        profile = dict(stored, **profile)
         if profile != record.get("profile"):
             log.info("title: profile %016X: level %d, online XP %d (wristband %d), %d online "
                      "races, %d credits", xuid, profile.get("level", 0),
@@ -623,6 +630,14 @@ def handle(server, method, path, headers, body, peer):
                  headers.get("x-method", "?"), len(body))
         return 200, "bin/xtsw", service_call(headers, body, server)
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
+    if url.path.startswith("/shader-lists"):  # players' shader lists (forza_shader_lists.py)
+        answer = shader_lists.handle(server, method, path, headers, body)
+        if answer is not None:
+            return answer
+    if url.path.startswith("/leaderboards"):  # public leaderboards as JSON (forza_leaderboards.py)
+        answer = leaderboards.handle(method, path)
+        if answer is not None:
+            return answer
     if url.path in ("/notify", "/gift"):
         query = urllib.parse.parse_qs(url.query)
         if not is_admin(peer, headers, query):

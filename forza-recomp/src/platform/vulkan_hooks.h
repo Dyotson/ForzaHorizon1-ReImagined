@@ -2,8 +2,9 @@
 // call Vulkan through it).
 //
 // Always: every swapchain creation logs the present mode it uses and the ones the surface
-// offers. With RECOMP_PERF (src/debug/frame_stats.h): host presents and pipeline creations
-// are timed and counted.
+// offers, and at 20 and 40 fps each guest frame's host present is paced
+// (frame_time::PresentDelayNs). With RECOMP_PERF (src/debug/frame_stats.h): host presents
+// and pipeline creations are timed and counted.
 
 #pragma once
 

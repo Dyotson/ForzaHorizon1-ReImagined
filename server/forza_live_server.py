@@ -34,6 +34,7 @@ import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
 import forza_world as world
+import forza_world_host as world_host
 
 MAGIC = b"RLV1"
 VERSION = 1
@@ -65,6 +66,11 @@ SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange
 MAX_PRESENCE_EXTRA = 1024
 
 PEER_TIMEOUT = 30.0  # seconds without a HELLO before a peer is dropped
+# A player dropped for silence whose game says HELLO again with its token and XUID gets its id
+# back for this long (#140: a Steam Deck that slept, a game that was stopped): its XNADDR, the
+# session it hosts and the others' view of it stay the same. At most GONE_MAX are kept.
+GONE_KEEP = 12 * 3600.0
+GONE_MAX = 5000
 # A restarting server keeps its players (#93): registrations are written to
 # DATA_DIR/live_state.json when they change, every STATE_REFRESH seconds and on shutdown,
 # and loaded again if the file is at most STATE_MAX_AGE seconds old.
@@ -74,9 +80,12 @@ STATE_REFRESH = 30.0
 STATE_VERSION = 1
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
-# once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
-# a few times that. Defaults to 160 KB/s with 640 KB bursts (--rate-limit).
-RATE_LIMIT = 160 * 1024
+# once per recipient). Measured through the relay (#12): a game sends each peer one
+# datagram a frame of about 100 bytes per car it runs (its own, and in an event its share
+# of the CPU drivers), so a full world of 8 costs a player about 7 x fps x 108 bytes with
+# the relay header: 106 KB/s at 144 fps, 181 KB/s at 240. Defaults to 256 KB/s with 1 MB
+# bursts (--rate-limit).
+RATE_LIMIT = 256 * 1024
 RATE_BURST = 4 * RATE_LIMIT
 
 
@@ -88,7 +97,8 @@ MAX_ROOM = 64
 MAX_MOTD = 64  # keeps the WELCOME about as large as the HELLO that asks for it
 # Limits against abuse from the internet (every datagram is untrusted):
 MAX_PEERS_PER_IP = 16  # registered players behind one public address (a LAN, a CGNAT)
-PACKETS_PER_IP = (1500, 3000)  # datagrams/s and burst accepted from one address
+# datagrams/s and burst accepted from one address (a player in a world of 8 at 240 fps: 1680/s)
+PACKETS_PER_IP = (2500, 5000)
 HELLOS_PER_IP = (2, 20)  # new registrations/s and burst from one address
 ERRORS_PER_IP = (2, 10)  # "not registered" replies/s and burst to one address
 
@@ -172,6 +182,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.state_dirty = False
         self.state_saved = 0.0  # monotonic time of the last write
         self.restored = set()  # ids of players loaded from the state file, not heard from yet
+        self.gone = {}  # token -> (id, xuid, monotonic time): players dropped for silence
         self.friends = friends.Friends(self)
         self.chat = chat.Chat(self, self.friends.store)
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
@@ -280,18 +291,23 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return
             if not take(self.hello_buckets, key, HELLOS_PER_IP):
                 return
-            while self.next_id in self.peers or self.next_id == 0:
+            back = self.take_gone(token, xuid)
+            if back is None:
+                reserved = {pid for pid, _, _ in self.gone.values()}
+                while self.next_id in self.peers or self.next_id == 0 or self.next_id in reserved:
+                    self.next_id = (self.next_id + 1) & 0xFFFFFF
+            peer = Peer(back if back is not None else self.next_id, addr, token, xuid, name, room,
+                        (local_ip, local_port))
+            if back is None:
                 self.next_id = (self.next_id + 1) & 0xFFFFFF
-            peer = Peer(self.next_id, addr, token, xuid, name, room, (local_ip, local_port))
-            self.next_id = (self.next_id + 1) & 0xFFFFFF
             peer.proxied = proxied
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
             self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
             self.state_dirty = True
-            log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s", peer.id, name,
-                     xuid, room, addr[0], addr[1], u32_to_ip(local_ip), local_port,
-                     " via proxy" if proxied else "")
+            log.info("%s  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s",
+                     "join" if back is None else "back", peer.id, name, xuid, room, addr[0],
+                     addr[1], u32_to_ip(local_ip), local_port, " via proxy" if proxied else "")
         peer.seen = time.monotonic()
         self.restored.discard(peer.id)
         if ((peer.name, peer.xuid, peer.room, peer.local, peer.features) !=
@@ -464,15 +480,17 @@ class ForzaLive(asyncio.DatagramProtocol):
     # Standby records: a player in a session someone else hosts publishes it with its own
     # address as the host (op 2). Forza's game picks a new host among the remaining
     # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
-    # session id any more, its standby records stand in for it: searchers get the record
-    # of the member the game made its host (the client sees the game's host flag and
-    # sends op 4 instead of op 2), else of the oldest remaining member, with the number of
-    # members as the filled slots.
+    # session id any more (or a member reports to host it: a host whose game closed stays
+    # registered until it times out), its standby records stand in for it: searchers get
+    # the record of the member the game made its host (the client sees the game's host
+    # flag and sends op 4 instead of op 2; the latest one), else of the oldest remaining
+    # member, with the number of members as the filled slots (forza_world_host.py).
 
     def standby_sessions(self, src, key):
         """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
-        hosted = {p.match[1][:8] for p in self.peers.values()
-                  if p.room == src.room and getattr(p, "match", None)}
+        room = [p for p in self.peers.values() if p.room == src.room]
+        hosted = {p.match[1][:8] for p in room if getattr(p, "match", None)}
+        hosted -= world_host.taken_over(room, key)
         groups = {}
         for p in self.room_peers(src):
             standby = getattr(p, "standby", None)
@@ -483,7 +501,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, members in groups.items():
             if own and own[1][:8] == sid:
                 continue  # the searcher is in it already
-            members.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            members.sort(key=world_host.lead_order)
             record = bytearray(members[0].standby[1])
             if len(record) >= SESSION_INFO_SIZE + 4:
                 record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
@@ -502,6 +520,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 if host != getattr(peer, "standby_host", False):
                     log.info("match #%d %r %s the game's host of %s", peer.id, peer.name,
                              "is now" if host else "is no longer", body[5:13].hex())
+                world_host.note_host(peer, host)
                 peer.standby_host = host
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
@@ -539,9 +558,11 @@ class ForzaLive(asyncio.DatagramProtocol):
         # The client answers the game once the last datagram is in.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
+        stale = world_host.taken_over([peer] + self.room_peers(peer), key)
         found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
                  if getattr(p, "match", None) and p.match[0] == key
-                 and not (own and own[0] == key and p.match[2] >= own[2])]
+                 and not (own and own[0] == key and p.match[2] >= own[2])
+                 and p.match[1][:8] not in stale]
         found += self.standby_sessions(peer, key)
         found = [f for f in found if self.match_slots(f[1])[1] > 0]
         found.sort(key=lambda f: (-self.match_slots(f[1])[0], f[2]))
@@ -589,9 +610,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         whose host left is led by its standby host (see standby_sessions)."""
         key = lsp.WORLD_HOPPER
         worlds = {}
+        stale = world_host.taken_over(self.peers.values(), key)
         for p in self.peers.values():
             match = getattr(p, "match", None)
-            if match and match[0] == key:
+            if match and match[0] == key and match[1][:8] not in stale:
                 worlds[match[1][:8]] = (p, self.match_slots(match[1])[0])
         members = {}
         for p in self.peers.values():
@@ -599,7 +621,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             if standby and standby[0] == key and standby[1][:8] not in worlds:
                 members.setdefault(standby[1][:8], []).append(p)
         for sid, group in members.items():
-            group.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
+            group.sort(key=world_host.lead_order)
             worlds[sid] = (group[0], len(group))
         return worlds
 
@@ -775,7 +797,22 @@ class ForzaLive(asyncio.DatagramProtocol):
             return peer
         return None
 
+    def take_gone(self, token, xuid):
+        """The id of a player dropped for silence that says HELLO again with its token and XUID
+        (GONE_KEEP), or None."""
+        entry = self.gone.pop(token, None)
+        if entry is None:
+            return None
+        pid, gone_xuid, when = entry
+        if gone_xuid != xuid or time.monotonic() - when > GONE_KEEP or pid in self.peers:
+            return None
+        return pid
+
     def drop(self, peer, why):
+        if why == "timed out":
+            self.gone[peer.token] = (peer.id, peer.xuid, time.monotonic())
+            while len(self.gone) > GONE_MAX:
+                del self.gone[next(iter(self.gone))]  # the oldest
         self.challenges.drop(peer.id)
         self.peers.pop(peer.id, None)
         self.restored.discard(peer.id)
@@ -794,6 +831,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         now = time.monotonic()
         for peer in [p for p in self.peers.values() if now - p.seen > PEER_TIMEOUT]:
             self.drop(peer, "timed out")
+        for token in [t for t, (_, _, when) in self.gone.items() if now - when > GONE_KEEP]:
+            del self.gone[token]
         for buckets in (self.packet_buckets, self.hello_buckets, self.error_buckets):
             if len(buckets) > 5000:  # forgotten addresses (forged sources)
                 for ip in [ip for ip, (_, last) in buckets.items() if now - last > 60]:

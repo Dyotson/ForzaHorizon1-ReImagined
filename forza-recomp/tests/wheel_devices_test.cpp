@@ -86,6 +86,14 @@ int main() {
   Check(DeviceMatch("03000000830400002505000000000000", p1000) == 2, "GUID");
   Check(DeviceMatch("0483:0525", p1000) == 2, "vid:pid");
   Check(DeviceMatch("P1000", p1000) == 1 && DeviceMatch("P2000", p1000) == 0, "part of the name");
+  const JoyInfo vjoy = Joy("Shaul Eizikovich vJoy - Virtual Joystick", 0x1234, 0xBEAD);
+  Check(DeviceMatch("vJoy Device", vjoy) == 2, "SDL2 vJoy name matches SDL3 by USB id");
+  Check(DeviceMatch("vJoy Device", evo) == 0 &&
+            DeviceMatch("vJoy Device", Joy(vjoy.name.c_str(), 0x1234, 1)) == 0,
+        "vJoy alias does not match other devices");
+  const AuxPick vjoy_pick = PickAuxDevices({evo, vjoy}, "vJoy Device", "vJoy Device");
+  Check(vjoy_pick.pedals == 1 && vjoy_pick.shifter == 1,
+        "existing vJoy bindings pick the actual auxiliary device");
 
   // Simagic EVO Pro with P1000 pedals and a DS-8X: pedals and shifter found by id.
   AuxPick pick = PickAuxDevices({evo, p1000, ds8x}, "", "");

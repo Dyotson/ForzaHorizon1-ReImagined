@@ -1,7 +1,7 @@
 """Import graphics choices saved by the game's native pause menu."""
 import json
 
-from . import display, schema
+from . import display, power, schema
 
 FILENAME = "graphics-settings.json"
 KEYS = {"output", "upscaler", "resolution_scale", "frame_rate", "vsync",
@@ -63,7 +63,7 @@ def translate(document, current, pc=None):
             if not isinstance(value, str) or not value.lstrip("-").isdigit():
                 raise ValueError(f"invalid {key}")
             number = int(value)
-            valid = ((key == "frame_rate" and (number == 30 or 60 <= number <= 240)) or
+            valid = ((key == "frame_rate" and (number in schema.LOW_FRAME_RATES or 60 <= number <= 240)) or
                      (key == "resolution_scale" and 1 <= number <= 8) or
                      (key == "anisotropic_override" and -1 <= number <= 5))
             if not valid:
@@ -103,6 +103,7 @@ def import_pending(cfg, log=print):
     except (OSError, ValueError, TypeError) as error:
         log(f"Could not load in-game graphics settings: {error}")
         return False
+    changes = power.without_forced(changes, cfg.d["power"].get("applied") or {})
     previous = dict(cfg.settings)
     cfg.settings.update(changes)
     try:

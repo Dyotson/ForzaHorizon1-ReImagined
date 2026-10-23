@@ -282,3 +282,13 @@ path used `RUNNER~1`, while the builder deliberately resolved the workspace to i
 long spelling. The preparation mock now compares resolved paths, retaining its
 workspace/TU containment assertions. A lexical-alias regression exercises that
 normalization on every host; the full Windows suite was rerun successfully.
+
+### Main integration after frame pacing (2026-10-23)
+
+Merged main through `da8386c` in an isolated checkout. The networking conflict
+retains the menu's receipt-only welcome timestamp and the suspend/resume and
+rejoining state. Windows validation: 688 launcher tests (37 skips), 24 native-menu
+tool tests, 20 menu/archive/disabled-hook/title/benchmark CTests, and the strict
+component test passed. Networking, friends, graphics, pause, scene and map sources
+compile for both disc and TU4 (native pause enabled for TU4). No post-merge game/GPU
+run or full game link was performed; the existing draft/runtime-opt-in gates remain.

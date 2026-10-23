@@ -7,7 +7,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss
+from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss, shader_share
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
@@ -505,6 +505,10 @@ class MainWindow(QMainWindow):
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        try:  # shader lists from play (#276): in the background, silent, never holds up Play
+            shader_share.share_in_background(self.cfg, self.session_plan)
+        except Exception as e:
+            paths.log_error("start the shader list upload", e)
         self._shader_warmup_status = None
         self.play.set_shader_warmup(None)
         plan = self.session_plan
