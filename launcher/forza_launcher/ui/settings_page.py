@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -648,6 +648,9 @@ class SettingsPage(QWidget):
         for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
             if w.key and w.key not in vendor_keys:
                 found.setdefault(w.key, []).append(w.text)
+        saver = power.setting_warning(self.cfg.settings.get("battery_saver", power.OFF))
+        if saver:
+            found.setdefault("battery_saver", []).append(saver)
         for key, row in self.rows.items():
             if key == "discord_presence":
                 continue  # its setup warning is managed by _apply_dependencies

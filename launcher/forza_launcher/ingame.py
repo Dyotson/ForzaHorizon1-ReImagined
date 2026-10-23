@@ -1,7 +1,7 @@
 """Import graphics choices saved by the game's native pause menu."""
 import json
 
-from . import display, schema
+from . import display, power, schema
 
 FILENAME = "graphics-settings.json"
 KEYS = {"output", "upscaler", "resolution_scale", "frame_rate", "vsync",
@@ -103,6 +103,7 @@ def import_pending(cfg, log=print):
     except (OSError, ValueError, TypeError) as error:
         log(f"Could not load in-game graphics settings: {error}")
         return False
+    changes = power.without_forced(changes, cfg.d["power"].get("applied") or {})
     previous = dict(cfg.settings)
     cfg.settings.update(changes)
     try:
