@@ -306,7 +306,10 @@ def online_profile_update_all(xuid, body):
     for key in ("onlineXP", "onlineWristbandLevel"):
         if key in profile:
             profile[key] = max(profile[key], stored.get(key, 0))
+    # An upload carries only the tables that changed: after a Playground Games round without
+    # credits won there is no playerHistory, and the stored credits read 0 (#13).
     if profile:
+        profile = dict(stored, **profile)
         if profile != record.get("profile"):
             log.info("title: profile %016X: level %d, online XP %d (wristband %d), %d online "
                      "races, %d credits", xuid, profile.get("level", 0),

@@ -647,6 +647,9 @@ of the first run), hence X is taken from the game only with a car ahead.
   follow-up: a server test option for one fixed destination (a point on the Millennia path,
   which autodrive can follow from the festival) or an image-based follower of the minimap's
   green GPS line (the minimap is a perspective view, heading up, the route green).
+  A circuit has its own AI route now (`tools/track_path.py`, #13: Cat & Mouse driven to its
+  end, `docs/title_services.md`); a landmark needs a chain of road routes (`route_NNN.owt`,
+  as the opening drive in `docs/rendering.md` follows two of them).
 
 - Not tested with real driving to a landmark: scripted driving goes straight and hits
   the festival's barriers (in the first run A was stuck against the grandstand). The
