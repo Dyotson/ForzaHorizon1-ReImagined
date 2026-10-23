@@ -5,10 +5,11 @@
 // must follow the spring and drop to 0 when it stops, is reset or becomes another type (#219 review:
 // a reset left the hardware autocentre at its last value). Then (#256) the forces fade out while
 // the game says the player is not driving (ForzaWheelPlayerDriving) and come back when they are,
-// and wheel_ffb_spring_strength scales the spring. Then (#273, patch 0129) the game's rumble on a
-// wheel with periodic effects (a uinput Fanatec CSR Elite): which effects each wheel_rumble_style
-// sends (fine: a 40 Hz road sine and a ~71 Hz engine sine; classic: one 25 Hz sine, as before), and
-// fine falling back to classic on a wheel with room for one effect.
+// and wheel_ffb_spring_strength scales the spring; quick toggles leave the spring whole, and back
+// at full strength the steering force is started again (#304, patch 0130). Then (#273, patch 0129)
+// the game's rumble on a wheel with periodic effects (a uinput Fanatec CSR Elite): which effects
+// each wheel_rumble_style sends (fine: a 40 Hz road sine and a ~71 Hz engine sine; classic: one
+// 25 Hz sine, as before), and fine falling back to classic on a wheel with room for one effect.
 //
 // Linux only (needs write access to /dev/uinput). Build against the patched SDK source
 // (tools/build_rexglue_sdk.sh --source-only) and link the patched runtime, from the repository root:
@@ -75,6 +76,14 @@ struct VirtualWheel {
   std::vector<Sine> Sines() {
     std::lock_guard lock(m);
     return sines;
+  }
+  int Starts() {  // play requests (EV_FF value 1) so far
+    std::lock_guard lock(m);
+    int n = 0;
+    for (const auto& [fx, v] : plays) {
+      n += v != 0;
+    }
+    return n;
   }
   bool Playing(int id) {
     std::lock_guard lock(m);
@@ -353,6 +362,34 @@ void SpringAndFade() {
   Poll(driver, id, 700);
   Check(dev.AutocenterIs(spring), "driving again: the spring is back");
   Check(dev.autocenter_between - between >= 3, "it came back in steps");
+  // #304: quick toggles (the old physics gate flipped on every hitch: out, then back 0.5 s later)
+  // leave nothing behind: once driving lasts, the spring is back whole.
+  for (int i = 0; i < 12; i++) {
+    ForzaWheelPlayerDriving(i % 2);
+    Poll(driver, id, 20 + 30 * (i % 3));
+  }
+  ForzaWheelPlayerDriving(1);
+  Poll(driver, id, 700);
+  Check(dev.AutocenterIs(spring), "quick toggles: the spring is back whole");
+  // #304: back at full strength every effect that should play is started again, even one the
+  // driver believes is running, so a wheel that dropped it meanwhile (DirectInput stops a device's
+  // effects when it acquires it again) gets its steering force back.
+  FfEffect steer;
+  steer.block = 5;
+  steer.type = kFfConstant;
+  steer.gain = 255;
+  steer.magnitude = 40;
+  Check(GameFfSetEffect(steer) && GameFfOperate(5, 2), "the steering force plays");
+  Poll(driver, id, 100);
+  const int starts = dev.Starts();
+  Check(starts > 0, "the steering force was started");
+  ForzaWheelPlayerDriving(0);
+  Poll(driver, id, 400);
+  Check(dev.Starts() == starts, "fading out starts nothing");
+  ForzaWheelPlayerDriving(1);
+  Poll(driver, id, 700);
+  Check(dev.Starts() > starts, "back at full strength: the steering force is started again");
+  Check(GameFfOperate(5, kFfOpStop), "stop the steering force");
   // wheel_ffb_spring_strength 50: half the centring (autocentre 15).
   SetCvar("wheel_ffb_spring_strength", "50");
   Check(GameFfUpdateEffect(Spring(), 0x100), "the spring again");

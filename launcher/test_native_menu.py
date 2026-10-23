@@ -55,8 +55,10 @@ class NativeMenuInstall(unittest.TestCase):
         self.assertEqual(cwd, self.root)
         self.assertIn(self.tu, cmd)
         output = cmd[cmd.index("--output") + 1]
-        self.assertTrue(output.is_relative_to(builder.build_dir(self.root)))
-        self.assertFalse(output.is_relative_to(self.tu))
+        # The builder resolves its workspace; Windows CI's TEMP can use an 8.3
+        # alias (RUNNER~1) for the same long path returned by resolve().
+        self.assertTrue(output.resolve().is_relative_to(builder.build_dir(self.root).resolve()))
+        self.assertFalse(output.resolve().is_relative_to(self.tu.resolve()))
         self.assertFalse(output.exists())
         shutil.copytree(self.tu, output)
         (output / "media.zip").write_bytes(b"prepared synthetic resources")
@@ -101,6 +103,14 @@ class NativeMenuInstall(unittest.TestCase):
         with mock.patch.object(builder, "run", side_effect=incomplete):
             self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
         self.assertEqual(snapshot(self.target), self.original)
+
+    def test_preparation_uses_resolved_workspace_for_aliased_root(self):
+        (self.root / "lexical-parent").mkdir()
+        self.root = self.root / "lexical-parent" / ".."
+        self.opts = builder.Options(self.root, jobs=1)
+        with mock.patch.object(builder, "run", side_effect=self.prepare):
+            self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        self.assertEqual((self.target / "media.zip").read_bytes(), b"prepared synthetic resources")
 
     def test_invalid_manifest_is_not_published(self):
         for report in ("invalid JSON", "[]", '{"schema": 9}'):
