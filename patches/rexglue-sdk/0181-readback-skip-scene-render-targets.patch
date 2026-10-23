@@ -1,0 +1,147 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 4860e645..a4c0b171 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -42,6 +42,7 @@
+ #include "fh1_render_target_trim.h"
+ #include <rex/platform.h>
+ #include "../fh1_frame_cost.h"
++#include "fh1_readback_history.h"
+ REXCVAR_DECLARE(int32_t, forza_native_width);
+ REXCVAR_DECLARE(int32_t, forza_native_height);
+ REXCVAR_DECLARE(bool, forza_present_16_9);
+@@ -129,6 +130,12 @@ REXCVAR_DEFINE_BOOL(vulkan_hoist_shared_memory_uploads, true, "GPU/Vulkan",
+                     "pages, instead of ending the render pass for every upload")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_BOOL(vulkan_readback_skip_render_targets, true, "GPU/Vulkan",
++                    "readback_resolve = some: do not copy back again a resolve that was made in "
++                    "150 frames in a row (a scene render target) when it comes back after its "
++                    "readback buffer was dropped (after the map or a menu)")
++    .debug_only();
++
+ REXCVAR_DEFINE_STRING(fh1_frame_cost_csv, "", "GPU/Vulkan",
+                       "Testing: write what the command processor did in every frame (draws, "
+                       "textures, uploads, pipelines, render targets, waits) to this CSV file")
+@@ -815,6 +822,13 @@ FrameCostState& GetFrameCostState() {
+   return state;
+ }
+ 
++// FH1 (#45): the resolves made every frame (fh1_readback_history.h). The game has one command
++// processor.
++fh1_readback_history::History& GetReadbackHistory() {
++  static fh1_readback_history::History history;
++  return history;
++}
++
+ // FH1 (#45): closes the frame's cost counters (fh1_frame_cost.h); a line in the log when
+ // frames were much slower than usual, every frame to fh1_frame_cost_csv.
+ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -6085,6 +6099,18 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+   ReadbackBuffer& readback = readback_buffers_[resolve_key];
+   readback.last_used_frame = frame_current_;
+   fh1_frame_cost::Frame& cost = fh1_frame_cost::Current();
++  if (readback_mode == ReadbackResolveMode::kSome) {
++    // FH1 (#45): a scene render target back after its buffer was dropped (the map, a long
++    // menu) was copied back before and is not read by the CPU: no GPU wait and copy again.
++    fh1_readback_history::History& history = GetReadbackHistory();
++    if (!readback.resolve_cpu_copy_valid && history.IsHot(resolve_key) &&
++        REXCVAR_GET(vulkan_readback_skip_render_targets)) {
++      readback.resolve_cpu_copy_valid = true;
++      ++cost.readbacks_skipped;
++    }
++    history.Resolved(resolve_key, frame_current_);
++    if (frame_current_ % 600 == 0) history.Forget(frame_current_);
++  }
+   // "some" only needs the first CPU copy of this address/size/format key.
+   // Keep the normal GPU resolve above, but avoid downscaling and transferring
+   // every subsequent result to a host buffer that the CPU will never read.
+diff --git a/src/graphics/vulkan/fh1_readback_history.h b/src/graphics/vulkan/fh1_readback_history.h
+new file mode 100644
+index 00000000..9d5d0863
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_readback_history.h
+@@ -0,0 +1,83 @@
++#pragma once
++// FH1 (#45): which resolves "readback_resolve = some" need not copy back again after a gap.
++//
++// "some" copies a resolve back to guest memory (a wait for the GPU, then a copy) the first time
++// its key (address, length, source, format) is seen, and again whenever its readback buffer was
++// evicted after 60 frames unused: car pictures and photos, made now and then, must reach the
++// CPU each time. But the scene's own render targets are resolved every frame and not read by
++// the CPU (after their first copy "some" leaves them stale on purpose); after the map or a long
++// menu (over 60 frames without the world) every one of them was a first-seen key again: ten
++// copies, 24 MB, 25-30 ms of the command processor and a wait for the GPU in the first frame
++// back, more on a Steam Deck.
++//
++// A key resolved in kHotRunFrames frames in a row is such a render target: when it comes back
++// after its buffer was evicted it is treated as copied. One-off resolves (pictures, photos)
++// never run that long and keep their copy. Free of Vulkan, so tools/test_readback_history.cpp
++// can test it.
++#include <cstddef>
++#include <cstdint>
++#include <unordered_map>
++
++namespace rex::graphics::vulkan::fh1_readback_history {
++
++// Frames in a row (a gap of one frame allowed) that make a key a per-frame render target.
++constexpr uint32_t kHotRunFrames = 150;
++// Keys not resolved for this many frames are forgotten (about 30 minutes at 30 fps), and at
++// most kMaxKeys are kept (the oldest go first).
++constexpr uint64_t kForgetFrames = 54000;
++constexpr size_t kMaxKeys = 2048;
++
++class History {
++ public:
++  struct Entry {
++    uint64_t last_frame = 0;
++    uint32_t run = 0;          // frames in the current run
++    uint32_t longest_run = 0;  // the longest run so far
++  };
++
++  // Every resolve of `key` (readback_resolve "some") at frame `frame`.
++  void Resolved(uint64_t key, uint64_t frame) {
++    auto [it, inserted] = entries_.try_emplace(key);
++    Entry& e = it->second;
++    if (inserted) {
++      e.last_frame = frame;
++      e.run = 1;
++    } else if (frame != e.last_frame) {
++      e.run = frame - e.last_frame <= 2 ? e.run + 1 : 1;
++      e.last_frame = frame;
++    }
++    if (e.run > e.longest_run) e.longest_run = e.run;
++  }
++
++  // A key whose readback buffer is new (first seen, or evicted): true when it is a per-frame
++  // render target already copied back once, so the copy can be skipped.
++  bool IsHot(uint64_t key) const {
++    auto it = entries_.find(key);
++    return it != entries_.end() && it->second.longest_run >= kHotRunFrames;
++  }
++
++  // Now and then: drop keys not seen for kForgetFrames, then the oldest past kMaxKeys.
++  void Forget(uint64_t frame) {
++    for (auto it = entries_.begin(); it != entries_.end();) {
++      if (frame > it->second.last_frame && frame - it->second.last_frame > kForgetFrames) {
++        it = entries_.erase(it);
++      } else {
++        ++it;
++      }
++    }
++    while (entries_.size() > kMaxKeys) {
++      auto oldest = entries_.begin();
++      for (auto it = entries_.begin(); it != entries_.end(); ++it) {
++        if (it->second.last_frame < oldest->second.last_frame) oldest = it;
++      }
++      entries_.erase(oldest);
++    }
++  }
++
++  size_t size() const { return entries_.size(); }
++
++ private:
++  std::unordered_map<uint64_t, Entry> entries_;
++};
++
++}  // namespace rex::graphics::vulkan::fh1_readback_history
