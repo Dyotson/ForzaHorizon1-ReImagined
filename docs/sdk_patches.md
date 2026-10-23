@@ -120,6 +120,11 @@ the jagged/striped saved garage previews in #336. It changes only RGBA8 thumbnai
 box filtering and includes the regenerated SPIR-V and a GPU regression test;
 see [validation](rendering.md#scaled-storage-layout-correction-336).
 
+0150 keeps fractional display raster scaling out of square off-screen reflection
+and shadow views, even when they use a screen pitch. The viewport classification
+is shared with the native display path; viewport/scissor and shader VPOS variants
+use the same policy. See [investigation](rendering.md#fractional-display-raster-and-off-screen-views-330).
+
 0072 adds the AMD FidelityFX FSR 3.1 upscaler (no frame generation) as a second backend of
 0046's scene/UI split: `fh1_upscaler=fsr3_quality|fsr3_balanced|fsr3_performance|fsr3_native`
 on any Vulkan GPU. CMake fetches the FidelityFX SDK v1.1.4 GLSL passes and headers (MIT; pinned
