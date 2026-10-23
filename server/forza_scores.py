@@ -48,15 +48,17 @@ KEPT_TYPES = {SPEED_TRAP, SPEED_ZONE, EVENT_TIME}  # submissions kept on a board
 GHOST_TYPES = {EVENT_TIME}  # a new best asks for its ghost (laps; a speed trap has none)
 # GetRows view 5 ("Friends & Club"): what the speed traps and zones read at the trap.
 FRIENDS_AND_CLUB = 5
-# The fastest a car can be at a speed trap by driving (#349), in km/h. A fast travel onto a
-# trap recorded the speed the car had before the fast travel (fixed in the game by
-# src/hooks/teleport_velocity.cpp); older games still send such speeds. Each limit is the
-# highest speed reachable at that trap, worked out from the roads around it (the straights,
-# corners and grades of every way in, from the game's sat-nav graph) for the fastest tuned
-# cars, plus a margin: max(estimate + 40, estimate x 1.2). Traps not listed (long straights,
-# where the car's top speed is the limit) and the speed zones have SPEED_CEILING_KMH. A
-# speed above the limit is logged and not kept.
+# Speeds no car reaches (#349), km/h. A fast travel onto a trap recorded the speed the car had
+# before the fast travel (fixed in the game by src/hooks/teleport_velocity.cpp); older games
+# still send such speeds. Any trap or zone: SPEED_CEILING_KMH, enforced (the speed is logged
+# and not kept). Per trap, SPEED_TRAP_LIMIT_KMH: the highest speed reachable there by driving,
+# estimated from the roads around it (the straights, corners and grades of every way in, from
+# the game's sat-nav graph) for the fastest tuned cars, plus a margin (max(estimate + 40,
+# estimate x 1.2)). The estimates are not validated in the game and ordinary players beat
+# some of them (175-200 km/h on board 210), so a speed above one is only logged unless
+# --enforce-trap-limits (ENFORCE_TRAP_LIMITS) is given. Traps not listed: the ceiling only.
 SPEED_CEILING_KMH = 470.0   # fastest results on long straights: about 435-442 km/h
+ENFORCE_TRAP_LIMITS = False  # --enforce-trap-limits
 SPEED_TRAP_LIMIT_KMH = {
     202: 380.0,   # C-987
     206: 190.0,   # Red Rock
@@ -161,13 +163,30 @@ def better(new, old, bigger):
     return new > old if bigger else new < old
 
 
-def speed_limit_kmh(kind, sbid):
-    """The highest believable speed on a speed trap or zone board, km/h (None: not a speed)."""
-    if kind == SPEED_TRAP:
-        return SPEED_TRAP_LIMIT_KMH.get(sbid, SPEED_CEILING_KMH)
-    if kind == SPEED_ZONE:
-        return SPEED_CEILING_KMH
-    return None
+def implausible_speed(xuid, kind, sbid, score):
+    """True when a speed on a trap or zone board is not to be kept: above SPEED_CEILING_KMH,
+    or above the trap's SPEED_TRAP_LIMIT_KMH with ENFORCE_TRAP_LIMITS. Both are logged."""
+    if kind not in (SPEED_TRAP, SPEED_ZONE):
+        return False
+    kmh = score * 3.6
+    if kmh > SPEED_CEILING_KMH:
+        log.warning("title: score %s: board %d type %d: %.1f km/h is more than any car "
+                    "reaches (%.0f km/h); not kept", public_id(xuid), sbid, kind, kmh,
+                    SPEED_CEILING_KMH)
+        return True
+    limit = SPEED_TRAP_LIMIT_KMH.get(sbid) if kind == SPEED_TRAP else None
+    if limit is not None and kmh > limit:
+        log.warning("title: score %s: speed trap %d: %.1f km/h is above its estimated limit "
+                    "(%.0f km/h)%s", public_id(xuid), sbid, kmh, limit,
+                    "; not kept" if ENFORCE_TRAP_LIMITS else "")
+        return ENFORCE_TRAP_LIMITS
+    return False
+
+
+def public_id(xuid):
+    """The player as the public leaderboards name them (forza_leaderboards.player_id)."""
+    import forza_leaderboards  # it imports this module
+    return forza_leaderboards.player_id("%016X" % xuid)
 
 
 def submit(xuid, gamertag, kind, data, extra=None):
@@ -179,11 +198,7 @@ def submit(xuid, gamertag, kind, data, extra=None):
              xuid, gamertag, sbid, " (time trial)" if stt else "", kind, score, data["carId"],
              data["carClassId"], data["carPerformanceIndex"],
              " passed %d" % extra if extra is not None else "")
-    limit = speed_limit_kmh(kind, sbid)
-    if limit is not None and score * 3.6 > limit:
-        log.warning("title: score %016X '%s': board %d type %d: %.1f km/h is more than a car can "
-                    "reach there (%.0f km/h); not kept", xuid, gamertag, sbid, kind, score * 3.6,
-                    limit)
+    if implausible_speed(xuid, kind, sbid, score):
         return x.reply(x.ScoreboardSubmitScore_Results, {"scoreId": score_id, "uploadFiles": False})
     # Online races submit board -1 (type 4, the XP of the game): not kept.
     board = STORE.board(kind, sbid, stt, create=True) if kind in KEPT_TYPES and sbid >= 0 \

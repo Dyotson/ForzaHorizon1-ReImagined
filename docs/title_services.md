@@ -385,10 +385,17 @@ game sent `SubmitScore(type 1, board 228, 41.976 m/s)`. `src/hooks/teleport_velo
 refreshes the reported velocity from the state after each teleport: the same test sent
 nothing (`TELEPORT: car ... its reported speed 146.5 km/h is now 0.0 km/h` in the log),
 and traps and zones driven through still record (Rt. 29 on both builds; on TU4 the Rt. 20
-speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). The server keeps no speed
-above what a car can reach at that trap by driving (`SPEED_TRAP_LIMIT_KMH`; 470 km/h on
-any trap or zone), for games without the fix: it logs "... is more than a car can reach
-there (... km/h); not kept".
+speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). For games without the fix
+the server keeps no speed above 470 km/h on any trap or zone (logged: "... is more than any
+car reaches (470 km/h); not kept"), and it logs a speed above the trap's estimated limit
+(`SPEED_TRAP_LIMIT_KMH`: "speed trap N: ... km/h is above its estimated limit", with the
+player's public leaderboard id) but keeps it unless the server runs with
+`--enforce-trap-limits`. The limits come from a model of the roads around each trap (the
+sat-nav graph's straights, corners and grades, generous grip and power for the fastest
+tuned cars, plus a margin) that was not validated in the game: no hypercar drove the
+approaches, and ordinary players on the live leaderboard reach 175-200 km/h on the Sth
+Rt. 38 trap (board 210), where the model says 132 km/h (limit 175). Corner-limited traps
+are underestimated until the model is calibrated against driven runs.
 
 Not done: an event board (type 3) was not driven again with the new board keys
 (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.

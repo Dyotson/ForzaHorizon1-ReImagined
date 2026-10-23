@@ -161,27 +161,48 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual(self.rows(A_XUID, scores.EVENT_TIME, 199)[0],
                          [("DriverB", 107.228), ("DriverA", 115.13)])
 
-    def test_speed_above_the_trap_limit_not_kept(self):
-        # #349: a fast travel onto the Red Rock trap (board 206, at most 190 km/h by driving)
-        # sent the 440 km/h the car had on a freeway before it.
-        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)            # 147.6 km/h: kept
+    def test_speed_above_the_trap_limit_logged(self):
+        # #349: a fast travel onto the Red Rock trap (board 206, estimated at most 190 km/h by
+        # driving) sent the 440 km/h the car had on a freeway before it. By default the
+        # estimate is only a warning (with the player's public id), and the score is kept.
+        import forza_leaderboards
+        who = forza_leaderboards.player_id("%016X" % A_XUID)
+        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)            # 147.6 km/h
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("score %s: speed trap 206: 439.9 km/h is above its estimated limit "
+                      "(190 km/h)" % who, logs.output[0])
+        self.assertNotIn("not kept", logs.output[0])
+        self.assertNotIn("%016X" % A_XUID, logs.output[0])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 122.2)])
+
+    def test_speed_above_the_trap_limit_enforced(self):
+        scores.ENFORCE_TRAP_LIMITS = True
+        self.addCleanup(setattr, scores, "ENFORCE_TRAP_LIMITS", False)
+        self.submit(A_XUID, scores.SPEED_TRAP, 206, 41.0)
         with self.assertLogs("forza-live", "WARNING") as logs:
             self.assertFalse(self.submit(A_XUID, scores.SPEED_TRAP, 206, 122.2)["uploadFiles"])
-        self.assertIn("board 206 type 1: 439.9 km/h is more than a car can reach there (190 km/h)",
-                      logs.output[0])
+        self.assertIn("(190 km/h); not kept", logs.output[0])
         self.submit(B_XUID, scores.SPEED_TRAP, 206, 53.0)            # 190.8 km/h: not kept
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [("DriverA", 41.0)])
-        # The same speed on a trap at the end of a long straight is kept.
+        # The same speed on a trap at the end of a long straight (no limit of its own) is kept.
         self.submit(A_XUID, scores.SPEED_TRAP, 218, 122.2)
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 218)[0], [("DriverA", 122.2)])
 
     def test_speed_ceiling(self):
-        # Any trap or zone: at most 470 km/h; event times have no limit.
+        # Any trap or zone: at most 470 km/h, always enforced; event times have no limit.
         self.submit(A_XUID, scores.SPEED_TRAP, 201, 130.0)           # 468 km/h
-        self.submit(B_XUID, scores.SPEED_TRAP, 201, 131.0)           # 471.6 km/h
-        self.submit(A_XUID, scores.SPEED_ZONE, 101, 140.0)
+        with self.assertLogs("forza-live", "WARNING") as logs:
+            self.submit(B_XUID, scores.SPEED_TRAP, 201, 131.0)       # 471.6 km/h
+            self.submit(A_XUID, scores.SPEED_TRAP, 206, 140.0)       # 504 km/h on a limited trap
+            self.submit(A_XUID, scores.SPEED_ZONE, 101, 140.0)
+        self.assertEqual(len(logs.output), 3)
+        self.assertTrue(all("more than any car reaches (470 km/h); not kept" in line
+                            for line in logs.output))
         self.submit(A_XUID, scores.EVENT_TIME, 201, 1000.0, ex=True)
         self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 201)[0], [("DriverA", 130.0)])
+        self.assertEqual(self.rows(C_XUID, scores.SPEED_TRAP, 206)[0], [])
         self.assertEqual(self.rows(C_XUID, scores.SPEED_ZONE, 101)[0], [])
         self.assertEqual(self.rows(C_XUID, scores.EVENT_TIME, 201)[0], [("DriverA", 1000.0)])
 
