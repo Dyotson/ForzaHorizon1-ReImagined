@@ -240,7 +240,7 @@ void Footer(UI& ui) {
   auto footer=ui.Call(0x82746638,{form.screen});if(!footer)return;
   ui.Call(0x8289A908,{footer});
   const bool tune=form.page==Form::Page::Tune,name=form.page==Form::Page::Name;
-  for(auto item:{std::pair{0u,tune?"APPLY SETUP":"SELECT"},std::pair{1u,tune?"DISCARD":"BACK"},
+  for(auto item:{std::pair{0u,tune?"APPLY SETUP":setups::LibraryActionEnabled(form.action)?"SELECT":""},std::pair{1u,tune?"DISCARD":"BACK"},
       std::pair{2u,tune?"SETUPS":""},std::pair{3u,name?"BACKSPACE":tune?"RESET ALL":""},
       std::pair{8u,name?"":tune?"PREV CATEGORY":"PREV ACTION"},std::pair{9u,name?"":tune?"NEXT CATEGORY":"NEXT ACTION"}}){
     if(*item.second)if(auto text=ui.Text(item.second)){ui.Call(0x8289E2B0,{footer,item.first,text});ui.Call(0x824CEAB0,{text});}
@@ -248,17 +248,19 @@ void Footer(UI& ui) {
   ui.Call(Read(ui.base,Read(ui.base,footer+0x6c)+0x28),{footer+0x6c});
 }
 void RefreshLibrary() {
+  if(!setups::LibraryActionEnabled(form.action)){form.entries.clear();return;}
   form.entries=SetupLibrary(form.action==5).List();
   form.library_selected=std::min<unsigned>(form.library_selected,form.entries.empty()?0:unsigned(form.entries.size()-1));
 }
 void LibraryPage(UI& ui) {
-  form.page=Form::Page::Library;form.library_tabs.SetTabs({{"save","SAVE"},{"load","LOAD"},{"rename","RENAME"},{"delete","DELETE"},{"export","EXPORT"},{"import","IMPORT"}});
+  form.page=Form::Page::Library;form.library_tabs.SetTabs({{"save","SAVE"},{"load","LOAD"},{"rename","RENAME"},{"delete","DELETE"},{"export","EXPORT"},{"import","IMPORT"},{"community","COMMUNITY",true,"Coming soon"}});
   form.library_tabs.Select(form.library_tabs.tabs()[form.action].id);RefreshLibrary();Footer(ui);
 }
 const std::vector<std::string>& NameKeys() {
   static const auto keys=[] {std::vector<std::string> v;for(char c:std::string("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_'"))v.emplace_back(1,c);v.push_back("DEL");v.push_back("DONE");v.push_back("CANCEL");return v;}();return keys;
 }
 void LibrarySelect(UI& ui) {
+  if(!setups::LibraryActionEnabled(form.action)){Status(ui,"Community browser - Coming soon. Export and Import are available now.");return;}
   if(form.page==Form::Page::Name){
     const auto& key=NameKeys()[form.key];
     if(key=="CANCEL"){LibraryPage(ui);return;}
@@ -630,6 +632,10 @@ void DrawWorkspace(UI& ui) {
     if(form.page==Form::Page::Name){view.keyboard=true;view.entry=form.name;view.keys=NameKeys();view.key=form.key;}
     else if(form.page==Form::Page::Delete){
       native_tuning_components::Row row;row.label="DELETE "+form.entries[form.library_selected].setup.name+"?";row.selected=true;view.rows.push_back(row);
+    }else if(!setups::LibraryActionEnabled(form.action)){
+      native_tuning_components::Row row;row.label="Community browser - Coming soon";row.draft="UNAVAILABLE";view.rows.push_back(row);
+      view.help="Community browser - Coming soon. Use Export and Import to share tune files.";
+      view.range="This page has no online connection or action.";
     }else if(form.action==0){
       native_tuning_components::Row row;row.label="Save current draft with a name";row.selected=true;view.rows.push_back(row);
       if(form.message.empty())view.help="Save a reusable local setup without changing the car.";
@@ -712,10 +718,10 @@ void Tick(const PPCContext& context, uint8_t* base) {
     if (form.armed && !form.applying && form.edit.open()) {
       if ((held & 0x0100) && !(form.held & 0x0100))
         {if(form.page==Form::Page::Tune){form.tabs.SelectNeighbor(-1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
-         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(-1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Status(ui);}}
+         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(-1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Footer(ui);Status(ui);}}
       if ((held & 0x0200) && !(form.held & 0x0200))
         {if(form.page==Form::Page::Tune){form.tabs.SelectNeighbor(1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
-         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Status(ui);}}
+         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Footer(ui);Status(ui);}}
     }
     form.held = held;
   }

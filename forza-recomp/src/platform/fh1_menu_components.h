@@ -34,6 +34,7 @@ struct Rect { float x=0,y=0,w=0,h=0; };
 struct Tab {
   std::string id, label;
   bool locked=false;
+  std::string unavailable_label="LOCKED";
 };
 struct TabCell { size_t index=0; Rect bounds; bool selected=false,focused=false; };
 class TabBar {
@@ -90,7 +91,7 @@ public:
       paper(slot,cell.bounds,cell.selected?0xff007au:0x302b30u);
       auto text=cell.bounds;text.x+=4;text.w-=8;text.y+=tab.locked?1:7;text.h=tab.locked?27:31;
       label(slot,0,text,14.f,tab.label,cell.selected?0xffffffu:tab.locked?0xc9c2c9u:0xffffffu);
-      if(tab.locked){auto lock=cell.bounds;lock.y+=29;lock.h=17;label(slot,1,lock,11.f,"LOCKED",0xc9c2c9u);}
+      if(tab.locked){auto lock=cell.bounds;lock.y+=29;lock.h=17;label(slot,1,lock,11.f,tab.unavailable_label,0xc9c2c9u);}
     }
   }
 };

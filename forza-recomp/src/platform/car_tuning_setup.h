@@ -9,6 +9,8 @@
 
 namespace forza::car_tuning::setups {
 inline constexpr size_t kMaxBytes=8192, kMaxName=32;
+inline constexpr unsigned kCommunityAction=6;
+inline constexpr bool LibraryActionEnabled(unsigned action){return action<kCommunityAction;}
 struct Setup {
   std::string name;
   uint32_t model=0;

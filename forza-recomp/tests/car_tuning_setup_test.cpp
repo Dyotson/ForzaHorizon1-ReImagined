@@ -5,6 +5,8 @@ using namespace forza::car_tuning;
 using namespace forza::car_tuning::setups;
 void Check(bool v,const char* message){if(!v){std::cerr<<message<<'\n';std::exit(1);}}
 int main(){
+ Check(!LibraryActionEnabled(kCommunityAction)&&!LibraryActionEnabled(99),"community and unknown actions must not dispatch");
+ for(unsigned action=0;action<6;++action)Check(LibraryActionEnabled(action),"local file actions remain enabled");
  Identity id{1,404,123,456};id.parts.fill(17);Payload payload;payload.fill(std::bit_cast<uint32_t>(kStock));payload[10]=0xDEADBEEF;
  FieldSchema schema{};schema[size_t(Field::FrontPressure)]={15,55,30};schema[size_t(Field::RearPressure)]={15,55,30};
  schema[size_t(Field::RearAcceleration)]={0,1,.5,Field::RearDeceleration};

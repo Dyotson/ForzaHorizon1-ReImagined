@@ -30,4 +30,9 @@ int main(){
   Check(cells.size()==9&&cells.back().index==11&&cells.back().selected,"Viewport did not expose selected page");
   Check(cells.front().bounds.x>=44&&cells.back().bounds.x+cells.back().bounds.w<=1236.01,"Viewport exceeded supplied bounds");
   Check(tabs.Layout({0,0,2,48},9).empty(),"Unsupported narrow layout must fail closed");
+  TabBar community;community.SetTabs({{"community","COMMUNITY",true,"Coming soon"}});
+  std::string unavailable;
+  community.Paint({0,0,220,48},9,[](size_t,Rect,uint32_t){},
+    [&](size_t,unsigned anchor,Rect,float,const std::string& text,uint32_t){if(anchor==1)unavailable=text;});
+  Check(unavailable=="Coming soon","Unavailable tabs must expose their explicit availability label");
 }
