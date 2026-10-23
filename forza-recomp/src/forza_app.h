@@ -11,6 +11,7 @@
 #include "platform/discord_presence.h"
 #include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
+#include "platform/resume.h"
 #include "platform/graphics_menu.h"
 #include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
@@ -112,6 +113,7 @@ class ForzaApp : public rex::ReXApp {
   void OnShutdown() override {
     cursor_idle_.reset();
     stall_watchdog_.Stop();
+    resume_watcher_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
       achievement_listener_ = 0;
@@ -125,6 +127,7 @@ class ForzaApp : public rex::ReXApp {
     // The SDK terminates guest threads immediately after accepting this request.
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
+    resume_watcher_.Stop();
     forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
@@ -165,6 +168,8 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallFaultGuard();
     // Long frames and where the game was during them (#187).
     stall_watchdog_.Start();
+    // A stopped game or a machine that slept: logged, Forza Live signs in again (#140).
+    resume_watcher_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
@@ -221,6 +226,7 @@ class ForzaApp : public rex::ReXApp {
  private:
   std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
+  forza::resume::Watcher resume_watcher_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

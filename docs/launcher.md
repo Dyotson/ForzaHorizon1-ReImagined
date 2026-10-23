@@ -610,6 +610,18 @@ monitors differently, in which case the label shows the rate of the monitor Qt c
 Graphics menu saves the frame rate it was started with every time; if that is the resolved rate, Match display
 stays, and any other rate chosen in the menu replaces it. Tests: `launcher/test_match_display.py`.
 
+**Battery saver (#140, Linux).** Display > Frame rate > Battery saver: Off (the default), On, or "Auto on battery
+(Steam Deck)". When it applies, Play starts the game at 30 fps and render scale 1 with AMD FSR 1 (FSR 3 becomes
+FSR 1, SMAA and FSR Native AA the game's own anti-aliasing) and passes `--gpu_wait_blocking=true` (already the
+default on Linux). Only this start's `forza.toml` and command line change: `launcher.json` keeps the player's own
+values, which the next start on mains power uses again, and the player's own extra flags still come last. Auto
+applies on a Steam Deck (DMI board name, as the GPU detection) whose battery runs it: no charger in
+`/sys/class/power_supply` online (type Mains, USB, ...) and the system battery discharging; a controller's or a
+mouse's battery (scope Device) does not count. The power source is read once, at Play; Auto on another PC shows
+that it never applies there. The in-game Graphics menu saves every value it shows, so the values battery saver
+forced at the last start (kept in `launcher.json` under `power`) are not taken from it as the player's choice.
+The shader prebuild plans with the player's own settings. Tests: `launcher/test_power.py` (fake sysfs).
+
 ### GPU choice (#52)
 
 Many glitches depend on the graphics card, so Settings > Display starts with **Graphics card**: NVIDIA, AMD, Intel,
@@ -663,7 +675,7 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 | NVIDIA | Vulkan, render scale 1, AMD FSR 1, 60 fps, shader cache and background shader compilation on (scale 2 is the most you should need) | Direct3D 12 (Windows): flicker, green reflections on glass and paint (#46). Render scale 3 and above: flicker and coloured artifacts across the map (#47). Background compilation or the shader cache off: Vulkan stutter (#49, open: warm-cache stutter unmeasured). Traffic car glow in the distance (#48): no setting avoids it |
 | AMD (Linux and Windows) | Vulkan, render scale 1, AMD FSR 1, 60 fps | none; render scale 3 and 4 are clean on Radeon (Vulkan/RADV, and Direct3D 12 under vkd3d-proton at 3) |
 | Intel | Vulkan, render scale 1, AMD FSR 1, 30 fps | nothing reported yet; Direct3D 12 (a different render target path on Intel) and render scale 2 and up are marked as untested / slow |
-| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
+| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
 
 Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
 valid for the schema, warnings, the first-run / existing-settings / player-choice flows, the `--gpu_vendor` argument).
