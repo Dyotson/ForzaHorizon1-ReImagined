@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 import forza_campaign as cp
 import forza_chat as ch
+import forza_coop_ledger as ledger
 import forza_live_lsp as lsp
 import forza_live_server as srv
 import forza_world as world
@@ -167,7 +168,10 @@ class CampaignDbTest(unittest.TestCase):
         self.assertEqual(cp.listing(0, width=14), ["Level 0: FR05", "Level 0: FR50"])
 
 
-class CoopFestivalTest(unittest.TestCase):
+class CoopWorldCase(unittest.TestCase):
+    """A server with DriverA-C (and an older game, 4) online, the small game database, and
+    helpers for the Co-op Festival's messages (also test_forza_coop_ledger.py)."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.tmp.name, "gamedb.slt")
@@ -175,6 +179,7 @@ class CoopFestivalTest(unittest.TestCase):
         cp.GAME_DB, cp.STREET, cp.AI_FIELD, cp._events = self.db, True, False, None  # street on
         world.WORLDS = world.Worlds()
         world.EVENT_LAPS = 0
+        ledger.LEDGER = ledger.Ledger()  # in memory
         self.server = srv.ForzaLive("test", 64)
         self.transport = FakeTransport()
         self.server.transport = self.transport
@@ -253,6 +258,8 @@ class CoopFestivalTest(unittest.TestCase):
         self.standby(self.b, lsp.COOP_HOPPER, b"coop-001")
         return b"coop-001"
 
+
+class CoopFestivalTest(CoopWorldCase):
     def test_listed_only_to_games_that_have_it(self):
         def ids(peer):
             body = bytes(x.encode(x.HopperGetList_Params,

@@ -7,7 +7,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss, shader_share
+from .. import APP_NAME, __version__, builder, cleanenv, coop_grant, crash_report, game, paths, dlss, shader_share
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
@@ -509,6 +509,11 @@ class MainWindow(QMainWindow):
             shader_share.share_in_background(self.cfg, self.session_plan)
         except Exception as e:
             paths.log_error("start the shader list upload", e)
+        try:  # co-op campaign results (#309): the host's festival event results to its save
+            coop_grant.after_session_in_background(
+                self.cfg, getattr(self.session_plan, "save_profile", None))
+        except Exception as e:
+            paths.log_error("start applying co-op results", e)
         self._shader_warmup_status = None
         self.play.set_shader_warmup(None)
         plan = self.session_plan

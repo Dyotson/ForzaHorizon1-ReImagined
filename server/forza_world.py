@@ -34,6 +34,7 @@ import sqlite3
 import time
 
 import forza_campaign
+import forza_coop_ledger as ledger
 
 log = logging.getLogger("forza-live")
 
@@ -188,14 +189,14 @@ class Worlds:
         self.members = {}     # session id -> {xuid: gamertag} (forza_live_server.world_tick)
         self.rounds = {}      # session id -> (campaign event, when it started, members)
 
-    def request(self, sid, event_id=None, campaign=None, by=""):
+    def request(self, sid, event_id=None, campaign=None, by="", by_xuid=0):
         if campaign is not None:
             event = (campaign.id, campaign.preset, campaign.track, campaign.laps,
                      campaign.car_class)
         else:
             event = pick_event(event_id)
         self.state[sid] = {"event": event, "state": "pending", "since": time.monotonic(),
-                           "campaign": campaign, "by": by}
+                           "campaign": campaign, "by": by, "by_xuid": by_xuid}
         log.info("world %s: %s %d requested%s (preset %d, track %d, %d laps, class %d)",
                  sid.hex(), "campaign event" if campaign else "event", event[0],
                  " by %s (%s)" % (by, campaign.code) if campaign else "", event[1], event[2],
@@ -221,8 +222,11 @@ class Worlds:
             log.info("world %s: event %d started; the world is next", sid.hex(),
                      st["event"][0])
             if st.get("campaign") is not None:
-                self.rounds[sid] = (st["campaign"], time.monotonic(),
-                                    dict(self.members.get(sid, {})), st.get("by", ""))
+                members = dict(self.members.get(sid, {}))
+                self.rounds[sid] = (st["campaign"], time.monotonic(), members, st.get("by", ""))
+                # the career's side: forza_coop_ledger keeps the round and its results
+                ledger.LEDGER.start_round(sid, st["campaign"], st.get("by_xuid", 0),
+                                          st.get("by", ""), members)
             del self.state[sid]
         self.started[sid] = time.monotonic()
         return None
@@ -239,8 +243,9 @@ class Worlds:
 
     def result(self, xuid, place, places, finished):
         """A player's race result (User.WriteRaceStatsEx): logged with the campaign round
-        of the world it was in, if one started there recently. Returns (sid, event) or
-        None."""
+        of the world it was in, if one started there recently, and kept in the ledger.
+        Returns (sid, event) or None."""
+        ledger.LEDGER.report(xuid, place, places, finished)
         now = time.monotonic()
         for sid, (campaign, since, members, by) in list(self.rounds.items()):
             if now - since > self.RESULT_WINDOW:

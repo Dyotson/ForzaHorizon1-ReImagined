@@ -34,6 +34,7 @@ import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
 import forza_campaign as campaign
+import forza_coop_ledger as coop_ledger
 import forza_world as world
 import forza_world_host as world_host
 
@@ -748,7 +749,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.chat.notice(peer, "No festival or street race %r to race online (/events "
                                        "lists them)" % arg[:20])
                 return True
-            world.WORLDS.request(sid, campaign=event, by=peer.name)
+            world.WORLDS.request(sid, campaign=event, by=peer.name, by_xuid=peer.xuid)
             text = "%s starts %s" % (peer.name, event.describe())
             for p in self.world_members(sid):
                 if p.features & chat.FEATURE:
@@ -1143,6 +1144,8 @@ async def main():
     lsp.configure(args)
     world.configure(args)
     campaign.configure(args, args.game_db)
+    coop_ledger.configure(args.data_dir)
+    stats.on_skill_write = coop_ledger.LEDGER.host_score
     challenge.configure(args)
     set_rate_limit(args.rate_limit)
 

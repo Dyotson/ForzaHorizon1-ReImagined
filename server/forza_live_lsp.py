@@ -42,6 +42,7 @@ import time
 import urllib.parse
 
 import forza_clubs as clubs
+import forza_coop_ledger as coop_ledger
 import forza_friends as friends
 import forza_limits as limits
 import forza_leaderboards as leaderboards
@@ -735,6 +736,10 @@ def handle(server, method, path, headers, body, peer):
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
     if url.path.startswith("/shader-lists"):  # players' shader lists (forza_shader_lists.py)
         answer = shader_lists.handle(server, method, path, headers, body)
+        if answer is not None:
+            return answer
+    if url.path.startswith("/coop/"):  # co-op campaign results (forza_coop_ledger.py)
+        answer = coop_ledger.handle(server, method, path, headers, body, shader_lists.authenticate)
         if answer is not None:
             return answer
     if url.path.startswith("/leaderboards"):  # public leaderboards as JSON (forza_leaderboards.py)
