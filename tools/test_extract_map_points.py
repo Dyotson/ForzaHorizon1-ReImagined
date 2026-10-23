@@ -117,10 +117,40 @@ def make_game(root):
         (1124, ref(0x13), 11, "ColoradoDirt"), (1101, ref(0x10), 21, "Colorado"), (1108, ref(0x11), 28, "Colorado"),
         (1109, ref(0x12), 29, "Colorado")])
     db.execute("insert into Data_Car values (1398, 2012, ?, 21)", (ref(0x40),))
+    # A car the database has but the disc's strings do not name (the title update's Rally cars).
+    db.execute("insert into Data_Car values (1517, 1992, ?, 21)", (ref(0x41),))
     db.execute("insert into List_CarMake values (21, ?)", (ref(0x50),))
     db.executemany("insert into Environments values (?, ?, 'Colorado')", [(101, ref(0x20)), (108, ref(0x22)), (109, ref(0x24))])
     db.commit()
     db.close()
+
+
+def make_dlc(root):
+    """Two packages in the installed layout: a car pack (its database patch adds car 1600 of
+    a make the disc's database lacks) and string tables of two priorities."""
+    def package(name, files):
+        folder = os.path.join(root, "0000000000000000", "4D5309C9", "00000002", name, "Media", "DLCZips")
+        os.makedirs(folder, exist_ok=True)
+        for zname, members in files.items():
+            with zipfile.ZipFile(os.path.join(folder, zname), "w") as z:
+                for mname, data in members.items():
+                    z.writestr(mname, data)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "patch.slt")
+        db = sqlite3.connect(path)
+        db.executescript("create table Data_Car (Id, Year, MakeID, DisplayName, MediaName);")
+        db.execute("insert into Data_Car values (1600, 2012, 77, ?, 'GUM_ApolloEnraged_12')", ("_&%d" % (0xC0DE << 16 | 0x60),))
+        db.commit()
+        db.close()
+        with open(path, "rb") as f:
+            patch = f.read()
+    package("AAAA", {"1100_pri_65.zip": {"media/db/patch/13312000_merge.slt": patch},
+                     "StringTables_pri_1250.zip": {"EN/Data_Car.str": lsb2([(0x60, "IDS_DisplayName_1600", "Old Name")])}})
+    package("BBBB", {"StringTables_pri_2950.zip": {
+        "EN/Data_Car.str": lsb2([(0x60, "IDS_DisplayName_1600", "Apollo Enraged"),
+                                 (0x61, "IDS_DisplayName_1517", "Celica GT-Four RC ST185")]),
+        "EN/List_CarMake.str": lsb2([(0x70, "IDS_DisplayName_77", "Gumpert")]),
+        "br/Data_Car.str": lsb2([(0x60, "IDS_DisplayName_1600", "Outro nome")])}})
 
 
 class ExtractTests(unittest.TestCase):
@@ -186,6 +216,20 @@ class ExtractTests(unittest.TestCase):
         game = emp.Game(emitters)
         objs = emp.game_objects(game.file(emp.RIBBON, "GameObjs.xml"))
         self.assertEqual(emp.dam_position(game, objs), (6690.0, -337.0))
+
+    def test_names_of_dlc_cars(self):
+        make_dlc(os.path.join(self.root, "dlc"))
+        names = os.path.join(self.root, "names_dlc.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            emp.main(["--game", os.path.join(self.root, "game"), "--dlc", os.path.join(self.root, "dlc"),
+                      "--out", os.path.join(self.root, "points_dlc.json"), "--names", names])
+        with open(names) as f:
+            cars = json.load(f)["cars"]
+        self.assertEqual(cars, {"1398": "2012 Maker Synthetic GT",
+                                "1517": "1992 Maker Celica GT-Four RC ST185",   # named by a package
+                                "1600": "2012 Gumpert Apollo Enraged"})         # the higher priority wins
+        self.assertEqual([os.path.basename(p) for _, p in emp.dlc_zips([os.path.join(self.root, "dlc")])],
+                         ["1100_pri_65.zip", "StringTables_pri_1250.zip", "StringTables_pri_2950.zip"])
 
     def test_names_file(self):
         with open(self.names) as f:
