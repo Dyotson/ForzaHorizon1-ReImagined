@@ -12,7 +12,8 @@ it. Copied-profile runtime checks cover representative edits across all nine
 categories on an upgraded RWD Mustang; remaining fields/drivetrains and direct
 non-pressure physics still need qualification. This implementation is not yet
 qualified for normal saves. Named setup files and parameter-only file sharing are described below. An online community
-browser or public publishing service is not implemented.
+browser or public publishing service is not implemented; its native tab is
+unavailable and marked Coming soon.
 
 ## Source comparison
 
@@ -186,7 +187,9 @@ Shared integration edits are confined to `graphics_menu.cpp`, `live.h`,
 ## Named setups and file sharing
 
 Press X / Setups in the native workspace. The shared tab component exposes Save,
-Load, Rename, Delete, Export and Import. Save and Rename use an original FH1
+Load, Rename, Delete, Export and Import. The unavailable Community tab reads
+Coming soon; it has no Select action, filesystem operation or online dispatch.
+Save and Rename use an original FH1
 controller character grid; directions select a character, A enters it, Y removes
 it, DONE commits the name and B cancels. Names are 1-32 bounded ASCII characters;
 letters, numbers, internal spaces, apostrophes, hyphens and underscores are
@@ -198,8 +201,9 @@ a new `.fh1tune` file in `tunes/exports`; share that parameter file yourself.
 The recipient places it, retaining its generated filename, in `tunes/inbox` and
 selects Import. The game does not publish or contact a server. The existing
 ForzaLive photo/club content services have no standalone named-tune contract;
-community search, author authentication, cloud storage and share codes remain
-outside this implementation. This route works offline and adds no opt-out
+community search, author authentication, cloud storage and share codes are
+planned later; the native Community browser is marked Coming soon. This route
+works offline and adds no opt-out
 network behavior. The containing feature remains off by default.
 
 The original `FH1TUNE 1` text format is limited to 8 KiB. It carries a display

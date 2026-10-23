@@ -35,6 +35,16 @@ class NativeMenuSettings(unittest.TestCase):
         self.assertIs(rendered["forza_native_pause"], True)
         self.assertFalse(any(key.startswith("fh2_") for key in rendered))
 
+    def test_tuning_is_independently_opt_in_and_reaches_game_configuration(self):
+        setting = schema.BY_KEY["forza_car_tuning"]
+        self.assertIs(self.cfg.settings[setting.key], False)
+        self.assertNotIn(setting.key, config.parse_toml(config.render_toml(self.cfg)))
+        self.assertTrue(setting.restart)
+        self.cfg.settings[setting.key] = True
+        self.cfg.save()
+        restored = config.Config(self.path)
+        self.assertIs(config.parse_toml(config.render_toml(restored))[setting.key], True)
+
     def test_import_is_managed_setting_and_disabling_restores_default(self):
         config.import_toml(self.cfg, "forza_native_pause = true\n")
         self.assertIs(self.cfg.settings["forza_native_pause"], True)

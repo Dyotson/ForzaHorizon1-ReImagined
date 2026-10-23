@@ -116,6 +116,8 @@ class ManifestTests(unittest.TestCase):
                      for i in range(3)]
         expected += [("ui/scenes/ui4/108_c_buy_carselect", f"ui/scenes/ui4/native_menu_tile_{i}")
                      for i in range(6)]
+        expected += [("ui/scenes/ui4/108_c_buy_carselect", f"ui/scenes/ui4/native_menu_tuning_{i}")
+                     for i in sorted(range(22), key=str)]
         self.assertEqual([(scene.source, scene.alias) for scene in scenes], expected)
 
     def test_canonical_round_trip_ignores_declaration_order(self):
@@ -264,7 +266,7 @@ class ArchiveContracts(Fixture):
         two_output = self.root / "output-two"
         two = self.stage(two_output)
         self.assertEqual(one, two)
-        self.assertEqual(len(one["entries"]), 36)
+        self.assertEqual(len(one["entries"]), 102)
         with zipfile.ZipFile(self.output / "media.zip") as archive:
             for scene in aliases:
                 for suffix in menu.SUFFIXES:

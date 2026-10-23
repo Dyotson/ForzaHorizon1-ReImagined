@@ -19,11 +19,21 @@ defaults to the existing pause behavior. Pause tabs now use the reusable
 and capability ownership.
 
 The Cars composition uses a larger full-width photo with five specification
-columns underneath. The combined code passes focused CPU checks and TU4 syntax
-checks. These layout and transition changes still require a fresh 720p runtime
-pass. The earlier screenshots show the previous layout. Header/footer icon and
-contrast consistency across pause and tuning, and named setup/sharing work,
-remain in progress; this checkpoint does not claim those are finished.
+columns underneath. Both menus bind real controller icons through the shared
+native footer model API. The resource manifest now prepares the pause and tuning
+aliases together; both runtime options remain independently disabled by default
+in the launcher. Named setups support Save, Load, Rename, Delete, Export and
+Import. Community is an unavailable Coming soon page with no action dispatch.
+
+A combined 1280x720 Vulkan copied-profile session verified Home, the selectable
+Tune Car tile, entry into the actual tuning workspace, in-game naming and a
+saved Setup 1 entry in Load, file export, the unavailable Community page, Back
+to Cars with Tune Car focused, and resume. All screenshots came from that same
+combined binary and copied profile. No tuning values were applied in this pass.
+The tuning worker's separate tests cover file import and persistence/readback;
+those are not claimed as repeated combined-session checks. Header class/PI
+binding is a follow-up; platform, fallback and extended lifetime checks remain
+limited as detailed below.
 
 | Layer | Responsibility | Source |
 | --- | --- | --- |

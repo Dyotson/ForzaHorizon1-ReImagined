@@ -65,6 +65,9 @@ struct State {
   std::array<Card, layout::kTileCapacity> cards;
   std::array<Card, layout::kTabCapacity> tabs;
   Donor header;
+  Donor stock_footer;
+  std::vector<std::pair<uint32_t,bool>> stock_nodes;
+  bool footer_bound=false, footer_recovery=false;
   Car car;
   uint32_t player_bar = 0, credits = 0, username = 0, username_paper = 0;
   uint32_t status = 0, footer = 0;
@@ -295,11 +298,14 @@ void HeaderLayout(Native& ui) {
   ui.Scale(d.presentation, state.username_paper, 2.6f, .36f);
   Label(ui, d, state.username, {976, 33, 220, 36}, 18, state.gamertag, 0x302b30, 1);
   Label(ui, d, state.status, {996, 652, 220, 32}, 14, state.connection, 0xffffff, 2);
-  const std::string footer = state.recovery ?
-      "A  SELECT     B  RESUME     LS  RESET CAR POSITION" : "A  SELECT     B  RESUME";
-  Label(ui, d, state.footer, {64, 650, 880, 36}, 17, footer);
-  Label(ui, d, state.bumpers[0], {20, 112, 40, 42}, 17, "LB", 0xffffff, 1);
-  Label(ui, d, state.bumpers[1], {652, 112, 40, 42}, 17, "RB", 0xffffff, 1);
+  for (auto node : {state.footer,state.bumpers[0],state.bumpers[1]})
+    ui.Show(d.presentation,node,false);
+  if (!state.footer_bound || state.footer_recovery!=state.recovery) {
+    state.footer_bound=FooterButtons(ui,state.screen,
+        {{0,"SELECT"},{1,"RESUME"},{8,"PREV TAB"},{9,"NEXT TAB"},
+         {14,state.recovery?"RESET CAR POSITION":""}});
+    state.footer_recovery=state.recovery;
+  }
 }
 void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
                const std::string& title, bool selected, bool enabled,
@@ -438,8 +444,10 @@ void StockVisibility(Native& ui, bool restore) {
   if (!state.stock_captured) return;
   // +370 suppresses drawing only. The neighboring +371 flag would stop the
   // original presentation's event/update work and must remain untouched.
-  ui.Call(0x82feb480, {state.engine, restore ? uint32_t(state.stock_suppression) : 1u});
-  GuestPtr(ui.base, state.stock_render_root + 0xfc)[0] = restore ? state.stock_visibility : 0;
+  const bool footer=state.stock_footer.Ready() && state.visible;
+  ui.Call(0x82feb480, {state.engine, restore ? uint32_t(state.stock_suppression) : footer?0u:1u});
+  GuestPtr(ui.base, state.stock_render_root + 0xfc)[0] = restore ? state.stock_visibility : uint8_t(footer);
+  if (!restore && footer) state.stock_footer.ApplyVisibility(ui);
   const auto manager = ui.Virtual(state.engine, 0x54, {state.engine});
   const auto adapter = ui.Virtual(manager, 0x3c, {manager});
   if (adapter) GuestPtr(ui.base, adapter + 0x110)[0] = 1;
@@ -452,7 +460,11 @@ void Visibility(Native& ui, bool visible) {
 }
 void Release(Native& ui, bool restore) {
   fh1_map_preview::Release(ui.ctx, ui.base);
-  if (restore) StockVisibility(ui, true);
+  if (restore) {
+    for (const auto& [node,visible]:state.stock_nodes) ui.Show(state.engine,node,visible);
+    ui.Call(0x827d6348,{state.screen});
+    StockVisibility(ui, true);
+  }
   for (auto& card : state.cards) card.donor.Release(ui);
   for (auto& tab : state.tabs) tab.donor.Release(ui);
   state.header.Release(ui);
@@ -693,6 +705,27 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     state.stock_suppression = GuestPtr(base, state.engine + 0x370)[0];
     state.stock_visibility = GuestPtr(base, state.stock_render_root + 0xfc)[0];
     state.stock_captured = true;
+    // Keep the initialized FH1 footer (and its real controller glyphs) while
+    // isolating the stock page artwork. Capture visibility for stock fallback.
+    auto& footer=state.stock_footer;
+    footer.presentation=state.engine;
+    footer.access=ui.Virtual(state.engine,0x1c,{state.engine});
+    footer.root=state.root; footer.status=Donor::Status::Ready;
+    const auto button_bar=Named(ui,state.root,"ButtonBar");
+    std::vector<uint32_t> pending{state.root};
+    while (!pending.empty() && state.stock_nodes.size()<8192) {
+      const auto node=pending.back();pending.pop_back();
+      const auto wrapper=Read(base,node+4);
+      if (wrapper && Read(base,wrapper+4)==node)
+        state.stock_nodes.push_back({node,GuestPtr(base,wrapper+0xfc)[0]!=0});
+      unsigned siblings=0;
+      for (auto child=Read(base,node+20);child && siblings++<1024;child=Read(base,child+16))
+        pending.push_back(child);
+    }
+    if (!pending.empty() || !button_bar || !footer.Isolate(ui,{button_bar})) {
+      REXLOG_WARN("Native pause: footer isolation unavailable; keeping stock pause");
+      Release(ui,true);return;
+    }
     if (const auto player = state.header.ControllerByVtable(ui, 0x8207eb54))
       ui.Call(0x82f36ab8, {player, Read(base, 0x833f44e8)});
     ui.Call(0x82f1ec20, {state.header.owner, Hash("SHOW_PLAYER_BAR") & 0x7fffffff});

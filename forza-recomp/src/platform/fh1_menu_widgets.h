@@ -268,6 +268,23 @@ public:
   }
 };
 
+struct FooterButton { uint32_t glyph; std::string_view label; };
+// The initialized native footer owns its atlas/style mapping and row spacing.
+// Glyph IDs are native model IDs, not texture coordinates.
+inline bool FooterButtons(Native& ui, uint32_t screen,
+                          std::initializer_list<FooterButton> buttons) {
+  const auto footer=ui.Call(0x82746638,{screen});
+  if (!footer) return false;
+  ui.Call(0x8289A908,{footer});
+  for (const auto& button:buttons) if (!button.label.empty()) {
+    const auto text=ui.TextRef(button.label);
+    if (!text) return false;
+    ui.Call(0x8289E2B0,{footer,button.glyph,text});
+    ui.Call(0x824CEAB0,{text});
+  }
+  ui.Call(Read(ui.base,Read(ui.base,footer+0x6C)+0x28),{footer+0x6C});
+  return true;
+}
 struct Donor {
   enum class Status { Idle, Loading, Ready, Failed };
   using KeepController = std::function<bool(uint32_t wrapper, uint32_t controller)>;
