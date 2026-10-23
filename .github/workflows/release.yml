@@ -450,6 +450,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: assets
@@ -463,4 +464,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
           # The SDK overlays are artifacts only for the packaging jobs; every package carries its own.
           rm -f assets/rexglue-overlay-*.tar.gz
+          python3 launcher/packaging/release_checksums.py assets
           gh release upload "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --clobber

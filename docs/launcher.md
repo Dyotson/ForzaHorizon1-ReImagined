@@ -696,7 +696,14 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
   redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
-  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three. The version comes from the tag. Nothing here needs the game or generated code.
+  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three.
+  Before upload, `launcher/packaging/release_checksums.py` hashes the final asset bytes
+  and writes `SHA256SUMS`, uploaded alongside them (#354). The manifest uses sorted,
+  download-relative filenames and excludes itself; reruns replace it. SDK overlays are
+  removed before hashing, as before upload. Checksums verify bytes against the release's
+  manifest; they are not code signatures or a malware assessment. Code-signing and vendor
+  submissions remain separate work. The version comes from the tag. Nothing here needs
+  the game or generated code.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.

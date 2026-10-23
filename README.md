@@ -116,6 +116,13 @@ This is the way to install. The launcher builds the game on your machine from yo
 
 Details: [`docs/launcher.md`](docs/launcher.md).
 
+To verify a download when its release includes `SHA256SUMS`, download that file from the
+same release. On Windows, run `Get-FileHash .\YourDownloadedSetup.exe -Algorithm SHA256`
+in PowerShell and compare the hash with the matching filename in `SHA256SUMS`.
+On Linux, put both files in the same folder and run
+`sha256sum --ignore-missing -c SHA256SUMS`. A match confirms the downloaded bytes match
+the published checksum; it does not certify that the program is safe or code-signed.
+
 ## Building from source
 
 For developers. Players should use the launcher.
