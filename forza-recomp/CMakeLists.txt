@@ -145,6 +145,7 @@ set(FORZA_SOURCES
     src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/ambient_leaderboard.cpp
     src/hooks/challenge_hud.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
@@ -170,8 +171,11 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/discord_presence.cpp
+    src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
+    src/platform/benchmark.cpp
+    src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
     src/platform/sdk_import.cpp

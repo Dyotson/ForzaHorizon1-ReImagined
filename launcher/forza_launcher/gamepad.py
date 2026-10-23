@@ -1,5 +1,7 @@
 """SDL controller input, independent of Qt. Only the launcher UI initializes SDL."""
 import ctypes
+import os
+import sys
 from dataclasses import dataclass
 
 
@@ -149,6 +151,40 @@ class Joysticks:
         self.pad = None
         self.instance = None
         self.counts = (0, 0, 0)
+        self.extra = {}  # instance -> (joystick, counts): pedal and shifter devices (#272)
+        # Linux devices SDL2 leaves out (pedals, shifters), read from evdev (evdev_joysticks.py):
+        # instance -> EvdevJoystick, and the event nodes they were found among.
+        self.evdev = {}
+        self.evdev_nodes = None
+        self.evdev_main = None
+
+    def scan_evdev(self, listed):
+        if not sys.platform.startswith("linux"):
+            return []
+        from . import evdev_joysticks
+        try:
+            nodes = sorted(n for n in os.listdir("/dev/input") if n.startswith("event"))
+        except OSError:
+            return []
+        if nodes != self.evdev_nodes:  # plugged in or out: look again
+            self.evdev_nodes = nodes
+            keep = {i for i in (self.instance, *self.extra) if i is not None and i < 0}
+            for instance in [i for i in self.evdev if i not in keep]:
+                self.evdev.pop(instance).close()
+            found = evdev_joysticks.scan(listed)
+            for number, joy in found.items():
+                instance = evdev_joysticks.INSTANCE_BASE - number
+                if instance in self.evdev:
+                    joy.close()
+                else:
+                    self.evdev[instance] = joy
+        return [DeviceInfo(i, j.name, "", j.vid, j.pid, False, False)
+                for i, j in sorted(self.evdev.items(), reverse=True) if j.fd is not None]
+
+    def drop_evdev(self, instance):
+        joy = self.evdev.pop(instance, None)
+        if joy is not None:
+            joy.close()
 
     def devices(self):
         s = self.sdl
@@ -165,14 +201,21 @@ class Joysticks:
                 s.SDL_JoystickGetDeviceVendor(i), s.SDL_JoystickGetDeviceProduct(i),
                 bool(s.SDL_IsGameController(i)),
                 s.SDL_JoystickGetDeviceType(i) == s.SDL_JOYSTICK_TYPE_WHEEL))
-        return out
+        return out + self.scan_evdev([(d.name, d.vid, d.pid) for d in out])
 
     def open(self, instance):
         """Open the joystick with this instance id (closing the previous one)."""
         s = self.sdl
         if instance == self.instance and self.joystick and s.SDL_JoystickGetAttached(self.joystick):
             return True
+        if instance == self.instance and self.evdev_main is not None:
+            return True
         self.release()
+        if instance is not None and instance < 0 and instance in self.evdev:
+            self.evdev_main = self.evdev[instance]
+            self.instance = instance
+            self.counts = self.evdev_main.counts
+            return True
         for i in range(s.SDL_NumJoysticks()):
             if s.SDL_JoystickGetDeviceInstanceID(i) != instance:
                 continue
@@ -193,6 +236,13 @@ class Joysticks:
         """The open joystick's state (bindings.Snapshot), or None when it is gone."""
         from .bindings import Snapshot
         s = self.sdl
+        if self.evdev_main is not None:
+            got = self.evdev_main.read()
+            if got is None:
+                self.drop_evdev(self.instance)
+                self.release()
+                return None
+            return Snapshot(*got)
         if not self.joystick:
             return None
         s.SDL_PumpEvents()
@@ -234,8 +284,65 @@ class Joysticks:
                         tuple(s.SDL_JoystickGetHat(j, n) for n in range(hats)),
                         pad_buttons, pad_axes)
 
+    def watch(self, instances):
+        """Keep these joysticks open too, next to the one `open` holds: a wheel's pedals and
+        shifter on their own USB devices bind with it (#272)."""
+        s = self.sdl
+        for instance in list(self.extra):
+            joystick = self.extra[instance][0]
+            if instance < 0:  # evdev: kept open in self.evdev
+                if instance not in instances:
+                    del self.extra[instance]
+                continue
+            if instance not in instances or not s.SDL_JoystickGetAttached(joystick):
+                s.SDL_JoystickClose(joystick)
+                del self.extra[instance]
+        for instance in instances:
+            if instance == self.instance or instance in self.extra:
+                continue
+            if instance < 0:
+                if instance in self.evdev:
+                    self.extra[instance] = (self.evdev[instance], self.evdev[instance].counts)
+                continue
+            for i in range(s.SDL_NumJoysticks()):
+                if s.SDL_JoystickGetDeviceInstanceID(i) != instance:
+                    continue
+                j = s.SDL_JoystickOpen(i)
+                if j:
+                    self.extra[instance] = (j, (s.SDL_JoystickNumAxes(j), s.SDL_JoystickNumButtons(j),
+                                                s.SDL_JoystickNumHats(j)))
+                break
+
+    def extra_counts(self, instance):
+        return self.extra[instance][1] if instance in self.extra else (0, 0, 0)
+
+    def read_extra(self, instance):
+        """A watched joystick's raw state (bindings.Snapshot), or None when it is gone."""
+        from .bindings import Snapshot
+        s = self.sdl
+        if instance not in self.extra:
+            return None
+        if instance < 0:
+            got = self.extra[instance][0].read()
+            if got is None:
+                del self.extra[instance]
+                self.drop_evdev(instance)
+                return None
+            return Snapshot(*got)
+        s.SDL_PumpEvents()
+        s.SDL_JoystickUpdate()
+        j, (axes, buttons, hats) = self.extra[instance]
+        if not s.SDL_JoystickGetAttached(j):
+            s.SDL_JoystickClose(j)
+            del self.extra[instance]
+            return None
+        return Snapshot(tuple(s.SDL_JoystickGetAxis(j, n) for n in range(axes)),
+                        tuple(bool(s.SDL_JoystickGetButton(j, n)) for n in range(buttons)),
+                        tuple(s.SDL_JoystickGetHat(j, n) for n in range(hats)))
+
     def release(self):
         s = self.sdl
+        self.evdev_main = None
         if self.pad:
             s.SDL_GameControllerClose(self.pad)
         elif self.joystick:
@@ -244,7 +351,11 @@ class Joysticks:
         self.counts = (0, 0, 0)
 
     def close(self):
+        self.watch(())
         self.release()
+        for joy in self.evdev.values():
+            joy.close()
+        self.evdev, self.evdev_nodes = {}, None
         if self.initialized:
             self.sdl.SDL_QuitSubSystem(self.sdl.SDL_INIT_GAMECONTROLLER)
             self.initialized = False

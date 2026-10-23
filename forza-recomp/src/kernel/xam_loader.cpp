@@ -193,6 +193,10 @@ void Relaunch() {
 
 }  // namespace
 
+namespace forza {
+void RestartForBenchmark() { Relaunch(); }
+}
+
 // The game's main loop, sub_823ED888(game object): entered once, after the boot.
 extern "C" REX_FUNC(__imp__sub_823ED888);
 extern "C" REX_FUNC(sub_823ED888) {

@@ -636,17 +636,18 @@ class SetupPage(QWidget):
         state, text = "unavailable", "Build the game first."
         if g is not None:
             try:
-                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False))
+                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False),
+                                                           shader_prebuild.build_problem(self.cfg))
             except Exception as e:  # a settings combination the plan refuses: say so, do not break the page
                 state, text = "unavailable", str(e)
         badge = {"none": ("Optional", None), "stale": ("Recommended", None), "done": ("Done", True),
-                 "unavailable": ("Unavailable", None)}[state]
+                 "unavailable": ("Unavailable", None), "rebuild": ("Rebuild first", None)}[state]
         self.c4.set_badge(*badge)
         self.go4.setText("Prebuild again" if state in ("done", "stale") else "Prebuild shaders")
-        self.go4.setEnabled(not busy and state != "unavailable")
+        self.go4.setEnabled(not busy and state not in ("unavailable", "rebuild"))
         if not self.fail.get("msg4") and not (busy and getattr(self, "_msg", None) is self.msg4):
             self.msg4.setText(text)
-            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state == 'stale' else theme.MUTED};")
+            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state in ('stale', 'rebuild') else theme.MUTED};")
 
     @staticmethod
     def _dlc_text(found, skipped):

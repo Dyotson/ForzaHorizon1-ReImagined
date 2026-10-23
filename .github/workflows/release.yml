@@ -57,6 +57,16 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -pthread forza-recomp/tests/resource_cache_lock_test.cpp -o "$RUNNER_TEMP/resource-cache-test"
           "$RUNNER_TEMP/resource-cache-test"
+      - if: runner.os == 'Linux'
+        name: Gamertag text cleaning
+        run: |
+          g++ -std=c++20 -O2 -I forza-recomp/src/kernel forza-recomp/tests/gamertag_text_test.cpp -o "$RUNNER_TEMP/gamertag-test"
+          "$RUNNER_TEMP/gamertag-test"
+      - if: runner.os == 'Linux'
+        name: Speed trap leaderboard placing
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/ambient_leaderboard_test.cpp -o "$RUNNER_TEMP/ambient-leaderboard-test"
+          "$RUNNER_TEMP/ambient-leaderboard-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
@@ -71,7 +81,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'forza-recomp/src/platform/native_renderer/**', 'tools/build_rexglue_sdk.sh', 'forza-recomp/tests/wheel_buttons_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'forza-recomp/src/platform/native_renderer/**', 'tools/build_rexglue_sdk.sh', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -100,6 +110,14 @@ jobs:
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             forza-recomp/tests/wheel_buttons_test.cpp -o "$RUNNER_TEMP/wheel-buttons-test"
           "$RUNNER_TEMP/wheel-buttons-test"
+          clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/wheel" \
+            forza-recomp/tests/wheel_devices_test.cpp -o "$RUNNER_TEMP/wheel-devices-test"
+          "$RUNNER_TEMP/wheel-devices-test"
+          clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+            -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/wheel" \
+            forza-recomp/tests/wheel_rumble_test.cpp -o "$RUNNER_TEMP/wheel-rumble-test"
+          "$RUNNER_TEMP/wheel-rumble-test"
           clang++ -std=c++20 -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             tools/test_pipeline_prebuild.cpp -o "$RUNNER_TEMP/pipeline-prebuild-test"
           "$RUNNER_TEMP/pipeline-prebuild-test"
@@ -137,6 +155,13 @@ jobs:
             -DFORZA_PATCHED_SDK_SOURCE="$HOME/rexglue-sdk-src-forza/sdk"
           "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/overlay-sdk" --parallel 2
           "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/overlay-sdk" --output-on-failure
+      - name: Benchmark and title-modal regression tests
+        run: |
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/benchmark -B "$RUNNER_TEMP/benchmark-tests" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/benchmark-tests" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/benchmark-tests" --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-overlay-linux
