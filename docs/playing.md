@@ -174,13 +174,35 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 ## Steam Deck
 
 The launcher detects the Deck and applies its preset: Vulkan, render scale 1, AMD FSR 1, `frame_rate = 30`,
-background shader compilation and the shader cache on. Keep these: render scale 2 and `frame_rate = 60` only
-make it slower. Play a session or two on a warm shader cache before judging the speed. Reported speed on a
-Steam Deck OLED (#45): 17 to 25 fps. We have no Deck; with a PC restricted to 4 cores that each give the game a
-fifth of a core, a race runs 22 to 24 fps (`docs/perf.md`, "Steam Deck approximation"), so the limit is the
-game's main thread and the graphics command thread, and none of the settings (MSAA, readback, submission thread,
-thread priorities) changes it. Cutscene audio that does not match the picture comes with the low frame rate;
-it has not been reproduced here.
+background shader compilation and the shader cache on (the PC check asks for the same: 30 fps for its CPU,
+render scale 1 for its graphics). Keep these: render scale 2 and `frame_rate = 60` only make it slower. Play a
+session or two on a warm shader cache before judging the speed. Reported speed on a Steam Deck OLED (#45,
+0.1.27): 17 to 25 fps, 8 in an 8-car race. Since then the game needs less CPU on few cores (#286): waits wake only
+their own threads, and the render thread sleeps while it waits for the GPU (`gpu_wait_blocking`, on by default
+on Linux; nothing to set). We have no Deck. This PC limited to four cores holds 30 fps in free roam and in a race,
+and the Deck's graphics, about a quarter of this card's compute units at half its clock, may well be what limits
+it (`docs/perf.md`, "Low-end CPUs"); a log from a Deck with Steam's performance overlay at level 4 in a race would
+tell. Cutscene audio that does not match the picture comes with the low frame rate; it has not been reproduced
+here.
+
+**Battery saver** (Settings > Display > Frame rate, Linux): On, or *Auto on battery (Steam Deck)*, starts the
+game on the lightest settings: 30 fps, render scale 1 with AMD FSR 1 (AMD FSR 3 and SMAA off) and the render
+thread sleeping while it waits for the GPU. Your own settings are not changed: the next start on mains power uses
+them again, so a docked setup at 60 fps and render scale 2 comes back by itself. Auto looks at the power source
+when the game starts, not while it runs. It is off by default; on the Deck's own preset it only undoes a frame
+rate, render scale or filter you raised.
+
+**Suspend and resume** (#140). The game should carry on where it was when the Deck wakes up: a suspend stops
+the clock the game runs on, so the game itself sees no gap. A game that was paused while that clock ran on (as
+`kill -STOP` does) does not count the time away either: the race clock did not count a 3 s or a 10 s stop.
+Signed in to Forza Live, the game says hello to the server as soon as it runs again. The server forgets a player
+after 30 s without one; from this version it gives a game that comes back its old player id, so the session it
+hosts and its address stay the same (an older server gives it a new id). Other players in your session see you
+leave after their own timeout, as on a console that lost its connection. `forza.log` has a `FORZA_RESUME:` line
+for each stop or sleep. Tested on Linux by stopping the game for 3 s, 10 s, 45 s, 2 and 10 minutes, offline in a
+race and signed in to a local server (free roam and a hosted Horizon World); not on a Deck yet: that the sound
+comes back (the game plays on the system's default output, which SDL follows when it changes), that the GPU
+survives the sleep without a "device lost", and that the Deck's controls come back.
 
 ## Keyboard and mouse
 
