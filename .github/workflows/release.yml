@@ -12,7 +12,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    branches: [main, 'launcher-stack/**']
+    branches: [main, 'launcher-stack/**', feature/physics-trigger-feedback]
   workflow_dispatch:
 
 concurrency:

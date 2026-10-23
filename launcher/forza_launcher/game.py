@@ -382,6 +382,8 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     notes = []
     env, unset = {}, []
     env["FORZA_GRAPHICS_SETTINGS"] = str(home / ingame.FILENAME)
+    from . import data_out
+    env.update(data_out.environment(cfg.settings, game.dir))
 
     # The profile: your own, or a copy of your Xenia Canary save (play.sh --xenia).
     log_file = home / "forza.log"

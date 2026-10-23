@@ -183,6 +183,7 @@ set(FORZA_SOURCES
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp
+    src/platform/data_out.cpp
     src/platform/vulkan_hooks.cpp
     src/platform/wheel_bridge.cpp
 )
