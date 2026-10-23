@@ -692,6 +692,27 @@ capture used `vulkan_sparse_shared_memory=false` and
 
 ## Filter supersampled car thumbnails (#50)
 
+### Scaled storage layout correction (#336)
+
+Patch 0149 corrects the RGBA8 box filter introduced by 0066. Scaled resolve
+storage expands each 16-byte guest quad into scaled host quads. The old filter
+instead averaged consecutive words as though each guest pixel owned a contiguous
+sample block, mixing neighboring pixels and losing detail. Only the thumbnail
+box-filter path changes; ordinary point/center readbacks retain their policy.
+
+Windows / RTX 5060 Ti, TU4, offline copied save: at 1440p with 2x Game MSAA,
+an identical Mustang auto-upgrade regenerated a visibly striped/jagged garage
+tile before the fix and a clean tile/card atlas after it. Display samplers were
+already linear. Existing saved thumbnails require regeneration through a normal
+paint/upgrade change; this patch does not rewrite profiles.
+
+`tools/test_vulkan_thumbnail_readback.py --header SDK/src/graphics/shaders/vulkan_spirv/resolve_downscale_cs.h`
+dispatches the embedded shader against independently packed physical quad data:
+scales 1–3 on both axes, offsets 0/16/256, one/two tiles and output guards.
+The corrected shader passes 27/27; the pre-fix shader fails 18/27 with
+`--original-control`. The earlier 81-case test used pixel-contiguous source data
+and therefore did not validate the renderer's actual storage layout.
+
 Patch 0066 averages the RGBA8 samples in each supersampled guest pixel when
 reading back a known car-thumbnail surface. The old shader chose one corner
 sample, discarding the other three samples at 2x or eight at 3x. Depth, other
