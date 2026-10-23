@@ -93,9 +93,11 @@ scrolling in both directions, and wraparound. The temporary extra pages are not
 part of the shipped menu or its scene assets. Geometry and viewport tests cover
 map containment, stable windows and bounded page capacity.
 
-Neutral cards use FH1's original `Horizon/DirtMasks/Panel01` painted paper with
-dark text; focused actions use festival pink and white text. This replaces the
-flat mauve card appearance without adding copied game textures to the repo.
+Neutral cards tint FH1's original `Horizon/DirtMasks/Panel01` painted paper
+dark charcoal, with white headings and pale secondary text. Focused actions
+use festival pink and white text. The rough painted edges remain visible;
+no copied game textures are added to the repo. Decorative action icons use
+faded white silhouettes for contrast against both charcoal and pink.
 
 The four action icons use Font Awesome Free 6.7.2 solid SVGs (car-side, wrench,
 warehouse and store), CC BY 4.0. Their attribution and license are retained in

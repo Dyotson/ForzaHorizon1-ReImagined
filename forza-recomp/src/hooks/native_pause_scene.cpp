@@ -41,6 +41,10 @@ namespace forza::native_pause_scene {
 namespace {
 using namespace fh1_menu_widgets;
 using Clock = std::chrono::steady_clock;
+constexpr uint32_t kPanelColor = 0x211e20;
+constexpr uint32_t kTextColor = 0xffffff;
+constexpr uint32_t kSecondaryTextColor = 0xe2dce2;
+constexpr uint32_t kDisabledTextColor = 0xaaaaaa;
 namespace layout = native_pause_layout;
 struct Card {
   Donor donor;
@@ -303,9 +307,9 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
   ui.Scale(d.presentation,card.icon,w/100,h/100);Depth(ui,d,card.icon,1);
   const auto focus=state.controller.focused_tile_id();
   const bool selected=focus&&*focus==tile.id;
-  ui.Color(d.presentation,card.icon_material,selected?0xffffff:0x161416);ui.Opacity(d.presentation,card.icon,selected?18:12);
+  ui.Color(d.presentation,card.icon_material,kTextColor);ui.Opacity(d.presentation,card.icon,selected?18:12);
   ui.CropImage(card.icon_material,image->l/image->w,image->t/image->h,image->bw*.75f/image->w,image->bh*.75f/image->h);
-  Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?(selected?0xffffff:0x171416):0x6f686b);
+  Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?kTextColor:kDisabledTextColor);
 }
 bool BindHeader(Native& ui) {
   const auto& d = state.header;
@@ -430,12 +434,12 @@ void StyleCard(Native& ui, Card& card, const menu::Rect& bounds,
   ui.Scale(d.presentation, card.paper, float(bounds.width / 100),
            float(bounds.height / 100));
   if (card.material)
-    ui.Color(d.presentation, card.material, selected ? 0xff007a : tab?0x302b30:0xece8df);
+    ui.Color(d.presentation, card.material, selected ? 0xff007a : tab?0x302b30:kPanelColor);
   ui.Opacity(d.presentation, card.paper, enabled ? 100.f : 48.f);
   Label(ui, d, card.title,
         {bounds.x + 20, bounds.y + (tab ? 0 : 12), bounds.width - 40,
          tab ? bounds.height : 40}, tab ? 23.f : 27.f, title,
-        enabled ? (tab||selected?0xffffff:0x171416) : 0x6f686b, tab ? 1 : 0);
+        enabled ? kTextColor : kDisabledTextColor, tab ? 1 : 0);
 }
 void Progress(Native& ui, Card& card, const menu::Rect& bounds) {
   const auto& d = card.donor;
@@ -457,9 +461,9 @@ void Progress(Native& ui, Card& card, const menu::Rect& bounds) {
   if (state.completion) std::snprintf(label, sizeof(label), "%.1f%% COMPLETE", fraction * 100);
   else std::snprintf(label, sizeof(label), "PROGRESS UNAVAILABLE");
   Label(ui, d, card.caption, {bounds.x + bounds.width - 228, bounds.y + 12, 204, 38},
-        20, label, 0x171416, 2);
+        20, label, kTextColor, 2);
   Label(ui, d, card.title, {bounds.x + 20, bounds.y + 12, bounds.width - 264, 40},
-        23, "FESTIVAL PROGRESS",0x171416);
+        23, "FESTIVAL PROGRESS",kTextColor);
 }
 bool BindCar(Native& ui) {
   auto& d = state.cards[0].donor;
@@ -547,8 +551,8 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
                float((content.name.width-168) / 1200), .045f, 0);
   ui.TextStyle(d.access, d.presentation, car.make, 18,
                float((content.name.width-78) / 1200), .035f, 0);
-  ui.Color(d.presentation, car.name, 0x171416, true);
-  ui.Color(d.presentation, car.make, 0x423b3d, true);
+  ui.Color(d.presentation, car.name, kTextColor, true);
+  ui.Color(d.presentation, car.make, kSecondaryTextColor, true);
   ui.Show(d.presentation,car.badge,car.badge_ready);
   if(car.badge_ready){Normalize(ui,d,car.badge);Depth(ui,d,car.badge,-3);
     Point(ui,d,car.badge,bounds.x+bounds.width-51,content.name.y+12);
@@ -581,8 +585,8 @@ void CarLayout(Native& ui, const menu::Rect& bounds) {
                  float((width - 8) / 1200), .032f, 1);
     ui.TextStyle(d.access, d.presentation, car.values[i], 16,
                  float((width - 8) / 1200), .035f, 1);
-    ui.Color(d.presentation,car.labels[i],0x423b3d,true);
-    ui.Color(d.presentation,car.values[i],0x171416,true);
+    ui.Color(d.presentation,car.labels[i],kSecondaryTextColor,true);
+    ui.Color(d.presentation,car.values[i],kTextColor,true);
   }
   ui.Scale(d.presentation,Read(ui.base,car.image+12),zoom,zoom);
   // The dedicated photo branch is excluded from the paper shear. Translate
@@ -970,7 +974,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
                tile.bounds.width - 48, tile.id=="friends"?112.:compact ? 26. : 32.},
-              compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?0xffffff:0x423b3d) : 0x6f686b);
+              compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";
@@ -980,10 +984,10 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       }
       const bool car = tile.id == "current_car";
       if (tile.id == "world_map" && fh1_map_preview::Ready()) {
-        ui.Color(card.donor.presentation, card.material, 0xece8df);
+        ui.Color(card.donor.presentation, card.material, kPanelColor);
         ui.Show(card.donor.presentation, card.caption, false);
         ui.Color(card.donor.presentation, card.title,
-                 focus && tile.id == *focus ? 0xff007a : 0x171416, true);
+                 focus && tile.id == *focus ? 0xff007a : kTextColor, true);
       }
       if (i == 0) {
         for (auto node : {state.car.name, state.car.make, state.car.image, state.car.stats, state.car.logo,state.car.badge})
