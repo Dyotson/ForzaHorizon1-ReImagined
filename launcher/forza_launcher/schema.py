@@ -185,6 +185,14 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+add("forza_pause_on_focus_loss", "Pause when the window loses focus", "Controls", "bool", False,
+    "Open the game's pause menu when you switch away while driving. Resume manually after returning. "
+    "Multiplayer continues running while its pause menu is open.", "Auto-pause", restart=True)
+add("forza_pause_on_controller_disconnect", "Pause when the controller disconnects", "Controls", "bool", False,
+    "Open the game's pause menu when the physical controller or wheel you were using disconnects. "
+    "Keyboard-only play and unplugging an idle extra controller do not trigger it. Resume manually.",
+    "Auto-pause", restart=True)
+
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
