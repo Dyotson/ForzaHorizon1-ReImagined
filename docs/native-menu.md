@@ -98,7 +98,11 @@ teleports, profile storage/reload/recovery and presence compatibility. A copied-
 1280x720 run exercised countdown, real driving, native timeout/retry, distance
 progress, a paused progress snapshot remaining unchanged and cancellation.
 Live challenge completion/relaunch is still unverified; model coverage alone is
-not a claim that a challenge was won in gameplay. Two private local clients
+not a claim that a challenge was won in gameplay. A further copied-profile 720p
+attempt confirmed native Reset Car Position executes HandOfGod and cancels the
+active challenge when the car is repositioned, rather than counting the jump as
+progress. Normal driving attempts were interrupted by traffic/barrier collisions;
+they do not close the gameplay-win/relaunch gate. Two private local clients
 exercised Friends join confirmation/cancel/accept, a populated custom lobby,
 race start and joining a running Horizon World. The session page showed both
 players' actual loaded cars with class/PI and distinct host/local labels.
