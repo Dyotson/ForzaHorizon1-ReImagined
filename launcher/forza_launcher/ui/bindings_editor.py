@@ -454,7 +454,8 @@ class BindingsEditor(QWidget):
             role = self.roles().get(device.instance)
             if role:
                 return role
-        if mode != "off" and (bindings.looks_like_wheel(device.name, device.vid, device.sdl_wheel)
+        if mode != "off" and (bindings.looks_like_wheel(device.name, device.vid, device.sdl_wheel,
+                                                        device.pid)
                               or (mode == "on" and not device.gamepad)):
             return "wheel"
         return "controller" if device.gamepad else "unused"
@@ -609,7 +610,8 @@ class BindingsEditor(QWidget):
 
     def known_wheel(self):
         w = self.wheel()
-        return bool(bindings.known_wheel(w.vid, w.pid)) and w.num_axes > 3
+        # Pedals that rest at the maximum (Logitech); a Thrustmaster's rest is read (#308).
+        return bool(bindings.known_logitech(w.vid, w.pid)) and w.num_axes > 3
 
     # --- rows ---------------------------------------------------------------------------------
     def kind(self):
