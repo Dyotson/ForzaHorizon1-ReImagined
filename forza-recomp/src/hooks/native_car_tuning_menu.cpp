@@ -9,6 +9,7 @@
 #include "../platform/guest_memory.h"
 #include "../platform/native_tuning_components.h"
 #include "../platform/native_tuning_assets.h"
+#include "../platform/car_tuning_library.h"
 #include "../kernel/live.h"
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -128,6 +129,11 @@ struct Form {
   int direction = 0;
   std::chrono::steady_clock::time_point repeat_at{};
   std::string message;
+  enum class Page { Tune, Library, Name, Delete } page=Page::Tune;
+  unsigned action=0,library_selected=0,key=0;
+  std::string name;
+  std::vector<setups::Entry> entries;
+  fh1_menu_components::TabBar library_tabs;
 };
 Form form;
 native_tuning_components::Workspace workspace;
@@ -227,6 +233,65 @@ void RestartPreview(UI& ui) {
 }
 void Status(UI& ui, const std::string& message = {}) {
   (void)ui; form.message=message;
+}
+setups::Library SetupLibrary(bool inbox=false,bool exports=false) {
+  const auto* runtime=rex::Runtime::instance();
+  return setups::Library(runtime->user_data_root()/"tunes"/(inbox?"inbox":exports?"exports":"library"));
+}
+void Footer(UI& ui) {
+  auto footer=ui.Call(0x82746638,{form.screen});if(!footer)return;
+  ui.Call(0x8289A908,{footer});
+  const bool tune=form.page==Form::Page::Tune,name=form.page==Form::Page::Name;
+  for(auto item:{std::pair{0u,tune?"APPLY SETUP":"SELECT"},std::pair{1u,tune?"DISCARD":"BACK"},
+      std::pair{2u,tune?"SETUPS":""},std::pair{3u,name?"BACKSPACE":tune?"RESET ALL":""},
+      std::pair{8u,name?"":tune?"PREV CATEGORY":"PREV ACTION"},std::pair{9u,name?"":tune?"NEXT CATEGORY":"NEXT ACTION"}}){
+    if(*item.second)if(auto text=ui.Text(item.second)){ui.Call(0x8289E2B0,{footer,item.first,text});ui.Call(0x824CEAB0,{text});}
+  }
+  ui.Call(Read(ui.base,Read(ui.base,footer+0x6c)+0x28),{footer+0x6c});
+}
+void RefreshLibrary() {
+  form.entries=SetupLibrary(form.action==5).List();
+  form.library_selected=std::min<unsigned>(form.library_selected,form.entries.empty()?0:unsigned(form.entries.size()-1));
+}
+void LibraryPage(UI& ui) {
+  form.page=Form::Page::Library;form.library_tabs.SetTabs({{"save","SAVE"},{"load","LOAD"},{"rename","RENAME"},{"delete","DELETE"},{"export","EXPORT"},{"import","IMPORT"}});
+  form.library_tabs.Select(form.library_tabs.tabs()[form.action].id);RefreshLibrary();Footer(ui);
+}
+const std::vector<std::string>& NameKeys() {
+  static const auto keys=[] {std::vector<std::string> v;for(char c:std::string("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_'"))v.emplace_back(1,c);v.push_back("DEL");v.push_back("DONE");v.push_back("CANCEL");return v;}();return keys;
+}
+void LibrarySelect(UI& ui) {
+  if(form.page==Form::Page::Name){
+    const auto& key=NameKeys()[form.key];
+    if(key=="CANCEL"){LibraryPage(ui);return;}
+    if(key=="DEL"){if(!form.name.empty())form.name.pop_back();return;}
+    if(key!="DONE"){if(form.name.size()<setups::kMaxName)form.name+=key;return;}
+    if(!setups::ValidName(form.name)){Status(ui,"Use 1-32 letters/numbers; names must start and end with a letter or number.");return;}
+    bool success=false;
+    if(form.action==0)success=SetupLibrary().Save(setups::Capture(form.name,form.edit)).has_value();
+    else if(form.library_selected<form.entries.size())success=SetupLibrary().Rename(form.entries[form.library_selected].id,form.name);
+    LibraryPage(ui);Status(ui,success?"Named setup saved locally. The car changes only with Apply.":"Could not save this setup. Check storage or the 256-setup limit.");return;
+  }
+  if(form.page==Form::Page::Delete){
+    bool success=form.library_selected<form.entries.size()&&SetupLibrary().Remove(form.entries[form.library_selected].id);
+    LibraryPage(ui);Status(ui,success?"Setup deleted from this local library.":"Setup could not be deleted.");return;
+  }
+  if(form.action==0||form.action==2){
+    if(form.action==2&&form.entries.empty()){Status(ui,"Select a saved setup first.");return;}
+    form.name=form.action==0?"Setup "+std::to_string(form.entries.size()+1):form.entries[form.library_selected].setup.name;
+    form.key=0;form.page=Form::Page::Name;Footer(ui);Status(ui,"Choose characters, then DONE. Y removes the last character.");return;
+  }
+  if(form.entries.empty()){Status(ui,"No setup is selected.");return;}
+  auto entry=form.entries[form.library_selected];
+  auto current=SetupLibrary(form.action==5).Get(entry.id);
+  if(!current){RefreshLibrary();Status(ui,"The selected file changed or is invalid. Select it again.");return;}
+  if(form.action==3){form.page=Form::Page::Delete;Footer(ui);Status(ui,"Select A to delete this local setup, or B to keep it.");return;}
+  if(form.action==4){Status(ui,SetupLibrary(false,true).Save(*current)?"Parameter-only file exported to tunes/exports. Share that .fh1tune file.":"Export failed or the export folder is full.");return;}
+  auto draft=form.edit;
+  if(!setups::LoadDraft(*current,draft)){Status(ui,"Incompatible tune: car model, all installed parts, schema and legal fields must match.");return;}
+  if(form.action==5&&!SetupLibrary().Save(*current)){Status(ui,"Import could not be saved locally. Your draft was not changed.");return;}
+  form.edit=std::move(draft);RestartPreview(ui);form.page=Form::Page::Tune;Footer(ui);
+  Status(ui,"Loaded "+current->name+" as an unsaved draft. Review it, then Apply or Discard.");
 }
 
 bool BuildRow(UI& ui, unsigned index) {
@@ -418,6 +483,7 @@ bool TryBind(PPCContext& context, uint8_t* base) {
     ui.Call(Read(base, Read(base, footer + 0x6C) + 0x28), {footer + 0x6C});
   }
   form.bound = rows_ok;
+  if(rows_ok)Footer(ui);
   if (rows_ok) {
     ParentRows(ui, false);
     RestartPreview(ui);
@@ -491,6 +557,13 @@ bool TryInput(PPCContext& context, uint8_t* base) {
   }
   if (!form.bound || !form.armed || form.applying) return true;
   const auto event = ui.Event(form.screen, context.r4.u32);
+  if(form.page!=Form::Page::Tune){
+    if(event==0x60){
+      if(form.page==Form::Page::Library){form.page=Form::Page::Tune;Footer(ui);Status(ui);}
+      else{LibraryPage(ui);Status(ui);}
+    }else if(event==0x5D)LibrarySelect(ui);
+    return true;
+  }
   if (event == 0x60) {
     form.edit.Cancel();
     ui.Call(0x827F20F0, {form.screen});
@@ -553,11 +626,36 @@ void DrawWorkspace(UI& ui) {
   }
   if(!form.edit.open()){view.status="REOPEN REQUIRED";for(auto& metric:view.metrics)metric.draft="N/A";}
   if(!form.message.empty())view.help=form.message;
+  if(form.page!=Form::Page::Tune){
+    view.library=true;view.tabs=form.library_tabs;view.rows.clear();
+    view.range="Local parameter files only. Loading never applies or saves the car.";
+    if(form.page==Form::Page::Name){view.keyboard=true;view.entry=form.name;view.keys=NameKeys();view.key=form.key;}
+    else if(form.page==Form::Page::Delete){
+      native_tuning_components::Row row;row.label="DELETE "+form.entries[form.library_selected].setup.name+"?";row.selected=true;view.rows.push_back(row);
+    }else if(form.action==0){
+      native_tuning_components::Row row;row.label="Save current draft with a name";row.selected=true;view.rows.push_back(row);
+      if(form.message.empty())view.help="Save a reusable local setup without changing the car.";
+    }else{
+      unsigned begin=form.library_selected/9*9,end=std::min<unsigned>(begin+9,unsigned(form.entries.size()));
+      for(unsigned i=begin;i<end;++i){auto& entry=form.entries[i];auto probe=form.edit;
+        native_tuning_components::Row row;row.label=entry.setup.name;row.saved=std::to_string(entry.setup.model);
+        row.draft=setups::LoadDraft(entry.setup,probe)?"READY":"INCOMPATIBLE";row.selected=i==form.library_selected;view.rows.push_back(std::move(row));}
+      if(form.message.empty())view.help=form.action==5?"Add shared .fh1tune files to tunes/inbox, then select Import.":"Choose a setup. Its car model and installed parts must match.";
+      if(!form.entries.empty())view.range="Setup "+std::to_string(form.library_selected+1)+" / "+std::to_string(form.entries.size())+". "+view.range;
+    }
+  }
   fh1_menu_widgets::Native native(ui.ctx,ui.base);workspace.Tick(native,view);
   if(workspace.Failed())REXLOG_WARN("Native car tuning: dedicated workspace rejected; next input closes without applying");
 }
 
 void Direction(UI& ui,int direction) {
+  if(form.page!=Form::Page::Tune){
+    if(form.page==Form::Page::Name){int delta=direction==1?-9:direction==2?9:direction==3?-1:1;
+      form.key=unsigned((int(form.key)+int(NameKeys().size())+delta)%int(NameKeys().size()));
+    }else if(form.page==Form::Page::Library&&!form.entries.empty()&&form.action!=0){
+      form.library_selected=unsigned((form.library_selected+form.entries.size()+(direction==1||direction==3?-1:1))%form.entries.size());
+    }return;
+  }
   if(form.visible.empty())return;
   if(direction==1||direction==2){
     form.selected=unsigned((form.selected+form.visible.size()+(direction==1?-1:1))%form.visible.size());
@@ -566,12 +664,16 @@ void Direction(UI& ui,int direction) {
   const auto index=form.visible[std::min<size_t>(form.selected,form.visible.size()-1)];
   const auto field=Field(index);const auto& range=*form.edit.schema()[index];
   const auto step=NativeStep(ui,field,range);
-  auto selected=fh1_menu_components::SliderNeighbor(form.choices[index],form.selections[index],range.stock,float(step*.25),direction==4?1:-1);
-  if(!selected||*selected==form.selections[index])return;
-  if(!form.edit.SetValue(field,form.choices[index][*selected])){
+  const auto current=*form.edit.Value(field);auto choices=form.choices[index];
+  auto at=std::lower_bound(choices.begin()+1,choices.end(),current);
+  if(at==choices.end()||*at!=current)at=choices.insert(at,current);
+  auto selected=fh1_menu_components::SliderNeighbor(choices,size_t(at-choices.begin()),range.stock,float(step*.25),direction==4?1:-1);
+  if(!selected||choices[*selected]==current)return;
+  if(!form.edit.SetValue(field,choices[*selected])){
     Status(ui,"Keep gear ratios in descending order. Adjust the neighboring gear first.");return;
   }
-  form.selections[index]=uint32_t(*selected);Write(ui.base,form.rows[index]+8,uint32_t(*selected));
+  auto original=std::find(form.choices[index].begin()+1,form.choices[index].end(),choices[*selected]);
+  form.selections[index]=uint32_t(original-form.choices[index].begin());Write(ui.base,form.rows[index]+8,form.selections[index]);
   RestartPreview(ui);Status(ui);
 }
 void Tick(const PPCContext& context, uint8_t* base) {
@@ -604,12 +706,18 @@ void Tick(const PPCContext& context, uint8_t* base) {
     }
     form.direction=direction;
     if (form.armed && !form.applying && form.edit.open() &&
-        (held & 0x8000) && !(form.held & 0x8000)) Reset(ui);
+        (held & 0x8000) && !(form.held & 0x8000)) {
+      if(form.page==Form::Page::Name){if(!form.name.empty())form.name.pop_back();}
+      else if(form.page==Form::Page::Tune)Reset(ui);
+    }
+    if(form.armed&&!form.applying&&form.edit.open()&&form.page==Form::Page::Tune&&(held&0x4000)&&!(form.held&0x4000))LibraryPage(ui);
     if (form.armed && !form.applying && form.edit.open()) {
       if ((held & 0x0100) && !(form.held & 0x0100))
-        {form.tabs.SelectNeighbor(-1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
+        {if(form.page==Form::Page::Tune){form.tabs.SelectNeighbor(-1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
+         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(-1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Status(ui);}}
       if ((held & 0x0200) && !(form.held & 0x0200))
-        {form.tabs.SelectNeighbor(1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
+        {if(form.page==Form::Page::Tune){form.tabs.SelectNeighbor(1);ShowCategory(ui,unsigned(form.tabs.selected_index()));}
+         else if(form.page==Form::Page::Library){form.library_tabs.SelectNeighbor(1);form.action=unsigned(form.library_tabs.selected_index());RefreshLibrary();Status(ui);}}
     }
     form.held = held;
   }

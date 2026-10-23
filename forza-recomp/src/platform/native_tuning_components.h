@@ -17,6 +17,8 @@ struct View {
   unsigned category=0;
   std::vector<Row> rows; std::array<Metric,7> metrics{};
   std::string status,help,range; bool dirty=false;
+  bool library=false,keyboard=false;unsigned key=0;std::string entry;
+  std::vector<std::string> keys;
 };
 class Workspace {
   struct Piece {
@@ -154,7 +156,7 @@ public:
     Mesh(ui,backing,backing.paper,{0,0,1280,720},0x161117,backing.ink);
     ui.Opacity(backing.donor.presentation,backing.paper,91);
     auto& header=pieces[20];
-    fh1_menu_components::Header heading{"CAR TUNING",view.dirty?"UNSAVED DRAFT":"SAVED SETUP",view.dirty};
+    fh1_menu_components::Header heading{view.library?"TUNE LIBRARY":"CAR TUNING",view.dirty?"UNSAVED DRAFT":"SAVED SETUP",view.dirty};
     const auto native_name=[&](unsigned index,Rect r,float size){auto n=header.text[index];auto& d=header.donor;
       ui.Show(d.presentation,n,true);Normalize(ui,d,n);ui.Scale(d.presentation,n,1,1);Depth(ui,d,n,-5);
       Point(ui,d,n,r.x,r.y+r.h/2);ui.TextStyle(d.access,d.presentation,n,size,r.w/1200,r.h/720,0);ui.Color(d.presentation,n,0xc9c2c9,true);ui.Opacity(d.presentation,n,100);};
@@ -168,20 +170,28 @@ public:
     const auto category=view.tabs.tabs().empty()?std::string{}:view.tabs.tabs()[view.tabs.selected_index()].label;
     Mesh(ui,header,header.track,{48,191,726,36},0x302b30,Named(ui,header.track,"Material100"));
     label(header,2,{58,194,340,30},19,category);
-    label(header,3,{442,194,140,30},14,"SAVED",0xc9c2c9,2);
-    label(header,4,{594,194,170,30},14,"DRAFT",0xff83bf,2);
+    label(header,3,{442,194,140,30},14,view.library?"CAR":"SAVED",0xc9c2c9,2);
+    label(header,4,{594,194,170,30},14,view.library?"STATUS":"DRAFT",0xff83bf,2);
     unsigned count=std::min<unsigned>(9,unsigned(view.rows.size()));
     for(unsigned i=0;i<count;++i){auto& p=pieces[9+i];const auto& row=view.rows[i];float y=235+i*34.f;
       Mesh(ui,p,p.paper,{48,y,726,31},row.selected?0x5b2342:0x302b30,p.ink);
-      label(p,0,{62,y,225,28},16,row.label);
+      label(p,0,{62,y,view.library?390.f:225.f,28},16,row.label);
       label(p,1,{462,y,119,28},15,row.saved,0xc9c2c9,2);label(p,2,{597,y,163,28},16,row.draft,0xffffff,2);
-      Mesh(ui,p,p.track,{302,y+15,140,4},0x888088,Named(ui,p.track,"Material100"));
+      if(!view.library){Mesh(ui,p,p.track,{302,y+15,140,4},0x888088,Named(ui,p.track,"Material100"));
       Mesh(ui,p,p.fill,{302,y+15,std::max(1.f,140*row.value),4},0xff007a,Named(ui,p.fill,"Material100"));
       Mesh(ui,p,p.tick,{301+140*row.saved_value,y+10,2,14},0xffffff,Named(ui,p.tick,"Material100"));
-      Mesh(ui,p,p.thumb,{300+140*row.value,y+9,4,16},0xff83bf,Named(ui,p.thumb,"Material90"));
+      Mesh(ui,p,p.thumb,{300+140*row.value,y+9,4,16},0xff83bf,Named(ui,p.thumb,"Material90"));}
     }
-    if(!count){label(header,5,{66,245,685,38},22,"NO ADJUSTABLE SETTINGS",0xffffff);
-      label(header,6,{66,289,685,40},16,"Installed parts lock this category.",0xc9c2c9);}
+    if(!count&&!view.keyboard){label(header,5,{66,245,685,38},22,view.library?"NO SAVED SETUPS":"NO ADJUSTABLE SETTINGS",0xffffff);
+      label(header,6,{66,289,685,40},16,view.library?"Save your draft or add a shared tune to the inbox.":"Installed parts lock this category.",0xc9c2c9);}
+    if(view.keyboard){
+      label(header,5,{66,237,685,43},24,view.entry+"_",0xff83bf);
+      for(unsigned i=0;i<view.keys.size();++i){unsigned row=i/9,col=i%9;auto& p=pieces[9+row];
+        float x=58+col*79.f,y=300+row*40.f;
+        const auto key=view.keys[i]==" "?std::string("SPACE"):view.keys[i];
+        label(p,col,{x,y,74,34},key.size()>1?12.f:20.f,key,i==view.key?0xff007a:0xffffff,1);
+      }
+    }
     auto& metrics=pieces[18];auto& metrics2=pieces[19];
     Mesh(ui,metrics2,metrics2.paper,{802,195,434,361},0x302b30,metrics2.ink);
     label(metrics,0,{822,203,390,31},21,"PERFORMANCE SIMULATION");
@@ -193,7 +203,7 @@ public:
       label(p,index+2,{1080,y,134,29},15,m.draft,0xffffff,2);
     }
     label(header,7,{63,570,1150,29},17,view.help);
-    label(header,8,{63,604,1150,26},13,view.range+" Changes are saved only with Apply.",0xc9c2c9);
+    label(header,8,{63,604,1150,26},13,view.range+(view.library?"":" Changes are saved only with Apply."),0xc9c2c9);
     // Actual native footer controller owns its button atlas and label spacing.
     footer.ApplyVisibility(ui);
     const auto footer_runtime=ui.Virtual(engine,8,{engine});ui.Call(0x82FE39A0,{footer_runtime});

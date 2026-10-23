@@ -158,6 +158,24 @@ class EditSession {
     return Reset(axle == Axle::Front ? Field::FrontPressure : Field::RearPressure);
   }
   void Cancel() { if (open_) pending_ = original_; }
+  // Imported documents may supply exposed fields only. Merge into this
+  // receiver's draft, preserving its opaque words and linked-part semantics.
+  bool LoadFields(const std::array<std::optional<uint32_t>, kFieldCount>& fields) {
+    if (!open_) return false;
+    auto candidate = *this;
+    for (size_t i = 0; i < kFieldCount; ++i) {
+      if (fields[i].has_value() != Editable(Field(i))) return false;
+      if (!fields[i]) continue;
+      const auto value = std::bit_cast<float>(*fields[i]);
+      if (!std::isfinite(value) || (value != kStock && (value < 0 || value > 1))) return false;
+      candidate.SetNormalized(Field(i), value);
+    }
+    // Validate the completed gear set, not an intermediate loading order.
+    for (size_t i = size_t(Field::Gear1); i <= size_t(Field::Gear8); ++i)
+      if (auto value = candidate.Value(Field(i)); value && !candidate.GearOrderAllows(Field(i), *value)) return false;
+    pending_ = candidate.pending_;
+    return true;
+  }
   void Close() { open_ = false; identity_ = {}; }
 
   // Recheck immediately before applying. Car swaps, upgrades and another writer
