@@ -154,10 +154,32 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 .fps tbody th { color: var(--orange); font-weight: 800; text-align: left; }
 .fps thead th:first-child { text-align: left; }
 
+/* ---- leaderboards page ---- */
+.board-page { padding: 100px clamp(16px, 5vw, 64px) 60px; max-width: 1000px; margin: 0 auto; }
+.board-page .panel { width: 100%; }
+.board-controls { display: flex; flex-wrap: wrap; gap: 14px; margin: 16px 0; }
+.board-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 700; color: var(--muted); flex: 1 1 220px; }
+.board-controls select { font: inherit; font-size: 16px; color: var(--text); background: #1d1342; border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; min-width: 0; }
+.board-meta { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+.board-wrap { overflow-x: auto; }
+.board { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.board th, .board td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.board thead th { color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap; }
+.board td:first-child, .board th:first-child { text-align: right; color: var(--orange); font-weight: 800; width: 3em; }
+.board .num { text-align: right; white-space: nowrap; font-weight: 700; color: var(--cream); }
+.board tbody tr:nth-child(-n+3) td:first-child { color: var(--pink); }
+.board-state { padding: 18px 0; color: var(--muted); }
+.board-state.error { color: #ffe3e8; }
+@media (max-width: 600px) {
+  .board-page { padding-top: 84px; }
+  .board .opt { display: none; }
+  .board th, .board td { padding: 8px 6px; }
+}
+
 /* phones: the road runs down the left edge */
 @media (max-width: 820px) {
   :root { --road-w: 26px; }
-  nav a:not(.nav-cta):not(.nav-discord) { display: none; }
+  nav a:not(.nav-cta):not(.nav-discord):not(.nav-keep) { display: none; }
   .stop { padding-left: 52px; padding-right: 14px; min-height: 0; padding-top: 90px; }
   .stop.left > *, .stop.right > * { align-self: stretch; }
   .panel, .shots { width: 100%; }

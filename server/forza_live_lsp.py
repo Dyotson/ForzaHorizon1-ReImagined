@@ -41,6 +41,7 @@ import urllib.parse
 
 import forza_clubs as clubs
 import forza_limits as limits
+import forza_leaderboards as leaderboards
 import forza_market as market
 import forza_notifications as notifications
 import forza_photos as photos
@@ -169,6 +170,7 @@ def configure(args):
     notifications.configure(DATA_DIR)
     photos.configure(DATA_DIR)
     shader_lists.configure(DATA_DIR)
+    leaderboards.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -627,6 +629,10 @@ def handle(server, method, path, headers, body, peer):
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
     if url.path.startswith("/shader-lists"):  # players' shader lists (forza_shader_lists.py)
         answer = shader_lists.handle(server, method, path, headers, body)
+        if answer is not None:
+            return answer
+    if url.path.startswith("/leaderboards"):  # public leaderboards as JSON (forza_leaderboards.py)
+        answer = leaderboards.handle(method, path)
         if answer is not None:
             return answer
     if url.path in ("/notify", "/gift"):

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaderboards - Forza Horizon 1: ReImagined</title>
+<meta name="description" content="The public Forza Live server's leaderboards: speed traps, speed zones, Rivals and event times, by car class.">
+<meta name="theme-color" content="#140d2e">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#boards">Skip to content</a>
+
+<div class="scene" aria-hidden="true">
+  <div class="sky"></div>
+  <div class="stars" style="--stars:.7"></div>
+  <svg class="ridge far" viewBox="0 0 1600 300" preserveAspectRatio="none"><polygon points="0,300 0,190 140,110 230,160 380,40 520,170 640,100 790,190 940,70 1090,180 1230,90 1380,170 1500,120 1600,170 1600,300"/></svg>
+  <svg class="ridge near" viewBox="0 0 1600 300" preserveAspectRatio="none"><polygon points="0,300 0,220 120,170 260,230 420,120 560,215 700,160 880,240 1030,150 1180,230 1340,140 1480,210 1600,180 1600,300"/></svg>
+</div>
+
+<header class="topbar">
+  <a class="brand" href="./"><img src="images/logo.svg" alt="" width="36" height="36"><span>Forza Horizon 1<b>ReImagined</b></span></a>
+  <nav aria-label="Sections">
+    <a href="./">Home</a>
+    <a class="nav-discord" href="https://discord.gg/yu7zScdcWw">Discord</a>
+    <a class="nav-cta" href="https://github.com/Dyotson/ForzaHorizon1-ReImagined">GitHub</a>
+  </nav>
+</header>
+
+<main class="board-page" id="boards">
+  <div class="panel">
+    <p class="kicker">Forza Live &middot; Public server</p>
+    <h1><span class="h1-big" style="font-size:clamp(36px,6vw,56px)">Leaderboards</span></h1>
+    <p class="aside">The best score of each player on the public server: speed traps, speed zones, Rivals and event times. Names are the ones the game shows. The page is refreshed from the server about every 30 minutes.</p>
+    <div class="board-controls">
+      <label>Board
+        <select id="board" disabled><option>Loading...</option></select>
+      </label>
+      <label>Car class
+        <select id="class" disabled><option value="">All classes</option></select>
+      </label>
+    </div>
+    <p class="board-meta" id="meta" aria-live="polite"></p>
+    <div class="board-wrap" id="out"><p class="board-state">Loading the leaderboards...</p></div>
+    <noscript><p class="board-state error">The leaderboards need JavaScript.</p></noscript>
+  </div>
+</main>
+
+<footer>
+  <p>Forza Horizon is &copy; Microsoft. This project is not affiliated with, endorsed by or sponsored by Microsoft, Playground Games or Turn 10 Studios. See the <a href="https://github.com/Dyotson/ForzaHorizon1-ReImagined/blob/main/LICENSE">license</a>.</p>
+</footer>
+<script src="leaderboards.js"></script>
+</body>
+</html>

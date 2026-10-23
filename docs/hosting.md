@@ -166,6 +166,38 @@ Mutes and bans are kept in `moderation.json` in the data folder until they run o
 The relay limit is 160 KB/s per player (bursts of 4 s) because a 144 fps player sends about
 50 KB/s to each peer.
 
+## Leaderboards on the website (#148)
+
+`forza_leaderboards.py` serves the scoreboards as public, read-only JSON on the HTTP port (the
+same one as the status page; 56678 on the public tunnel):
+
+- `GET /leaderboards`: the boards that have scores (`id`, `name`, `unit`, `better`, `players`,
+  the class ids on it).
+- `GET /leaderboards/<board>?class=<id|letter>&limit=<1-100>`: the top rows (default 50). Board
+  ids are `speed-trap-230`, `speed-zone-101`, `event-199` (events and Rivals) and
+  `time-trial-7` (monthly Rivals). A row has `rank`, `player` (an opaque id), `gamertag` (the
+  ASCII name the game shows), `score` (km/h for speeds, seconds for times), `unit`, `display`,
+  `carId`, `car`, `classId`, `class` (D to R1) and `date`.
+- `GET /leaderboards/snapshot`: every board with the top 50 of each class, in one document.
+
+No XUIDs are in the output. The player id is a hash with a secret salt kept in the data folder
+(`leaderboards_salt.txt`; keep it so ids stay the same across restarts). Answers are cached for
+60 s and the server builds at most 120 answers a minute (429 beyond). Replies carry
+`Access-Control-Allow-Origin: *`, like the rest of the HTTP port.
+
+The game's own board and car names are game data and are not shipped: boards show as "Speed
+trap 230" and cars as "Car 797". To name them, put
+`{"boards": {"speed-trap-230": "I-70"}, "cars": {"797": "Lamborghini Aventador"}}` in
+`leaderboard_names.json` in the data folder (read again when it changes).
+
+The website (https) cannot fetch a plain-http tunnel (mixed content), so the `pages` workflow
+(`.github/workflows/pages.yml`) copies `/leaderboards/snapshot` from
+`http://forza-reimagined.playit.plus:56678` into the site as `data/leaderboards.json` every 30
+minutes, and `site/leaderboards.html` reads that file. A scheduled run that cannot reach the
+server fails and leaves the published site as it was. Nothing else is needed at deploy but the
+tunnel publishing the HTTP port. To try the page against a local server:
+`leaderboards.html?api=http://127.0.0.1:21201`.
+
 ## Shader lists from players (#276)
 
 The launcher's *Prebuild shaders* step builds a list of pipelines before play. Launchers upload
