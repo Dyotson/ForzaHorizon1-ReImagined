@@ -9,6 +9,31 @@ runtime adapters and build configuration have been retired.
 
 ## Structure
 
+The pause strip has Home, Cars, Social and Settings. Social's Friends and Chat
+tiles queue the existing Forza Live editor, including requests, removal,
+blocking and chat; they require a live server connection. Statistics opens
+FH1's original statistics screen and returns to Social. Online Free Roam and
+Create Game are disabled, labeled Coming soon while their native lobby entry
+flows are being integrated. These tiles do not dispatch an incomplete action.
+
+Home renders the original `fullscreen` map profile into a separate native map
+record at the card's resolution. Terrain, roads, labels and the player's
+heading marker come from FH1. Record0 and its gameplay camera remain untouched;
+record1 remains available for the normal full-map screen. The preview follows
+the native compressed-heap setup, waits for readiness, and submits texture I/O
+under allocation group4. Using the current world's allocation group instead
+caused the previous loading crash. Hide releases the preview record and profile
+references, restores allocation routes, and releases any heap setup it owns.
+
+At 1280x720, copied-profile checks covered terrain/roads/player-marker rendering,
+Home to full map and back, Social to native Statistics and back, and resume with
+the normal HUD restored. A loopback-only Forza Live server with an empty friends
+database verified Friends entry, shoulder navigation to Requests and Add friend,
+Chat entry, and closing back to Social. No requests or chat messages were sent.
+The existing Friends editor uses the SDK overlay, which is not included in the
+native game-render-target screenshots; its open/tab/close log events supplied
+the integration evidence. Online Free Roam and Create Game remain unimplemented.
+
 The combined WIP includes the native tuning workspace described in
 [car-tuning.md](car-tuning.md). Cars exposes `car_tuning` through its native
 availability gate, alongside Change Car, Garage and Autoshow. Tuning returns
@@ -101,7 +126,7 @@ published only after preparation and validation succeed. The original update
 and the player's input files remain unchanged.
 
 Before requesting donors, the runtime checks the mounted update archive for all
-33 required, nonempty scene members. Missing, incomplete or unsupported archives
+36 required, nonempty scene members. Missing, incomplete or unsupported archives
 keep the stock pause immediately. This is necessary because FH1's native scene
 request can stall on a missing resource before a UI timeout can run. The check
 reads ZIP directory metadata and accepts native method-21 payloads without

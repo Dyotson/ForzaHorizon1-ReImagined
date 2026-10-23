@@ -113,7 +113,7 @@ class ManifestTests(unittest.TestCase):
             ("ui/scenes/ui4/925_pause_menu", "ui/scenes/ui4/native_menu_pause"),
         ]
         expected += [("ui/scenes/ui4/108_c_buy_carselect", f"ui/scenes/ui4/native_menu_tab_{i}")
-                     for i in range(3)]
+                     for i in range(4)]
         expected += [("ui/scenes/ui4/108_c_buy_carselect", f"ui/scenes/ui4/native_menu_tile_{i}")
                      for i in range(6)]
         expected += [("ui/scenes/ui4/108_c_buy_carselect", f"ui/scenes/ui4/native_menu_tuning_{i}")
@@ -266,7 +266,7 @@ class ArchiveContracts(Fixture):
         two_output = self.root / "output-two"
         two = self.stage(two_output)
         self.assertEqual(one, two)
-        self.assertEqual(len(one["entries"]), 102)
+        self.assertEqual(len(one["entries"]), 105)
         with zipfile.ZipFile(self.output / "media.zip") as archive:
             for scene in aliases:
                 for suffix in menu.SUFFIXES:

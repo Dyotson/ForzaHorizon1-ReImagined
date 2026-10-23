@@ -51,7 +51,7 @@ inline bool DonorsAvailable(const std::filesystem::path& archive) {
   };
   require("native_menu_header"); require("native_menu_map");
   for (unsigned i = 0; i < 6; ++i) require("native_menu_tile_" + std::to_string(i));
-  for (unsigned i = 0; i < 3; ++i) require("native_menu_tab_" + std::to_string(i));
+  for (unsigned i = 0; i < 4; ++i) require("native_menu_tab_" + std::to_string(i));
   size_t position = 0;
   for (uint32_t i = 0; i < count; ++i) {
     if (position > directory.size() || directory.size() - position < 46) return false;

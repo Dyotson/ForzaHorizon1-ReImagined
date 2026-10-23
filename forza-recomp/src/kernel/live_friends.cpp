@@ -894,6 +894,10 @@ void LiveChatMessage(const uint8_t* p, size_t n) {
 }
 
 bool LiveFriendsScreenOpen() { return screen; }
+void LiveOpenFriends(bool chat) {
+  if (chat) chat_request = true;
+  else toggle_request = true;
+}
 
 void InstallFriendsKey() {
   if (const std::string key = REXCVAR_GET(live_friends_key); !key.empty()) {

@@ -7,7 +7,7 @@ namespace forza::native_pause_layout {
 // A bounded native backend, independent of the arbitrary-sized menu model.
 // Reject unsupported pages before hiding stock controls.
 inline constexpr size_t kTileCapacity = 6;
-inline constexpr size_t kTabCapacity = 3;
+inline constexpr size_t kTabCapacity = 4;
 inline bool Valid(const menu::Rect& r) {
   return std::isfinite(r.x) && std::isfinite(r.y) &&
       std::isfinite(r.width) && std::isfinite(r.height) &&
@@ -37,5 +37,5 @@ inline menu::Rect Map(const menu::Rect& panel) {
   return {panel.x + 12, panel.y + 54, panel.width - 24, panel.height - 66};
 }
 inline constexpr std::array<menu::Rect, kTabCapacity> kTabs{{
-    {64, 112, 172, 42}, {244, 112, 172, 42}, {424, 112, 220, 42}}};
+    {64, 112, 172, 42}, {244, 112, 172, 42}, {424, 112, 172, 42}, {604, 112, 172, 42}}};
 } // namespace forza::native_pause_layout

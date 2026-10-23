@@ -134,7 +134,8 @@ menu::PauseCapabilities Capabilities(Native& ui) {
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow),
-          car_tuning_menu::Available(ui.ctx, ui.base, state.screen)};
+          car_tuning_menu::Available(ui.ctx, ui.base, state.screen),
+          LiveConnected(), false, false};
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -238,6 +239,11 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
 }
 const char* Description(std::string_view id) {
   if (id == "world_map") return "Explore Colorado";
+  if (id == "friends") return LiveConnected() ? "Add friends, requests and invites" : "Connect to Forza Live to edit friends";
+  if (id == "chat") return LiveConnected() ? "World, session and private chat" : "Connect to Forza Live to chat";
+  if (id == "social_stats") return "Your Horizon career in numbers";
+  if (id == "free_roam") return "Join Horizon World - coming soon";
+  if (id == "create_game") return "Host a custom lobby - coming soon";
   if (id == "my_cars" || id == "change_car") return "Choose an owned car";
   if (id == "garage") return "Fast travel for car upgrades";
   if (id == "autoshow") return "Fast travel to buy cars";
@@ -571,6 +577,10 @@ void Activate(Native& ui, const std::string& id) {
     state.controller.SelectPage("settings");
     return;
   }
+  if (*action == menu::PauseAction::Friends || *action == menu::PauseAction::Chat) {
+    if (LiveConnected()) LiveOpenFriends(*action == menu::PauseAction::Chat);
+    return;
+  }
   // Revalidate gates immediately before transitions, not just on pause entry.
   const auto caps = Capabilities(ui);
   if (*action == menu::PauseAction::TuneCar && !caps.car_tuning) return;
@@ -599,6 +609,7 @@ void Activate(Native& ui, const std::string& id) {
       requested = fh1_festival_travel::Open(ui.ctx, ui.base, screen,
           *action == A::Garage ? fh1_festival_travel::Destination::Garage : fh1_festival_travel::Destination::Autoshow); break;
     case A::FestivalProgress: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
+    case A::SocialStats: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
     case A::PhotoMode: requested = caps.photo_mode && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 11); break;
     case A::MyProfile: requested = caps.my_profile && fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 12); break;
     case A::Audio: requested = fh1_pause_actions::OpenAudio(ui.ctx, ui.base, screen); break;
@@ -826,7 +837,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     return_bookmark.reset();
     state.refreshed = {};
     Visibility(ui, state.visible);
-    REXLOG_INFO("Native pause: validated six tile slots, three tabs and FH1 header");
+    REXLOG_INFO("Native pause: validated six tile slots, four tabs and FH1 header");
   }
   const double elapsed = std::chrono::duration<double>(now - state.previous).count();
   state.previous = now;
@@ -890,10 +901,10 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     Release(ui, true); return;
   }
   state.tab_bar.Advance(elapsed);
-  const auto cells = state.tab_bar.Layout({64, 112, 580, 42}, layout::kTabCapacity);
+  const auto cells = state.tab_bar.Layout({64, 112, 768, 42}, layout::kTabCapacity);
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
-  state.tab_bar.Paint({64, 112, 580, 42}, layout::kTabCapacity,
+  state.tab_bar.Paint({64, 112, 768, 42}, layout::kTabCapacity,
       [&](size_t slot, fh1_menu_components::Rect r, uint32_t color) {
         auto& tab = state.tabs[slot];
         tab.donor.Layer(ui,Read(ui.base,state.screen+0x110)+(color==0xff007a?3:2));

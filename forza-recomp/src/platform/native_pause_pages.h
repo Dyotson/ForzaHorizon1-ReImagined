@@ -16,6 +16,7 @@ inline constexpr double kPauseCanvasHeight = 720;
 enum class PauseAction {
   WorldMap, SettingsPage, ChangeCar, FestivalProgress, PhotoMode, MyProfile,
   Garage, Autoshow, TuneCar, Difficulty, Graphics, Audio, Controls, Hud, Video,
+  Friends, Chat, SocialStats, FreeRoam, CreateGame,
 };
 
 struct PauseActionBinding {
@@ -39,6 +40,11 @@ inline constexpr std::array kPauseActions{
     PauseActionBinding{"controls", PauseAction::Controls},
     PauseActionBinding{"hud", PauseAction::Hud},
     PauseActionBinding{"video", PauseAction::Video},
+    PauseActionBinding{"friends", PauseAction::Friends},
+    PauseActionBinding{"chat", PauseAction::Chat},
+    PauseActionBinding{"social_stats", PauseAction::SocialStats},
+    PauseActionBinding{"free_roam", PauseAction::FreeRoam},
+    PauseActionBinding{"create_game", PauseAction::CreateGame},
 };
 
 inline std::optional<PauseAction> FindPauseAction(std::string_view id) {
@@ -56,6 +62,9 @@ struct PauseCapabilities {
   bool garage = false;
   bool autoshow = false;
   bool car_tuning = false;
+  bool friends = false;
+  bool free_roam = false;
+  bool create_game = false;
 };
 
 inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
@@ -75,6 +84,13 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}) {
           {"garage", "GO TO GARAGE", {640, 376, 280, 194}, "garage", true, caps.world_map && caps.garage},
           {"autoshow", "GO TO AUTOSHOW", {936, 376, 280, 194}, "autoshow", true, caps.world_map && caps.autoshow},
       }, true, caps.world_map},
+      {"social", "SOCIAL", {
+          {"friends", "FORZA LIVE FRIENDS", {64, 166, 560, 194}, "friends", true, caps.friends},
+          {"free_roam", "ONLINE FREE ROAM", {640, 166, 576, 194}, "free_roam", true, caps.free_roam},
+          {"create_game", "CREATE GAME", {64, 376, 374, 194}, "create_game", true, caps.create_game},
+          {"chat", "CHAT", {454, 376, 372, 194}, "chat", true, caps.friends},
+          {"social_stats", "STATISTICS", {842, 376, 374, 194}, "social_stats"},
+      }},
       {"settings", "SETTINGS", {
           {"difficulty", "DIFFICULTY", {64, 166, 374, 194}, "difficulty"},
           {"graphics", "GRAPHICS", {454, 166, 372, 194}, "graphics"},

@@ -51,6 +51,10 @@
     },
     {
       "source": "ui/scenes/ui4/108_c_buy_carselect",
+      "alias": "ui/scenes/ui4/native_menu_tab_3"
+    },
+    {
+      "source": "ui/scenes/ui4/108_c_buy_carselect",
       "alias": "ui/scenes/ui4/native_menu_tuning_0"
     },
     {

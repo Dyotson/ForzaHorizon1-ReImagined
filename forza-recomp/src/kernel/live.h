@@ -151,6 +151,8 @@ void LiveFriendsTick();
 // from the game; `block_all`: the game gets no input.
 uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);
 bool LiveFriendsScreenOpen();
+// Queue the existing friends editor/chat through its input-thread request path.
+void LiveOpenFriends(bool chat = false);
 // ForzaApp::OnCreateDialogs: registers the keyboard bindings.
 void InstallFriendsKey();
 

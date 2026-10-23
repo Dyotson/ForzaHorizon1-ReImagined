@@ -270,7 +270,7 @@ void ChildOwnershipAndInputPolicy() {
 }
 
 void DefaultPausePages() {
-  const PauseCapabilities all{true, true, true, true, true, true};
+  const PauseCapabilities all{true, true, true, true, true, true, true, true, true};
   const auto pages = MakePausePages(all);
   Controller menu;
   menu.SetPages(pages);
@@ -343,7 +343,9 @@ void DefaultPausePages() {
       for (const auto& tile : page.tiles) assert(Focusable(tile));
     }
   }
+  assert(menu.ChangePage(1) && menu.page_id() == "social");
   assert(menu.ChangePage(1) && menu.page_id() == "settings");
+  assert(menu.ChangePage(-1) && menu.page_id() == "social");
   assert(menu.ChangePage(-1) && menu.page_id() == "home");
   menu.FocusTile("settings");
   assert(menu.Activate() == "settings_page");
@@ -386,7 +388,7 @@ void NativeLayoutContract() {
   const auto defaults = MakePausePages({true, true, true, true, true});
   assert(layout::Supports(defaults));
   assert(!layout::Supports({}));
-  for (size_t count = 1; count <= 3; ++count) {
+  for (size_t count = 1; count <= layout::kTabCapacity; ++count) {
     auto pages = defaults;
     pages.resize(count);
     assert(layout::Supports(pages));
