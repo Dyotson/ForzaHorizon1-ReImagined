@@ -434,6 +434,11 @@ class SettingsPage(QWidget):
             str(self.cfg.settings.get("wheel_pedal_device", "")).strip().lower() not in ("none", "off", "wheel"),
             "Set Pedal device to a device (or empty) to set its axes.")
         states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_shifter_follow_slot"] = (shifter == "h",
+                                               "Choose the H-pattern shifter to use this setting.")
+        states["wheel_handbrake_axis"] = (
+            str(self.cfg.settings.get("wheel_handbrake_device", "")).strip().lower() not in ("none", "off", "wheel"),
+            "Set Handbrake device to a device (or empty) to set its axis.")
         states["wheel_clutch_threshold"] = (
             shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
             "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")

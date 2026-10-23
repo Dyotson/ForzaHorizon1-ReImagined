@@ -86,7 +86,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -123,6 +123,15 @@ jobs:
             -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/wheel" \
             forza-recomp/tests/wheel_rumble_test.cpp -o "$RUNNER_TEMP/wheel-rumble-test"
           "$RUNNER_TEMP/wheel-rumble-test"
+          # #303: the minimum force, the H-pattern gear on lever moves (and the shifter it sits
+          # on), the analog handbrake and which device is the wheel (patches 0131-0134, #306).
+          for t in wheel_shifter wheel_min_force wheel_gear_request wheel_handbrake \
+                   wheel_primary; do
+            clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
+              -I"$HOME/rexglue-sdk-src-forza/sdk/src/input/wheel" \
+              "forza-recomp/tests/${t}_test.cpp" -o "$RUNNER_TEMP/${t}-test"
+            "$RUNNER_TEMP/${t}-test"
+          done
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \
             forza-recomp/tests/wheel_ff_test.cpp -o "$RUNNER_TEMP/wheel-ff-test"
           "$RUNNER_TEMP/wheel-ff-test"

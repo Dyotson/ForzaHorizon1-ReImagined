@@ -65,7 +65,9 @@ class WheelForceFeedbackSettings(unittest.TestCase):
 
     def test_strengths_follow_the_overall_strength(self):
         keys = [s.key for s in schema.for_group("Controls")]
-        start = keys.index("wheel_ffb_strength") + 1
+        # The minimum force (#303) comes right after the overall strength.
+        self.assertEqual(keys[keys.index("wheel_ffb_strength") + 1], "wheel_ffb_min_strength")
+        start = keys.index("wheel_ffb_min_strength") + 1
         self.assertEqual(tuple(keys[start:start + len(KEYS)]), KEYS)
         self.assertEqual({schema.BY_KEY[k].section for k in KEYS}, {"Racing wheel"})
 
@@ -86,6 +88,34 @@ class WheelForceFeedbackSettings(unittest.TestCase):
                 self.assertEqual(imported.settings[key], value)
         self.assertEqual(schema.coerce(schema.BY_KEY["wheel_ffb_spring_strength"], 150), 100)
         self.assertEqual(schema.coerce(schema.BY_KEY["wheel_rumble_road_strength"], -5), 0)
+
+
+class WheelMinimumForce(unittest.TestCase):
+    """#303 (patch 0131): the minimum steering force, a percentage after the overall strength,
+    off (0) by default."""
+    def test_setting_matches_the_sdk_cvar(self):
+        text = added(PATCHES / "0131-wheel-minimum-force.patch")
+        m = re.search(r"REXCVAR_DEFINE_INT32\(wheel_ffb_min_strength, (\d+),.*?\.range\((\d+), (\d+)\)",
+                      text, re.S)
+        self.assertIsNotNone(m)
+        setting = schema.BY_KEY["wheel_ffb_min_strength"]
+        self.assertEqual((setting.default, setting.lo, setting.hi),
+                         tuple(int(v) for v in m.groups()))
+        self.assertEqual(setting.default, 0)
+        self.assertEqual((setting.kind, setting.section), ("int", "Racing wheel"))
+
+    def test_roundtrip(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        cfg = Config(Path(folder.name) / "launcher.json")
+        self.assertNotIn("wheel_ffb_min_strength", render_toml(cfg))
+        cfg.settings["wheel_ffb_min_strength"] = 20
+        text = render_toml(cfg)
+        self.assertIn("wheel_ffb_min_strength = 20", text)
+        imported = Config(Path(folder.name) / "other.json")
+        import_toml(imported, text)
+        self.assertEqual(imported.settings["wheel_ffb_min_strength"], 20)
+        self.assertEqual(schema.coerce(schema.BY_KEY["wheel_ffb_min_strength"], 150), 100)
 
 
 if __name__ == "__main__":
