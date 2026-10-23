@@ -248,9 +248,12 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   valid = Require("card", "HIGHLIGHT.BigPane01", card.paper) && valid;
   if (!valid) return false;
   card.material = Named(ui, card.paper, "Material866");
-  if(!tab && &card!=&state.cards[0]){
-    card.icon=Named(ui,Named(ui,card.donor.root,"CAR_STATS"),"LOGO");
-    card.icon_material=Named(ui,card.icon,"Material_Car_Logo");
+  if(!tab){
+    // Slot zero keeps its manufacturer logo exclusively for the current car.
+    // Its otherwise unused progress quad supplies Social artwork instead.
+    const bool first=&card==&state.cards[0];
+    card.icon=first?card.progress_fill:Named(ui,Named(ui,card.donor.root,"CAR_STATS"),"LOGO");
+    card.icon_material=Named(ui,card.icon,first?"Material90":"Material_Car_Logo");
   }
   if(tab){const auto grain=Descendants(ui.base,tape,0x43a6b655);
     card.grain=grain.empty()?0:grain.front();card.grain_material=Named(ui,card.grain,"Material90");
@@ -303,6 +306,14 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
     {"car_tuning","UI4\\Native_Menu\\tune_car.tga",256,256,0,0,256,256},
     {"garage","UI4\\Native_Menu\\garage.tga",256,256,0,0,256,256},
     {"autoshow","UI4\\Native_Menu\\autoshow.tga",256,256,0,0,256,256},
+    {"friends","UI4\\Native_Menu\\social_friends.tga",256,256,0,0,256,256},
+    {"free_roam","UI4\\Native_Menu\\social_world.tga",256,256,0,0,256,256},
+    {"create_game","UI4\\Native_Menu\\social_game.tga",256,256,0,0,256,256},
+    {"friend_requests","UI4\\Native_Menu\\social_requests.tga",256,256,0,0,256,256},
+    {"chat","UI4\\Native_Menu\\social_chat.tga",256,256,0,0,256,256},
+    {"social_connection","UI4\\Native_Menu\\social_connection.tga",256,256,0,0,256,256},
+    {"social_account","UI4\\Native_Menu\\social_connection.tga",256,256,0,0,256,256},
+    {"social_help","UI4\\Native_Menu\\social_connection.tga",256,256,0,0,256,256},
   };
   const Art* image=nullptr;for(const auto& a:art)if(tile.id==a.id){image=&a;break;}
   if(!card.icon)return;
@@ -324,6 +335,17 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
   const bool selected=focus&&*focus==tile.id;
   ui.Color(d.presentation,card.icon_material,kTextColor);ui.Opacity(d.presentation,card.icon,selected?18:12);
   ui.CropImage(card.icon_material,image->l/image->w,image->t/image->h,image->bw*.75f/image->w,image->bh*.75f/image->h);
+  if(tile.id=="social_connection"){
+    // A complete, foreground plug is an actual connection indicator, rather
+    // than a cropped decoration or an invented signal-strength meter.
+    Point(ui,d,card.icon,tile.bounds.x+tile.bounds.width-48,tile.bounds.y+tile.bounds.height/2);
+    ui.Scale(d.presentation,card.icon,.48f,.48f);
+    ui.CropImage(card.icon_material,0,0,1,1);
+    ui.Color(d.presentation,card.icon_material,LiveConnected()&&!selected?0xff007a:kTextColor);
+    ui.Opacity(d.presentation,card.icon,LiveConnected()?100:45);
+  }else if(state.controller.page_id()=="social"){
+    ui.Opacity(d.presentation,card.icon,selected?14:9);
+  }
   Label(ui,d,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},21,tile.label,tile.enabled?kTextColor:kDisabledTextColor);
 }
 bool BindHeader(Native& ui) {
@@ -1054,7 +1076,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
-               tile.bounds.width - 48, social?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
+               tile.bounds.width - (tile.id=="social_connection"?104:48), social?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
               social?(state.social_help?14:16):compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
       }
       if (i == 4) {

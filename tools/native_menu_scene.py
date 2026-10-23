@@ -4,7 +4,7 @@
 This is resource preparation, not a BGF/BSG/FBF scene compiler. The
 runtime owns layout, text, input and controller isolation. Whole scene triplets
 are copied without decoding or changing geometry, fonts, textures or animation.
-Four attributed monochrome action textures are staged separately.
+Ten attributed monochrome action textures are staged separately.
 The existing FH1 pause flow is patched to support native offline car changes.
 Only a recognized original FH1 TU4 archive is accepted; an old modified overlay
 is not an input. No other game's files or preparation modules are required.
@@ -40,7 +40,7 @@ TITLE_ID = 0x4D5309C9
 TU4_VERSION = 0x0000040C
 ORIGINAL_ARCHIVE_SHA256 = "dfb31d11bf00153cfc5f3634681a41ea7e2a877d470230a148721ba3ccd5bab3"
 DEFAULT_MANIFEST = Path(__file__).parent / "native_menu" / "fh1_donors.json"
-ACTION_ICONS = ("change_car", "tune_car", "garage", "autoshow")
+ACTION_ICONS = ("change_car", "tune_car", "garage", "autoshow", "social_friends", "social_world", "social_game", "social_requests", "social_chat", "social_connection")
 
 
 def append_action_icons(archive):

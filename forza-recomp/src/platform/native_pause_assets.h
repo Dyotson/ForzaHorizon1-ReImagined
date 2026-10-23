@@ -52,7 +52,7 @@ inline bool DonorsAvailable(const std::filesystem::path& archive) {
   require("native_menu_header"); require("native_menu_map");
   for (unsigned i = 0; i < 6; ++i) require("native_menu_tile_" + std::to_string(i));
   for (unsigned i = 0; i < 4; ++i) require("native_menu_tab_" + std::to_string(i));
-  for (const char* name : {"change_car", "tune_car", "garage", "autoshow"})
+  for (const char* name : {"change_car", "tune_car", "garage", "autoshow", "social_friends", "social_world", "social_game", "social_requests", "social_chat", "social_connection"})
     required.insert(std::string("ui/textures/ui4/native_menu/")+name+".xds");
   size_t position = 0;
   for (uint32_t i = 0; i < count; ++i) {

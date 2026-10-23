@@ -112,7 +112,7 @@ NATIVE_MENU_FILES = ("native_menu_scene.py", "offline_cars_flow.py", "lzx_delta.
                      "native_menu/fh1_donors.json", "native_menu/icons/ATTRIBUTION.md",
                      "native_menu/icons/FONT-AWESOME-LICENSE.txt",
                      *(f"native_menu/icons/{name}.xds" for name in
-                       ("change_car", "tune_car", "garage", "autoshow")))
+                       ("change_car", "tune_car", "garage", "autoshow", "social_friends", "social_world", "social_game", "social_requests", "social_chat", "social_connection")))
 
 
 def source_files(proj: Path):

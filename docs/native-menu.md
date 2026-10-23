@@ -137,14 +137,14 @@ use festival pink and white text. The rough painted edges remain visible;
 no copied game textures are added to the repo. Decorative action icons use
 faded white silhouettes for contrast against both charcoal and pink.
 
-The four action icons use Font Awesome Free 6.7.2 solid SVGs (car-side, wrench,
-warehouse and store), CC BY 4.0. Their attribution and license are retained in
+The ten action icons use Font Awesome Free 6.7.2 solid SVGs (car-side, wrench,
+warehouse, store, user-group, earth-americas, gamepad, user-plus, comments and plug), CC BY 4.0. Their attribution and license are retained in
 `tools/native_menu/icons` and shipped alongside the staged runtime. Native
 256x256 XDS surfaces are staged from that directory; SVG sources are retained.
 Developers can rebuild them with `python tools/native_menu_icons.py` (Pillow and
 resvg-py are required only for rebuilding). The launcher ships prebuilt artwork;
 players need no image conversion dependency. Archive preflight checks all 36
-scene members plus these four textures before activating the menu.
+scene members plus these ten textures before activating the menu.
 
 The Cars composition uses a larger full-width photo with five specification
 columns underneath. Both menus bind real controller icons through the shared
@@ -362,3 +362,17 @@ tool tests, 20 menu/archive/disabled-hook/title/benchmark CTests, and the strict
 component test passed. Networking, friends, graphics, pause, scene and map sources
 compile for both disc and TU4 (native pause enabled for TU4). No post-merge game/GPU
 run or full game link was performed; the existing draft/runtime-opt-in gates remain.
+
+Social uses the same faded silhouette family as Cars on charcoal painted panels.
+Friends uses a separate native quad, preserving the current-car manufacturer logo.
+The connection strip displays a complete plug, pink while connected and dimmed
+while offline; it reserves text padding and does not imply signal strength.
+
+Social artwork validation (2026-10-23): native compilation/link, 24 staging tests,
+17 model/archive/tuning CTests, 62 launcher checks and six TU4 syntax checks pass.
+A private copied-save 1280x720 session verified offline Social, connection help,
+Cars manufacturer-logo preservation and return to Social. It then hit a native
+allocator write fault on resume (guest 0x00000005, LR 0x8242306C). A comparison
+against the preceding implementation is pending the shared game test window;
+the cause and whether this revision introduced it are not established. Keep
+the existing draft and runtime opt-in gates. Source save hashes were unchanged.
