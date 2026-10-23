@@ -103,6 +103,20 @@ int main() {
   CHECK(!trim::OverBudget(15000 * kMB, 0, 90));
   CHECK(trim::OverBudget(9 * kMB, 10 * kMB, 90));
   CHECK(!trim::OverBudget(8 * kMB, 10 * kMB, 90));
+  // #268 (patch 0138): on integrated GPUs, where new textures go to system memory, a nearly
+  // full device-local heap does not trim; device-local use over the whole budget, the system
+  // memory heap at the percentage or a failure does. Elsewhere as before.
+  {
+    const uint64_t b = 486 * kMB, sb = 7000 * kMB;
+    CHECK(!trim::ShouldTrim(true, false, 470 * kMB, b, 2000 * kMB, sb, 90));
+    CHECK(trim::ShouldTrim(false, false, 470 * kMB, b, 2000 * kMB, sb, 90));
+    CHECK(trim::ShouldTrim(true, false, 486 * kMB, b, 2000 * kMB, sb, 90));
+    CHECK(trim::ShouldTrim(true, false, 1017 * kMB, b, 2000 * kMB, sb, 90));
+    CHECK(trim::ShouldTrim(true, false, 300 * kMB, b, 6400 * kMB, sb, 90));
+    CHECK(trim::ShouldTrim(true, true, 100 * kMB, b, 100 * kMB, sb, 90));
+    CHECK(!trim::ShouldTrim(false, false, 400 * kMB, b, 6900 * kMB, sb, 90));
+    CHECK(!trim::ShouldTrim(true, false, 400 * kMB, 0, 0, 0, 90));  // no budget known
+  }
   std::puts("render target trim: ok");
   return 0;
 }

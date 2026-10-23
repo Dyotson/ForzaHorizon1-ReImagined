@@ -1,0 +1,1175 @@
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index 749b4ec..46a1e7e 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -45,6 +45,7 @@ set(REXGPU_XENOS_SPIRV_SOURCES
+ set(REXGPU_XENOS_VULKAN_SOURCES
+     vulkan/graphics_system.cpp
+     vulkan/deferred_command_buffer.cpp
++    vulkan/fh1_device_memory.cpp
+     vulkan/fh1_dlss.cpp
+     vulkan/fh1_fsr3.cpp
+     vulkan/fh1_smaa.cpp
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 518acbb..0ef7c2d 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -36,6 +36,7 @@
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+ #include <rex/graphics/util/fh1_hud.h>
++#include "fh1_device_memory.h"
+ #include "fh1_render_target_trim.h"
+ REXCVAR_DECLARE(int32_t, forza_native_width);
+ REXCVAR_DECLARE(int32_t, forza_native_height);
+@@ -785,6 +786,8 @@ void VulkanCommandProcessor::ClearCaches() {
+ 
+ void VulkanCommandProcessor::TrimRenderTargetsIfNeeded() {
+   namespace trim = fh1_render_target_trim;
++  fh1_device_memory::State& device_memory = fh1_device_memory::Get();
++  device_memory.EndFrame();
+   const uint32_t percent = REXCVAR_GET(vulkan_render_target_trim_percent);
+   if (!render_target_cache_ || !percent) {
+     render_target_trim_requested_ = false;
+@@ -801,24 +804,14 @@ void VulkanCommandProcessor::TrimRenderTargetsIfNeeded() {
+                          render_target_trim_next_allowed_frame_, percent, failed, have_budget)) {
+     return;
+   }
+-  uint64_t usage = 0, budget = 0;
+-  if (have_budget) {
+-    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget_properties = {};
+-    budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+-    VkPhysicalDeviceMemoryProperties2 memory_properties = {};
+-    memory_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+-    memory_properties.pNext = &budget_properties;
+-    vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceMemoryProperties2(
+-        vulkan_device->physical_device(), &memory_properties);
+-    const VkPhysicalDeviceMemoryProperties& properties = memory_properties.memoryProperties;
+-    for (uint32_t i = 0; i < properties.memoryHeapCount; ++i) {
+-      if (properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+-        usage += budget_properties.heapUsage[i];
+-        budget += budget_properties.heapBudget[i];
+-      }
+-    }
+-  }
+-  if (!failed && !trim::OverBudget(usage, budget, percent)) {
++  // The device-local use and budget (and the test cap, vulkan_device_local_budget_mb).
++  const fh1_device_memory::State::Budget memory = device_memory.Query();
++  const uint64_t usage = memory.usage, budget = memory.budget;
++  // FH1 (#268): where new textures go to system memory (integrated GPUs) a nearly full
++  // device-local heap is no reason to free render targets.
++  const bool integrated = device_memory.active();
++  if (!trim::ShouldTrim(integrated, failed, usage, budget, memory.system_usage,
++                        memory.system_budget, percent)) {
+     return;
+   }
+   if (!AwaitAllQueueOperationsCompletion()) {
+@@ -840,9 +833,12 @@ void VulkanCommandProcessor::TrimRenderTargetsIfNeeded() {
+   render_target_trim_next_allowed_frame_ =
+       trim::NextAllowedFrame(frame_current_, failed, before - after);
+   REXGPU_INFO(
+-      "Render targets trimmed ({}): {} -> {} ({} -> {} MB); device-local memory {} of {} MB",
++      "Render targets trimmed ({}): {} -> {} ({} -> {} MB); device-local memory {} of {} MB{}",
+       failed ? "an allocation failed" : "memory nearly full", count_before, count_after,
+-      before >> 20, after >> 20, usage >> 20, budget >> 20);
++      before >> 20, after >> 20, usage >> 20, budget >> 20,
++      integrated ? fmt::format(", system memory {} of {} MB", memory.system_usage >> 20,
++                               memory.system_budget >> 20)
++                 : std::string());
+ }
+ 
+ void VulkanCommandProcessor::InvalidateGpuMemory() {
+@@ -1251,6 +1247,9 @@ bool VulkanCommandProcessor::SetupContext() {
+     return false;
+   }
+ 
++  // FH1 (#268): the memory layout, before the first allocation it places.
++  fh1_device_memory::Get().Initialize(vulkan_device);
++
+   shared_memory_ =
+       std::make_unique<VulkanSharedMemory>(*this, *memory_, guest_shader_pipeline_stages_);
+   if (!shared_memory_->Initialize()) {
+@@ -2647,6 +2646,7 @@ void VulkanCommandProcessor::ShutdownContext() {
+   fences_free_.clear();
+ 
+   device_lost_ = false;
++  fh1_device_memory::Get().Shutdown();
+ 
+   CommandProcessor::ShutdownContext();
+ }
+diff --git a/src/graphics/vulkan/fh1_device_memory.cpp b/src/graphics/vulkan/fh1_device_memory.cpp
+new file mode 100644
+index 0000000..f70a4d4
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_device_memory.cpp
+@@ -0,0 +1,465 @@
++// FH1 (#268): device memory placement on integrated GPUs and allocation failure reports.
++// See fh1_device_memory.h and fh1_memory_placement.h.
++
++#include "fh1_device_memory.h"
++
++#include <algorithm>
++#include <chrono>
++#include <string>
++
++#include <rex/cvar.h>
++#include <rex/logging.h>
++#include <rex/ui/vulkan/util.h>
++
++REXCVAR_DEFINE_BOOL(vulkan_integrated_memory_spill, true, "GPU/Vulkan",
++                    "On integrated GPUs, put new textures in system memory once device-local "
++                    "memory use reaches 80% of the driver's budget (VK_EXT_memory_budget), and "
++                    "render targets and guest memory pages at 95%, instead of overfilling the "
++                    "device-local memory (the BIOS carve-out). No effect on discrete GPUs")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++
++REXCVAR_DEFINE_UINT32(vulkan_device_local_budget_mb, 0, "GPU/Vulkan",
++                      "Testing: treat the device-local memory budget as at most this many MB and "
++                      "place memory as on an integrated GPU, also on a discrete one (0 = the "
++                      "driver's budget)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart)
++    .debug_only();
++
++namespace rex::graphics::vulkan::fh1_device_memory {
++
++namespace {
++
++constexpr uint64_t kRefreshAfterBytes = uint64_t(32) << 20;
++constexpr auto kSummaryInterval = std::chrono::seconds(60);
++
++uint64_t Mb(uint64_t bytes) { return (bytes + (uint64_t(1) << 19)) >> 20; }
++
++const char* ResultName(int32_t result) {
++  switch (result) {
++    case VK_ERROR_OUT_OF_HOST_MEMORY:
++      return "VK_ERROR_OUT_OF_HOST_MEMORY";
++    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
++      return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
++    case VK_ERROR_TOO_MANY_OBJECTS:
++      return "VK_ERROR_TOO_MANY_OBJECTS";
++    case VK_ERROR_FEATURE_NOT_PRESENT:
++      return "VK_ERROR_FEATURE_NOT_PRESENT (no memory type fits)";
++    case VK_ERROR_INVALID_EXTERNAL_HANDLE:
++      return "VK_ERROR_INVALID_EXTERNAL_HANDLE";
++    default:
++      return "VkResult";
++  }
++}
++
++std::chrono::steady_clock::time_point next_summary_time;
++
++}  // namespace
++
++const char* UseName(Use use) {
++  switch (use) {
++    case Use::kTexture:
++      return "textures";
++    case Use::kRenderTarget:
++      return "render targets";
++    case Use::kSharedMemory:
++      return "guest memory pages";
++    case Use::kScaledResolve:
++      return "scaled resolve memory";
++    default:
++      return "memory";
++  }
++}
++
++State& Get() {
++  static State state;
++  return state;
++}
++
++void State::Initialize(const ui::vulkan::VulkanDevice* device) {
++  device_ = device;
++  const ui::vulkan::VulkanInstance::Functions& ifn = device->vulkan_instance()->functions();
++  VkPhysicalDeviceProperties properties;
++  ifn.vkGetPhysicalDeviceProperties(device->physical_device(), &properties);
++  have_budget_ = device->extensions().ext_EXT_memory_budget &&
++                 ifn.vkGetPhysicalDeviceMemoryProperties2 != nullptr;
++
++  VkPhysicalDeviceMemoryBudgetPropertiesEXT budget_properties = {};
++  budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
++  VkPhysicalDeviceMemoryProperties2 memory_properties2 = {};
++  memory_properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
++  if (have_budget_) {
++    memory_properties2.pNext = &budget_properties;
++    ifn.vkGetPhysicalDeviceMemoryProperties2(device->physical_device(), &memory_properties2);
++  } else {
++    ifn.vkGetPhysicalDeviceMemoryProperties(device->physical_device(),
++                                            &memory_properties2.memoryProperties);
++  }
++  const VkPhysicalDeviceMemoryProperties& memory = memory_properties2.memoryProperties;
++
++  placement::MemoryInfo info;
++  info.device_type = uint32_t(properties.deviceType);
++  info.type_count = std::min(memory.memoryTypeCount, placement::kMaxTypes);
++  for (uint32_t i = 0; i < info.type_count; ++i) {
++    info.type_flags[i] = memory.memoryTypes[i].propertyFlags;
++    info.type_heap[i] = memory.memoryTypes[i].heapIndex;
++    type_heap_[i] = memory.memoryTypes[i].heapIndex;
++  }
++  info.heap_count = std::min(memory.memoryHeapCount, placement::kMaxHeaps);
++  for (uint32_t i = 0; i < info.heap_count; ++i) {
++    info.heap_size[i] = memory.memoryHeaps[i].size;
++    info.heap_flags[i] = memory.memoryHeaps[i].flags;
++  }
++  layout_ = placement::Describe(info);
++  cap_mb_ = REXCVAR_GET(vulkan_device_local_budget_mb);
++  const uint32_t device_local_type = placement::LowestType(layout_.device_local_types);
++  block_bytes_ = placement::AllocatorBlockBytes(
++      device_local_type < info.type_count ? info.heap_size[info.type_heap[device_local_type]] : 0);
++
++  std::string heaps;
++  for (uint32_t i = 0; i < info.heap_count; ++i) {
++    if (!heaps.empty()) heaps += ", ";
++    heaps += fmt::format("{}: {} MB {}", i, Mb(info.heap_size[i]),
++                         (info.heap_flags[i] & placement::kHeapDeviceLocal) ? "device-local"
++                                                                           : "system");
++    if (have_budget_) heaps += fmt::format(" (budget {} MB)", Mb(budget_properties.heapBudget[i]));
++  }
++  const char* device_kind = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
++                                ? "integrated GPU"
++                            : properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
++                                ? "discrete GPU"
++                                : "GPU";
++  if (cap_mb_) {
++    REXGPU_WARN(
++        "Vulkan memory: device-local budget capped at {} MB for testing "
++        "(vulkan_device_local_budget_mb), placement as on an integrated GPU",
++        cap_mb_);
++  }
++  if ((layout_.integrated || cap_mb_) && layout_.can_move() &&
++      !REXCVAR_GET(vulkan_integrated_memory_spill)) {
++    REXGPU_INFO(
++        "Vulkan memory heaps: {}; {}: GPU memory stays device-local "
++        "(vulkan_integrated_memory_spill off)",
++        heaps, device_kind);
++  } else if ((layout_.integrated || cap_mb_) && layout_.can_move()) {
++    REXGPU_INFO(
++        "Vulkan memory heaps: {}; {}: new textures go to system memory (heap {}) above {}% of "
++        "the device-local budget, render targets and guest memory pages above {}%",
++        heaps, device_kind, layout_.system_heap, placement::kTexturePercent,
++        placement::kHotPercent);
++  } else {
++    REXGPU_INFO("Vulkan memory heaps: {}; {}: GPU memory stays device-local", heaps,
++                device_kind);
++  }
++  Refresh();
++  next_summary_time = std::chrono::steady_clock::now() + kSummaryInterval;
++}
++
++void State::Shutdown() {
++  {
++    std::lock_guard<std::mutex> lock(remembered_mutex_);
++    remembered_.clear();
++  }
++  device_ = nullptr;
++}
++
++bool State::active() const {
++  return device_ && (layout_.integrated || cap_mb_) && layout_.can_move() &&
++         REXCVAR_GET(vulkan_integrated_memory_spill);
++}
++
++State::Budget State::Query() {
++  Budget b;
++  if (!device_) return b;
++  if (have_budget_) {
++    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget_properties = {};
++    budget_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
++    VkPhysicalDeviceMemoryProperties2 memory_properties = {};
++    memory_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
++    memory_properties.pNext = &budget_properties;
++    device_->vulkan_instance()->functions().vkGetPhysicalDeviceMemoryProperties2(
++        device_->physical_device(), &memory_properties);
++    const VkPhysicalDeviceMemoryProperties& properties = memory_properties.memoryProperties;
++    for (uint32_t i = 0; i < properties.memoryHeapCount; ++i) {
++      if (properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
++        b.usage += budget_properties.heapUsage[i];
++        b.budget += budget_properties.heapBudget[i];
++      } else if (i == layout_.system_heap) {
++        b.system_usage = budget_properties.heapUsage[i];
++        b.system_budget = budget_properties.heapBudget[i];
++      }
++    }
++  }
++  b.budget = placement::CappedBudget(b.budget, cap_mb_);
++  return b;
++}
++
++void State::Refresh() {
++  const Budget b = Query();
++  std::lock_guard<std::mutex> lock(mutex_);
++  last_ = b;
++  device_local_since_refresh_ = 0;
++}
++
++State::Budget State::Estimate() {
++  std::lock_guard<std::mutex> lock(mutex_);
++  Budget b = last_;
++  b.usage += device_local_since_refresh_;
++  return b;
++}
++
++void State::EndFrame() {
++  const bool is_active = active();
++  bool failures_pending = false;
++  for (const Counter& counter : counters_) {
++    failures_pending |= counter.failures != counter.failures_reported;
++  }
++  if (!is_active && !failures_pending) return;
++  if (is_active) Refresh();
++  const auto now = std::chrono::steady_clock::now();
++  if (now < next_summary_time || (!summary_due_ && !failures_pending)) return;
++  next_summary_time = now + kSummaryInterval;
++  summary_due_ = false;
++  LogSummary();
++}
++
++void State::LogSummary() {
++  const Budget b = Query();
++  std::string device_local;
++  for (size_t i = 0; i < size_t(Use::kCount); ++i) {
++    const Counter& counter = counters_[i];
++    if (!counter.device_local_bytes) continue;
++    device_local += fmt::format("{}{} {} MB", device_local.empty() ? "" : ", ", UseName(Use(i)),
++                                Mb(counter.device_local_bytes));
++  }
++  std::string moved;
++  for (size_t i = 0; i < size_t(Use::kCount); ++i) {
++    const Counter& counter = counters_[i];
++    if (!counter.moved) continue;
++    if (!moved.empty()) moved += ", ";
++    moved += fmt::format("{} {} ({} MB)", UseName(Use(i)), counter.system_count.load(),
++                         Mb(counter.system_bytes));
++  }
++  std::string failed;
++  for (size_t i = 0; i < size_t(Use::kCount); ++i) {
++    Counter& counter = counters_[i];
++    const uint32_t failures = counter.failures;
++    if (failures == counter.failures_reported) continue;
++    if (!failed.empty()) failed += ", ";
++    failed += fmt::format("{} {}", UseName(Use(i)), failures - counter.failures_reported);
++    counter.failures_reported = failures;
++  }
++  REXGPU_INFO(
++      "Vulkan memory: device-local {} of {} MB used{}{}{}, system memory {} of {} MB{}{}{}{}",
++      Mb(b.usage), Mb(b.budget), device_local.empty() ? "" : " (", device_local,
++      device_local.empty() ? "" : ")", Mb(b.system_usage), Mb(b.system_budget),
++      moved.empty() ? "" : "; in system memory now: ", moved,
++      failed.empty() ? "" : "; failed allocations since the last report: ", failed);
++}
++
++placement::Order State::Choose(Use use, uint32_t allowed, uint64_t growth) {
++  Budget b = Estimate();
++  if (device_local_since_refresh_ >= kRefreshAfterBytes) {
++    Refresh();
++    b = Estimate();
++  }
++  return placement::Choose(layout_, allowed,
++                           placement::Fits(KindOf(use), b.usage, growth, b.budget));
++}
++
++uint64_t State::TextureGrowth(uint64_t size) const { return std::max(size, block_bytes_); }
++
++void State::Allocated(Use use, uint32_t type, uint64_t size) {
++  Counter& counter = counters_[size_t(use)];
++  if (IsDeviceLocalType(type)) {
++    device_local_since_refresh_ += size;
++    counter.device_local_bytes += size;
++    return;
++  }
++  counter.system_bytes += size;
++  ++counter.system_count;
++  ++counter.moved;
++  summary_due_ = true;
++  if (!counter.move_logged) {
++    counter.move_logged = true;
++    const Budget b = Estimate();
++    REXGPU_INFO(
++        "Vulkan memory: device-local memory {} of {} MB used: new {} go to system memory "
++        "(memory type {}, heap {})",
++        Mb(b.usage), Mb(b.budget), UseName(use), type, type < 32 ? type_heap_[type] : 0);
++  }
++}
++
++void State::Freed(Use use, uint32_t type, uint64_t size) {
++  Counter& counter = counters_[size_t(use)];
++  if (IsDeviceLocalType(type)) {
++    counter.device_local_bytes -= size;
++    return;
++  }
++  counter.system_bytes -= size;
++  --counter.system_count;
++}
++
++void State::Remember(VkDeviceMemory memory, Use use, uint32_t type, uint64_t size) {
++  std::lock_guard<std::mutex> lock(remembered_mutex_);
++  remembered_[memory] = Remembered{use, type, size};
++}
++
++void State::Forget(VkDeviceMemory memory) {
++  Remembered remembered;
++  {
++    std::lock_guard<std::mutex> lock(remembered_mutex_);
++    auto it = remembered_.find(memory);
++    if (it == remembered_.end()) return;
++    remembered = it->second;
++    remembered_.erase(it);
++  }
++  Freed(remembered.use, remembered.type, remembered.size);
++}
++
++void State::ReportFailure(Use use, const char* what, uint64_t size, uint32_t allowed,
++                          int32_t result) {
++  Counter& counter = counters_[size_t(use)];
++  if (counter.failures++) return;
++  // The first failure for this use: in full. Later ones are counted in the summary.
++  ++counter.failures_reported;
++  const Budget b = device_ ? Query() : Budget();
++  std::string types;
++  for (uint32_t i = 0; i < 32; ++i) {
++    if (!(allowed >> i & 1)) continue;
++    if (!types.empty()) types += " ";
++    types += fmt::format("{}{}", i, IsDeviceLocalType(i) ? "(device-local)" : "");
++  }
++  REXGPU_ERROR(
++      "Vulkan memory: could not allocate {} MB ({} bytes) for {} in any memory type it accepts "
++      "(types {}): {} ({}); device-local memory {} of {} MB used, system memory {} of {} MB. "
++      "It is left out (a texture reads black). Later failures are counted in the memory "
++      "summary",
++      Mb(size), size, what, types.empty() ? "none" : types, ResultName(result), result,
++      Mb(b.usage), Mb(b.budget), Mb(b.system_usage), Mb(b.system_budget));
++}
++
++namespace {
++
++// For a failure report: the memory an image would take and the types it accepts.
++VkMemoryRequirements ImageRequirements(const ui::vulkan::VulkanDevice* device,
++                                       const VkImageCreateInfo& info) {
++  VkMemoryRequirements requirements = {};
++  const ui::vulkan::VulkanDevice::Functions& dfn = device->functions();
++  VkImage image;
++  if (dfn.vkCreateImage(device->device(), &info, nullptr, &image) == VK_SUCCESS) {
++    dfn.vkGetImageMemoryRequirements(device->device(), image, &requirements);
++    dfn.vkDestroyImage(device->device(), image, nullptr);
++  }
++  return requirements;
++}
++
++}  // namespace
++
++void ReportImageFailure(const ui::vulkan::VulkanDevice* device, Use use,
++                        const VkImageCreateInfo& info, int32_t result) {
++  State& state = Get();
++  const VkMemoryRequirements requirements = ImageRequirements(device, info);
++  const std::string what = fmt::format(
++      "{} (a {}x{}x{} image, {} mips, {} layers, format {})", UseName(use), info.extent.width,
++      info.extent.height, info.extent.depth, info.mipLevels, info.arrayLayers,
++      uint32_t(info.format));
++  state.ReportFailure(use, what.c_str(), requirements.size, requirements.memoryTypeBits, result);
++}
++
++bool CreateDedicatedImage(const ui::vulkan::VulkanDevice* device, const VkImageCreateInfo& info,
++                          Use use, VkImage& image_out, VkDeviceMemory& memory_out,
++                          VkDeviceSize* size_out) {
++  State& state = Get();
++  if (!state.active()) {
++    if (ui::vulkan::util::CreateDedicatedAllocationImage(
++            device, info, ui::vulkan::util::MemoryPurpose::kDeviceLocal, image_out, memory_out,
++            nullptr, size_out)) {
++      return true;
++    }
++    ReportImageFailure(device, use, info, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++    return false;
++  }
++  const ui::vulkan::VulkanDevice::Functions& dfn = device->functions();
++  const VkDevice vk_device = device->device();
++  VkImage image;
++  VkResult result = dfn.vkCreateImage(vk_device, &info, nullptr, &image);
++  if (result != VK_SUCCESS) {
++    state.ReportFailure(use, "an image (vkCreateImage)", 0, 0, result);
++    return false;
++  }
++  VkMemoryRequirements requirements;
++  dfn.vkGetImageMemoryRequirements(vk_device, image, &requirements);
++  const placement::Order order =
++      state.Choose(use, requirements.memoryTypeBits, requirements.size);
++  VkMemoryAllocateInfo allocate_info = {};
++  allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
++  allocate_info.allocationSize = requirements.size;
++  VkMemoryDedicatedAllocateInfo dedicated_info = {};
++  if (device->extensions().ext_1_1_KHR_dedicated_allocation) {
++    dedicated_info.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
++    dedicated_info.image = image;
++    allocate_info.pNext = &dedicated_info;
++  }
++  result = VK_ERROR_FEATURE_NOT_PRESENT;
++  for (uint32_t i = 0; i < order.count; ++i) {
++    for (uint32_t type = 0; type < 32; ++type) {
++      if (!(order.masks[i] >> type & 1)) continue;
++      allocate_info.memoryTypeIndex = type;
++      VkDeviceMemory memory;
++      result = dfn.vkAllocateMemory(vk_device, &allocate_info, nullptr, &memory);
++      if (result != VK_SUCCESS) continue;
++      if (dfn.vkBindImageMemory(vk_device, image, memory, 0) != VK_SUCCESS) {
++        dfn.vkFreeMemory(vk_device, memory, nullptr);
++        result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
++        continue;
++      }
++      state.Allocated(use, type, requirements.size);
++      state.Remember(memory, use, type, requirements.size);
++      image_out = image;
++      memory_out = memory;
++      if (size_out) *size_out = requirements.size;
++      return true;
++    }
++  }
++  dfn.vkDestroyImage(vk_device, image, nullptr);
++  ReportImageFailure(device, use, info, result);
++  return false;
++}
++
++VkResult AllocateSparseMemory(const ui::vulkan::VulkanDevice* device, Use use, uint32_t allowed,
++                              uint32_t default_type, VkDeviceSize size, VkDeviceMemory& memory_out,
++                              uint32_t& type_out) {
++  State& state = Get();
++  const ui::vulkan::VulkanDevice::Functions& dfn = device->functions();
++  VkMemoryAllocateInfo allocate_info = {};
++  allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
++  allocate_info.allocationSize = size;
++  VkResult result;
++  if (!state.active()) {
++    allocate_info.memoryTypeIndex = default_type;
++    result = dfn.vkAllocateMemory(device->device(), &allocate_info, nullptr, &memory_out);
++    if (result == VK_SUCCESS) {
++      type_out = default_type;
++    } else {
++      state.ReportFailure(use, UseName(use), size, uint32_t(1) << default_type, result);
++    }
++    return result;
++  }
++  const placement::Order order = state.Choose(use, allowed, size);
++  result = VK_ERROR_FEATURE_NOT_PRESENT;
++  for (uint32_t i = 0; i < order.count; ++i) {
++    for (uint32_t type = 0; type < 32; ++type) {
++      if (!(order.masks[i] >> type & 1)) continue;
++      allocate_info.memoryTypeIndex = type;
++      result = dfn.vkAllocateMemory(device->device(), &allocate_info, nullptr, &memory_out);
++      if (result != VK_SUCCESS) continue;
++      state.Allocated(use, type, size);
++      type_out = type;
++      return VK_SUCCESS;
++    }
++  }
++  state.ReportFailure(use, UseName(use), size, allowed, result);
++  return result;
++}
++
++}  // namespace rex::graphics::vulkan::fh1_device_memory
+diff --git a/src/graphics/vulkan/fh1_device_memory.h b/src/graphics/vulkan/fh1_device_memory.h
+new file mode 100644
+index 0000000..36dad3e
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_device_memory.h
+@@ -0,0 +1,128 @@
++#pragma once
++// FH1 (#268): device memory placement on integrated GPUs and allocation failure reports for
++// the Vulkan backend. The policy is in fh1_memory_placement.h; this is its state for the
++// one Vulkan device the game uses: the memory layout, the device-local use and budget
++// (VK_EXT_memory_budget, refreshed at frame ends), what was moved to system memory, and
++// which failures were reported. Discrete GPUs only get the reports (and the heap line at
++// start); their memory goes where it always went.
++#include <atomic>
++#include <cstdint>
++#include <mutex>
++#include <unordered_map>
++
++#include <rex/ui/vulkan/device.h>
++
++#include "fh1_memory_placement.h"
++
++namespace rex::graphics::vulkan::fh1_device_memory {
++
++namespace placement = fh1_memory_placement;
++
++// What an allocation is for: textures move first, the others only when device-local memory
++// is (nearly) full.
++enum class Use : uint32_t { kTexture, kRenderTarget, kSharedMemory, kScaledResolve, kCount };
++
++const char* UseName(Use use);
++inline placement::Kind KindOf(Use use) {
++  return use == Use::kTexture ? placement::Kind::kTexture : placement::Kind::kHot;
++}
++
++class State {
++ public:
++  // At the command processor's setup: reads the memory layout and logs it.
++  void Initialize(const ui::vulkan::VulkanDevice* device);
++  void Shutdown();
++
++  // Memory moves to system memory: an integrated GPU (or the test budget cap) and
++  // vulkan_integrated_memory_spill.
++  bool active() const;
++  const placement::Layout& layout() const { return layout_; }
++
++  // The device-local use and budget (the test cap applied), queried now.
++  struct Budget {
++    uint64_t usage = 0;
++    uint64_t budget = 0;
++    uint64_t system_usage = 0;  // the system memory heap's
++    uint64_t system_budget = 0;
++  };
++  Budget Query();
++  // The last query plus what was allocated in device-local memory since.
++  Budget Estimate();
++
++  // At every frame end: when active, refreshes the budget and logs a summary now and then.
++  void EndFrame();
++
++  // The memory type order for a resource accepting `allowed` types that grows device-local
++  // use by up to `growth` bytes. Without active(), device-local first.
++  placement::Order Choose(Use use, uint32_t allowed, uint64_t growth);
++  // The device-local growth a texture of `size` bytes may cause: the texture cache's allocator
++  // (VMA) makes a new block when one does not fit its blocks.
++  uint64_t TextureGrowth(uint64_t size) const;
++  // An allocation was made (or freed) in memory type `type`.
++  void Allocated(Use use, uint32_t type, uint64_t size);
++  void Freed(Use use, uint32_t type, uint64_t size);
++  // Dedicated allocations whose type the owner does not keep (render targets).
++  void Remember(VkDeviceMemory memory, Use use, uint32_t type, uint64_t size);
++  void Forget(VkDeviceMemory memory);
++
++  // An allocation failed in every memory type tried: logged in full the first time for each
++  // use, counted afterwards (reported with the summary).
++  void ReportFailure(Use use, const char* what, uint64_t size, uint32_t allowed, int32_t result);
++
++  bool IsDeviceLocalType(uint32_t type) const {
++    return type < 32 && (layout_.device_local_types >> type & 1);
++  }
++
++ private:
++  void Refresh();
++  void LogSummary();
++
++  const ui::vulkan::VulkanDevice* device_ = nullptr;
++  placement::Layout layout_;
++  uint32_t type_heap_[placement::kMaxTypes] = {};
++  bool have_budget_ = false;
++  uint32_t cap_mb_ = 0;  // vulkan_device_local_budget_mb
++  uint64_t block_bytes_ = 0;
++
++  std::mutex mutex_;
++  Budget last_;
++  std::atomic<uint64_t> device_local_since_refresh_{0};
++  std::atomic<bool> summary_due_{false};
++
++  struct Counter {
++    std::atomic<uint64_t> device_local_bytes{0};
++    std::atomic<uint64_t> system_bytes{0};
++    std::atomic<uint32_t> system_count{0};
++    std::atomic<uint32_t> moved{0};  // allocations placed in system memory, ever
++    std::atomic<uint32_t> failures{0};
++    uint32_t failures_reported = 0;
++    bool move_logged = false;
++  };
++  Counter counters_[size_t(Use::kCount)];
++
++  std::mutex remembered_mutex_;
++  struct Remembered {
++    Use use;
++    uint32_t type;
++    uint64_t size;
++  };
++  std::unordered_map<VkDeviceMemory, Remembered> remembered_;
++};
++
++State& Get();
++
++// A dedicated image allocation in the order Choose gives (render targets): as
++// ui::vulkan::util::CreateDedicatedAllocationImage, which it calls when !active().
++bool CreateDedicatedImage(const ui::vulkan::VulkanDevice* device, const VkImageCreateInfo& info,
++                          Use use, VkImage& image_out, VkDeviceMemory& memory_out,
++                          VkDeviceSize* size_out);
++// Reports a failed image allocation (ReportFailure) with the image's size and memory types.
++void ReportImageFailure(const ui::vulkan::VulkanDevice* device, Use use,
++                        const VkImageCreateInfo& info, int32_t result);
++// A memory allocation for a sparse buffer that accepts `allowed` types, `default_type` when
++// !active(). Writes the type used.
++VkResult AllocateSparseMemory(const ui::vulkan::VulkanDevice* device, Use use, uint32_t allowed,
++                              uint32_t default_type, VkDeviceSize size, VkDeviceMemory& memory_out,
++                              uint32_t& type_out);
++
++}  // namespace rex::graphics::vulkan::fh1_device_memory
+diff --git a/src/graphics/vulkan/fh1_memory_placement.h b/src/graphics/vulkan/fh1_memory_placement.h
+new file mode 100644
+index 0000000..2c51cc2
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_memory_placement.h
+@@ -0,0 +1,174 @@
++#pragma once
++// FH1 (#268): where the Vulkan backend puts new memory on integrated GPUs.
++//
++// An APU's device-local heap is a carve-out of system RAM (the BIOS "UMA frame buffer",
++// often 512 MB) and its other heap is the rest of RAM, which the GPU reads about as fast
++// (write-combined system memory). The backend used to put everything in the device-local
++// heap: in free roam about 1 GB against a 486 MB budget. A Windows driver then pages
++// device-local memory in and out: textures read black and the driver can time out.
++//
++// So on integrated GPUs (or with the test budget cap), new textures stay device-local only
++// while the device-local use stays under kTexturePercent of the budget, and render
++// targets and guest memory pages under kHotPercent; past that they go to a memory type of
++// the system memory heap that the resource accepts. Discrete GPUs are not affected.
++//
++// Free of the Vulkan headers so that tools/test_vulkan_memory_placement.cpp can test it;
++// the flag values are Vulkan's.
++#include <cstdint>
++
++namespace rex::graphics::vulkan::fh1_memory_placement {
++
++// VkMemoryPropertyFlagBits.
++constexpr uint32_t kPropertyDeviceLocal = 0x1;
++constexpr uint32_t kPropertyHostVisible = 0x2;
++constexpr uint32_t kPropertyHostCoherent = 0x4;
++constexpr uint32_t kPropertyHostCached = 0x8;
++// Lazily allocated, protected, AMD device-coherent and device-uncached, NVIDIA RDMA: types
++// that need a feature or an extension of their own.
++constexpr uint32_t kPropertySpecial = 0x10 | 0x20 | 0x40 | 0x80 | 0x100;
++// VkMemoryHeapFlagBits.
++constexpr uint32_t kHeapDeviceLocal = 0x1;
++// VkPhysicalDeviceType.
++constexpr uint32_t kDeviceTypeIntegrated = 1;
++constexpr uint32_t kDeviceTypeDiscrete = 2;
++constexpr uint32_t kDeviceTypeCpu = 4;
++
++constexpr uint32_t kMaxTypes = 32;
++constexpr uint32_t kMaxHeaps = 16;
++
++// Textures stay device-local while use (with the new allocation) stays under this share of
++// the device-local budget; render targets and guest memory pages under kHotPercent (a
++// little room for the driver's own allocations).
++constexpr uint64_t kTexturePercent = 80;
++constexpr uint64_t kHotPercent = 95;
++
++struct MemoryInfo {
++  uint32_t device_type = 0;
++  uint32_t type_count = 0;
++  uint32_t type_flags[kMaxTypes] = {};
++  uint32_t type_heap[kMaxTypes] = {};
++  uint32_t heap_count = 0;
++  uint64_t heap_size[kMaxHeaps] = {};
++  uint32_t heap_flags[kMaxHeaps] = {};
++};
++
++struct Layout {
++  // The device is an integrated GPU (or not a discrete one, with a device-local heap at most a
++  // quarter of the system memory heap) and has a system memory heap to move memory to.
++  bool integrated = false;
++  uint32_t device_local_types = 0;  // ordinary memory types with the device-local property
++  uint32_t device_local_heaps = 0;  // heaps with the device-local flag (a mask)
++  uint64_t device_local_bytes = 0;  // their size
++  uint32_t system_heap = UINT32_MAX;  // the largest heap without the device-local flag
++  uint64_t system_heap_bytes = 0;
++  uint32_t system_types = 0;         // its write-combined (not host-cached) types
++  uint32_t system_types_cached = 0;  // its host-cached types (snooped: slower for the GPU)
++  bool can_move() const { return (system_types | system_types_cached) != 0; }
++};
++
++inline uint32_t LowestType(uint32_t mask) {
++  for (uint32_t i = 0; i < kMaxTypes; ++i) {
++    if (mask & (uint32_t(1) << i)) return i;
++  }
++  return UINT32_MAX;
++}
++
++inline Layout Describe(const MemoryInfo& m) {
++  Layout l;
++  const uint32_t heap_count = m.heap_count < kMaxHeaps ? m.heap_count : kMaxHeaps;
++  const uint32_t type_count = m.type_count < kMaxTypes ? m.type_count : kMaxTypes;
++  for (uint32_t h = 0; h < heap_count; ++h) {
++    if (m.heap_flags[h] & kHeapDeviceLocal) {
++      l.device_local_heaps |= uint32_t(1) << h;
++      l.device_local_bytes += m.heap_size[h];
++    }
++  }
++  // The system memory heap: the largest heap without the device-local flag that has a type
++  // usable for ordinary resources.
++  for (uint32_t h = 0; h < heap_count; ++h) {
++    if (m.heap_flags[h] & kHeapDeviceLocal) continue;
++    bool usable = false;
++    for (uint32_t t = 0; t < type_count; ++t) {
++      usable |= m.type_heap[t] == h &&
++                !(m.type_flags[t] & (kPropertySpecial | kPropertyDeviceLocal));
++    }
++    if (usable && (l.system_heap == UINT32_MAX || m.heap_size[h] > l.system_heap_bytes)) {
++      l.system_heap = h;
++      l.system_heap_bytes = m.heap_size[h];
++    }
++  }
++  for (uint32_t t = 0; t < type_count; ++t) {
++    const uint32_t flags = m.type_flags[t];
++    const uint32_t bit = uint32_t(1) << t;
++    if (flags & kPropertySpecial) continue;
++    if (flags & kPropertyDeviceLocal) l.device_local_types |= bit;
++    if (m.type_heap[t] != l.system_heap || (flags & kPropertyDeviceLocal)) {
++      continue;
++    }
++    if (flags & kPropertyHostCached) {
++      l.system_types_cached |= bit;
++    } else {
++      l.system_types |= bit;
++    }
++  }
++  const bool small_device_local =
++      l.device_local_bytes && l.device_local_bytes * 4 <= l.system_heap_bytes;
++  l.integrated = l.can_move() && l.device_local_types &&
++                 (m.device_type == kDeviceTypeIntegrated ||
++                  (m.device_type != kDeviceTypeDiscrete && m.device_type != kDeviceTypeCpu &&
++                   small_device_local));
++  return l;
++}
++
++// The budget the placement (and the render target trim) sees: the driver's, or the test cap.
++inline uint64_t CappedBudget(uint64_t budget, uint32_t cap_mb) {
++  if (!cap_mb) return budget;
++  const uint64_t cap = uint64_t(cap_mb) << 20;
++  return budget && budget < cap ? budget : cap;
++}
++
++// The device memory block the texture cache's allocator (VMA) makes when an allocation does
++// not fit its existing blocks: an eighth of a heap of up to 1 GB, else 256 MB.
++inline uint64_t AllocatorBlockBytes(uint64_t heap_bytes) {
++  if (heap_bytes && heap_bytes <= (uint64_t(1) << 30)) return (heap_bytes / 8 + 31) & ~uint64_t(31);
++  return uint64_t(256) << 20;
++}
++
++enum class Kind { kTexture, kHot };
++
++// Whether `growth` more bytes of device-local memory keep the use within the kind's share.
++// Without a budget (no VK_EXT_memory_budget and no cap) everything fits.
++inline bool Fits(Kind kind, uint64_t usage, uint64_t growth, uint64_t budget) {
++  if (!budget) return true;
++  return (usage + growth) * 100 <= budget * (kind == Kind::kTexture ? kTexturePercent : kHotPercent);
++}
++
++// The memory type masks to try, in order, for a resource that accepts `allowed` types.
++struct Order {
++  uint32_t masks[3] = {};
++  uint32_t count = 0;
++  bool system_first = false;  // device-local memory is (nearly) full: system memory first
++  void Add(uint32_t mask) {
++    if (mask && count < 3) masks[count++] = mask;
++  }
++};
++
++inline Order Choose(const Layout& l, uint32_t allowed, bool fits) {
++  Order o;
++  const uint32_t device_local = allowed & l.device_local_types;
++  const uint32_t system = allowed & l.system_types;
++  const uint32_t system_cached = allowed & l.system_types_cached;
++  if (fits || !(system | system_cached)) {
++    o.Add(device_local);
++    o.Add(system);
++    o.Add(system_cached);
++  } else {
++    o.system_first = true;
++    o.Add(system);
++    o.Add(system_cached);
++    o.Add(device_local);
++  }
++  return o;
++}
++
++}  // namespace rex::graphics::vulkan::fh1_memory_placement
+diff --git a/src/graphics/vulkan/fh1_render_target_trim.h b/src/graphics/vulkan/fh1_render_target_trim.h
+index e38d8be..f1e643c 100644
+--- a/src/graphics/vulkan/fh1_render_target_trim.h
++++ b/src/graphics/vulkan/fh1_render_target_trim.h
+@@ -29,6 +29,20 @@ inline bool OverBudget(uint64_t usage, uint64_t budget, uint32_t percent) {
+   return percent && budget && usage * 100 >= budget * percent;
+ }
+ 
++// FH1 (#268): whether to trim now. On integrated GPUs (fh1_memory_placement.h) new textures,
++// and render targets and guest memory pages once device-local memory is nearly full, go to
++// system memory instead of overfilling it, so a nearly full device-local heap is no reason to
++// free render targets there (the trims every 15 s of #268 freed render targets for memory that
++// textures took): only device-local use over its whole budget (memory that could not move) or
++// the system memory heap reaching `percent` of its budget is.
++inline bool ShouldTrim(bool integrated, bool allocation_failed, uint64_t usage, uint64_t budget,
++                       uint64_t system_usage, uint64_t system_budget, uint32_t percent) {
++  if (allocation_failed) return true;
++  if (!integrated) return OverBudget(usage, budget, percent);
++  return OverBudget(usage, budget, percent > 100 ? percent : 100) ||
++         OverBudget(system_usage, system_budget, percent);
++}
++
+ // The first frame of the next trim. Little freed: the memory is full of other things, so
+ // wait longer before the next GPU wait.
+ inline uint64_t NextAllowedFrame(uint64_t frame, bool after_failure, uint64_t freed_bytes) {
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index 2febf5f..b9f8414 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -37,6 +37,8 @@
+ #include <rex/math.h>
+ #include <rex/ui/vulkan/util.h>
+ 
++#include "fh1_device_memory.h"
++
+ REXCVAR_DEFINE_INT32(vulkan_render_target_initial_fill, 0, "GPU/Vulkan",
+                      "Fill a host color render target before its first use: 0 leaves the driver's "
+                      "memory (undefined), 1 clears it to zero, 2 to a loud magenta (64, 0, 64, 1) to "
+@@ -1871,6 +1873,7 @@ VulkanRenderTargetCache::VulkanRenderTarget::~VulkanRenderTarget() {
+   }
+   dfn.vkDestroyImageView(device, view_depth_color_, nullptr);
+   dfn.vkDestroyImage(device, image_, nullptr);
++  fh1_device_memory::Get().Forget(memory_);
+   dfn.vkFreeMemory(device, memory_, nullptr);
+   render_target_cache_.render_target_memory_bytes_ -= memory_size_;
+   --render_target_cache_.render_target_count_;
+@@ -1949,9 +1952,10 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(Ren
+   VkImage image;
+   VkDeviceMemory memory;
+   VkDeviceSize memory_size = 0;
+-  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+-          vulkan_device, image_create_info, ui::vulkan::util::MemoryPurpose::kDeviceLocal, image,
+-          memory, nullptr, &memory_size)) {
++  // FH1 (#268): on integrated GPUs, system memory once device-local memory is nearly full.
++  if (!fh1_device_memory::CreateDedicatedImage(vulkan_device, image_create_info,
++                                               fh1_device_memory::Use::kRenderTarget, image, memory,
++                                               &memory_size)) {
+     render_target_allocation_failed_ = true;
+     REXGPU_ERROR(
+         "VulkanRenderTarget: Failed to create a {}x{} {}xMSAA {} render target "
+diff --git a/src/graphics/vulkan/shared_memory.cpp b/src/graphics/vulkan/shared_memory.cpp
+index 7f9c0b6..9e05090 100644
+--- a/src/graphics/vulkan/shared_memory.cpp
++++ b/src/graphics/vulkan/shared_memory.cpp
+@@ -23,6 +23,8 @@
+ #include <rex/math.h>
+ #include <rex/ui/vulkan/util.h>
+ 
++#include "fh1_device_memory.h"
++
+ REXCVAR_DEFINE_BOOL(vulkan_sparse_shared_memory, true, "GPU/Vulkan",
+                     "Use sparse shared memory on Vulkan")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+@@ -237,14 +239,17 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(uint32_t offset_alloca
+   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+   const VkDevice device = vulkan_device->device();
+ 
+-  VkMemoryAllocateInfo memory_allocate_info;
+-  memory_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+-  memory_allocate_info.pNext = nullptr;
+-  memory_allocate_info.allocationSize = length_allocations
+-                                        << host_gpu_memory_sparse_granularity_log2();
+-  memory_allocate_info.memoryTypeIndex = buffer_memory_type_;
++  const VkDeviceSize allocation_size = VkDeviceSize(length_allocations)
++                                       << host_gpu_memory_sparse_granularity_log2();
++  // FH1 (#268): on integrated GPUs, system memory once device-local memory is nearly full.
++  VkMemoryRequirements buffer_memory_requirements;
++  dfn.vkGetBufferMemoryRequirements(device, buffer_, &buffer_memory_requirements);
+   VkDeviceMemory memory;
+-  if (dfn.vkAllocateMemory(device, &memory_allocate_info, nullptr, &memory) != VK_SUCCESS) {
++  uint32_t memory_type;
++  if (fh1_device_memory::AllocateSparseMemory(
++          vulkan_device, fh1_device_memory::Use::kSharedMemory,
++          buffer_memory_requirements.memoryTypeBits, buffer_memory_type_, allocation_size, memory,
++          memory_type) != VK_SUCCESS) {
+     REXGPU_ERROR("Shared memory: Failed to allocate sparse buffer memory");
+     return false;
+   }
+@@ -252,7 +257,7 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(uint32_t offset_alloca
+ 
+   VkSparseMemoryBind bind;
+   bind.resourceOffset = offset_allocations << host_gpu_memory_sparse_granularity_log2();
+-  bind.size = memory_allocate_info.allocationSize;
++  bind.size = allocation_size;
+   bind.memory = memory;
+   bind.memoryOffset = 0;
+   bind.flags = 0;
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index 70dd3f5..e8a5bb9 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -33,6 +33,8 @@
+ #include <rex/ui/vulkan/ui_samplers.h>
+ #include <rex/ui/vulkan/util.h>
+ 
++#include "fh1_device_memory.h"
++
+ REXCVAR_DEFINE_BOOL(non_seamless_cube_map, false, "GPU", "Use non-seamless cube map sampling");
+ 
+ REXCVAR_DEFINE_BOOL(
+@@ -112,6 +114,45 @@ namespace {
+ constexpr VkFormat kInvalidTextureFetchFallbackFormat = VK_FORMAT_R8G8B8A8_UNORM;
+ const VkClearColorValue kInvalidTextureFetchFallbackColor = {{0.0f, 0.0f, 0.0f, 0.0f}};
+ 
++namespace device_memory = fh1_device_memory;
++
++// FH1 (#268): a texture's image and memory. On integrated GPUs (fh1_device_memory.h) the
++// free room of the allocator's device-local blocks first, then device-local memory while its
++// use stays under 80% of the budget, else system memory; elsewhere as before (VMA prefers
++// device-local memory and tries the other types when that fails).
++VkResult CreateTextureImage(VmaAllocator allocator, const VkImageCreateInfo& info, VkImage& image,
++                            VmaAllocation& allocation) {
++  VmaAllocationCreateInfo create_info = {};
++  create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
++  device_memory::State& state = device_memory::Get();
++  if (!state.active()) {
++    return vmaCreateImage(allocator, &info, &create_info, &image, &allocation, nullptr);
++  }
++  const uint32_t device_local_types = state.layout().device_local_types;
++  create_info.flags = VMA_ALLOCATION_CREATE_NEVER_ALLOCATE_BIT;
++  create_info.memoryTypeBits = device_local_types;
++  if (vmaCreateImage(allocator, &info, &create_info, &image, &allocation, nullptr) == VK_SUCCESS) {
++    return VK_SUCCESS;
++  }
++  create_info.flags = 0;
++  // About the size: 4 bytes per texel (more than the compressed formats take), a third more
++  // for the mips.
++  uint64_t size = uint64_t(info.extent.width) * info.extent.height * info.extent.depth *
++                  info.arrayLayers * 4;
++  if (info.mipLevels > 1) size += size / 3;
++  const auto order = state.Choose(device_memory::Use::kTexture, ~uint32_t(0),
++                                  state.TextureGrowth(size));
++  VkResult result = VK_ERROR_FEATURE_NOT_PRESENT;
++  for (uint32_t i = 0; i < order.count; ++i) {
++    create_info.memoryTypeBits = order.masks[i];
++    create_info.usage = (order.masks[i] & device_local_types) ? VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE
++                                                              : VMA_MEMORY_USAGE_UNKNOWN;
++    result = vmaCreateImage(allocator, &info, &create_info, &image, &allocation, nullptr);
++    if (result == VK_SUCCESS) break;
++  }
++  return result;
++}
++
+ }  // namespace
+ 
+ static_assert(VK_FORMAT_UNDEFINED == VkFormat(0),
+@@ -1255,17 +1296,16 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(Texture
+     image_format_list_create_info.pViewFormats = formats;
+   }
+ 
+-  VmaAllocationCreateInfo allocation_create_info = {};
+-  allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+-
+   VkImage image;
+   VmaAllocation allocation;
+-  if (vmaCreateImage(vma_allocator_, &image_create_info, &allocation_create_info, &image,
+-                     &allocation, nullptr)) {
++  if (VkResult result = CreateTextureImage(vma_allocator_, image_create_info, image, allocation)) {
+     // Storage usage or format reinterpretation may impose extra device limits.
+     // A failed fast-path allocation must not prevent the original upload path.
+-    if (!direct_upload)
++    if (!direct_upload) {
++      device_memory::ReportImageFailure(vulkan_device, device_memory::Use::kTexture,
++                                        image_create_info, result);
+       return nullptr;
++    }
+     direct_upload = false;
+     image_create_info.usage &= ~VK_IMAGE_USAGE_STORAGE_BIT;
+     if (!separate_view_format) {
+@@ -1274,9 +1314,12 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(Texture
+     } else if (image_create_info.pNext) {
+       image_format_list_create_info.viewFormatCount = 2;
+     }
+-    if (vmaCreateImage(vma_allocator_, &image_create_info, &allocation_create_info, &image,
+-                       &allocation, nullptr))
++    if (VkResult result =
++            CreateTextureImage(vma_allocator_, image_create_info, image, allocation)) {
++      device_memory::ReportImageFailure(vulkan_device, device_memory::Use::kTexture,
++                                        image_create_info, result);
+       return nullptr;
++    }
+   }
+ 
+   auto result = std::make_unique<VulkanTexture>(*this, key, image, allocation);
+@@ -1299,9 +1342,12 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(Texture
+     image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+     VkImage upload_image;
+     VmaAllocation upload_allocation;
+-    if (vmaCreateImage(vma_allocator_, &image_create_info, &allocation_create_info, &upload_image,
+-                       &upload_allocation, nullptr) != VK_SUCCESS)
++    if (VkResult result =
++            CreateTextureImage(vma_allocator_, image_create_info, upload_image, upload_allocation)) {
++      device_memory::ReportImageFailure(vulkan_device, device_memory::Use::kTexture,
++                                        image_create_info, result);
+       return nullptr;
++    }
+     auto upload_key = key;
+     upload_key.dimension = xenos::DataDimension::k2DOrStacked;
+     result->SetCubeUpload(
+@@ -2066,6 +2112,8 @@ VulkanTextureCache::VulkanTexture::VulkanTexture(VulkanTextureCache& texture_cac
+   VmaAllocationInfo allocation_info;
+   vmaGetAllocationInfo(texture_cache.vma_allocator_, allocation_, &allocation_info);
+   SetHostMemoryUsage(uint64_t(allocation_info.size));
++  device_memory::Get().Allocated(device_memory::Use::kTexture, allocation_info.memoryType,
++                                 allocation_info.size);
+ }
+ 
+ VulkanTextureCache::VulkanTexture::~VulkanTexture() {
+@@ -2086,6 +2134,10 @@ VulkanTextureCache::VulkanTexture::~VulkanTexture() {
+   if (image_view_3d_as_2d_signed_ != VK_NULL_HANDLE) {
+     dfn.vkDestroyImageView(device, image_view_3d_as_2d_signed_, nullptr);
+   }
++  VmaAllocationInfo allocation_info;
++  vmaGetAllocationInfo(vulkan_texture_cache.vma_allocator_, allocation_, &allocation_info);
++  device_memory::Get().Freed(device_memory::Use::kTexture, allocation_info.memoryType,
++                             allocation_info.size);
+   vmaDestroyImage(vulkan_texture_cache.vma_allocator_, image_, allocation_);
+ }
+ 
+@@ -2216,13 +2268,12 @@ VkImageView VulkanTextureCache::VulkanTexture::GetOrCreate3DAs2DImageView(bool i
+     image_create_info.pQueueFamilyIndices = nullptr;
+     image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+ 
+-    VmaAllocationCreateInfo allocation_create_info = {};
+-    allocation_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+-
+     VkImage image_2d;
+     VmaAllocation allocation_2d;
+-    if (vmaCreateImage(vulkan_texture_cache.vma_allocator_, &image_create_info,
+-                       &allocation_create_info, &image_2d, &allocation_2d, nullptr) != VK_SUCCESS) {
++    if (VkResult result = CreateTextureImage(vulkan_texture_cache.vma_allocator_,
++                                             image_create_info, image_2d, allocation_2d)) {
++      device_memory::ReportImageFailure(vulkan_texture_cache.command_processor_.GetVulkanDevice(),
++                                        device_memory::Use::kTexture, image_create_info, result);
+       REXGPU_ERROR("VulkanTextureCache: Failed to create 3D-as-2D wrapper image");
+       return VK_NULL_HANDLE;
+     }
+@@ -2442,14 +2493,17 @@ bool VulkanTextureCache::EnsureScaledResolveBufferAllocated(uint64_t start_scale
+     const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+     const VkDevice device = vulkan_device->device();
+ 
+-    VkMemoryAllocateInfo memory_allocate_info;
+-    memory_allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+-    memory_allocate_info.pNext = nullptr;
+-    memory_allocate_info.allocationSize = VkDeviceSize(allocation_range.second)
+-                                          << scaled_resolve_sparse_granularity_log2_;
+-    memory_allocate_info.memoryTypeIndex = scaled_resolve_buffer_memory_type_;
++    const VkDeviceSize allocation_size = VkDeviceSize(allocation_range.second)
++                                         << scaled_resolve_sparse_granularity_log2_;
++    // FH1 (#268): on integrated GPUs, system memory once device-local memory is nearly full.
++    VkMemoryRequirements buffer_memory_requirements;
++    dfn.vkGetBufferMemoryRequirements(device, scaled_resolve_buffer_, &buffer_memory_requirements);
+     VkDeviceMemory allocation_memory;
+-    if (dfn.vkAllocateMemory(device, &memory_allocate_info, nullptr, &allocation_memory) !=
++    uint32_t allocation_memory_type;
++    if (device_memory::AllocateSparseMemory(vulkan_device, device_memory::Use::kScaledResolve,
++                                            buffer_memory_requirements.memoryTypeBits,
++                                            scaled_resolve_buffer_memory_type_, allocation_size,
++                                            allocation_memory, allocation_memory_type) !=
+         VK_SUCCESS) {
+       REXGPU_ERROR(
+           "VulkanTextureCache: Failed to allocate sparse memory for the "
+@@ -2462,7 +2516,7 @@ bool VulkanTextureCache::EnsureScaledResolveBufferAllocated(uint64_t start_scale
+     VkSparseMemoryBind bind;
+     bind.resourceOffset = VkDeviceSize(allocation_range.first)
+                           << scaled_resolve_sparse_granularity_log2_;
+-    bind.size = memory_allocate_info.allocationSize;
++    bind.size = allocation_size;
+     bind.memory = allocation_memory;
+     bind.memoryOffset = 0;
+     bind.flags = 0;
