@@ -347,6 +347,12 @@ add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
 add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
     "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
     lo=0.1, hi=1, step=0.05)
+# H-pattern gears on lever moves (patch 0132, #303).
+add("wheel_shifter_follow_slot", "Gear follows the lever's slot", "Controls", "bool", False,
+    "H-pattern. Off: a gear engages only when the lever moves into a slot or out to neutral, so "
+    "the paddles keep the gear they chose and a race start keeps the game's. On: the game takes "
+    "the gear the lever sits in whenever it sets the gear itself (race and event starts), as "
+    "before.", "Shifter and clutch")
 # A shifter on its own USB device (patch 0128, #272): read with the wheel.
 add("wheel_shifter_device", "Shifter device", "Controls", "str", "",
     "A shifter on its own USB device, read with the wheel. Empty finds known shifters (Simagic "

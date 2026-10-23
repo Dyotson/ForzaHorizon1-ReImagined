@@ -5,12 +5,16 @@
 //    buttons the gear, and the base's own pedal-like axis does nothing while the pedals are there;
 //  - the pedals unplugged at run time: nothing from them, the wheel's own axes count again;
 //    plugged back in, they work again; wheel_pedal_device = none leaves them alone.
+// #303 (patch 0132):
+//  - the H-pattern gear is asked of the game when the lever moves: a lever already in 3rd when the
+//    driver starts asks for nothing (thumb_rx 10, the game's "no request"), a move asks for the new
+//    gear for a moment, then nothing; wheel_shifter_follow_slot reports the slot all the time;
 //
 // Linux only (needs write access to /dev/uinput). Build against the patched SDK source and link
 // the patched runtime, from the repository root:
 //   SDK=~/rexglue-sdk-src-forza/sdk; clang++ -std=c++23 -msse4.1 -I$SDK/include
 //       -I$SDK/thirdparty/sdl3/include -I$SDK/thirdparty/fmt/include -I$SDK/thirdparty/spdlog/include
-//       -I$SDK/thirdparty/simde
+//       -I$SDK/thirdparty/simde -I$SDK/src/input/wheel
 //       -DSPDLOG_COMPILED_LIB -DSPDLOG_FMT_EXTERNAL forza-recomp/tests/wheel_devices_probe.cpp
 //       -L ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -lrexruntime -pthread
 //       -Wl,-rpath,$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib -o wheel-devices-probe
@@ -18,6 +22,7 @@
 #include <rex/cvar.h>
 #include <rex/input/wheel/wheel_ff.h>
 #include <rex/input/wheel/wheel_input_driver.h>
+#include <wheel_gear_request.h>
 
 #include <fcntl.h>
 #include <linux/uinput.h>
@@ -283,6 +288,56 @@ int main() {
     std::printf("  wheel_pedal_device = none: the pedal device is not read\n");
   }
 
+  {
+    // #303: the H-pattern gear on lever moves. The lever is in 3rd when the driver starts.
+    shifter.SetButton(2, true);
+    Sleep(100);
+    WheelInputDriver driver(nullptr, 0);
+    Check(driver.Setup() == X_STATUS_SUCCESS, "driver setup (gear requests)");
+    auto found = Wheels(driver, 1);
+    Check(found.size() == 1, "gear requests: one wheel");
+    const auto id = found[0].id;
+    rex::input::X_INPUT_CAPABILITIES caps{};
+    Check(driver.GetDeviceCapabilities(id, 1, &caps) == 0, "caps");
+    Poll(driver, id, 800);  // the shifter device attached and read
+    bool asked = false;
+    for (int t = 0; t < 1500; t += 20) {
+      asked = asked || State(driver, id).thumb_rx != kGearNoRequest;
+      Sleep(20);
+    }
+    Check(!asked, "a lever left in 3rd asks for nothing (the game keeps its own gear at a start)");
+    shifter.SetButton(2, false);
+    shifter.SetButton(3, true);
+    int reads_4 = 0;
+    auto t0 = std::chrono::steady_clock::now();
+    while (State(driver, id).thumb_rx != 4 &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) {
+      Sleep(10);
+    }
+    t0 = std::chrono::steady_clock::now();
+    while (State(driver, id).thumb_rx == 4) {
+      reads_4++;
+      Sleep(10);
+    }
+    const auto held = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+    Check(reads_4 > 3 && held >= 200 && held < 1000,
+          "the lever moved into 4th: 4th asked for a moment");
+    Check(State(driver, id).thumb_rx == kGearNoRequest, "then nothing: the paddles keep their gear");
+    std::printf("  lever left in 3rd: no request; moved into 4th: 4th asked for %lld ms, then none\n",
+                static_cast<long long>(held));
+    // wheel_shifter_follow_slot: the slot all the time, as before.
+    SetCvar("wheel_shifter_follow_slot", "true");
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 4; }), "follow: 4th");
+    Poll(driver, id, 600);
+    Check(State(driver, id).thumb_rx == 4, "follow: still 4th");
+    SetCvar("wheel_shifter_follow_slot", "false");
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == kGearNoRequest; }),
+          "back to lever moves: nothing until the lever moves");
+    shifter.SetButton(3, false);
+    Check(Until(driver, id, [](const auto& g) { return g.thumb_rx == 0; }), "out to neutral: asked");
+    std::printf("  wheel_shifter_follow_slot: the slot all the time\n");
+  }
   std::printf("wheel devices probe: all checks passed\n");
   return 0;
 }
