@@ -128,20 +128,78 @@ WHEEL_WORDS = ("wheel", "racing", "driving force", "g25", "g27", "g29", "g920", 
                "ts-xw")
 
 
-def known_wheel(vid, pid):
+# Thrustmaster wheels (patch 0135, #308): the SDK's kThrustmasterModels (src/input/wheel/
+# wheel_thrustmaster.h; test_wheel_thrustmaster.py checks they match), from Project Motor Racing's
+# device maps (Pitwall PMR/shared/inputDevices, commit 01acf41). The axes hold only with the axis
+# count the map assumes; where the pedals rest is read from the wheel.
+@dataclass(frozen=True)
+class ThrustmasterModel:
+    pid: int
+    name: str
+    axes: int
+    steer: int
+    throttle: int
+    brake: int
+    clutch: int
+    a: int
+    b: int
+    x: int
+    y: int
+    lb: int
+    rb: int
+    back: int
+    start: int
+    ls: int
+    rs: int
+
+
+_THRUSTMASTER = 0x044F
+THRUSTMASTER_MODELS = [
+    ThrustmasterModel(0xB67F, "Thrustmaster TMX", 4, 0, 2, 1, 3, 4, 8, 2, 9, 0, 1, 6, 7, 5, 10),
+    ThrustmasterModel(0xB669, "Thrustmaster TX", 4, 0, 2, 1, 3, 4, 8, 2, 9, 0, 1, 3, 5, -1, -1),
+    ThrustmasterModel(0xB692, "Thrustmaster TS-XW", 4, 0, 2, 1, 3, 12, 8, 2, 9, 0, 1, 6, 7, -1, -1),
+    ThrustmasterModel(0xB689, "Thrustmaster TS-PC Racer", 4, 0, 2, 1, 3, 12, 8, 2, 9, 0, 1, 6, 7,
+                      -1, -1),
+    ThrustmasterModel(0xB66E, "Thrustmaster T300 RS", 4, 0, 2, 1, 3, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+    ThrustmasterModel(0xB677, "Thrustmaster T150", 4, 0, 2, 1, 3, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+    ThrustmasterModel(0xB684, "Thrustmaster T-GT", 8, 0, 5, 1, 6, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+]
+
+
+def thrustmaster(vid, pid):
+    if vid != _THRUSTMASTER:
+        return None
+    return next((m for m in THRUSTMASTER_MODELS if m.pid == pid), None)
+
+
+def known_logitech(vid, pid):
+    """A Logitech wheel with a built-in profile: fixed axes, pedals that rest at the maximum."""
     return KNOWN_WHEELS.get(pid) if vid == _LOGITECH else None
 
 
-def looks_like_wheel(name, vid=0, sdl_wheel=False):
-    """The driver's wheel_mode = auto test (IsWheelDevice): Microsoft pads never are."""
+def known_wheel(vid, pid):
+    m = thrustmaster(vid, pid)
+    return known_logitech(vid, pid) or (m.name if m else None)
+
+
+def looks_like_wheel(name, vid=0, sdl_wheel=False, pid=0):
+    """The driver's wheel_mode = auto test (IsWheelDevice): Microsoft pads never are; a known
+    Thrustmaster always is (a TMX has no name on Windows: "44F B67F")."""
     if vid == 0x045E:
         return False
-    return bool(sdl_wheel) or any(w in (name or "").lower() for w in WHEEL_WORDS)
+    return bool(sdl_wheel) or any(w in (name or "").lower() for w in WHEEL_WORDS) or \
+        thrustmaster(vid, pid) is not None
 
 
-def default_axes(vid, pid, windows):
-    """A known wheel's fixed axes; {} for others (the driver detects them when it opens the wheel)."""
-    if not known_wheel(vid, pid):
+def default_axes(vid, pid, windows, num_axes=None):
+    """A known wheel's fixed axes; {} for others (the driver detects them when it opens the wheel).
+    A Thrustmaster's hold only with the axis count its map has (num_axes, when known)."""
+    m = thrustmaster(vid, pid)
+    if m:
+        if num_axes and num_axes != m.axes:
+            return {}
+        return {"steer": m.steer, "throttle": m.throttle, "brake": m.brake, "clutch": m.clutch}
+    if not known_logitech(vid, pid):
         return {}
     if windows:
         return {"steer": 0, "throttle": 1, "brake": 2, "clutch": 3}
@@ -151,7 +209,10 @@ def default_axes(vid, pid, windows):
 def default_buttons(vid, pid):
     m = {"a": 0, "b": 1, "x": 2, "y": 3, "rb": 4, "lb": 5, "back": 8, "start": 9, "rs": 10,
          "ls": 11, "up": -1, "down": -1, "left": -1, "right": -1}
-    if vid == _LOGITECH and pid in _PLAYSTATION:
+    t = thrustmaster(vid, pid)
+    if t:
+        m.update({k: getattr(t, k) for k in ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs")})
+    elif vid == _LOGITECH and pid in _PLAYSTATION:
         m.update(b=2, x=1)
     elif vid == _LOGITECH and pid in _XBOX:
         m.update(start=6, back=7, rs=8, ls=9)
@@ -182,7 +243,7 @@ def wheel_binding(action, settings, wheel):
     if action.setting == "wheel_axes":
         if own is not None and own >= 0:
             return (None if own >= NO_AXIS else own), False
-        return default_axes(wheel.vid, wheel.pid, wheel.windows).get(action.field), True
+        return default_axes(wheel.vid, wheel.pid, wheel.windows, wheel.num_axes).get(action.field), True
     if action.setting == "wheel_buttons":
         if own is not None:
             return (own if own >= 0 else None), False
@@ -430,7 +491,7 @@ def wheel_like(device, settings):
     mode = settings.get("wheel_mode", "auto")
     if mode == "off":
         return False
-    return looks_like_wheel(device.name, device.vid, device.sdl_wheel) or \
+    return looks_like_wheel(device.name, device.vid, device.sdl_wheel, device.pid) or \
         (mode == "on" and not device.gamepad) or wheel_device_match(settings, device) > 0
 
 
