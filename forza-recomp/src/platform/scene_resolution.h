@@ -78,9 +78,20 @@ constexpr uint32_t kTextureSize = 0x2C;
 constexpr uint32_t kTextureWidth = 0x04;
 constexpr uint32_t kTextureHeight = 0x08;
 constexpr uint32_t kTextureName = 0x28;
-// The renderer's texture objects (sub_8257C220's r3 + 0x1A0, 0x34 bytes each, in table order).
+// The renderer keeps a 0x34-byte slot per entry (sub_8257C220's r3 + 0x1A0: the table entry, its
+// memory size at +0x2C, its address at +0x30), then the D3D textures, 0x34 bytes each in table
+// order: the passes draw into and resolve to those.
 constexpr uint32_t kRendererTextures = 0x1A0;
 constexpr uint32_t kRendererTextureSize = 0x34;
+constexpr uint32_t kTextureObjects = kRendererTextures + kTextureCount * kRendererTextureSize;
+static_assert(kTextureObjects == 0x9F4);
+// Several entries share memory: an entry whose +0x1C is not 0x29 lies in another one's memory
+// (at its start or after it), and the renderer lends parts of the block to others with 720p
+// sizes written in the code (sub_8257C428). The textures that follow the scene therefore keep
+// their 720p memory: only their size changes, not where they and everything after them lie.
+// With the 540p sizes the block ended 6.5 MB earlier, and a full-screen filter's 1280x720 resolve
+// into the Shared texture in WorldDepth wrote into the stream buffers of the file heap after it
+// (a race load then crashed in their allocator, #347).
 inline bool ScreenTextureFollowsScene(std::string_view name) {
   return name != "FrontBuffer_0" && name != "FrontBuffer_1" && name != "MapRender";
 }

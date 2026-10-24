@@ -1203,9 +1203,10 @@ was dropped when other games started):
 
 **Status: experimental** (launcher Display > Picture, "3D scene resolution").
 `scene_resolution = "540"` draws the 3D scene and
-its effects at 960x540 under the 720p HUD and works in free roam, the pause menu, the map, photo
-mode, car select and the event screens, but loading a race crashes in the game's heap (3 of 3
-tries, below). Default `"720"` changes nothing (the hooks pass through).
+its effects at 960x540 under the 720p HUD. Free roam, the pause menu, the map, photo mode, car
+select, the event screens and races (loads, restarts, a full race, rewind, photo mode, the
+replay) render correctly with no GPU errors. Loading a race crashed until the textures kept their
+720p memory (below). Default `"720"` changes nothing (the hooks pass through).
 
 The idea: render scale starts at 1 (the game's 1280x720). For integrated graphics that cannot hold
 the frame rate (#263 Iris Xe, #268 Vega), draw the scene smaller and let the game's tonemap scale it
@@ -1226,12 +1227,22 @@ ultrawide path, `docs/ultrawide.md`, gave up on fractional heights for that reas
   surfaces from it (`sub_82C3F2E8`: full size and tile size; colour, 8888, depth), the scenario
   switch (`sub_82C3F548`) writes its size into the D3D presentation parameters, and the scene's
   passes take their sizes from it. `UITilingScenario` (2 in every XML) is the menus' one.
-- The screen textures come from a table of 41 entries at `0x832295B0` (TU4 `0x8330C830`, 0x2C bytes,
-  copied by `sub_8257C220` into texture objects at its r3 + 0x1A0, 0x34 bytes each): a flag, then
-  width and height as divisors of a hard-coded 1280x720 (`WorldRender`, `ScratchBuffer`,
-  `ShadowMask`, `WorldDepth`, `Bloom`, the post chain's `Shared` buffers, the `FrontBuffer_0/1` the
-  HUD is drawn on and VdSwap presents, `MapRender`), or absolute sizes (shadow maps, cube map, a
-  640x360 half-size buffer).
+- The screen textures come from a table of 41 entries at `0x832295B0` (TU4 `0x8330C830`, 0x2C
+  bytes): a flag, then width and height as divisors of a hard-coded 1280x720 (`WorldRender`,
+  `ScratchBuffer`, `ShadowMask`, `WorldDepth`, `Bloom`, the post chain's `Shared` buffers, the
+  `FrontBuffer_0/1` the HUD is drawn on and VdSwap presents, `MapRender`), or absolute sizes
+  (shadow maps, cube map, a 640x360 half-size buffer). `sub_8257C220` copies it into the
+  renderer's slots (its r3 + 0x1A0, 0x34 bytes each: the entry, then its memory size and
+  address), makes the headers of the D3D textures that follow the slots (r3 + 0x9F4, 0x34 bytes
+  each, in table order) and adds up their memory.
+- The textures share memory. An entry whose +0x1C is 0x29 has memory of its own; any other value
+  is the entry whose memory it lies in, at its start or right after it (+0x20). So most `Shared`
+  buffers lie in `ScratchBuffer` or the front buffers, `MapRender` (1280x720) and two `Shared`
+  textures in `WorldDepth`, and three 1024x1024 depth targets (12 MB) start in `ScratchBuffer` and
+  cover the textures after it. `sub_82482E70` allocates one block for
+  the memory pools and these textures, and the game's file heap comes right after it;
+  `sub_8257C428` places the textures and lends parts of the block to other users with 720p sizes
+  written in the code (0x384000 = 1280x720x4 from `WorldRender`, for example).
 - The world view (`sub_82444E60`) draws with the view's viewport (+0x1A8), 0,0,1280,720, placed
   at (surface - viewport): with a smaller surface the scene moved off it.
 - The post-processing quad (`sub_823E5628`) maps a rectangle in screen pixels to its source texture
@@ -1245,9 +1256,12 @@ ultrawide path, `docs/ultrawide.md`, gave up on fractional heights for that reas
    `scene_msaa = off`). The game's own tiled path at 960x540 (three tiles of 192 lines) left the
    first tile blank.
 2. The scene's screen textures get 960x540 (the divided ones 960/d and 540/d rounded up to 32, as
-   the game rounds); the front buffers and `MapRender` stay 720p. Changing only the scenario drew
-   the scene but resolved it into 1280x720 textures ("Resolve region 0 <= x < 1280 is outside the
-   surface pitch 960"); changing the menus' scenario too broke the HUD.
+   the game rounds); the front buffers and `MapRender` stay 720p. They keep their 720p memory: the
+   header function (`sub_82A40F28`, TU4 `sub_82AFE678`, which returns the memory size) is called
+   with the 720p size first, for the size, then with the scene's, for the header. The block lies
+   exactly as at 720p. Changing only the scenario drew the scene but resolved it into 1280x720
+   textures ("Resolve region 0 <= x < 1280 is outside the surface pitch 960"); changing the menus'
+   scenario too broke the HUD.
 3. The world view's 1280x720 viewport is 960x540 while it is drawn, and back afterwards (the
    HUD's projected name tags read it). Without this the scene was empty: RenderDoc showed a
    degenerate host viewport.
@@ -1259,28 +1273,35 @@ ultrawide path, `docs/ultrawide.md`, gave up on fractional heights for that reas
    draw there and resolve into the 720p front buffers; at 960 their resolves were refused (60 a
    second for 9 s after loading free roam, 7 at each camera change).
 6. A 1280x720 post-processing pass (`sub_824426B8`) into one of the scene's textures is drawn at
-   960x540 (one at load time resolves into the full-size `Shared` texture).
+   960x540. On menu screens and loads the render target manager's full-screen filter
+   (`sub_82C3E310`, from `sub_82586170`) copies the last 720p front buffer this way into the
+   `Shared` 2:10:10:10 texture in `WorldDepth`.
 7. The D3D device keeps a 1280x720 back buffer (it is made with the first scenario's size).
 
 It stays at 720p with the SDK's scene reconstruction (`fh1_upscaler`: FSR 3, DLSS, SMAA), separate
 scene anti-aliasing or ultrawide gameplay, which find the scene by its 720p targets (logged).
 
-**The race-load crash.** Signing up for the festival race at the spawn and starting it crashes
-while the race loads: a null read in the game's allocator (`sub_82D7AB..`, chain
-`82E3CBA8 82E3CC3C 82CE2A60 82F0B300` in TU4), so most likely guest memory was overwritten
-earlier. The textures made smaller have less memory: a 1280x720 resolve into a 960x540 texture
-(the `Shared` one, twice a session) writes 720 rows past its end; item 6 removed that resolve,
-and the crash stayed. Keeping the textures' memory at the 720p size (the size computation,
-`sub_82A40F28`, given 720p dimensions inside `sub_8257C220`) garbled the picture: the texture
-layout follows those sizes. Patching the texture objects after `sub_8257C220` made instead
-(memory for 720p, sizes for 540p) did not crash, but in some states the scene came out 1:1 in the
-lower right 960x540 of a 720p target. Next: a write watch on the guest heap block that is
-corrupted, or the race renderer's own screen-sized buffers.
+**The race-load crash (fixed).** With the first version, signing up for the festival race at the
+spawn and starting it crashed while the race loaded (3 of 3): a null read in the pool of 1028-byte
+stream buffers (`sub_82D78310`, TU4 `sub_82E3A2E8`, returning to `82E3CBA8`): its free list ended
+early. A temporary hook that walked the list found it cut within 50 ms of the pool's set-up for the
+race, with 2:10:10:10 pixels (`C0100401`: dark, full alpha) in the links of free buffers 130 to 560.
+The pool lies in the file heap right after the screen texture block, which the 540p sizes had made
+6.5 MB smaller. The full-screen filter's 1280x720 pass (item 6) resolved into the 960x540 `Shared`
+texture in `WorldDepth`, the second-to-last texture of the block, and ran past the block's end into
+the pool (`readback_resolve = some` copies resolved data back into guest memory). Item 6 was meant
+to stop that pass but looked for the texture among the renderer's slots instead of the D3D textures
+after them, so it never applied. The smaller memory also put `MapRender` (1280x720 in a 960x540
+`WorldDepth`) past the block's end, and the three 1024x1024 depth targets over `CSMBuffer`, which a
+race draws in the same frames. Fixed by keeping every texture's 720p memory (item 2) and finding the
+D3D textures in item 6. Earlier attempts: 720p sizes for `sub_82A40F28` alone gave 720p headers
+(garbled picture); patching the texture objects after `sub_8257C220` (720p memory, 540p sizes) did
+not crash, but in some states the scene came out 1:1 in the lower right 960x540 of a 720p target.
 
 **360p** (640x360, 4x MSAA in one pass) came out magnified with blown-out rectangles and magenta,
 and after about 10 s of driving the render thread looped in the allocator's list walk
 (`sub_82D78490`): the same kind of corruption, sooner. The game has textures of its own at 640x360
-that a 640x360 scene collides with. Not offered.
+that a 640x360 scene collides with. Not offered, and not tried again with the 720p memory.
 
 **Measured** (TU4 on this PC's RX 9060 XT, RADV; a copy of the Xenia save, warm scratch shader
 cache, offline, audio muted, 1920x1080 window with FSR 1; BENCH lock held, no other game; GPU-side

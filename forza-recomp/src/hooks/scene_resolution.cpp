@@ -12,9 +12,10 @@
 // - At start (PatchSceneResolution, after the executable is loaded): render scenario 3
 //   ("Largest 2xMSAA No Split", which no scenario of the game uses) becomes one pass at the
 //   scene size with the MSAA that fits EDRAM.
-// - The scene's screen textures get the scene size (sub_8257C220, TU4 sub_825F2100); a 1280x720
-//   post-processing pass into one of them (sub_824426B8, TU4 sub_824728D8) is drawn at the scene
-//   size.
+// - The scene's screen textures get the scene size (sub_8257C220, TU4 sub_825F2100) and keep
+//   their 720p memory (sub_82A40F28, TU4 sub_82AFE678): the block they share with each other
+//   and with other users lies as at 720p. A 1280x720 post-processing pass into one of them
+//   (sub_824426B8, TU4 sub_824728D8) is drawn at the scene size.
 // - The full-screen render scenarios become scenario 3 (src/hooks/scene_tiling.cpp).
 // - The world view (sub_82444E60, TU4 sub_824744D0) draws with the view's viewport, 1280x720;
 //   it is the scene size while that view is drawn.
@@ -50,7 +51,7 @@
 REXCVAR_DEFINE_STRING(scene_resolution, "720", "Display",
                       "Height of the 3D scene: 720 (the game's own) or 540. Below 720 the "
                       "scene and its effects are drawn smaller and scaled to 720p; the HUD and "
-                      "menus stay at 720p. Experimental: loading a race crashes (#347)");
+                      "menus stay at 720p. Experimental (#347)");
 REXCVAR_DECLARE(std::string, scene_msaa);       // src/hooks/scene_tiling.cpp
 REXCVAR_DECLARE(bool, forza_ultrawide);         // src/platform/ultrawide.cpp
 
@@ -67,6 +68,8 @@ REXCVAR_DECLARE(bool, forza_ultrawide);         // src/platform/ultrawide.cpp
 #define OriginalScreenTextures __imp__sub_825F2100
 #define PostPass sub_824728D8
 #define OriginalPostPass __imp__sub_824728D8
+#define TextureHeader sub_82AFE678
+#define OriginalTextureHeader __imp__sub_82AFE678
 constexpr uint32_t kScenarioTable = 0x833901F8;
 constexpr uint32_t kTextureTable = 0x8330C830;
 #else
@@ -82,6 +85,8 @@ constexpr uint32_t kTextureTable = 0x8330C830;
 #define OriginalScreenTextures __imp__sub_8257C220
 #define PostPass sub_824426B8
 #define OriginalPostPass __imp__sub_824426B8
+#define TextureHeader sub_82A40F28
+#define OriginalTextureHeader __imp__sub_82A40F28
 constexpr uint32_t kScenarioTable = 0x832A4860;
 constexpr uint32_t kTextureTable = 0x832295B0;
 #endif
@@ -91,6 +96,7 @@ extern "C" REX_FUNC(OriginalCreateDevice);
 extern "C" REX_FUNC(OriginalScenarioSurface);
 extern "C" REX_FUNC(OriginalScreenTextures);
 extern "C" REX_FUNC(OriginalPostPass);
+extern "C" REX_FUNC(OriginalTextureHeader);
 
 namespace forza {
 namespace {
@@ -99,9 +105,12 @@ namespace sr = scene_resolution;
 // The scene size once PatchSceneResolution has changed the tables; 0 while the scene is 720p.
 std::atomic<uint32_t> g_width{0};
 std::atomic<uint32_t> g_height{0};
-// Which screen textures follow the scene, and where the renderer keeps the texture objects.
+// Which screen textures follow the scene, their 720p size, and where the renderer keeps the D3D
+// textures; set on the thread that runs sub_8257C220 while it makes them.
 bool g_scaled[scene_resolution::kTextureCount] = {};
+scene_resolution::Size g_native[scene_resolution::kTextureCount] = {};
 std::atomic<uint32_t> g_textures{0};
+thread_local bool g_making_textures = false;
 
 uint32_t Load32(const uint8_t* p) {
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
@@ -190,8 +199,10 @@ void PatchSceneResolution() {
     const char* name = reinterpret_cast<const char*>(GuestPtr(base, texture_name(i)));
     if (!sr::ScreenTextureFollowsScene(std::string_view(name, strnlen(name, 32)))) continue;
     t[0] = 0;
-    Store32(t + sr::kTextureWidth, sr::TextureSide(Load32(t + sr::kTextureWidth), scene.width));
-    Store32(t + sr::kTextureHeight, sr::TextureSide(Load32(t + sr::kTextureHeight), scene.height));
+    const uint32_t dw = Load32(t + sr::kTextureWidth), dh = Load32(t + sr::kTextureHeight);
+    g_native[i] = {sr::TextureSide(dw, sr::kNativeWidth), sr::TextureSide(dh, sr::kNativeHeight)};
+    Store32(t + sr::kTextureWidth, sr::TextureSide(dw, scene.width));
+    Store32(t + sr::kTextureHeight, sr::TextureSide(dh, scene.height));
     g_scaled[i] = true;
     ++scaled;
   }
@@ -205,18 +216,57 @@ void PatchSceneResolution() {
 
 namespace sr = forza::scene_resolution;
 
-// Copies the screen texture table into the renderer (r3) and makes the textures
-// (sub_8257C220): the texture objects are the renderer's 0x34-byte entries from r3 + 0x1A0, in
-// the table's order. Remembered so a pass into one of the scene's can be told apart.
+// Copies the screen texture table into the renderer (r3), makes the textures' headers and adds
+// up their memory (sub_8257C220): the D3D textures follow the renderer's 41 slots, in the
+// table's order. Remembered so a pass into one of the scene's can be told apart.
 extern "C" REX_FUNC(ScreenTextures) {
-  forza::g_textures.store(ctx.r3.u32 + sr::kRendererTextures);
+  forza::g_textures.store(ctx.r3.u32 + sr::kTextureObjects);
+  forza::g_making_textures = true;
   OriginalScreenTextures(ctx, base);
+  forza::g_making_textures = false;
+}
+
+// Makes a 2D texture's header (sub_82A40F28: r3 width, r4 height, ..., the texture as the third
+// argument on the stack, r1 + 0x64) and returns the size of its memory. For the scene's screen
+// textures the header gets the scene size and the memory stays the 720p size
+// (src/platform/scene_resolution.h: the block is shared and lent out with 720p sizes): the 720p
+// header is made first for its size, then the scene-size one over it.
+extern "C" REX_FUNC(TextureHeader) {
+  const uint32_t textures = forza::g_textures.load(std::memory_order_relaxed);
+  if (!forza::g_making_textures || !textures) {
+    OriginalTextureHeader(ctx, base);
+    return;
+  }
+  const uint32_t texture = forza::Load32(forza::GuestPtr(base, ctx.r1.u32 + 0x64));
+  const uint32_t offset = texture - textures;
+  const uint32_t i = offset / sr::kRendererTextureSize;
+  if (texture < textures || offset % sr::kRendererTextureSize || i >= sr::kTextureCount ||
+      !forza::g_scaled[i]) {
+    OriginalTextureHeader(ctx, base);
+    return;
+  }
+  const PPCRegister args[8] = {ctx.r3, ctx.r4, ctx.r5, ctx.r6, ctx.r7, ctx.r8, ctx.r9, ctx.r10};
+  ctx.r3.u64 = forza::g_native[i].width;
+  ctx.r4.u64 = forza::g_native[i].height;
+  OriginalTextureHeader(ctx, base);
+  const uint32_t native_size = ctx.r3.u32;
+  ctx.r3 = args[0];
+  ctx.r4 = args[1];
+  ctx.r5 = args[2];
+  ctx.r6 = args[3];
+  ctx.r7 = args[4];
+  ctx.r8 = args[5];
+  ctx.r9 = args[6];
+  ctx.r10 = args[7];
+  OriginalTextureHeader(ctx, base);
+  ctx.r3.u64 = native_size;
 }
 
 // A post-processing pass into texture r4 with viewport r8 (x, y, width, height). A 1280x720 pass
-// into one of the scene's textures (one at load time resolves into the full-size Shared one)
-// covers the scene: at 1280x720 its resolve wrote 720 rows of 960 into a 960x540 texture, past
-// its end into the game's heap (a race load then crashed in the allocator).
+// into one of the scene's textures covers it: on menu screens and loads the render target
+// manager's full-screen filter (sub_82C3E310, TU4 sub_82CFEC80) copies the last 720p frame into
+// the Shared texture in WorldDepth this way. At 1280x720 its resolve wrote 1280x720 pixels into
+// a 960x540 texture, and past the end of the texture block while its memory was the 540p size.
 extern "C" REX_FUNC(PostPass) {
   const uint32_t w = forza::g_width.load(std::memory_order_relaxed);
   const uint32_t textures = forza::g_textures.load(std::memory_order_relaxed);
