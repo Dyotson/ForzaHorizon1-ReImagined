@@ -47,6 +47,11 @@ jobs:
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
       - name: Livery codec tests
         run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
+      - name: Native renderer CPU tests
+        run: |
+          cmake -S tools/native_renderer -B build/native-renderer-tests -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/native-renderer-tests --config Release
+          ctest --test-dir build/native-renderer-tests -C Release --output-on-failure
       - name: Standalone car tuning model, library and donor checks
         shell: bash
         run: |
@@ -112,7 +117,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_readback_history.cpp', 'tools/test_frame_cost.cpp', 'tools/test_shader_load_memo.cpp', 'forza-recomp/tests/wheel_ff_log_test.cpp', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_vulkan_memory_placement.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('forza-recomp/src/platform/native_renderer/**', 'patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_readback_history.cpp', 'tools/test_frame_cost.cpp', 'tools/test_shader_load_memo.cpp', 'forza-recomp/tests/wheel_ff_log_test.cpp', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_vulkan_memory_placement.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -240,7 +245,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-windows-amd64.tar.gz
-          key: sdk-overlay-windows-${{ hashFiles('patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/tests/sdk-filesystem/**', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-windows-${{ hashFiles('forza-recomp/src/platform/native_renderer/**', 'patches/rexglue-sdk/**', 'tools/build_rexglue_sdk.sh', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/tests/sdk-filesystem/**', 'tools/cmake/windows-native-clang-cl.cmake', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
@@ -273,6 +278,7 @@ jobs:
           # a u8 literal as std::string_view) and -ffp-model=strict. Their clang-cl spellings:
           sed -i -e 's|^    -fno-char8_t$|    /Zc:char8_t-|' -e 's|^    -ffp-model=strict$|    /fp:strict|' "$SRC/CMakeLists.txt"
           cmake -S "$SRC" -B "$SRC/out/build/win" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DREXGLUE_FH1_NATIVE_SOURCE_DIR="$PWD/forza-recomp/src/platform/native_renderer" \
             -DCMAKE_CXX_STANDARD=23 -DREXGLUE_USE_VULKAN=ON -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/tools/cmake/windows-native-clang-cl.cmake"
           if ! cmake --build "$SRC/out/build/win" -- -k 0 > "$RUNNER_TEMP/build.log" 2>&1; then
