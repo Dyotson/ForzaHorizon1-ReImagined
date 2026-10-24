@@ -61,6 +61,25 @@ class LauncherUITests(unittest.TestCase):
             time.sleep(.005)
         self.assertTrue(predicate())
 
+    def test_co_op_results_are_listed_after_the_session(self):
+        """#309: what the co-op results thread added, and what waits, under "The game closed."
+        once the thread is done (it runs after the game, in the background)."""
+        win = self.window
+        release = threading.Event()
+        win._coop_notes = ["Co-op results: FR69 at place 8 (was not raced): +70 XP, +2,100 CR",
+                           "Co-op results: FR05 (8th in DriverA's world) waits: ..."]
+        win._coop_thread = threading.Thread(target=release.wait, daemon=True)
+        win._coop_thread.start()
+        win.play.show_message("The game closed.")
+        win._coop_timer.start()
+        self.app.processEvents()
+        self.assertEqual(win.play.msg.text(), "The game closed.")  # still applying
+        release.set()
+        self.wait_for(lambda: not win._coop_timer.isActive())
+        self.assertEqual(win.play.msg.text().splitlines(), [
+            "The game closed.", "Co-op results: FR69 at place 8 (was not raced): +70 XP, +2,100 CR",
+            "Co-op results: FR05 (8th in DriverA's world) waits: ..."])
+
     def test_catalog_recovery_warning_stays_visible_after_successful_start(self):
         from forza_launcher import game, catalog_import, ugc
         plan = game.LaunchPlan(game.GameInstall(self.root, Path('forza.exe')), self.root,

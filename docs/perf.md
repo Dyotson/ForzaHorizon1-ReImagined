@@ -1171,28 +1171,59 @@ counts with gdb:
   for two, 5 for one), and the game records lists for pass 4 only: in a one-pass race every pass-5
   call found no list (68,000 a second, against 87,000 calls with a list in pass 4 tiled).
 - `sub_82466418` has a second path, chosen by its last argument: `sub_82EAF3B0` draws the same items
-  directly, without recorded lists. Taking it for passes 3 and 5 when they have no list brings the
-  world back. Replaying pass 4's lists instead does not work: they hold the tiled layout and
-  drew the sky into the bottom of the screen.
+  directly, without recorded lists. 0.1.32 took it for passes 3 and 5 without a list, which brought
+  the road and terrain back but not everything: the procedural models
+  (`proceduralGeometry::CProceduralModels`, trees, concrete barriers: `sub_82447B70`, the pass in
+  its ninth argument) draw from the same kind of lists and have no direct path, and the track skips
+  instanced items for which `sub_82EAC930` finds no list of the pass. Players saw trees and barriers
+  vanish as they drove past in the Recaro Rush races with `off` (#268); in the benchmark race the
+  concrete barriers on both sides of the road were missing.
+- Pass 4's lists as they are cannot be replayed in a pass of two tiles or one. Their PM4 packets
+  (dumped from the game): each starts, per tile, with a bin mask and a predicated SET_CONSTANT of
+  PA_SC_WINDOW_OFFSET and the window scissor (rows 0, -256, -512), repeated before the first draw
+  and at the end, and its first draw sets the render target of a 1280x256 tile with 4x MSAA
+  (RB_SURFACE_INFO, RB_COLOR_INFO, and RB_DEPTH_INFO with the depth at EDRAM tile 1024) and
+  PA_SC_AA_CONFIG. Replayed in one pass, the window moved up (the sky drawn into the bottom of the
+  screen) and the items and everything after them went into the tiled EDRAM layout (the road and
+  terrain gone). D3D marks such lists (command buffer flag 0x800: recorded with tiling rectangles;
+  the shadow, reflection and split-screen passes' lists have none) and flushes all pending state
+  before it runs one (`sub_824469B0`), so the scene's own window and render target are already set
+  when a list starts.
 
 **Change** (`src/hooks/scene_tiling.cpp`, `src/platform/scene_tiling.h`, launcher Display >
 Picture > "Scene anti-aliasing (MSAA)"): `scene_msaa = game` (default) keeps the game's 4x MSAA in
 three tiles; `2x` lowers the 4x scenario to the game's two-tile 2x MSAA one; `off` lowers 4x and 2x
 to its one-pass scenario without MSAA. The scenario is lowered right after the game reads it from
-the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`); the track draws
-passes 3 and 5 directly when they have no recorded list (those passes are never reached with the
-game's own scenarios in free roam and races, so `game` is unchanged). Disc build:
-`sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`. `forza-recomp/tests/scene_tiling_test.cpp` checks the
-scenario choice and the pass rule.
+the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`). Passes 3 and 5
+draw pass 4's lists: `sub_82EAC930` finds them, `sub_82466418` draws them with its list path
+(`sub_82466560`) after its own work, the procedural models are given pass 4, and when a pass's view
+changes (`sub_82EADC80`: its lists are fixed up again) pass 4 is reset with it. When a list
+recorded for the tiles runs for pass 3 or 5 (`sub_824467A8`, which hands it to D3D's
+RunCommandBuffer), its window and scissor writes, render target and MSAA config become NOPs of the
+same length, and they are put back (the headers are kept per list) before it runs for another
+pass: the game reads all its scenarios' `TilingScenario` values at startup (0, 1 and 4) and uses
+the current screen's, so a list can run for pass 4 later in the session (changing the values in
+free roam switched the tiling from the next frame; a race after that drew as in `game`). The
+list's first window write being a NOP marks it as done (one loaded again at the same address
+has its packets back). The direct path is not used any more. Pass 4, the game's 4x scenario, is
+unchanged. Disc build: `sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`, `sub_824365B0`,
+`sub_82DEA700`, `sub_82417BC0`, `sub_82DEBA08`, `sub_824167F8`.
+`forza-recomp/tests/scene_tiling_test.cpp` checks the scenario choice, the pass rule and which
+packets of a list are skipped.
 
-**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark's race start
-and race, free roam at the spawn in the chase camera, the driver (cockpit) camera standing and after
-6 s of driving, in each mode: the track, terrain, barriers, signs, gantries, trees, crowd and cars
-are all there in `2x` and `off`, as in `game`; the edges are more jagged without MSAA. The same race
-moment differs only by the AI cars' positions.
+**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark race every 2 s
+from its start, and an 18.8 km free-roam loop south of the festival (County Route 203 from the save's
+spawn, Routes 28, 29 and 4, the Montano Plains outpost by the Recaro Rush races, the festival's
+outer loop; `tools/nav_route.py`, driven by `tools/autodrive.py`) with a screenshot every 240 m,
+in each mode. With the direct path of 0.1.32 the concrete barriers along the benchmark race were
+missing in `off`; now the track, terrain, barriers, guard rails, fences, signs, trees, crowd and
+cars are there in `2x` and `off` as in `game` at each point, also where the two tiles meet in
+`2x`; the edges are more jagged without MSAA. Shots of the same point differ by the traffic, the
+time of day and where the car is.
 
-**Measured** (benchmark as in the 4-core section, the same build with patch 0140, two runs per mode
-and configuration, alternating, BENCH lock held, no other game; ms per frame):
+**Measured** with the direct path of 0.1.32, when `2x` and `off` lacked the procedural models and
+some track items (benchmark as in the 4-core section, the same build with patch 0140, two runs per
+mode and configuration, alternating, BENCH lock held, no other game; ms per frame):
 
 | Configuration | scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1203,14 +1234,25 @@ and configuration, alternating, BENCH lock held, no other game; ms per frame):
 | 4 cores, 30 fps | 2x | 30.0 | 26.9 [26.6-27.2] | 5.85 [5.39-6.31] | 4.07 | 22.9 | 7.5 |
 | 4 cores, 30 fps | off | 30.0 | 27.3 [27.3-27.3] | 4.86 [4.75-4.97] | 4.04 | 21.6 | 6.9 |
 
-- `off`: the command processor needs 29% less time a frame (6.86 to 4.86 ms at 30 fps), the Vulkan
-  submission thread 0.3 ms less, the GPU 14% less at 30 fps (16% uncapped); uncapped the benchmark
-  runs 24% faster (115 to 142 fps) with a 1% low 18% higher. The render thread does 0.45-0.65 ms more,
-  drawing the track items directly instead of running recorded lists.
-- `2x`: two tiles instead of three: the command processor 15% less (but between runs more spread),
-  the GPU 6% less at 30 fps, 21% more fps uncapped.
+With pass 4's lists for those passes (2026-10-24, main after 0.1.32 with the change, 4 cores,
+uncapped, two runs per mode alternating, BENCH lock held, no other game; `2x` one run, a second
+was dropped when other games started):
+
+| scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
+| --- | --- | --- | --- | --- | --- | --- |
+| game | 119.5 [116.6-122.4] | 78.2 [76.0-80.3] | 6.82 [6.66-6.97] | 3.45 | 17.5 | 5.7 |
+| off, 0.1.32 (direct path) | 156.3 [154.1-158.4] | 98.3 [98.0-98.5] | 4.55 [4.45-4.64] | 3.84 | 14.6 | 4.8 |
+| off | 137.4 [134.8-139.9] | 91.0 [90.2-91.7] | 5.38 [5.30-5.46] | 3.42 | 15.4 | 4.9 |
+| 2x | 143.4 | 87.8 | 5.70 | 3.33 | 15.6 | 5.2 |
+
+- `off`: the command processor needs 21% less time a frame than `game` (6.82 to 5.38 ms), the GPU
+  13% less, and the benchmark runs 15% faster with a 1% low 16% higher. The 0.1.32 figures were
+  better because the trees, barriers and part of the track were not drawn at all; drawing them
+  costs the command processor 0.8 ms a frame, and running their lists again instead of the direct
+  path saves the render thread 0.4 ms. The first table's `off` and `2x` rows are of that build.
+- `2x`: two tiles instead of three: the command processor 16% less than `game`, the GPU 8% less.
 - On a Deck, where the frame waits on the command processor's chain (above), the command processor's
-  2 ms a frame at 5 GHz is about 4-5 ms of a Deck frame.
+  1.4 ms a frame at 5 GHz is about 3 ms of a Deck frame.
 - Not tested yet: with the FSR 3, DLSS and SMAA scene paths (they look for the game's scene and HUD
   targets), ultrawide, render scale above 1, photo mode, Windows and a Deck. It stays off by default.
 

@@ -489,6 +489,12 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         notes.append(saver.note())
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
+    # The mods turned on in the Mods page, in their load order (#149). An option the player
+    # names in the extra flags ("--name=value" or "--name value") is left to them: the game
+    # refuses one given twice.
+    from . import mods
+    named = {a[2:].split("=", 1)[0] for a in extra if a.startswith("--")}
+    args += mods.launch_args(cfg, named)
     args += extra
     env.update(parse_env(cfg.advanced.get("extra_env", "")))
 
