@@ -22,6 +22,16 @@ Each run writes an independent profile and its reports under `user_data_root/ben
 
 Writable profiles are copied byte-for-byte; no profile is hard-linked. Installed DLC packages may be hard-linked as immutable inputs. No downloaded profile, game assets or screenshots are needed in the source repository.
 
+On Windows, the DLC setup uses extended filesystem paths. Adding the benchmark's
+timestamped directory to a deep DLC installation can exceed the traditional 260-character
+path limit: `create_hard_link` then fails with "The system cannot find the path specified",
+and the setup prompt reappears after the restart (#374, related #364). A filesystem-only
+fixture reproduced the error at a 285-character destination and succeeded with the
+extended path form. The regression links a deeply nested synthetic DLC file, verifies
+the linked bytes and checks that writable profile copies remain independent. It also
+covers extended-path reuse and UNC path conversion without accessing a network share.
+This validates the setup failure path; a complete benchmark run still needs a game retest.
+
 ## Focused tests
 
 Compile and run `forza-recomp/tests/benchmark_stats_test.cpp` and `benchmark_profile_test.cpp` as standalone C++20 programs. They check time-weighted FPS, percentile/1% low behavior, real stalls, invalid samples and save-copy independence. End-to-end validation additionally needs the user's TU4 game data and a disposable saved profile.
