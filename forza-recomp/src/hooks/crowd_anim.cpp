@@ -10,10 +10,12 @@
 // the end). So the crowd advances one baked frame per rendered frame: right at the
 // console's 30 fps, 2x at 60 and about 3.5x at 144 (the intro renders about 100 fps).
 //
-// Above 30 fps the step is the number of 1/30 s periods the simulated time crossed: the
+// At rates other than 30 (20 fps too, where one baked frame per rendered frame was two thirds
+// of the speed) the step is the number of 1/30 s periods the simulated time crossed: the
 // accumulator (in 1/3 us, so a period is exactly 100000) keeps the remainder. At 30 the
 // game's own function runs; FORZA_CROWD_ANIM=game keeps it at every rate (comparisons).
 
+#include "frame_time.h"
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 
@@ -56,7 +58,7 @@ extern "C" REX_FUNC(sub_82DF7BB0) {
     const char* v = std::getenv("FORZA_CROWD_ANIM");
     return v && std::strcmp(v, "game") == 0;
   }();
-  if (game || REXCVAR_GET(frame_rate) <= 30) {
+  if (game || forza::frame_time::ConsoleRate()) {
     __imp__sub_82DF7BB0(ctx, base);
     return;
   }

@@ -241,9 +241,11 @@ def make_shader_recipes(hashes_types, xsh_paths, sources):
     return recipes
 
 
-def cmd_make(a):
+def stores_to_pipelines(xpso_paths):
+    """Pipelines of pipeline storage files, decoded: ({key: pipeline}, versions, {hash: 0 vs / 1 ps}).
+    A pipeline's partitions are those of the stores it was found in."""
     pipelines, versions, hashes = {}, set(), {}
-    for path in a.xpso:
+    for path in xpso_paths:
         header, layout, descs = read_xpso(path)
         versions.add((header["api"], header["version"]))
         part = partition_of(path)
@@ -258,6 +260,11 @@ def cmd_make(a):
                 hashes[int(p["ps"], 16)] = 1
     for e in pipelines.values():
         e["partitions"].sort()
+    return pipelines, versions, hashes
+
+
+def cmd_make(a):
+    pipelines, versions, hashes = stores_to_pipelines(a.xpso)
     out = {
         "format": LIST_FORMAT,
         "title": "4D5309C9",
@@ -306,10 +313,12 @@ def load_list(path):
     return lst
 
 
-def cmd_merge(a):
+def merge_lists(lists, mixed_versions=False):
+    """One list from several loaded lists (format 2): pipelines by key with their partitions joined,
+    shaders by hash (a recipe that is not `missing` replaces `missing`; two different ones are an error).
+    Raises ValueError."""
     pipelines, shaders, versions = {}, {}, set()
-    for path in a.lists:
-        lst = load_list(path)
+    for lst in lists:
         versions.update(lst["storage_versions"])
         for p in lst["pipelines"]:
             k = pipeline_key(p)
@@ -323,15 +332,22 @@ def cmd_merge(a):
             if old is None or old["from"] == "missing":
                 shaders[h] = r
             elif r["from"] != "missing" and r != old:
-                raise SystemExit(f"conflicting recipes for shader {h}")
-    if len(versions) > 1 and not a.mixed_versions:
-        raise SystemExit(f"lists from different SDK storage versions {sorted(versions)}: "
+                raise ValueError(f"conflicting recipes for shader {h}")
+    if len(versions) > 1 and not mixed_versions:
+        raise ValueError(f"lists from different SDK storage versions {sorted(versions)}: "
                          "descriptions may not mean the same (--mixed-versions to merge anyway)")
     # Shaders no listed pipeline uses (lists cut with --drop) are left out.
     used = {p[k] for p in pipelines.values() for k in ("vs", "ps")}
-    out = {"format": LIST_FORMAT, "title": "4D5309C9", "storage_versions": sorted(versions),
-           "pipelines": sorted(pipelines.values(), key=pipeline_key),
-           "shaders": {h: r for h, r in shaders.items() if h in used}}
+    return {"format": LIST_FORMAT, "title": "4D5309C9", "storage_versions": sorted(versions),
+            "pipelines": sorted(pipelines.values(), key=pipeline_key),
+            "shaders": {h: r for h, r in shaders.items() if h in used}}
+
+
+def cmd_merge(a):
+    try:
+        out = merge_lists([load_list(path) for path in a.lists], a.mixed_versions)
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     write_list(a.output, out)
     print(f"{len(out['pipelines'])} pipelines, {len(out['shaders'])} shaders -> {a.output}")
 

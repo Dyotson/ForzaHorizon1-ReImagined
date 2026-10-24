@@ -1,9 +1,12 @@
 """The Horizon World with three or more players (issue #12): placement into the fullest
-world, the standby host after the host left, the AI level from the number of humans.
-Drives the server's matchmaking handlers directly (no sockets)."""
+world, the standby host after the host left (also before the gone host timed out), the AI
+level from the number of humans. Drives the server's matchmaking handlers directly (no
+sockets)."""
 
 import struct
+import time
 import unittest
+from unittest import mock
 
 import forza_live_lsp as lsp
 import forza_live_server as srv
@@ -128,6 +131,56 @@ class WorldPlayersTest(unittest.TestCase):
         self.server.drop(host, "left")
         self.assertEqual(self.server.world_sessions()[sid][0].name, "B")
 
+    def first_host(self, searcher):
+        """The player id of the first session a search by searcher answers."""
+        self.transport.sent.clear()
+        self.server.on_match(searcher, srv.MATCH_SEARCH, struct.pack(">II", KEY, 9))
+        return struct.unpack_from(">I", self.transport.sent[0][1][5:], 6)[0]
+
+    def test_a_closed_host_s_record_gives_way_to_the_game_s_new_host(self):
+        # The host's game was closed: it is still registered (until it times out), and so
+        # is its record, when the game makes C its host. Searchers go to C, not to the
+        # gone host (seen with four games: the searcher opened a world of its own).
+        host, b, c, d = (self.player(n) for n in ("Host", "B", "C", "D"))
+        sid = b"\x0a" * 8
+        self.publish(host, sid, 3)
+        self.standby(b, sid)
+        self.standby(c, sid)
+        self.assertEqual(self.first_host(d), host.id)
+        self.standby(c, sid, host=True)
+        self.assertEqual(self.search(d), [(sid, 2)])
+        self.assertEqual(self.first_host(d), c.id)
+        self.assertEqual(self.server.world_sessions()[sid][0].name, "C")  # world events go to C
+
+    def test_the_latest_of_the_game_s_hosts_leads(self):
+        # B became the host when the first host left; then B's game was closed and the
+        # game made C its host while B was still registered.
+        host, b, c, d, e = (self.player(n) for n in ("Host", "B", "C", "D", "E"))
+        sid = b"\x0b" * 8
+        self.publish(host, sid, 4)
+        for p in (b, c, d):
+            self.standby(p, sid)
+        self.server.drop(host, "left")
+        with mock.patch("forza_world_host.time.monotonic", return_value=100.0):
+            self.standby(b, sid, host=True)
+        self.assertEqual(self.first_host(e), b.id)
+        with mock.patch("forza_world_host.time.monotonic", return_value=130.0):
+            self.standby(c, sid, host=True)
+        self.assertEqual(self.first_host(e), c.id)
+        self.assertEqual(self.server.world_sessions()[sid][0].name, "C")
+        self.standby(b, sid, host=True)  # B's repeated op 4 does not take it back
+        self.assertEqual(self.first_host(e), c.id)
+        self.server.drop(b, "timed out")
+        self.assertEqual(self.server.world_sessions()[sid], (c, 2))
+
+    def test_a_host_claim_in_another_world_leaves_this_one_alone(self):
+        h1, h2, m2, d = (self.player(n) for n in ("H1", "H2", "M2", "D"))
+        self.publish(h1, b"\x0c" * 8, 3)
+        self.publish(h2, b"\x0d" * 8, 2)
+        self.standby(m2, b"\x0e" * 8, host=True)  # hosts a third world, left by its host
+        self.assertEqual([s for s, _ in self.search(d)], [b"\x0c" * 8, b"\x0d" * 8, b"\x0e" * 8])
+        self.assertEqual(self.server.world_sessions()[b"\x0c" * 8][0], h1)
+
     def test_a_world_without_players_disappears(self):
         host, b = self.player("Host"), self.player("B")
         sid = b"\x09" * 8
@@ -140,6 +193,41 @@ class WorldPlayersTest(unittest.TestCase):
     def test_ai_difficulty_follows_the_human_share_of_the_grid(self):
         levels = [world.ai_difficulty(n) for n in range(1, 9)]
         self.assertEqual(levels, ["Easy", "Easy", "Medium", "Medium", "Medium", "Hard", "Hard", "Hard"])
+
+
+class CountingTransport:
+    def __init__(self):
+        self.count = 0
+
+    def sendto(self, data, addr):
+        self.count += 1
+
+
+class WorldRelayTest(unittest.TestCase):
+    """The relay budget for a full world. Measured through the relay with four games (#12):
+    a game sends each peer one datagram a frame, about 100 bytes per car it runs (its own,
+    and in an event its share of the CPU drivers)."""
+
+    def test_a_full_world_at_240_fps_through_the_relay_loses_nothing(self):
+        server = srv.ForzaLive("test", 64)
+        server.transport = CountingTransport()
+        clock = [time.monotonic()]
+        with mock.patch.object(srv.time, "monotonic", lambda: clock[0]):
+            peers = []
+            for n in range(1, 9):
+                peer = srv.Peer(n, ("198.51.100.%d" % n, 21300), n, 0x0009000000000000 + n,
+                                "P%d" % n, "#TU4", (0, 0))
+                server.peers[n] = peer
+                server.by_addr[peer.addr] = peer
+                peers.append(peer)
+            sender, others = peers[0], peers[1:]
+            for _ in range(240 * 60):  # a minute at 240 fps, 100 bytes to each of 7 peers
+                clock[0] += 1 / 240
+                for dst in others:
+                    server.datagram_received(srv.MAGIC + bytes([srv.RELAY]) +
+                                             struct.pack(">I", dst.id) + bytes(104), sender.addr)
+        self.assertEqual(server.dropped_packets, 0)
+        self.assertEqual(server.relayed_packets, 240 * 60 * 7)
 
 
 if __name__ == "__main__":

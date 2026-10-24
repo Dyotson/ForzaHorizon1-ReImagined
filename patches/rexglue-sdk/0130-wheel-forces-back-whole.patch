@@ -1,0 +1,127 @@
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index 2d546d4..358f8be 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -368,7 +368,10 @@ void LogShifter(const ShifterMap& m, const std::string& mode, const char* where)
+ 
+ // A periodic rumble effect brought to `wave`: updated when its magnitude changes (the game repeats
+ // its rumble every frame), started while it has one, stopped at 0.
+-void PlayWave(SDL_Haptic* haptic, int fx, const RumbleWave& wave, int& sent, bool& running) {
++// `restart` starts the wave again even when it is believed running (the forces back at full
++// strength, #304).
++void PlayWave(SDL_Haptic* haptic, int fx, const RumbleWave& wave, int& sent, bool& running,
++              bool restart) {
+   if (!haptic || fx < 0) {
+     return;
+   }
+@@ -378,11 +381,10 @@ void PlayWave(SDL_Haptic* haptic, int fx, const RumbleWave& wave, int& sent, boo
+   e.periodic.length = SDL_HAPTIC_INFINITY;
+   e.periodic.period = wave.period_ms;
+   e.periodic.magnitude = RumbleMagnitude(wave.level);
+-  if (e.periodic.magnitude != sent) {
+-    SDL_UpdateHapticEffect(haptic, fx, &e);
+-    sent = e.periodic.magnitude;
++  if (e.periodic.magnitude != sent && SDL_UpdateHapticEffect(haptic, fx, &e)) {
++    sent = e.periodic.magnitude;  // a failed update is sent again
+   }
+-  if (e.periodic.magnitude > 0 && !running) {
++  if (e.periodic.magnitude > 0 && (!running || restart)) {
+     running = SDL_RunHapticEffect(haptic, fx, SDL_HAPTIC_INFINITY);
+   } else if (e.periodic.magnitude <= 0 && running) {
+     SDL_StopHapticEffect(haptic, fx);
+@@ -390,6 +392,19 @@ void PlayWave(SDL_Haptic* haptic, int fx, const RumbleWave& wave, int& sent, boo
+   }
+ }
+ 
++// A failed SDL call on the game's effects, logged the 1st, 10th, 100th... time (#304: a wheel that
++// stopped taking updates kept its last, faded-out forces, and the log said nothing).
++void NoteFfFailure(int& failures, const char* what, uint32_t block) {
++  const int n = ++failures;
++  for (int k = 1; k > 0 && k <= n; k *= 10) {
++    if (k == n) {
++      REXLOG_WARN("Wheel: {} of the game's effect block {} failed ({} so far): {}", what, block, n,
++                  SDL_GetError());
++      return;
++    }
++  }
++}
++
+ int CreateSine(SDL_Haptic* haptic, uint16_t period_ms) {
+   SDL_HapticEffect e{};
+   e.type = SDL_HAPTIC_SINE;
+@@ -450,6 +465,10 @@ struct WheelInputDriver::Wheel {
+   int game_fx[kFfMaxBlocks];
+   SDL_HapticEffect game_fx_sent[kFfMaxBlocks];  // what each SDL effect was last given
+   bool game_fx_running[kFfMaxBlocks] = {};
++  // Set while the game's forces come back to full strength: every effect that should play is
++  // started again, running or not (#304).
++  bool restart_effects = false;
++  int ff_failures = 0;  // failed SDL calls on the game's effects (NoteFfFailure)
+   int autocenter = -1;
+   int sine_magnitude = -1;
+   std::string name;
+@@ -761,11 +780,12 @@ void WheelInputDriver::ApplyRumbleLocked(Wheel& w, uint16_t left_motor, uint16_t
+   const float fade = game ? fade_.level : 1.0f;
+   if (w.road_fx >= 0 && w.engine_fx >= 0) {  // fine (wheel_rumble.h)
+     const FineRumble fine = FineRumbleOf(left_motor, right_motor, Strengths(), fade);
+-    PlayWave(w.haptic, w.road_fx, fine.road, w.road_magnitude, w.road_running);
+-    PlayWave(w.haptic, w.engine_fx, fine.engine, w.engine_magnitude, w.engine_running);
++    PlayWave(w.haptic, w.road_fx, fine.road, w.road_magnitude, w.road_running, w.restart_effects);
++    PlayWave(w.haptic, w.engine_fx, fine.engine, w.engine_magnitude, w.engine_running,
++             w.restart_effects);
+   } else {
+     PlayWave(w.haptic, w.sine_fx, ClassicRumble(left_motor, right_motor, Strengths(), fade),
+-             w.sine_magnitude, w.sine_running);
++             w.sine_magnitude, w.sine_running, w.restart_effects);
+   }
+ }
+ 
+@@ -856,11 +876,14 @@ void WheelInputDriver::ApplyGameBlockLocked(Wheel& w, uint32_t block) {
+     if (SDL_UpdateHapticEffect(w.haptic, id, &fx)) {
+       w.game_fx_sent[i] = fx;
+     } else {
+-      REXLOG_DEBUG("Wheel: effect block {} update failed: {}", block, SDL_GetError());
++      NoteFfFailure(w.ff_failures, "an update", block);
+     }
+   }
+-  if (!w.game_fx_running[i]) {
++  if (!w.game_fx_running[i] || w.restart_effects) {
+     w.game_fx_running[i] = SDL_RunHapticEffect(w.haptic, id, SDL_HAPTIC_INFINITY);
++    if (!w.game_fx_running[i]) {
++      NoteFfFailure(w.ff_failures, "starting", block);
++    }
+   }
+ }
+ 
+@@ -939,19 +962,28 @@ void WheelInputDriver::UpdateFadeLocked() {
+   if (std::fabs(level - fade_played_) < 1.0f / 32.0f && level != 0.0f && level != 1.0f) {
+     return;
+   }
+-  if (level == 0.0f || (fade_played_ == 0.0f && level > 0.0f)) {
+-    REXLOG_INFO("Wheel: {}", level == 0.0f ? "not driving: the game's forces are faded out"
+-                                           : "driving: the game's forces fade back in");
++  // The ends are logged (the game logs why it changes, forza-recomp wheel_bridge.cpp), so a log
++  // shows the forces came back whole (#304).
++  if (level == 0.0f) {
++    REXLOG_INFO("Wheel: the game's forces are faded out");
++  } else if (level == 1.0f && fade_played_ < 1.0f) {
++    REXLOG_INFO("Wheel: the game's forces are back at full strength");
+   }
+   fade_played_ = level;
+   if (!game_ff_active_) {
+     return;
+   }
+   for (auto& w : wheels_) {
++    // Back at full strength, every effect that should play is started again, even one this driver
++    // believes is running: a wheel that dropped its effects meanwhile plays them again (DirectInput
++    // stops a device's effects when it has to acquire it again) instead of going on without its
++    // steering force (#304). Every level is sent whole, so a quick toggle leaves nothing behind.
++    w->restart_effects = level == 1.0f;
+     for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
+       ApplyGameBlockLocked(*w, b);
+     }
+     ApplyRumbleLocked(*w, game_rumble_[0], game_rumble_[1], true);
++    w->restart_effects = false;
+   }
+ }
+ 

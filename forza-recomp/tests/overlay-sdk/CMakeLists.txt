@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # files or generated guest code are needed to compile the actual HUD adapter.
 find_package(rexglue 0.10.0 REQUIRED CONFIG)
 add_library(stock_sdk_overlay OBJECT
+    ../../src/platform/cursor_idle.cpp
     ../../src/platform/hud_overlay.cpp
     ../../src/platform/sdk_import.cpp)
 target_link_libraries(stock_sdk_overlay PRIVATE rex::runtime)
@@ -25,5 +26,7 @@ target_include_directories(audio_output_fallback_test PRIVATE
     "${FORZA_PATCHED_SDK_SOURCE}/src/audio/sdl")
 
 enable_testing()
+add_executable(cursor_idle_test ../../../tools/test_cursor_idle.cpp)
+add_test(NAME cursor_idle COMMAND cursor_idle_test)
 add_test(NAME dialog_repaint COMMAND dialog_repaint_test)
 add_test(NAME audio_output_fallback COMMAND audio_output_fallback_test)

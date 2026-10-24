@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.25)
+project(benchmark_menu_tests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(rexglue 0.10.0 REQUIRED CONFIG)
+
+add_executable(title_menu_test ../title_menu_test.cpp)
+target_compile_definitions(title_menu_test PRIVATE FORZA_TITLE_UPDATE=4)
+target_include_directories(title_menu_test PRIVATE ../../src)
+target_link_libraries(title_menu_test PRIVATE rex::runtime)
+
+add_executable(benchmark_stats_test ../benchmark_stats_test.cpp)
+add_executable(benchmark_profile_test ../benchmark_profile_test.cpp)
+add_executable(input_caps_test ../input_caps_test.cpp)
+target_include_directories(input_caps_test PRIVATE ../../src)
+target_link_libraries(input_caps_test PRIVATE rex::runtime)
+
+enable_testing()
+foreach(test title_menu benchmark_stats benchmark_profile input_caps)
+    # The existing standalone tests use assert, including in Release builds.
+    if(MSVC)
+        target_compile_options(${test}_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${test}_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ${test} COMMAND ${test}_test)
+endforeach()

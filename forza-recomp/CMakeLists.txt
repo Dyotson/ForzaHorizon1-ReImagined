@@ -126,26 +126,37 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
+    src/hooks/database_query.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
     src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
+    src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/native_car_tuning.cpp
+    src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_resolution.cpp
+    src/hooks/scene_tiling.cpp
+    src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
     src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/ambient_leaderboard.cpp
+    src/hooks/teleport_velocity.cpp
     src/hooks/challenge_hud.cpp
+    src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/hooks/telemetry.cpp
@@ -159,10 +170,12 @@ set(FORZA_SOURCES
     src/kernel/live_friends.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/mod_overlay.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp
     src/kernel/xam_enumerate.cpp
+    src/kernel/xam_keyboard.cpp
     src/kernel/xam_loader.cpp
     src/kernel/xam_nui.cpp
     src/kernel/xam_signin.cpp
@@ -170,10 +183,14 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/discord_presence.cpp
+    src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
+    src/platform/benchmark.cpp
+    src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp

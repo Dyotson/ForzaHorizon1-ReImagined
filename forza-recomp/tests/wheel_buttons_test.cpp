@@ -1,6 +1,7 @@
 // The racing wheel's button map (SDK patch 0101, rex/input/wheel/wheel_buttons.h): with the game's
 // wheel layouts the paddles must be the bumpers, which shift (#219); each model's own layout, and
-// the shifter's buttons press no pad button (#256). Build against the patched SDK
+// the shifter's buttons press no pad button (#256); a d-pad direction set in wheel_buttons replaces
+// the hat's (patch 0127, #279). Build against the patched SDK
 // source (tools/build_rexglue_sdk.sh --source-only), from the repository root:
 //   g++ -std=c++17 -Wall -Wextra -Werror -I ~/rexglue-sdk-src-forza/sdk/include
 //       forza-recomp/tests/wheel_buttons_test.cpp -o wheel-buttons-test && ./wheel-buttons-test
@@ -13,6 +14,8 @@
 using namespace rex::input::wheel;
 
 namespace {
+std::map<std::string, int> ParseKvLike(const char* key, int value) { return {{key, value}}; }
+
 void Check(bool ok, const char* what) {
   if (!ok) {
     std::fprintf(stderr, "FAIL: %s\n", what);
@@ -84,6 +87,17 @@ int main() {
   for (const auto& [k, v] : WheelButtons(ButtonLayout::kPlayStation, {}, {})) {
     Check(v == g29[k], "nothing taken: the plain map");
   }
+
+  // The hat is the d-pad (SDL hat bits up 1, right 2, down 4, left 8 to XInput up 1, down 2,
+  // left 4, right 8) except for directions wheel_buttons sets: the launcher's Clear writes
+  // up=-1, which must turn hat up off (#279), and a bound button replaces the hat's direction.
+  Check(HatDpad(0x01, {}) == 0x0001 && HatDpad(0x02, {}) == 0x0008 && HatDpad(0x04, {}) == 0x0002 &&
+            HatDpad(0x08, {}) == 0x0004 && HatDpad(0x03, {}) == 0x0009 && HatDpad(0, {}) == 0,
+        "the hat is the d-pad");
+  Check(HatDpad(0x01, ParseKvLike("up", -1)) == 0, "a cleared d-pad direction ignores the hat");
+  Check(HatDpad(0x09, ParseKvLike("up", -1)) == 0x0004, "the other directions keep the hat");
+  Check(HatDpad(0x01, ParseKvLike("up", 12)) == 0, "a bound button replaces the hat's direction");
+  Check(HatDpad(0x01, ParseKvLike("a", -1)) == 0x0001, "other buttons leave the hat alone");
   std::puts("wheel buttons: all checks passed");
   return 0;
 }

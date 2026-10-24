@@ -149,6 +149,8 @@ def photo_create(xuid, body):
     if len(shared_files(xuid)) >= STOREFRONT_SLOTS:
         log.info("photos: %016X: storefront full (%d slots)", xuid, STOREFRONT_SLOTS)
         return x.failure(3, "storefront full")
+    for f, n in (("Title", 16), ("Description", 256)):
+        h[f] = limits.clean_ascii_text(h[f], n)
     meta = {"title": h["Title"], "description": h["Description"], "price": h["Price"],
             "quantity": h["Quantity"], "type": h["Type"], "keywordOne": h["KeywordOne"],
             "keywordTwo": h["KeywordTwo"], "envId": desc["EnvironmentId"],
@@ -173,7 +175,8 @@ def file_record(fid, f, preview=True):
         except OSError:
             pass
     rating = m["ratingSum"] / m["ratings"] if m["ratings"] else 0.0
-    return {"Id": fid, "Type": m["type"], "Title": m["title"], "Description": m["description"],
+    return {"Id": fid, "Type": m["type"], "Title": limits.clean_ascii_text(m["title"], 16),
+            "Description": limits.clean_ascii_text(m["description"], 256),
             "Price": m["price"], "Quantity": m["quantity"], "DownloadCount": m["downloads"],
             "Rating": rating, "SubmissionTime": x.iso_time(f["created"]),
             "KeywordOne": m["keywordOne"], "KeywordTwo": m["keywordTwo"],
@@ -318,7 +321,7 @@ def change_field(ptype, param, field, limit):
         f = own_shared_file(xuid, p["fileId"])
         if f is None:
             return x.failure(1, "no such file")
-        f["meta"][field] = p[param][:limit]
+        f["meta"][field] = limits.clean_ascii_text(p[param], limit)
         save()
         return x.reply()
     return handler

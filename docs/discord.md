@@ -14,22 +14,19 @@ game callbacks only copy small pieces of state. Updates are coalesced to at most
 one every five seconds. Reconnect sends the latest activity. Closing the game
 closes the connection and clears its activity; a crash closes the pipe as well.
 
-## One-time application setup
+## Setup
 
-This project does not yet have an official Discord application ID. Status display
-therefore needs an ID configured before it can connect; an empty or invalid ID
-logs a warning and leaves the game running normally.
+The project has its own Discord application (ID `1563015276583460934`, named **Forza Horizon 1:
+ReImagined**), set by default, so there is nothing to create:
 
-1. In the [Discord Developer Portal](https://discord.com/developers/applications),
-   create an application named **Forza Horizon 1: ReImagined**. That application's
-   name and icon are what Discord displays as the game identity.
-2. Copy the public **Application ID** from General Information to
-   **Settings > Advanced > Discord setup > Discord application ID**.
-3. Enable sharing under Online and launch the game. Discord's own activity privacy
-   settings must also allow sharing. No bot, OAuth login, token or client secret is used.
+1. **Settings > Online > Share activity on Discord** is on by default; turn it off to stop
+   sharing. Discord's own activity privacy settings must also allow sharing.
+2. To use another Discord application (a fork), put its public **Application ID** in
+   **Settings > Advanced > Discord setup > Discord application ID**. No bot, OAuth login, token
+   or client secret is used.
 
 For a direct launch, set `discord_presence = true` and
-`discord_application_id = "YOUR_PUBLIC_APPLICATION_ID"` in `forza.toml`.
+(the application ID defaults to the project's) in `forza.toml`.
 Missing/stopped Discord is optional: the game continues and retries in the background.
 The log uses `DISCORD:` for connection and activity updates; it does not log Discord
 account details or server-provided error text.

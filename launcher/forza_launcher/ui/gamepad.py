@@ -188,7 +188,9 @@ class Navigation(QObject):
             if scope is self.window:
                 buttons = sorted(self.window.navs.buttons(),
                                  key=lambda b: b.parentWidget().layout().indexOf(b))
-                current = self.window.navs.button(self.window.stack.currentIndex())
+                page = self.window.stack.currentWidget()
+                current = next((self.window.navs.button(i) for i, p in self.window._pages.items()
+                                if p is page), None)
                 index = buttons.index(current) if current in buttons else 0
                 button = buttons[(index + (1 if action == "next" else -1)) % len(buttons)]
                 self.window.show_page(self.window.navs.id(button))
