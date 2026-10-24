@@ -73,6 +73,11 @@ inside it are fine, `dump/` is not read). Keep the name of the dumped texture yo
   the plain ones, as the game applies its own gamma. PNG: 8 bits per channel (16-bit images are
   reduced), any colour type. Not supported: cube maps, arrays, volume textures, other DXGI
   formats.
+- **Row padding** (uncompressed DDS): rows are read packed unless the header's pitch
+  (`DDSD_PITCH`) says otherwise. Rows padded to 4 bytes are read in every mip level (as
+  Direct3D 9 tools write them); other padding only in a file without mips. A header whose pitch
+  is shorter than a row, or a file shorter than its header says, is not used (the log says
+  why).
 - When both a `.dds` and a `.png` exist, the `.dds` is used; the same name in two folders, the
   first path in alphabetical order.
 
