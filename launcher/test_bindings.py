@@ -98,6 +98,38 @@ class ConflictTests(unittest.TestCase):
         self.assertEqual(b.wheel_conflicts(s, OTHER), [])
 
 
+class ReviewTests(unittest.TestCase):
+    """#284 review: a cleared d-pad direction, and combined pedals."""
+    def test_dpad_rows_show_what_the_driver_reads(self):
+        # The driver reads the hat only for directions wheel_buttons leaves out (patch 0127):
+        # Clear writes up=-1, which now turns hat up off, and a button replaces it.
+        s = settings()
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Hat (d-pad)")
+        s.update(b.set_wheel_binding(s, ACT["up"], None))
+        self.assertEqual(s["wheel_buttons"], "up=-1")
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Not bound")
+        self.assertEqual(b.wheel_binding_text(ACT["down"], s, OTHER), "Hat (d-pad)")
+        s.update(b.set_wheel_binding(s, ACT["up"], 12))
+        self.assertEqual(b.wheel_binding_text(ACT["up"], s, OTHER), "Button 12")
+        s.update(b.set_wheel_binding(s, ACT["up"], "default"))
+        self.assertEqual((s["wheel_buttons"], b.wheel_binding_text(ACT["up"], s, OTHER)),
+                         ("", "Hat (d-pad)"))
+
+    def test_combined_pedals_have_one_row_for_both(self):
+        separate = settings(wheel_axes="steer=0,throttle=1,brake=1")
+        self.assertEqual(b.wheel_conflicts(separate, OTHER), [("Axis 1", ["Throttle", "Brake"])])
+        combined = settings(wheel_axes="steer=0,throttle=1,brake=1", wheel_pedals="combined")
+        # The driver ignores `brake` then: no conflict, no brake binding to bind or clear.
+        self.assertEqual(b.wheel_conflicts(combined, OTHER), [])
+        self.assertFalse(b.wheel_action_editable(ACT["brake"], combined))
+        self.assertTrue(b.wheel_action_editable(ACT["brake"], separate))
+        self.assertEqual(b.wheel_action_label(ACT["throttle"], combined),
+                         "Throttle and brake (combined pedals)")
+        self.assertEqual(b.wheel_binding_text(ACT["brake"], combined, OTHER),
+                         "The throttle axis's other side (combined pedals)")
+        self.assertEqual(b.wheel_binding_text(ACT["throttle"], combined, OTHER), "Axis 1")
+
+
 class DetectorTests(unittest.TestCase):
     base = b.Snapshot((0, 32767, 32767, -32768), (False, True, False), (0,))
 
@@ -296,6 +328,15 @@ class RemapTests(unittest.TestCase):
         self.assertEqual(b.source_text(b.Source("rt", threshold=0.3)), "RT past 30%")
         self.assertEqual(b.source_text(b.NONE), "Not bound")
 
+    def test_reset_last_binding_shadows_same_model_profile(self):
+        text = f"{XBOX}:rt=a;{XBOX_BT}:rt=b;{DS}:a=b"
+        text = b.set_controller_binding(text, XBOX_BT, CA["rt"], "default")
+        self.assertEqual(b.controller_rules(text, XBOX_BT), {})
+        self.assertEqual(b.controller_rules(text, XBOX), {"rt": b.Source("a")})
+        self.assertEqual(b.controller_rules(text, DS), {"a": b.Source("b")})
+        self.assertIn(f"{XBOX_BT}:", text)
+        self.assertEqual(b.format_remap(b.parse_remap(text)), text)
+
     def test_detect_on_the_mapped_pad(self):
         base = b.Snapshot(pad_buttons=frozenset({"a"}), pad_axes=(0, 0, 0, 0, 0, 0))
 
@@ -401,6 +442,41 @@ class EditorTests(unittest.TestCase):
         self.ed.reset(self.row("x"))
         self.assertEqual(self.cfg.settings["wheel_buttons"], "rb=7")
         self.assertEqual(self.ed.conflicts.text() if self.ed.conflicts.isVisible() else "", "")
+
+    def test_cleared_dpad_direction_is_not_bound(self):
+        self.assertEqual(self.row("up").value.text(), "Hat (d-pad)")
+        self.ed.clear(self.row("up"))
+        self.assertEqual(self.cfg.settings["wheel_buttons"], "up=-1")
+        self.assertEqual(self.row("up").value.text(), "Not bound")
+
+    def test_combined_pedals_bind_and_clear_both_on_the_throttle_row(self):
+        s = sdl2
+        self.ed.apply({"wheel_pedals": "combined", "wheel_axes": "steer=0,throttle=3"})
+        self.ed.refresh()
+        throttle, brake = self.row("throttle"), self.row("brake")
+        self.assertEqual(throttle.title.text(), "Throttle and brake (combined pedals)")
+        self.assertFalse(brake.bind.isEnabled() or brake.clear.isEnabled() or brake.reset.isEnabled())
+        before = dict(self.cfg.settings)
+        self.ed.clear(brake)       # not offered; a stray call changes nothing
+        self.ed.begin(brake)
+        self.assertIsNone(self.ed.binding)
+        self.assertEqual(dict(self.cfg.settings), before)
+        # A combined axis rests in the middle; throttle pushes it up here, so it needs the invert.
+        s.SDL_JoystickSetVirtualAxis(self.joy, 3, 0)
+        self.step()
+        self.ed.begin(throttle)
+        s.SDL_JoystickSetVirtualAxis(self.joy, 3, 32767)
+        self.step()
+        self.assertEqual(self.cfg.settings["wheel_axes"], "steer=0,throttle=3")
+        self.assertTrue(self.cfg.settings["wheel_invert_throttle"])
+        self.assertIn("Throttle and brake (combined pedals): Axis 3", self.ed.status.text())
+        self.ed.clear(throttle)
+        self.assertEqual(self.cfg.settings["wheel_axes"], f"steer=0,throttle={b.NO_AXIS}")
+        self.assertEqual(self.ed.status.text(), "Throttle and brake (combined pedals): not bound.")
+        self.ed.apply({"wheel_pedals": "auto"})
+        self.ed.refresh()
+        self.assertEqual(self.row("throttle").title.text(), "Throttle")
+        self.assertTrue(self.row("brake").clear.isEnabled())
 
     def test_steering_direction_sets_the_invert_switch(self):
         self.ed.begin(self.row("steer"))
@@ -580,6 +656,31 @@ class ControllerEditorTests(unittest.TestCase):
 
     def view_names(self):
         return list(self.ed.view.names.values())
+
+    def test_reset_all_shadows_fallbacks_without_changing_other_profiles(self):
+        from dataclasses import replace
+        self.ed.device = replace(self.ed.device, guid=XBOX_BT)
+        for profiles in (f"{XBOX}:rt=a;{XBOX_BT}:rt=b", f"{XBOX}:rt=a",
+                         f"*:rt=a;{XBOX_BT}:rt=b", "*:rt=a"):
+            with self.subTest(profiles=profiles):
+                text = f"{profiles};{DS}:a=b"
+                self.cfg.settings["controller_remap"] = text
+                others = {k: rules for k, rules in b.parse_remap(text).items() if k != XBOX_BT}
+                self.ed.reset_everything()
+                result = self.cfg.settings["controller_remap"]
+                self.assertEqual(b.controller_rules(result, XBOX_BT), {})
+                for key, rules in others.items():
+                    self.assertEqual(b.parse_remap(result)[key], rules)
+                self.assertEqual(b.controller_rules(result, DS), {"a": b.Source("b")})
+                self.assertEqual(self.row("rt").value.text(), "RT (default)")
+
+    def test_reset_last_row_shadows_same_model_profile(self):
+        from dataclasses import replace
+        self.ed.device = replace(self.ed.device, guid=XBOX_BT)
+        self.cfg.settings["controller_remap"] = f"{XBOX}:rt=a;{XBOX_BT}:rt=b"
+        self.ed.reset(self.row("rt"))
+        self.assertEqual(self.ed.rules(), {})
+        self.assertEqual(self.row("rt").value.text(), "RT (default)")
 
 
 if __name__ == "__main__":

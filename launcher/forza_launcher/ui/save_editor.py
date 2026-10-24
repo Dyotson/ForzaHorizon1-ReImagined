@@ -64,6 +64,13 @@ class ProfileEditor(QDialog):
         self.unicorn_button = QPushButton('Add missing unicorns')
         self.unicorn_button.clicked.connect(self.add_unicorns)
         unicorns.content.addWidget(self.unicorn_button)
+        unicorns.content.addWidget(label(
+            'Earlier launcher versions added these cars with an invalid factory colour. '
+            'Repair changes that colour only on launcher-added unicorns without a custom livery; '
+            'upgrades, tuning and other cars are preserved. A full backup is kept.', 'muted'))
+        self.repair_paint_button = QPushButton('Repair unicorn factory paint')
+        self.repair_paint_button.clicked.connect(self.repair_unicorn_paint)
+        unicorns.content.addWidget(self.repair_paint_button)
         layout.addWidget(unicorns)
         self.tutorial = Disclosure('1000 CLUB tutorial')
         self.tutorial.content.addWidget(label(
@@ -101,6 +108,7 @@ class ProfileEditor(QDialog):
             control.setEnabled(not busy and self.document is not None)
         self.apply_button.setEnabled(not busy and self.document is not None)
         self.unicorn_button.setEnabled(not busy and self.document is not None)
+        self.repair_paint_button.setEnabled(not busy and self.document is not None)
         self.tutorial_button.setEnabled(not busy and self._tutorial_pending())
         self.reload_button.setEnabled(not busy)
         self.close_button.setText('Cancel' if busy else 'Close')
@@ -185,6 +193,26 @@ class ProfileEditor(QDialog):
     def _tutorial_pending(self):
         tutorial = self.document and self.document.values.get(save_editor.CAR_CHALLENGE_TUTORIAL)
         return bool(tutorial) and not tutorial.value
+
+    def repair_unicorn_paint(self):
+        if self.document is None or self.page.busy():
+            return
+        if self._changes():
+            self.message.setText('Apply your profile changes or reload before repairing paint.')
+            return
+        document = self.document
+        self._set_busy(True)
+        self.message.setText('Checking unicorn factory paint and backing up before repair…')
+
+        def complete(result):
+            message = (f'Repaired factory paint on {len(result.repaired)} unicorn car(s). '
+                       'A “Before repairing unicorn paint” backup was kept.' if result.repaired else
+                       'No matching unicorn paint needs repair. Custom liveries and other cars were left as they are.')
+            self._loaded(document, message)
+
+        self.page._run('Repairing unicorn factory paint…',
+                       lambda t: garage.repair_factory_paint(self.cfg, self.profile,
+                                 t.cancelled, self.page._copy_progress(t)), complete, failed=self._failed)
 
     def finish_tutorial(self):
         if not self._tutorial_pending() or self.page.busy():

@@ -61,6 +61,49 @@ class LauncherUITests(unittest.TestCase):
             time.sleep(.005)
         self.assertTrue(predicate())
 
+    def test_co_op_results_are_listed_after_the_session(self):
+        """#309: what the co-op results thread added, and what waits, under "The game closed."
+        once the thread is done (it runs after the game, in the background)."""
+        win = self.window
+        release = threading.Event()
+        win._coop_notes = ["Co-op results: FR69 at place 8 (was not raced): +70 XP, +2,100 CR",
+                           "Co-op results: FR05 (8th in DriverA's world) waits: ..."]
+        win._coop_thread = threading.Thread(target=release.wait, daemon=True)
+        win._coop_thread.start()
+        win.play.show_message("The game closed.")
+        win._coop_timer.start()
+        self.app.processEvents()
+        self.assertEqual(win.play.msg.text(), "The game closed.")  # still applying
+        release.set()
+        self.wait_for(lambda: not win._coop_timer.isActive())
+        self.assertEqual(win.play.msg.text().splitlines(), [
+            "The game closed.", "Co-op results: FR69 at place 8 (was not raced): +70 XP, +2,100 CR",
+            "Co-op results: FR05 (8th in DriverA's world) waits: ..."])
+
+    def test_catalog_recovery_warning_stays_visible_after_successful_start(self):
+        from forza_launcher import game, catalog_import, ugc
+        plan = game.LaunchPlan(game.GameInstall(self.root, Path('forza.exe')), self.root,
+                              ['forza'], {}, [], self.root/'forza.toml', '', log_dir=self.root)
+        win = self.window
+        self.wait_for(lambda: not win.saves.busy() and not win._busy)
+        with patch.object(catalog_import, 'recover', side_effect=ugc.CatalogError('Invalid import journal')), \
+                patch('subprocess.Popen') as spawn:
+            spawn.return_value.poll.return_value = None
+            try:
+                win._start_plan(plan)
+                self.assertIsNotNone(win.session)
+                self.assertIn('The game is running', win.play.warn.text())
+                self.assertIn('Invalid import journal', win.play.warn.text())
+                self.assertIn('save-backups', win.play.warn.text())
+                self.assertTrue(win.play._keep_warn)
+                win.play.refresh()
+                self.assertFalse(win.play.warn.isHidden())
+            finally:
+                if win.session:
+                    win.session.cleanup()
+                win.session = None
+                win.poll.stop()
+
     def test_crashing_child_offers_review_and_preserves_report_after_log_changes(self):
         import sys
         from forza_launcher import crash_report, game

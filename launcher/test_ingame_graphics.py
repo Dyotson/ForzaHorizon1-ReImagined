@@ -97,10 +97,17 @@ class InGameGraphicsTests(unittest.TestCase):
 
 
 
+    def test_20_and_40_fps_are_imported(self):
+        for rate in (20, 40, 30):
+            with self.subTest(rate=rate):
+                self.request(frame_rate=str(rate))
+                self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(Config(self.cfg.path).settings["frame_rate"], rate)
+
     def test_invalid_request_does_not_partially_apply(self):
         previous = dict(self.cfg.settings)
         for values in [{"frame_rate": "120", "output": "12k"},
-                       {"frame_rate": "360"}, {"resolution_scale": "0"},
+                       {"frame_rate": "360"}, {"frame_rate": "45"}, {"resolution_scale": "0"},
                        {"vsync": "maybe"}, {"upscaler": "dlss5"},
                        {"extra_args": "--unknown=true"}]:
             with self.subTest(values=values):

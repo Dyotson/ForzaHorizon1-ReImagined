@@ -30,6 +30,7 @@
 // Before the server sends a list (an older server), everyone in the room stays a friend.
 
 #include "../platform/hud_overlay.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
 #include "live_osk.h"
@@ -648,6 +649,16 @@ bool LiveFriendsActive() {
   return active;
 }
 
+void LiveChatSay(uint8_t channel, const std::string& text) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (channel != 1 && channel != 2) return;
+  const auto to = chat_to;
+  chat_to = channel - 1;  // 0 session, 1 world (ChatSendLocked)
+  chat_text = text.substr(0, kMaxMessage);
+  ChatSendLocked();
+  chat_to = to;
+}
+
 std::vector<LiveRelation> LiveRelations() {
   std::lock_guard<std::mutex> lock(mutex);
   return relations;
@@ -760,6 +771,7 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
           r.state = Load32(p + pos + 9);
           pos += 13;
           if (!ReadText(p, n, pos, r.gamertag) || !ReadText(p, n, pos, r.status)) return;
+          r.gamertag = SanitizeGamertag(r.gamertag);
           parts.push_back(std::move(r));
           ++parts_seen;
         }
@@ -803,6 +815,7 @@ void LiveFriendMessage(const uint8_t* p, size_t n) {
           r.online = p[pos + 8] != 0;
           pos += 10;
           if (!ReadText(p, n, pos, r.gamertag)) break;
+          r.gamertag = SanitizeGamertag(r.gamertag);
           results.push_back(std::move(r));
         }
         dirty = true;

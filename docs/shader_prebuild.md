@@ -284,8 +284,8 @@ Proposed fix:
 4. Measure: hitches per session (`FORZA_STALL`) on a fresh cache, before and after, on
    AMD and NVIDIA. Also prebuild time and warm start time with the full list. **Done on
    Linux AMD; open on NVIDIA** (and Windows AMD, where the warm-up was slow in #167).
-5. Later: lists uploaded by players through Forza Live. The format already holds no
-   game content.
+5. Lists uploaded by players through Forza Live. The format holds no game content.
+   **Done**: [phase 3](#phase-3-lists-from-players-276).
 
 ## Phase 2: the prebuild (Linux, AMD)
 
@@ -413,6 +413,18 @@ The step refuses to run when `--user_data_root` or `--cache_root` is given twice
 launcher's own plus one in Advanced > extra arguments): the game then ignores its path
 options and uses its default folders, so the files would be written where it does not look.
 
+### Current build required (#295)
+
+A game built by an older launcher does not know `--shader_prebuild_only` or patch 0113 and
+exits at once. The step therefore asks `builder.build_status` (the Setup page's Build test:
+complete build whose id matches the project, title update and CPU target) and, unless it says
+"built", does not start the game: the card shows "Rebuild first" and "Rebuild the game first
+(Setup > Build): Prebuild shaders needs the current build." When the game still stops early,
+the launcher quotes error lines only from a `forza.log` written during that run (modification
+time); with no fresh log it says the game stopped right away without writing a log and that
+rebuilding usually fixes it, and it reports an unknown-option message from the game's console
+output the same way.
+
 ### Measurements
 
 RX 9060 XT, RADV (Mesa driver 0x6802001), 8 cores; benchmark lock held, no other game
@@ -461,3 +473,45 @@ while the festival loaded included.
 
 The list costs about 170 ms per start here. On the Windows AMD driver of #167 the warm-up
 took 7.2 s for 867 pipelines: that is where Windows and NVIDIA measurements are needed.
+
+## Phase 3: lists from players (#276)
+
+Like Steam's shader pre-caching, the list grows from play, through Forza Live. Hard rule:
+nothing from the game is uploaded or distributed, only pipeline descriptions (shader hashes and
+decoded render state, the list format, plus for each shader how to rebuild it from the player's
+own files: a `file` or `bound` recipe of hashes and vertex layout fields, no microcode). Shader
+code always comes from each player's own files. Descriptions do not depend on the GPU, so uploads
+from any vendor help everyone.
+
+Data flow:
+1. **After a session** (`shader_share.py`, started when the launcher sees the game exit, in a
+   background thread): the player's pipeline stores (`<cache root>/shaders/shareable/*.xpso` and the
+   split `fh1-live-*/{ui,scene}` ones) are read and decoded with `pipeline_list.stores_to_pipelines`,
+   the same code as `pipeline_list.py make`. Only stores of the shipped list's storage version are
+   used. Entries already in the shipped list, or already sent to this server (a small record,
+   `shader_share.json` in the data folder), are skipped. Recipes are made from the player's own
+   `.xsh` and game files (`make_shader_recipes`); pipelines whose shaders cannot be rebuilt from
+   them are not worth sending and are noted as done. Up to 3000 pipelines per session, 400 per
+   request.
+2. **Upload**: `POST /shader-lists/upload` on the server's HTTP port (UDP port plus one), signed
+   with the player's XUID and friends key from `live_identity.txt`, 8 s timeout. Only when
+   Settings > Online > **Share shader list** is on (default), and the online mode is the public
+   server or the player's own server: never offline, never "This PC". Failures are silent and logged
+   to the launcher log; entries that were not accepted are tried again after the next session; it
+   never blocks Play.
+3. **Merge** (`server/forza_shader_lists.py`): every entry is validated against the list format
+   and its enum ranges, and counted by **distinct players**; an entry is published once at least 3
+   players reported it. Caps: 1 MiB and 500 pipelines per request, 5000 pipelines per player and day.
+   The recipe most players reported is published for each shader.
+4. **Download**: before *Prebuild shaders* writes its files, the launcher fetches
+   `GET /shader-lists?version=...` (6 s timeout), checks it with `check_list` (any problem: ignored),
+   merges it with the shipped list (`pipeline_list.merge_lists`; the shipped recipe wins a
+   conflict) and builds that. Offline, on any failure, or for another storage version it uses the
+   shipped list alone. The existing validation still drops entries whose shaders are not in the
+   player's files, and a `bound` shader must reproduce its listed hash.
+
+Abuse: a fake player can add entries, never code. An entry costs only prebuild time, and only when
+the player's own files contain its shaders. Three accounts are needed to publish one.
+
+Tests: `launcher/test_shader_share.py`, `server/test_forza_shader_lists.py`, and an end-to-end run
+against a local server with three players (not part of CI).

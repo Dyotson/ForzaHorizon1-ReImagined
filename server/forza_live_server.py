@@ -33,7 +33,10 @@ import forza_friends as friends
 import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
+import forza_campaign as campaign
+import forza_coop_ledger as coop_ledger
 import forza_world as world
+import forza_world_host as world_host
 
 MAGIC = b"RLV1"
 VERSION = 1
@@ -55,6 +58,11 @@ FEATURE_FRIENDS = friends.FEATURE
 FRIEND = friends.KIND  # 22
 # FEATURE_CHAT: the game has text chat (CHAT messages, forza_chat.py, #92).
 FEATURE_CHAT = chat.FEATURE
+# FEATURE_LOBBY: the game's standby records follow the lobby: its search key (a custom
+# game's game type) when the host changes the setup, and, from the player the game made the
+# lobby's host, the description that game gives it (#391, standby_view). Older games send
+# the key and description they found the lobby with.
+FEATURE_LOBBY = 0x10
 CHAT = chat.KIND  # 23
 WORLD_EVENT = 18  # server -> a Horizon World's host: end the free roam for an event
 CHALLENGE = challenge.KIND  # 19: head-to-head challenges in the world (forza_challenge.py)
@@ -63,8 +71,14 @@ MAX_MATCH_RECORD = 1300
 MATCH_RESULTS_MAX = 25  # sessions answered per search (Forza asks for up to 25)
 SESSION_INFO_SIZE = 0x3C  # XSESSION_INFO: session id, host XNADDR, key-exchange key
 MAX_PRESENCE_EXTRA = 1024
+MAX_LOBBY_TAILS = 4096  # lobby descriptions kept for standby records (standby_view)
 
 PEER_TIMEOUT = 30.0  # seconds without a HELLO before a peer is dropped
+# A player dropped for silence whose game says HELLO again with its token and XUID gets its id
+# back for this long (#140: a Steam Deck that slept, a game that was stopped): its XNADDR, the
+# session it hosts and the others' view of it stay the same. At most GONE_MAX are kept.
+GONE_KEEP = 12 * 3600.0
+GONE_MAX = 5000
 # A restarting server keeps its players (#93): registrations are written to
 # DATA_DIR/live_state.json when they change, every STATE_REFRESH seconds and on shutdown,
 # and loaded again if the file is at most STATE_MAX_AGE seconds old.
@@ -74,9 +88,12 @@ STATE_REFRESH = 30.0
 STATE_VERSION = 1
 MAX_PAYLOAD = 1500
 # Per-player limit on bytes the server sends for it (relayed datagrams; a broadcast counts
-# once per recipient): a two-player match is about 2 KB/s per player, a full lobby of 16
-# a few times that. Defaults to 160 KB/s with 640 KB bursts (--rate-limit).
-RATE_LIMIT = 160 * 1024
+# once per recipient). Measured through the relay (#12): a game sends each peer one
+# datagram a frame of about 100 bytes per car it runs (its own, and in an event its share
+# of the CPU drivers), so a full world of 8 costs a player about 7 x fps x 108 bytes with
+# the relay header: 106 KB/s at 144 fps, 181 KB/s at 240. Defaults to 256 KB/s with 1 MB
+# bursts (--rate-limit).
+RATE_LIMIT = 256 * 1024
 RATE_BURST = 4 * RATE_LIMIT
 
 
@@ -88,7 +105,8 @@ MAX_ROOM = 64
 MAX_MOTD = 64  # keeps the WELCOME about as large as the HELLO that asks for it
 # Limits against abuse from the internet (every datagram is untrusted):
 MAX_PEERS_PER_IP = 16  # registered players behind one public address (a LAN, a CGNAT)
-PACKETS_PER_IP = (1500, 3000)  # datagrams/s and burst accepted from one address
+# datagrams/s and burst accepted from one address (a player in a world of 8 at 240 fps: 1680/s)
+PACKETS_PER_IP = (2500, 5000)
 HELLOS_PER_IP = (2, 20)  # new registrations/s and burst from one address
 ERRORS_PER_IP = (2, 10)  # "not registered" replies/s and burst to one address
 
@@ -172,8 +190,15 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.state_dirty = False
         self.state_saved = 0.0  # monotonic time of the last write
         self.restored = set()  # ids of players loaded from the state file, not heard from yet
+        self.gone = {}  # token -> (id, xuid, monotonic time): players dropped for silence
         self.friends = friends.Friends(self)
         self.chat = chat.Chat(self, self.friends.store)
+        self.chat.commands = self.chat_command
+        self.world_keys = {}  # world session id -> its playlist (lsp.WORLD_HOPPERS)
+        # session id -> (search key, record after the slots, monotonic time): the newest
+        # description of a lobby from its host (op 1) or the game's host (op 4) (#391)
+        self.lobby_tails = {}
+        lsp.client_features = self.features_of
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
@@ -245,10 +270,10 @@ class ForzaLive(asyncio.DatagramProtocol):
         version, token, xuid, local_ip, local_port = struct.unpack_from(">HQQIH", body, 0)
         pos = 24
         room_len = body[pos]
-        room = body[pos + 1:pos + 1 + room_len].decode()[:MAX_ROOM]
+        room = body[pos + 1:pos + 1 + room_len].decode("utf-8", "replace")[:MAX_ROOM]
         pos += 1 + room_len
         name_len = body[pos]
-        name = body[pos + 1:pos + 1 + name_len].decode()[:MAX_NAME]
+        name = limits.clean_gamertag(body[pos + 1:pos + 1 + name_len].decode("utf-8", "replace"), xuid)
         pos += 1 + name_len
         features = body[pos] if pos < len(body) else 0
         friend_key = b""  # after the features byte: u8 length + the friends key
@@ -280,18 +305,23 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return
             if not take(self.hello_buckets, key, HELLOS_PER_IP):
                 return
-            while self.next_id in self.peers or self.next_id == 0:
+            back = self.take_gone(token, xuid)
+            if back is None:
+                reserved = {pid for pid, _, _ in self.gone.values()}
+                while self.next_id in self.peers or self.next_id == 0 or self.next_id in reserved:
+                    self.next_id = (self.next_id + 1) & 0xFFFFFF
+            peer = Peer(back if back is not None else self.next_id, addr, token, xuid, name, room,
+                        (local_ip, local_port))
+            if back is None:
                 self.next_id = (self.next_id + 1) & 0xFFFFFF
-            peer = Peer(self.next_id, addr, token, xuid, name, room, (local_ip, local_port))
-            self.next_id = (self.next_id + 1) & 0xFFFFFF
             peer.proxied = proxied
             self.peers[peer.id] = peer
             self.by_addr[addr] = peer
             self.per_ip[addr[0]] = self.per_ip.get(addr[0], 0) + 1
             self.state_dirty = True
-            log.info("join  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s", peer.id, name,
-                     xuid, room, addr[0], addr[1], u32_to_ip(local_ip), local_port,
-                     " via proxy" if proxied else "")
+            log.info("%s  #%d %r xuid %016X room %r from %s:%d (lan %s:%d)%s",
+                     "join" if back is None else "back", peer.id, name, xuid, room, addr[0],
+                     addr[1], u32_to_ip(local_ip), local_port, " via proxy" if proxied else "")
         peer.seen = time.monotonic()
         self.restored.discard(peer.id)
         if ((peer.name, peer.xuid, peer.room, peer.local, peer.features) !=
@@ -464,31 +494,76 @@ class ForzaLive(asyncio.DatagramProtocol):
     # Standby records: a player in a session someone else hosts publishes it with its own
     # address as the host (op 2). Forza's game picks a new host among the remaining
     # players when its host leaves, without telling Xbox LIVE, so once nobody hosts a
-    # session id any more, its standby records stand in for it: searchers get the record
-    # of the member the game made its host (the client sees the game's host flag and
-    # sends op 4 instead of op 2), else of the oldest remaining member, with the number of
-    # members as the filled slots.
+    # session id any more (or a member reports to host it: a host whose game closed stays
+    # registered until it times out), its standby records stand in for it: searchers get
+    # the record of the member the game made its host (the client sees the game's host
+    # flag and sends op 4 instead of op 2; the latest one), else of the oldest remaining
+    # member, with the number of members as the filled slots (forza_world_host.py).
 
     def standby_sessions(self, src, key):
         """Advertisable standby sessions for playlist key: [(peer, record, since)]."""
-        hosted = {p.match[1][:8] for p in self.peers.values()
-                  if p.room == src.room and getattr(p, "match", None)}
+        room = [p for p in self.peers.values() if p.room == src.room]
+        hosted = {p.match[1][:8] for p in room if getattr(p, "match", None)}
+        hosted -= world_host.taken_over(room, key)
         groups = {}
         for p in self.room_peers(src):
             standby = getattr(p, "standby", None)
-            if standby and standby[0] == key and standby[1][:8] not in hosted:
+            if standby and self.standby_view(p)[0] == key and standby[1][:8] not in hosted:
                 groups.setdefault(standby[1][:8], []).append(p)
         own = getattr(src, "standby", None)
         found = []
         for sid, members in groups.items():
             if own and own[1][:8] == sid:
                 continue  # the searcher is in it already
-            members.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
-            record = bytearray(members[0].standby[1])
+            members.sort(key=world_host.lead_order)
+            record = bytearray(self.standby_view(members[0])[1])
             if len(record) >= SESSION_INFO_SIZE + 4:
                 record[SESSION_INFO_SIZE + 2] = min(len(members), 255)
             found.append((members[0], bytes(record), members[0].standby[2]))
         return found
+
+    # A member's standby record describes the lobby as it was when the member found it: its
+    # search key (a custom game's game type) and, after the slots, the properties and the
+    # QoS data that Find Custom Game shows (game type, track, class, time limit, the host's
+    # name). The lobby's host describes it as it is now (op 1), and so does the game's later
+    # host with FEATURE_LOBBY (op 4), so any other member's record goes out with the newest
+    # of their descriptions (#391: a lobby playing King was listed under Infected, with the
+    # details and the host of rounds long gone).
+
+    @staticmethod
+    def match_qos_size(record):
+        """The size of the QoS data at the end of a session record, or None."""
+        pos = SESSION_INFO_SIZE + 4
+        try:
+            pos += 1 + 13 * record[pos]
+            pos += 1 + 8 * record[pos]
+            return struct.unpack_from(">H", record, pos)[0]
+        except (IndexError, struct.error):
+            return None
+
+    def note_lobby(self, key, record):
+        # A host that leaves its lobby stops describing it (its game releases the QoS data)
+        # before it withdraws: a record without a description is not one.
+        if not self.match_qos_size(record):
+            return
+        tails = self.lobby_tails
+        tails.pop(record[:8], None)
+        tails[record[:8]] = (key, bytes(record[SESSION_INFO_SIZE + 4:]), time.monotonic())
+        while len(tails) > MAX_LOBBY_TAILS:
+            del tails[next(iter(tails))]  # the oldest description
+
+    @staticmethod
+    def describes_lobby(peer):
+        """Whether peer's standby record describes its lobby as it is now."""
+        return getattr(peer, "standby_host", False) and peer.features & FEATURE_LOBBY
+
+    def standby_view(self, peer):
+        """(search key, record) a member's standby record is advertised with."""
+        key, record, _ = peer.standby
+        tail = self.lobby_tails.get(record[:8])
+        if tail is None or self.describes_lobby(peer) or len(record) < SESSION_INFO_SIZE + 4:
+            return key, record
+        return tail[0], record[:SESSION_INFO_SIZE + 4] + tail[1]
 
     def on_match(self, peer, kind, body):
         if kind == MATCH_PUBLISH and body[0] in (2, 3, 4):
@@ -502,6 +577,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                 if host != getattr(peer, "standby_host", False):
                     log.info("match #%d %r %s the game's host of %s", peer.id, peer.name,
                              "is now" if host else "is no longer", body[5:13].hex())
+                world_host.note_host(peer, host)
                 peer.standby_host = host
                 (key,) = struct.unpack_from(">I", body, 1)
                 record = body[5:5 + MAX_MATCH_RECORD]
@@ -511,6 +587,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                              record[:8].hex(), key)
                 peer.standby = (key, record, old[2] if old and old[1][:8] == record[:8]
                                 else time.monotonic())
+                if self.describes_lobby(peer):
+                    self.note_lobby(key, record)
             return
         if kind == MATCH_PUBLISH:
             # op u8: 0 withdraw, 1 publish (then search key u32 + the record)
@@ -529,6 +607,7 @@ class ForzaLive(asyncio.DatagramProtocol):
                     log.info("match #%d %r hosts %s for playlist %d (%d/%d)", peer.id, peer.name,
                              record[:8].hex(), key, filled, filled + free)
                 peer.match = (key, record, since)  # since: when this session first appeared
+                self.note_lobby(key, record)
             return
         # search key u32, request number u32. Reply: request number u32, count u16, then
         # per session the host's id u32, XUID u64 and record (u16 length + bytes), in the
@@ -539,11 +618,15 @@ class ForzaLive(asyncio.DatagramProtocol):
         # The client answers the game once the last datagram is in.
         key, request = struct.unpack_from(">II", body, 0)
         own = getattr(peer, "match", None)
+        stale = world_host.taken_over([peer] + self.room_peers(peer), key)
         found = [(p, p.match[1], p.match[2]) for p in self.room_peers(peer)
                  if getattr(p, "match", None) and p.match[0] == key
-                 and not (own and own[0] == key and p.match[2] >= own[2])]
+                 and not (own and own[0] == key and p.match[2] >= own[2])
+                 and p.match[1][:8] not in stale]
         found += self.standby_sessions(peer, key)
         found = [f for f in found if self.match_slots(f[1])[1] > 0]
+        if key == lsp.COOP_HOPPER:
+            found = self.coop_placement(peer, found)
         found.sort(key=lambda f: (-self.match_slots(f[1])[0], f[2]))
         if found:
             filled, free = self.match_slots(found[0][1])
@@ -575,7 +658,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             room = {p.xuid: p.name for p in self.room_peers(peer)}
             room[peer.xuid] = peer.name
             stats.write(peer.xuid, lambda x: room.get(x) or lsp.gamertag_of(x), body[1:],
-                        allowed=set(room))
+                        allowed=set(room), verified=bool(getattr(peer, "friends_ok", False)))
         elif body[0] == 2:
             names = {p.xuid: p.name for p in self.peers.values()}
             reply = stats.read(peer.xuid, body[1:], lambda x: names.get(x) or lsp.gamertag_of(x))
@@ -585,23 +668,35 @@ class ForzaLive(asyncio.DatagramProtocol):
     # --- Horizon World events (forza_world.py) ---
 
     def world_sessions(self):
-        """The Horizon World sessions: {session id: (its host peer, humans)}. A session
-        whose host left is led by its standby host (see standby_sessions)."""
-        key = lsp.WORLD_HOPPER
+        """The Horizon World and Co-op Festival sessions: {session id: (its host peer,
+        humans)} (self.world_keys says which playlist). A session whose host left is led by
+        its standby host (see standby_sessions)."""
         worlds = {}
-        for p in self.peers.values():
-            match = getattr(p, "match", None)
-            if match and match[0] == key:
-                worlds[match[1][:8]] = (p, self.match_slots(match[1])[0])
-        members = {}
-        for p in self.peers.values():
-            standby = getattr(p, "standby", None)
-            if standby and standby[0] == key and standby[1][:8] not in worlds:
-                members.setdefault(standby[1][:8], []).append(p)
-        for sid, group in members.items():
-            group.sort(key=lambda p: (not getattr(p, "standby_host", False), p.standby[2]))
-            worlds[sid] = (group[0], len(group))
+        keys = {}
+        for key in lsp.WORLD_HOPPERS:
+            found = {}
+            stale = world_host.taken_over(self.peers.values(), key)
+            for p in self.peers.values():
+                match = getattr(p, "match", None)
+                if match and match[0] == key and match[1][:8] not in stale:
+                    found[match[1][:8]] = (p, self.match_slots(match[1])[0])
+            members = {}
+            for p in self.peers.values():
+                standby = getattr(p, "standby", None)
+                if standby and standby[0] == key and standby[1][:8] not in found:
+                    members.setdefault(standby[1][:8], []).append(p)
+            for sid, group in members.items():
+                group.sort(key=world_host.lead_order)
+                found[sid] = (group[0], len(group))
+            for sid in found:
+                keys[sid] = key
+            worlds.update(found)
+        self.world_keys = keys
         return worlds
+
+    def world_members(self, sid):
+        """The players in a world (hosting it or in it): [peer]."""
+        return [p for p in self.peers.values() if self.world_of_peer(p.id) == sid]
 
     def world_of(self, xuid):
         """(session id, humans) of the world the player with this XUID hosts, or None."""
@@ -612,15 +707,39 @@ class ForzaLive(asyncio.DatagramProtocol):
 
     def world_tick(self):
         """Every 2 s: tell each world's host about an event waiting for it (op u8 1,
-        event id u32); the client ends the free roam once the event is its next round."""
+        event id u32); the client ends the free roam once the event is its next round. A
+        campaign round's CPU skill goes to every console of its world (op 2,
+        forza_campaign.ai_message) until the round starts."""
         worlds = self.world_sessions()
-        for sid, event in world.WORLDS.tick(set(worlds)):
+        scheduled = {sid for sid in worlds if self.world_keys.get(sid) == lsp.WORLD_HOPPER}
+        for sid, event in world.WORLDS.tick(set(worlds), scheduled):
             host = worlds[sid][0]
             self.send(host.addr, WORLD_EVENT, struct.pack(">BI", 1, event[0]) + sid)
+        for sid, event, code in world.WORLDS.empty:  # a campaign round nobody raced
+            cars = (": its cars must be %s" % event.restriction_text()) if event is not None else ""
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, "%s ended at once and nobody raced it%s (a game that has no "
+                                        "such car shows NO CARS AVAILABLE)" % (code, cars))
+        world.WORLDS.empty = []
+        for sid, st in world.WORLDS.dropped:  # a campaign the host's game never took
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, "%s did not start: the world's host must be driving in "
+                                        "the free roam. Try /event again" % st["campaign"].code)
+        coop_ledger.LEDGER.maybe_save()
+        world.WORLDS.members = {sid: {p.xuid: p.name for p in self.world_members(sid)}
+                                for sid in worlds}
+        for sid, event in world.WORLDS.campaigns():
+            body = campaign.ai_message(event, sid)
+            for p in self.world_members(sid):
+                self.send(p.addr, WORLD_EVENT, body)
 
     def world_request(self, session, event_id):
-        """GET /world/event?session=<id hex>|all[&event=<id>]: start an event in a world."""
+        """GET /world/event?session=<id hex>|all[&event=<id>]: start an event in a world.
+        Co-op Festival worlds are left out: their events are their host's (/event)."""
         worlds = self.world_sessions()
+        worlds = {sid: w for sid, w in worlds.items() if self.world_keys.get(sid) != lsp.COOP_HOPPER}
         sids = list(worlds) if session in ("", "all") else \
             [sid for sid in worlds if sid.hex() == session.lower()]
         return {"requested": [{"session": sid.hex(), "host": worlds[sid][0].name,
@@ -642,9 +761,85 @@ class ForzaLive(asyncio.DatagramProtocol):
         if p is None:
             return None
         for record in (getattr(p, "match", None), getattr(p, "standby", None)):
-            if record and record[0] == lsp.WORLD_HOPPER:
+            if record and record[0] in lsp.WORLD_HOPPERS:
                 return bytes(record[1][:8])
         return None
+
+    # --- the Co-op Festival (forza_campaign.py, #309) ---
+
+    def features_of(self, xuid):
+        """The HELLO features of the game signed in with this XUID (lsp.client_features),
+        or None when it is not online."""
+        found = [p.features for p in self.peers.values() if p.xuid == xuid]
+        return max(found) if found else None
+
+    def coop_placement(self, peer, found):
+        """Co-op Festival placement: only worlds led by one of the searcher's friends (the
+        friends list kept by forza_friends.py, accepted both ways), both of them proven by
+        their friends keys (friends_ok: a HELLO's XUID alone could be anyone's). Without one
+        the searcher's game opens a world of its own, which its friends are then placed
+        into."""
+        store = self.friends.store
+        if not getattr(peer, "friends_ok", False):
+            log.info("match #%d %r co-op: its XUID is not proven (friends key): no world", peer.id,
+                     peer.name)
+            return []
+        kept = [f for f in found if getattr(f[0], "friends_ok", False)
+                and store.relation(peer.xuid, f[0].xuid) == friends.FRIEND]
+        if len(kept) != len(found):
+            log.info("match #%d %r co-op: %d of %d world(s) led by a friend", peer.id,
+                     peer.name, len(kept), len(found))
+        return kept
+
+    def chat_command(self, peer, channel, text):
+        """A chat line starting with "/" (forza_chat.Chat.say): True when it was a command
+        (answered with notices, not relayed). /event and /events, in WORLD chat."""
+        word = text.split()[0].lower()
+        if word not in ("/event", "/events"):
+            return False
+        arg = text[len(word):].strip()
+        if channel != chat.WORLD:
+            self.chat.notice(peer, campaign.NOT_WORLD_CHAT)
+            return True
+        if word == "/events" or not arg or arg.lower() == "help":
+            if word == "/event":
+                self.chat.notice(peer, campaign.USAGE)
+            level = arg.lower() if arg.lower() == "street" else int(arg) if arg.isdigit() else None
+            if word == "/events":
+                for line in campaign.listing(level):
+                    self.chat.notice(peer, line)
+            return True
+        sid = self.world_of_peer(peer.id)
+        worlds = self.world_sessions()
+        if sid is None or sid not in worlds:
+            self.chat.notice(peer, campaign.NOT_IN_WORLD)
+        elif self.world_keys.get(sid) != lsp.COOP_HOPPER:
+            self.chat.notice(peer, campaign.IN_HORIZON_WORLD)
+        elif worlds[sid][0].xuid != peer.xuid:
+            self.chat.notice(peer, "Only the world's host (%s) can start an event" %
+                             worlds[sid][0].name)
+        elif world.WORLDS.state.get(sid):
+            self.chat.notice(peer, "An event is already starting in this world")
+        elif coop_ledger.LEDGER.open_round(sid):
+            self.chat.notice(peer, "An event is running in this world: start the next one when "
+                                   "you are back in the free roam")
+        elif coop_ledger.LEDGER.waiting_for(peer.xuid) >= coop_ledger.MAX_WAITING:
+            self.chat.notice(peer, coop_ledger.LEDGER.refusal(peer.xuid))
+        else:
+            event = campaign.find(arg)
+            if event is None:
+                self.chat.notice(peer, "No festival or street race %r to race online (/events "
+                                       "lists them)" % arg[:20])
+                return True
+            world.WORLDS.request(sid, campaign=event, by=peer.name, by_xuid=peer.xuid)
+            text = "%s starts %s" % (peer.name, event.describe())
+            if event.loaners == 0:  # the lobby lends a stock car that meets it: there is none
+                text += (". No stock car fits it (%s): only players whose own upgraded car "
+                         "fits can race it" % event.restriction_text())
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, text)
+        return True
 
     # --- keeping the players across a server restart (#93) ---
     # A restart used to forget everyone: the games' next packet got "not registered", they
@@ -725,7 +920,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 addr = (d["addr"][0], d["addr"][1])
                 if d["id"] in self.peers or addr in self.by_addr:
                     continue
-                peer = Peer(d["id"], addr, d["token"], d["xuid"], d["name"], d["room"],
+                peer = Peer(d["id"], addr, d["token"], d["xuid"],
+                            limits.clean_gamertag(d["name"], d["xuid"]), d["room"],
                             tuple(d["local"]))
                 peer.proxied = d["proxied"]
                 peer.since = d["since"]
@@ -774,7 +970,22 @@ class ForzaLive(asyncio.DatagramProtocol):
             return peer
         return None
 
+    def take_gone(self, token, xuid):
+        """The id of a player dropped for silence that says HELLO again with its token and XUID
+        (GONE_KEEP), or None."""
+        entry = self.gone.pop(token, None)
+        if entry is None:
+            return None
+        pid, gone_xuid, when = entry
+        if gone_xuid != xuid or time.monotonic() - when > GONE_KEEP or pid in self.peers:
+            return None
+        return pid
+
     def drop(self, peer, why):
+        if why == "timed out":
+            self.gone[peer.token] = (peer.id, peer.xuid, time.monotonic())
+            while len(self.gone) > GONE_MAX:
+                del self.gone[next(iter(self.gone))]  # the oldest
         self.challenges.drop(peer.id)
         self.peers.pop(peer.id, None)
         self.restored.discard(peer.id)
@@ -793,6 +1004,12 @@ class ForzaLive(asyncio.DatagramProtocol):
         now = time.monotonic()
         for peer in [p for p in self.peers.values() if now - p.seen > PEER_TIMEOUT]:
             self.drop(peer, "timed out")
+        for token in [t for t, (_, _, when) in self.gone.items() if now - when > GONE_KEEP]:
+            del self.gone[token]
+        listed = {r[1][:8] for p in self.peers.values()
+                  for r in (getattr(p, "match", None), getattr(p, "standby", None)) if r}
+        for sid in [sid for sid in self.lobby_tails if sid not in listed]:
+            del self.lobby_tails[sid]
         for buckets in (self.packet_buckets, self.hello_buckets, self.error_buckets):
             if len(buckets) > 5000:  # forgotten addresses (forged sources)
                 for ip in [ip for ip, (_, last) in buckets.items() if now - last > 60]:
@@ -1005,6 +1222,7 @@ async def main():
     parser.add_argument("-v", "--verbose", action="store_true")
     lsp.add_arguments(parser)
     world.add_arguments(parser)
+    campaign.add_arguments(parser)
     challenge.add_arguments(parser)
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -1014,6 +1232,9 @@ async def main():
         log.info("trusted proxies: %s", ", ".join(map(str, limits.TRUSTED_PROXIES)))
     lsp.configure(args)
     world.configure(args)
+    campaign.configure(args, args.game_db)
+    coop_ledger.configure(args.data_dir)
+    stats.on_skill_write = coop_ledger.LEDGER.host_score
     challenge.configure(args)
     set_rate_limit(args.rate_limit)
 
@@ -1052,6 +1273,8 @@ async def main():
                 await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
     finally:
         server.save_state()  # a restart now keeps the players (#93)
+        if coop_ledger.LEDGER.dirty:
+            coop_ledger.LEDGER.save()
         if server.friends.store.dirty:
             server.friends.store.save()
         if discord_status.enabled():

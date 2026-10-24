@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 namespace forza::telemetry {
 // "The player is driving" (#224), shared by the trigger effects and anything else that must
@@ -29,30 +30,105 @@ inline DrivingGate& Gate() { static DrivingGate gate; return gate; }
 // Thread safe; no telemetry bridge needed. Fed by the XamInputSetState hook.
 inline bool IsDriving() { return Gate().Driving(DrivingNowMs()); }
 
-// "The car's physics is running" (#256): the physics substep hook (hooks/telemetry.cpp) steps it.
-// The substeps stop in the pause menu, rewinds, replays, menus and loading screens, and unlike the
-// rumble above this needs nothing from the pad: the game sends a racing wheel's rumble through
-// XInputdFFSetRumble, never XamInputSetState, so the rumble gate never opens with a wheel. A gap of
-// kSimulationHoldMs ends a run (substeps come at 60 a second); a run counts once it has lasted
-// kSimulationSettleMs, which leaves out the bursts of substeps when a replay starts (1.3 s from
-// the rewind menu's View replay, 0.3 s at its Restart), mostly. Read it with IsSimulating().
-constexpr uint64_t kSimulationHoldMs = 250;
-constexpr uint64_t kSimulationSettleMs = 500;
-struct SimulationGate {
-  std::atomic<uint64_t> last_ms{0};   // the last substep; 0 = never
-  std::atomic<uint64_t> since_ms{0};  // the first substep of the current run
-  void Step(uint64_t now) {
-    now = now ? now : 1;
-    const uint64_t last = last_ms.load(std::memory_order_relaxed);
-    if (!last || now - last >= kSimulationHoldMs) since_ms.store(now, std::memory_order_relaxed);
-    last_ms.store(now, std::memory_order_relaxed);
+// "The player drives" for the racing wheel (#256, #304), from the game's own simulation state,
+// which the world update hook (hooks/telemetry.cpp) reads once a frame: the world object (the main
+// loop's game + 4, the same layout in TU4) has a pause flag (+0x0C: the pause and rewind menus,
+// replays, the second after Resume from here), a time scale (+0x28: -1 while a rewind plays the car
+// backwards, its physics still stepping) and a started flag (+0x0D: clear while it loads); the
+// physics substep hook tells whether the car's physics stepped (sub_82D4DE30). The pad polls tell
+// menus: the game polls every frame, also where no world is updated (main menu, event menus).
+// Counted in frames, never in elapsed time alone: a hitch is one long frame (a shader compile, a
+// collision's physics burst, a window losing focus, streaming), and it is not a pause. The physics
+// gate before this one (#256) ended a run after 250 ms without a substep, so every hitch that long
+// faded the forces out and back in over a second (#304).
+// A state counts after kGateFrames frames in a row; driving also after kDrivingSettleMs, which
+// leaves out most of the burst of physics when a replay starts. A frame where the physics did not
+// step (a frame of 0.1 ms) counts for nothing, unless kIdleFrames of them last kIdleMs.
+enum class Drive : uint8_t { kUnknown, kDriving, kPause, kRewind, kLoading, kMenu, kStopped };
+inline const char* DriveName(Drive d) {
+  switch (d) {
+    case Drive::kDriving: return "driving";
+    case Drive::kPause: return "pause";
+    case Drive::kRewind: return "rewind";
+    case Drive::kLoading: return "loading";
+    case Drive::kMenu: return "menu or loading";
+    case Drive::kStopped: return "the car's physics stopped";
+    default: return "unknown";
   }
-  bool Running(uint64_t now) const {
-    const uint64_t last = last_ms.load(std::memory_order_relaxed);
-    const uint64_t since = since_ms.load(std::memory_order_relaxed);
-    return last && now >= last && now - last < kSimulationHoldMs && now - since >= kSimulationSettleMs;
-  }
+}
+struct WorldFrame {
+  bool paused = false;     // the pause flag (+0x0C)
+  bool rewinding = false;  // the time scale (+0x28) is below 0
+  bool loaded = true;      // the started flag (+0x0D)
+  bool stepped = false;    // the car's physics stepped during this update
 };
-inline SimulationGate& Simulation() { static SimulationGate gate; return gate; }
-inline bool IsSimulating() { return Simulation().Running(DrivingNowMs()); }
+constexpr int kGateFrames = 3;
+constexpr uint64_t kDrivingSettleMs = 500;
+constexpr int kIdleFrames = 30;
+constexpr uint64_t kIdleMs = 500;
+constexpr int kMenuPolls = 24;  // pad polls without a world update (the game polls 4 a frame)
+constexpr uint64_t kMenuMs = 300;
+class PlayerGate {
+ public:
+  // One world update. Called on the game's main loop thread, as the polls are; locked anyway.
+  void Frame(uint64_t now, const WorldFrame& f) {
+    std::lock_guard lock(mutex_);
+    polls_ = 0;
+    last_frame_ms_ = now ? now : 1;
+    Drive d;
+    if (f.rewinding) {
+      d = Drive::kRewind;
+      rewound_ = true;
+    } else if (f.paused) {
+      d = rewound_ ? Drive::kRewind : Drive::kPause;  // the rewind menu, or the pause menu
+    } else if (!f.loaded) {
+      d = Drive::kLoading;
+    } else if (f.stepped) {
+      d = Drive::kDriving;
+    } else {
+      if (idle_frames_++ == 0) idle_since_ = now;
+      if (idle_frames_ < kIdleFrames || now - idle_since_ < kIdleMs) return;
+      d = Drive::kStopped;
+    }
+    if (d != Drive::kStopped) idle_frames_ = 0;
+    if (d == candidate_) {
+      candidate_frames_++;
+    } else {
+      candidate_ = d;
+      candidate_frames_ = 1;
+      candidate_since_ = now;
+    }
+    if (d == state_ || candidate_frames_ < kGateFrames) return;
+    if (d == Drive::kDriving && now - candidate_since_ < kDrivingSettleMs) return;
+    state_ = d;
+    if (d == Drive::kDriving) rewound_ = false;
+  }
+  // One pad poll.
+  void Poll(uint64_t now) {
+    std::lock_guard lock(mutex_);
+    if (!last_frame_ms_) last_frame_ms_ = now ? now : 1;  // counted from the first poll
+    if (state_ == Drive::kMenu || ++polls_ < kMenuPolls || now - last_frame_ms_ < kMenuMs) return;
+    state_ = candidate_ = Drive::kMenu;
+    candidate_frames_ = 0;
+    rewound_ = false;
+    idle_frames_ = 0;
+  }
+  Drive State() {
+    std::lock_guard lock(mutex_);
+    return state_;
+  }
+
+ private:
+  std::mutex mutex_;
+  Drive state_ = Drive::kUnknown;
+  Drive candidate_ = Drive::kUnknown;
+  int candidate_frames_ = 0;
+  uint64_t candidate_since_ = 0;
+  int idle_frames_ = 0;
+  uint64_t idle_since_ = 0;
+  bool rewound_ = false;  // a rewind played since the player last drove: its menu is a rewind
+  int polls_ = 0;
+  uint64_t last_frame_ms_ = 0;
+};
+inline PlayerGate& Player() { static PlayerGate gate; return gate; }
 }
