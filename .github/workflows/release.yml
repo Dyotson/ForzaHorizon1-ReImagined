@@ -47,6 +47,12 @@ jobs:
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
       - name: Livery codec tests
         run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
+      - name: Standalone car tuning model, library and donor checks
+        shell: bash
+        run: |
+          cmake -S forza-recomp/tests/car-tuning -B "$RUNNER_TEMP/car-tuning" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/car-tuning" --config Release --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/car-tuning" -C Release --output-on-failure
       - if: runner.os == 'Linux'
         name: Resource cache eviction lifetime regression
         run: |

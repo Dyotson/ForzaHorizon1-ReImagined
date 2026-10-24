@@ -139,6 +139,8 @@ set(FORZA_SOURCES
     src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/native_car_tuning.cpp
+    src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
