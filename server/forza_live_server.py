@@ -603,7 +603,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             room = {p.xuid: p.name for p in self.room_peers(peer)}
             room[peer.xuid] = peer.name
             stats.write(peer.xuid, lambda x: room.get(x) or lsp.gamertag_of(x), body[1:],
-                        allowed=set(room))
+                        allowed=set(room), verified=bool(getattr(peer, "friends_ok", False)))
         elif body[0] == 2:
             names = {p.xuid: p.name for p in self.peers.values()}
             reply = stats.read(peer.xuid, body[1:], lambda x: names.get(x) or lsp.gamertag_of(x))
@@ -660,6 +660,13 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, event in world.WORLDS.tick(set(worlds), scheduled):
             host = worlds[sid][0]
             self.send(host.addr, WORLD_EVENT, struct.pack(">BI", 1, event[0]) + sid)
+        for sid, event, code in world.WORLDS.empty:  # a campaign round nobody raced
+            cars = (": its cars must be %s" % event.restriction_text()) if event is not None else ""
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, "%s ended at once and nobody raced it%s (a game that has no "
+                                        "such car shows NO CARS AVAILABLE)" % (code, cars))
+        world.WORLDS.empty = []
         for sid, st in world.WORLDS.dropped:  # a campaign the host's game never took
             for p in self.world_members(sid):
                 if p.features & chat.FEATURE:
@@ -761,9 +768,8 @@ class ForzaLive(asyncio.DatagramProtocol):
         elif coop_ledger.LEDGER.open_round(sid):
             self.chat.notice(peer, "An event is running in this world: start the next one when "
                                    "you are back in the free roam")
-        elif coop_ledger.LEDGER.unsettled(peer.xuid) >= coop_ledger.MAX_ROUNDS_PER_PLAYER:
-            self.chat.notice(peer, "You have %d co-op results waiting for your launcher: play a "
-                                   "session from it first" % coop_ledger.MAX_ROUNDS_PER_PLAYER)
+        elif coop_ledger.LEDGER.waiting_for(peer.xuid) >= coop_ledger.MAX_WAITING:
+            self.chat.notice(peer, coop_ledger.LEDGER.refusal(peer.xuid))
         else:
             event = campaign.find(arg)
             if event is None:
@@ -772,6 +778,9 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return True
             world.WORLDS.request(sid, campaign=event, by=peer.name, by_xuid=peer.xuid)
             text = "%s starts %s" % (peer.name, event.describe())
+            if event.loaners == 0:  # the lobby lends a stock car that meets it: there is none
+                text += (". No stock car fits it (%s): only players whose own upgraded car "
+                         "fits can race it" % event.restriction_text())
             for p in self.world_members(sid):
                 if p.features & chat.FEATURE:
                     self.chat.notice(p, text)

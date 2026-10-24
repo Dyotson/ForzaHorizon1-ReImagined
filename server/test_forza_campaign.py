@@ -141,6 +141,9 @@ class CampaignDbTest(unittest.TestCase):
         self.assertEqual(root.find("StartingGridOptions").get("GridOrderingType"),
                          "PIWithPlayerLast")
         self.assertEqual(root.find("EndConditionOptions").attrib["NumLaps"], "2")
+        # a loaner from every car that meets the restrictions, not only the class's rental
+        self.assertEqual(root.find("Overrides").get("ForceOnlyRentalCars"), "0")
+        self.assertEqual(cp.find("FR05").restriction_text(), "B class, AWD")
         street = ET.fromstring(cp.campaign_xml(cp.find("STREET_PLNS_005"), laps=1))
         self.assertEqual((street.get("GameTypePreset"), street.get("GameTypeFilterType"),
                           street.get("UseTraffic"), street.find("EndConditionOptions").get("Type")),
@@ -156,7 +159,8 @@ class CampaignDbTest(unittest.TestCase):
         self.assertEqual(sorted(e.id for e in cp.available()), [4, 231])
         cp.configure(parser.parse_args(["--coop-street"]), self.db)
         self.assertEqual(cp.find("STREET_PLNS_005").describe(),
-                         "STREET_PLNS_005: A class, 7 CPU drivers, street race, Sunset")
+                         "STREET_PLNS_005: A class, 7 CPU drivers, street race (no traffic online, "
+                         "so no career result), Sunset")
 
     def test_listing(self):
         self.assertEqual(cp.listing(), ["Level 0: FR05", "Level 5: FR50", "Street: STREET_PLNS_005"])
@@ -263,10 +267,13 @@ class CoopWorldCase(unittest.TestCase):
         results, _ = x.decode(x.HopperGetGameOptions_Results, reply[12:])
         return ET.fromstring(results["gameOptionsXml"])
 
-    def race_report(self, peer, place, sid, finished=True, places=8, hopper=None, key=True):
-        """User.WriteRaceStatsEx at a race's end."""
+    def race_report(self, peer, place, sid, finished=True, places=8, hopper=None, key=True,
+                    winnings=0):
+        """User.WriteRaceStatsEx at a race's end (winnings: its onlineWinnings, before the race
+        pays)."""
         stats = {"finished": finished, "userFinishPosition": place, "maxPlaces": places,
-                 "hopperId": lsp.COOP_HOPPER if hopper is None else hopper, "sessionId": sid}
+                 "hopperId": lsp.COOP_HOPPER if hopper is None else hopper, "sessionId": sid,
+                 "onlineWinnings": winnings}
         return self.title_call(peer, "User", "WriteRaceStatsEx", x.UserWriteRaceStats_Head,
                                {"id": 1, "raceStats": stats}, key)
 
@@ -317,6 +324,26 @@ class CoopFestivalTest(CoopWorldCase):
         store.befriend(self.c.xuid, self.b.xuid)
         self.assertEqual(self.search(self.c, lsp.COOP_HOPPER), [sid])
 
+    def test_event_warns_when_no_stock_car_meets_it(self):
+        """The lobby lends each player a stock car that meets the event (ForceOnlyRentalCars 0):
+        when the game's database has none, /event says only an upgraded car of one's own can."""
+        columns = sorted(set(cp.CAR_IDS.values()) | {c for c, _ in cp.CAR_RANGES.values()})
+        db = sqlite3.connect(self.db)
+        db.execute("CREATE TABLE Data_Car (%s, IsUnicorn INT)" % ", ".join('"%s"' % c for c in columns))
+        car = dict.fromkeys(columns, 0)
+        car.update(ClassID=4, DriveTypeID=3, Year=2002, BaseCost=30000, PerformanceIndex=0.46)
+        db.execute("INSERT INTO Data_Car VALUES (%s, 0)" % ", ".join("?" * len(columns)),
+                   [car[c] for c in columns])  # a B-class AWD car (the GT-R): FR05 has one
+        db.commit()
+        db.close()
+        cp._events = None
+        self.assertEqual((cp.find("FR05").loaners, cp.find("FR50").loaners), (1, 0))
+        self.coop_world()
+        self.say(self.a, "/event FR50")
+        self.assertEqual(self.notices(self.b), [
+            "Driver1 starts FR50: A class, 1960-1969, 7 CPU drivers, 1 lap, Dawn. No stock car fits "
+            "it (A class, 1960-1969): only players whose own upgraded car fits can race it"])
+
     def test_event_from_the_host_starts_a_campaign_round(self):
         sid = self.coop_world()
         self.say(self.a, "/event fr05")
@@ -347,6 +374,15 @@ class CoopFestivalTest(CoopWorldCase):
         found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid, trusted=True, coop=True)
         self.assertEqual((found[0], found[1].code), (sid, "FR05"))
         self.assertIsNone(world.WORLDS.result(self.c.xuid, 1, 8, 1))
+        # an earlier world's round that still lists the player is not the one reported
+        older = dict(world.WORLDS.rounds)
+        world.WORLDS.rounds = {b"world-old": (type("E", (), {"id": 231, "code": "FR50"}),
+                                              time.monotonic(), {self.b.xuid: "Driver2"}, "Driver1")}
+        world.WORLDS.rounds.update(older)
+        found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid)
+        self.assertEqual((found[0], found[1].code), (sid, "FR05"))
+        # a race in a world without a campaign round names none (not another world's)
+        self.assertIsNone(world.WORLDS.result(self.b.xuid, 3, 8, 1, session=b"world-03"))
 
     def test_event_is_refused(self):
         sid = self.coop_world()
