@@ -853,12 +853,211 @@ a campaign round names none. In `launcher/test_coop_grant.py`:
   unlocks. M3 should build on it once it lands, not beside it.
 - **Results that wait:** an in-game note when a co-op result waits (today only the launcher's
   Play page says so), and a way for a player to drop one.
-- **Before `/event`:** whether every player has a car for the event (FR63 above), which needs
-  the client; this could also be M4 with the event prompt.
+- **Before `/event`:** whether every player has a car for the event (FR63 above). Done
+  differently in milestone 3: every player gets a loaner that meets the event (see "Events
+  nobody has a car for").
 - **Online winnings at the source:** the game asks the server for a race multiplier at every
-  race start (`Hopper.GetRaceMultipliers`, `specialMultiplier`, always 1.0 today). Whether it
-  scales the online winnings, the online XP or both is not measured. If it scales only the
-  winnings, a co-op round could be served 0 and the grant could pay the whole prize again.
+  race start (`Hopper.GetRaceMultipliers`, `specialMultiplier`, always 1.0 today). Measured in
+  milestone 3 (see "The race multiplier").
+
+## Milestone 3 (2026-10-24)
+
+### Events nobody has a car for ("NO CARS AVAILABLE")
+
+`/event FR63` ("MUST BE AUDI", S class) showed "NO CARS AVAILABLE" on both games, and the round
+ended at once with no results. The game's database explains it (the queries were logged with
+`FORZA_SQL_LOG=1`, `src/hooks/database_query.cpp`):
+
+- **Online rounds give a player without a qualifying car of its own a car from the rental
+  garage.** (M1's FR50 used the saves' own Shelby Daytonas.) The presets' `<Overrides>`
+  (TU4 `GameOptionPresets.xml`, which a round without its own `Overrides` inherits) set
+  `ForceOnlyRentalCars="1"`. The lobby then picks
+  `SELECT Id FROM Restrictions_Data_Car AS Garage WHERE Garage.IsRentable=1 AND ... ORDER BY
+  PerformanceIndex DESC`. `Data_Car.IsRentable` marks one stock car per class: Rabbit GTI,
+  Fiat 500 Abarth, Scion FR-S, Skyline GT-R V-Spec II (B, AWD), Ford GT (A), Gallardo LP570
+  (S), Gumpert Apollo (R3), 599XX (R2) and FXX (R1). That is why the earlier rounds ran in GT-Rs
+  (FR05, B AWD) and Gumpert Apollos (FR69, R3). For a player who owns no qualifying car, an
+  event that the class's one rental does not meet has no car. By the restrictions alone that
+  is about 40 of the 70 events.
+- **With `ForceOnlyRentalCars="0"` the game lends any car that meets the event.** The same
+  pick runs without `IsRentable` (`... WHERE Garage.ClassId=6 AND Garage.MakeId=3 AND
+  IsUnicorn=0 AND IsCarDisc1(Id) ...`), over every installed car, upgrade levels included, best
+  PI first. In a round of FR63 with it, the guest, whose save has no S-class Audi, got an Audi
+  R8 GT. Both raced to the end, and the guest's garage was unchanged afterwards (the car is
+  only lent). The host had an R8 GT of its own in that run (added to its scratch save), and the
+  lobby showed the same car for both.
+- **The fix (server):** campaign rounds send their own `<Overrides>` with
+  `ForceOnlyRentalCars="0"` (`forza_campaign.CAMPAIGN_XML`). Every event whose restriction some
+  installed car meets is playable; no client change was needed.
+- **And an explanation when a round still ends at once:** a campaign round that closes within
+  90 s without a single report (`forza_world.EMPTY_ROUND`) is told to the world: "FR63 ended at
+  once and nobody raced it: its cars must be S class, Audi (a game that has no such car shows
+  NO CARS AVAILABLE)". This uses what the server sees (the host's game moving to the next round
+  with nobody's race stats).
+- **And a warning before it, where the database tells:** the loaner is a stock car, and four
+  events have none: FR24 and FR65 (A class, up to 15,000 and 20,000 CR), FR60 (A class, FWD) and
+  FR25 (A class, FWD, one body type). Their career race expects a cheaper car upgraded into A.
+  The server checks every event against `Data_Car` at start (`forza_campaign.car_fits`, the
+  restriction columns the lobby's pick names). For these four, `/event` adds "No stock car fits
+  it (A class, FWD): only players whose own upgraded car fits can race it". The server can't see
+  garages, so this is as far as it can tell in advance.
+
+Tests: `server/test_forza_campaign.py` (the round's `ForceOnlyRentalCars="0"`, the restriction
+text, the warning for an event no stock car fits) and `server/test_forza_coop_ledger.py` (a
+round nobody raced is told to the world and a raced one is not, and the multiplier knob gives a
+campaign round's players its values in turn and everyone else 1.0).
+
+### The race multiplier (`Hopper.GetRaceMultipliers`)
+
+At every race start the game asks the server for a multiplier (`Hopper.GetRaceMultipliers`,
+`specialMultiplier`; the server has always answered 1.0). The test knob
+`--coop-race-multiplier 2` or `0,1` gives a campaign round's players that value, one value per
+round in turn. Three rounds of FR63 were raced, with A 7th and B 8th each time, and both saves
+were decoded around each round:
+
+| Multiplier | A online XP | A online winnings (online level-ups) | B online XP | B online winnings (level-ups) |
+| --- | --- | --- | --- | --- |
+| 2 | +8,680 | +17,000 (2) | +7,200 | +9,000 (1) |
+| 0 | +4,030 | +5,000 (0) | +3,600 | +20,500 (1) |
+| 1 | +4,030 | +10,500 (1) | +3,300 | +20,500 (1) |
+
+- **Online XP:** 2 doubles it (the XP REWARDS screen's total), and 0 is taken as 1, not as
+  nothing.
+- **Credits:** no sign of it. A's round without a level-up paid 5,000 at 0, the same race payout
+  the other rounds imply. `Main/OnlineWinnings` also takes the online level-ups' rewards, which
+  vary from 4,000 to 15,500 here, so those rounds can't separate the two.
+
+So the multiplier can't make an event round pay no credits, and it would change the online XP
+that all online play earns. **The grant's deduction stays**, and it is also the more robust of
+the two. It works from what the save itself recorded around the race, needs nothing from the
+client, and errs on the safe side: when the race's own winnings are not known it pays no prize.
+One more thing the table shows: a level-up's reward lands in `Main/OnlineWinnings` too. So a
+round in which the player levels up online deducts that reward from the prize as well. That
+lowers the prize, never pays twice, and an in-game grant (below) could separate the two.
+
+### Design: the in-game grant (option B), for players who start without the launcher
+
+Today a co-op result reaches a career only through the launcher, after the session. A player
+who starts the game some other way (a shortcut, Steam, a script) gets nothing: their results
+wait 30 days and the launcher drops them as "from a game the launcher did not start". Option B
+grants in the game, right after the race, with the same rules and the same ledger. It is a
+design only; nothing of it is built.
+
+**When.** After an online campaign round's race, in the multiplayer race flow, once
+`CPostRaceUpdateProfile` (TU4 enter `sub_829DCB88`) has run and before its `CSaveProfile`. The
+client already knows a campaign round: `world_events.cpp` keeps the event and track the server
+sent (WORLD_EVENT op 2), and `CampaignGame()` tells the round from the world's free roam. A hook
+on the flow state after the post-race update starts the grant on each console for its own
+player.
+
+**What it asks the server.** The ledger stays the authority: only it has the host game's write
+that confirms a guest's place. The client asks over the Forza Live UDP channel, which already
+carries the world events and chat and proves the player with its friends key:
+
+- a new WORLD_EVENT op ("my result of round R") is answered by the round's entry for that
+  player, as `GET /coop/results` gives it (event, place, places, winnings), or by "not yet";
+- the host's `XSessionWriteStats` and the guest's `WriteRaceStatsEx` arrive at the race's end,
+  so the client retries for a few seconds while the result screens show;
+- a result that isn't grantable gets a reason (no host write, not finished, a street race).
+
+**What it writes.** The same as the launcher, through the game's own code where it exists, so
+that the game's cached state stays right:
+
+- **the results:** the career writer (`sub_826ADDD0`, base `sub_82607BF8`), called with a
+  career-component-shaped object whose `+12` is the event id. It inserts or improves
+  `Career_RaceResults` and `Career_EventResults` exactly as a career race does. What it reads
+  from the local player in an online race must be found first (the open question under
+  "Granting the result to each participant");
+- **the XP improvement:** the points from `sub_8253B230` (what the event has left to earn),
+  added through the wristband tracker that `sub_824BEF10` sets up, so the free roam's "new
+  wristband" reminder follows. `Main/WristbandLevel` stays Race Central's;
+- **the event's own unlocks:** `Rewards_EventUnlock` through `sub_8253B988`;
+- **the prize, less what the race paid:** in game this is exact, with no bracket and no session
+  matching. The post-race payout's result (`sub_826C0C00`, its output `+0`) or the
+  `Main/OnlineWinnings` change across the race is the online winnings. The grant adds
+  `max(0, prize - winnings)` to `Main/Credits`;
+- the flow's own `CSaveProfile` then saves all of it.
+
+**Settling.** After the save, the client confirms the round to the server (the same
+"applied" the launcher sends). The two paths can't pay twice. The place only ever improves, and
+the launcher pays the prize only when it improves the save's place. So a result that the game
+granted, and that the launcher fetches again because the confirmation was lost, comes back
+"unchanged" there. A locked event (not in the live `CareerEventUnlocks`) is not granted in game
+either: it stays on the server for the launcher or for a later in-game check, which could run
+when the free roam loads.
+
+**What the player sees.** A line on the results screen or a toast: "Career: FR69 7th, +80 XP,
++4,300 CR", or "FR69 waits until your career unlocks it". Today only the launcher's Play page
+says so.
+
+**Per build.** All of it needs the TU4 and the base addresses (`src/tu4_addresses.h` maps
+the hooks). The base game's career component has its post-race slot at `+0x28`, not `+0x30`.
+Base and TU4 games never share a world, so a world is one build.
+
+**Risks and order of work:**
+
+1. Find what the career writer reads in an online race (its local player through the online
+   game object `*(0x833F4A80)`), and call it on a scratch save from a test hook outside any
+   race.
+2. Grant from the flow in a two-game run: the results, XP and credits in the saved file, Race
+   Central's wristband prompt, and the map's points card.
+3. Behind a cvar (`coop_ingame_grant`, off at first). The launcher path stays and settles
+   whatever the game did not. The server needs only the new op.
+
+The risk is writing career state from a flow that never did. A wrong call is saved by
+`CSaveProfile`, so every step is checked on scratch saves, as the launcher's grant was.
+
+### Option B: findings so far (parked)
+
+An attempt to build the design above, for TU4 only, stopped before any code was written: writing
+XP and credits from a hook needs more reverse engineering than expected. The launcher grant
+stays the way a co-op result reaches a career. What was found:
+
+1. **The profile's values are a tree keyed by hashes.** In a running game, the in-memory
+   profile is a tree of nodes keyed by a 32-bit hash. It has the same fields and types as the
+   `ForzaProfile` file the launcher edits. `Main/Credits` is the node keyed `0xB2050D51`; its value
+   object has the vtable `0x821551C0`, the u32 value at `+8` and the type 3 at `+16`. It was
+   found by scanning guest memory for the save's credits. The strings `Main/Credits`
+   (`0x8200DFD4`) and `Main/XP` (`0x82005948`) are referenced by no code. The hash is none of
+   CRC32, CRC32C, FNV-1/1a, djb2, sdbm, one-at-a-time, lookup2 or murmur2 over the name, its path
+   or UTF-16 forms. So a hook can't find these values safely, and writing them directly is out.
+2. **The career's own components can do the work.** The career race's component set (TU4
+   `sub_826AC9D0`) builds:
+   - a 360-byte payout component, `sub_826C67D0(this, *0x833ED72C, *0x833ED728 (the event id),
+     byte 0x833ED720, 0)`. Its event id at `+16` is what `sub_826C0C00` reads to pay the
+     event's `CashPrize`;
+   - a CCareerComponent (vtable `0x8203852C`, the event id at `+12`). Its post-race step
+     (`sub_826B06A8`) calls the career writer `sub_826ADDD0`;
+   - `sub_82592AA0`, and more when the byte at `0x833ED721` is 10.
+
+   The online race's set (`sub_826AF3C0`) builds the same payout component with an event id of
+   0, which is why an online race's prize base is 0.
+3. **The plan.** For a campaign round only, behind a cvar (`coop_ingame_grant`):
+   - pass the event id to that payout component, so the game pays the career prize itself;
+   - add a CCareerComponent to the online set, so the race's own `CPostRaceUpdateProfile` writes
+     the result with the game's code;
+   - run the event's unlock rewards (`sub_8253B988`);
+   - let the multiplayer flow's `CSaveProfile` save, then send the server an "applied" message
+     (a new WORLD_EVENT op), so that the launcher finds the result settled. This also works for a
+     game started outside the launcher.
+4. **Unknowns to settle first:**
+   - where an online race's own winnings come from. If they don't come from that payout
+     component, the career prize would be paid on top of them again;
+   - where a career race adds its wristband XP: the career component, or a step only the
+     festival flow runs (`ShowPostRaceCareerPointsScreen`);
+   - what the career writer reads from the online game object (`*(0x833F4A80)`) in an online
+     race.
+5. **Default:** the cvar off until a two-game run shows the result, the XP and the credits each
+   landing exactly once. After that, on, with the launcher grant kept as the fallback for
+   whatever the game doesn't settle.
+6. **Estimate:** about a day. That is about two hours of reverse engineering, then two or three
+   build and two-game test rounds of about half an hour each; a client build is incremental.
+   The risk is medium to high, because it changes what an online race's components do.
+
+A smaller first step would write only the result and the event's unlocks in game, through the
+game's own SQL on the `Profile0_*` tables (the query function `src/hooks/database_query.cpp`
+wraps). XP and credits would stay with the launcher. That needs a ledger flag: otherwise the
+launcher finds the place already stored and pays no XP or credits.
 
 ## Open questions (measure first)
 

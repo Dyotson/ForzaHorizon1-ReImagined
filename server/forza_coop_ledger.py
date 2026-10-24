@@ -159,6 +159,14 @@ class Ledger:
 
     # --- the game's side ---
 
+    def open_round_of(self, xuid, now=None):
+        """The id of the open campaign round the player is one of the humans of, or None."""
+        now = time.time() if now is None else now
+        x = hx(xuid)
+        with self.lock:
+            return next((r["id"] for r in self.rounds.values()
+                         if not self.closed(r, now) and x in r["members"]), None)
+
     def open_round(self, sid):
         return next((r for r in self.rounds.values() if r["open"] and r["sid"] == sid.hex()), None)
 
@@ -184,7 +192,7 @@ class Ledger:
 
     def close_round(self, sid):
         """The world's next round started: its campaign round takes no more reports (and is
-        dropped if none of its results waits)."""
+        dropped if none of its results waits). Returns the rounds it closed (copies)."""
         with self.lock:
             closed = [r for r in self.rounds.values() if r["open"] and r["sid"] == sid.hex()]
             for r in closed:
@@ -197,6 +205,7 @@ class Ledger:
             if closed:
                 self.expire()
                 self.dirty = True
+            return [dict(r) for r in closed]
 
     def race_written(self, xuid, winnings):
         """Any race's User.WriteRaceStatsEx from the player's own game: its onlineWinnings

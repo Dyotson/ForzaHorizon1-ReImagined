@@ -343,6 +343,44 @@ class LedgerTest(CoopWorldCase):
         ledger.LEDGER.expire(now=time.time() + ledger.KEEP_DAYS * 86400 + 60)
         self.assertNotIn(rid, ledger.LEDGER.rounds)
 
+    def multiplier(self, peer):
+        reply = self.title_call(peer, "Hopper", "GetRaceMultipliers",
+                                lsp.x.HopperGetRaceMultipliers_Params,
+                                {"maxSpecialMultiplierDescriptionLength": 64})
+        results, _ = lsp.x.decode(lsp.x.HopperGetRaceMultipliers_Results, reply[12:])
+        return results["specialMultiplier"]
+
+    def test_the_race_multiplier_knob_turns_per_campaign_round(self):
+        import forza_campaign as cp
+        self.assertEqual(self.multiplier(self.a), 1.0)
+        cp.RACE_MULTIPLIERS = [0.0, 2.0]
+        self.addCleanup(setattr, cp, "RACE_MULTIPLIERS", [1.0])
+        self.assertEqual(self.multiplier(self.a), 1.0)   # no campaign round
+        self.run_round()
+        self.assertEqual((self.multiplier(self.a), self.multiplier(self.b), self.multiplier(self.c)),
+                         (0.0, 0.0, 1.0))              # C is not in the world
+        self.end_round()
+        self.run_round("FR50")
+        self.assertEqual(self.multiplier(self.a), 2.0)
+
+    def test_a_round_nobody_raced_is_told(self):
+        """A round that closes at once without a report (no player had a car it allows: NO CARS
+        AVAILABLE) is explained to the world."""
+        self.run_round("FR05")
+        self.transport.sent.clear()
+        self.end_round()
+        self.server.world_tick()
+        self.assertEqual(self.notices(self.b), ["FR05 ended at once and nobody raced it: its cars "
+                                                "must be B class, AWD (a game that has no such car "
+                                                "shows NO CARS AVAILABLE)"])
+        rid = self.run_round("FR05")  # a raced round is not
+        self.race_report(self.a, 3, self.sid)
+        self.transport.sent.clear()
+        self.end_round()
+        self.server.world_tick()
+        self.assertEqual(self.notices(self.b), [])
+        self.assertIn(rid, ledger.LEDGER.rounds)
+
     def test_a_dropped_campaign_is_told(self):
         self.say(self.a, "/event FR05")
         world.WORLDS.state[self.sid]["since"] -= world.PENDING_TIMEOUT + 1
