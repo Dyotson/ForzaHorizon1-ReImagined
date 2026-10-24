@@ -81,9 +81,11 @@ class Ledger:
             log.warning("cannot read %s: %s", self.path, e)
 
     def save(self):
-        self.dirty = False
+        """Writes the ledger. It stays dirty until the file is replaced, so a failed write is
+        tried again at the next tick and at shutdown."""
         self.saved = time.monotonic()
         if not self.path:
+            self.dirty = False
             return
         try:
             tmp = self.path + ".tmp"
@@ -92,6 +94,8 @@ class Ledger:
             os.replace(tmp, self.path)
         except OSError as e:
             log.warning("cannot write %s: %s", self.path, e)
+            return
+        self.dirty = False
 
     def maybe_save(self):
         """From the server's tick: the changes of the last SAVE_EVERY seconds, in one write."""

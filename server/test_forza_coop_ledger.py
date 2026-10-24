@@ -203,6 +203,30 @@ class LedgerTest(CoopWorldCase):
         self.assertNotIn(rid, again.rounds)  # settled: dropped
 
 
+    def test_a_failed_write_is_tried_again(self):
+        rid = self.run_round()
+        self.race_report(self.a, 3, self.sid)
+        real = os.replace
+        calls = []
+        def fail_once(src, dst):
+            calls.append(dst)
+            if len(calls) == 1:
+                raise PermissionError("sharing violation")
+            return real(src, dst)
+        ledger.os.replace = fail_once
+        self.addCleanup(setattr, ledger.os, "replace", real)
+        ledger.LEDGER.saved -= ledger.SAVE_EVERY
+        with self.assertLogs("forza-live", "WARNING"):
+            self.server.world_tick()                          # the write fails
+        self.assertTrue(ledger.LEDGER.dirty)                  # still to be written
+        ledger.LEDGER.saved -= ledger.SAVE_EVERY
+        self.server.world_tick()                              # and the next tick writes it
+        self.assertFalse(ledger.LEDGER.dirty)
+        self.assertEqual(len(calls), 2)
+        again = ledger.Ledger(self.ledger_file)
+        again.load()
+        self.assertEqual([e["id"] for e in again.pending(self.a.xuid)], [rid])
+
 class OperatorAndPlaylistTest(CoopWorldCase):
     def test_world_event_for_all_leaves_co_op_worlds_alone(self):
         sid = self.coop_world()
