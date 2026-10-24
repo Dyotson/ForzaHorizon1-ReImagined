@@ -458,10 +458,10 @@ index 6dbb9d8..7a376f8 100644
    if (pipeline == VK_NULL_HANDLE || pipeline_layout_provider == nullptr) {
 diff --git a/src/graphics/vulkan/fh1_pipeline_lookahead.cpp b/src/graphics/vulkan/fh1_pipeline_lookahead.cpp
 new file mode 100644
-index 0000000..941bb2b
+index 0000000..906fd53
 --- /dev/null
 +++ b/src/graphics/vulkan/fh1_pipeline_lookahead.cpp
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,617 @@
 +// FH1 (#378): building the pipelines of queued draws before the command processor reaches them
 +// (fh1_pipeline_lookahead.h). The idea is ReGPU's (github.com/zer0ducksgiven/ReGPU, MIT;
 +// renderer.cpp GpuLookahead): at a pipeline miss, walk what is queued on shadow registers and
@@ -505,8 +505,9 @@ index 0000000..941bb2b
 +                    "already queued behind it and start building every pipeline they need at "
 +                    "once, in the background (with synchronous creation: wait once for all)")
 +    .lifecycle(rex::cvar::Lifecycle::kHotReload);
-+REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_packets, 65536, "GPU/Vulkan",
-+                      "Pipeline lookahead: command packets looked at in one walk at most")
++REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_packets, 262144, "GPU/Vulkan",
++                      "Pipeline lookahead: command packets looked at in one walk at most "
++                      "(padding words included)")
 +    .debug_only();
 +REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_pipelines, 64, "GPU/Vulkan",
 +                      "Pipeline lookahead: pipelines started by one walk at most")
@@ -760,7 +761,7 @@ index 0000000..941bb2b
 +    uint32_t last_draw_bits = 0;
 +    Shader* last_vertex_shader = nullptr;
 +    Shader* last_pixel_shader = nullptr;
-+    uint32_t draws = 0, queued = 0, out_checks = 0;
++    uint32_t draws = 0, queued = 0;
 +    bool out = false;
 +
 +    void Register(uint32_t index, uint32_t value) {
@@ -786,8 +787,10 @@ index 0000000..941bb2b
 +          pipelines.LoadShaderAhead(xenos::ShaderType(type), ucode.data(), dwords);
 +      (type == uint32_t(xenos::ShaderType::kVertex) ? vertex_shader : pixel_shader) = shader;
 +    }
++    // Asked by the walker every few packets and after each draw looked at (which may have
++    // translated shaders).
 +    bool Out() {
-+      if (!out && !(++out_checks & 63)) {
++      if (!out) {
 +        out = std::chrono::steady_clock::now() >= deadline;
 +      }
 +      return out;
@@ -1078,10 +1081,10 @@ index 0000000..941bb2b
 +}  // namespace rex::graphics::vulkan
 diff --git a/src/graphics/vulkan/fh1_pipeline_lookahead.h b/src/graphics/vulkan/fh1_pipeline_lookahead.h
 new file mode 100644
-index 0000000..b0270aa
+index 0000000..fec8310
 --- /dev/null
 +++ b/src/graphics/vulkan/fh1_pipeline_lookahead.h
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,349 @@
 +// FH1 (#378): building the pipelines of queued draws before the command processor reaches them.
 +//
 +// When a draw needs a pipeline that does not exist yet, the command processor walks the commands
@@ -1190,7 +1193,10 @@ index 0000000..b0270aa
 +//   End Draw(uint32_t initiator, bool dma, uint32_t dma_base, uint32_t dma_size)
 +//                                                  a draw (kQueueEnd to go on, else why to stop)
 +//   End Swap()                                     the end of a frame
-+//   bool Out()                                     a time limit was reached
++//   bool Out()                                     the time limit was reached (asked every
++//                                                  kOutInterval words, padding included)
++constexpr uint32_t kOutInterval = 64;
++
 +template <typename Hooks>
 +class Walker {
 + public:
@@ -1199,21 +1205,26 @@ index 0000000..b0270aa
 +
 +  // Walks `count` dwords of `base` from dword `start`, wrapping at `wrap` dwords (0: no wrap).
 +  // At depth 0, stopped() is then the dword (from `start`) where the walk stopped: the packet
-+  // that stopped it, or `count`.
++  // that stopped it, or `count`. Every packet counts towards the packet limit, padding words
++  // included, and the time limit is checked every kOutInterval of them whatever their type.
 +  End Walk(const uint32_t* base, uint32_t start, uint32_t count, uint32_t wrap,
 +           uint32_t depth = 0) {
 +    Buffer b{base, start, count, wrap};
 +    uint32_t i = 0;
 +    End end = End::kQueueEnd;
 +    while (i < count) {
++      if (++packets_ > max_packets_) {
++        end = End::kPackets;
++        break;
++      }
++      if (!(packets_ % kOutInterval) && hooks_.Out()) {
++        end = End::kTime;
++        break;
++      }
 +      uint32_t header = b.Word(i);
 +      if (header == 0 || (header >> 30) == 2) {
 +        ++i;  // padding (zero words and type-2 packets)
 +        continue;
-+      }
-+      if (++packets_ > max_packets_) {
-+        end = End::kPackets;
-+        break;
 +      }
 +      uint32_t type = header >> 30;
 +      if (type == 1) {
@@ -1396,7 +1407,7 @@ index 0000000..b0270aa
 +      default:
 +        break;
 +    }
-+    return hooks_.Out() ? End::kTime : End::kQueueEnd;
++    return End::kQueueEnd;
 +  }
 +
 +  static bool WaitMatched(uint32_t function, uint32_t value, uint32_t ref) {

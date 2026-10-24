@@ -80,7 +80,10 @@ struct Hooks {
     ++swaps;
     return la::End::kQueueEnd;
   }
-  bool Out() { return false; }
+  // The time limit: reached once Out() has been asked more than out_after times.
+  uint32_t out_calls = 0;
+  uint32_t out_after = UINT32_MAX;
+  bool Out() { return ++out_calls > out_after; }
 };
 
 la::End WalkAll(Hooks& hooks, const Words& words, uint32_t start = 0, uint32_t count = UINT32_MAX,
@@ -215,6 +218,38 @@ int main() {
     for (int i = 0; i < 4; ++i) d << Type3(la::pm4::kDrawIndx2, 1) << ((2u << 6) | 4);
     CHECK(WalkAll(stop_hooks, d, 0, UINT32_MAX, 0, 1000, &walker) == la::End::kPipelines);
     CHECK(stop_hooks.draws.size() == 2 && walker->stopped() == 3);
+  }
+
+  // The time limit is asked on every kind of packet: long runs of register writes (type 0 and
+  // type 1) and of padding stop when it is reached, and padding counts towards the packet limit.
+  {
+    const uint32_t interval = la::kOutInterval;
+    Words type0, type1, padding;
+    for (uint32_t i = 0; i < 10000; ++i) {
+      type0 << Type0(0x2001, 1) << i;
+      type1 << (0x40000000u | 0x10u | (0x11u << 11)) << i << i;
+      padding << ((i & 1) ? kType2 : 0u);
+    }
+    la::Walker<Hooks>* walker;
+    Hooks h0;
+    h0.out_after = 0;  // out from the start
+    CHECK(WalkAll(h0, type0, 0, UINT32_MAX, 0, 1000000, &walker) == la::End::kTime);
+    CHECK(h0.out_calls == 1 && walker->stopped() == (interval - 1) * 2);
+    CHECK(h0.registers[0x2001] == interval - 2);
+    Hooks h1;
+    h1.out_after = 0;
+    CHECK(WalkAll(h1, type1, 0, UINT32_MAX, 0, 1000000, &walker) == la::End::kTime);
+    CHECK(h1.out_calls == 1 && walker->stopped() == (interval - 1) * 3);
+    Hooks hp;
+    hp.out_after = 2;  // out at the third question
+    CHECK(WalkAll(hp, padding, 0, UINT32_MAX, 0, 1000000, &walker) == la::End::kTime);
+    CHECK(hp.out_calls == 3 && walker->stopped() == 3 * interval - 1);
+    Hooks hl;  // never out: the packet limit, padding words counted
+    CHECK(WalkAll(hl, padding, 0, UINT32_MAX, 0, 1000, &walker) == la::End::kPackets);
+    CHECK(walker->stopped() == 1000 && hl.out_calls == 1000 / interval);
+    Hooks hall;  // and without limits the whole run is walked, asked all along
+    CHECK(WalkAll(hall, type0, 0, UINT32_MAX, 0, 1000000, &walker) == la::End::kQueueEnd);
+    CHECK(hall.registers[0x2001] == 9999 && hall.out_calls == 10000 / interval);
   }
 
   // A packet longer than what is queued; one longer than its indirect buffer ends only that
