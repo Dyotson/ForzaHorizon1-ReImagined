@@ -1,6 +1,6 @@
 // The slow-frame report of the GPU command processor (#45): src/graphics/fh1_frame_cost.h of
 // the patched SDK source (patch 0180). Which frames are slow, when a line is logged and what it
-// names as the cause.
+// names as the cause; and the once-a-minute summary (patch 0200).
 // Build with the patched SDK source's src/graphics on the include path:
 //   c++ -std=c++17 -I ~/rexglue-sdk-src-forza/sdk/src/graphics
 //       tools/test_frame_cost.cpp -o test_frame_cost
@@ -277,6 +277,87 @@ int main() {
     CHECK(a.draws == 8000 && a.render_target_trims == 1 && a.textures_evicted == 7);
     CHECK(a.readbacks == 2 && a.readbacks_skipped == 5 && a.readback_wait_ms == 1.5);
     CHECK(a.texture_evicted_bytes == 3 * kMB && a.upload_bytes == 4 * kMB);
+  }
+  // The minute summary (#45, patch 0200): one line a minute with the minute's frames and the
+  // sizes now; the next minute counts only its own frames and watch checks.
+  {
+    cost::Summary summary;
+    cost::Snapshot s;
+    s.textures = 1873;
+    s.texture_bytes = 312 * kMB;
+    s.render_targets = 39;
+    s.render_target_bytes = 553 * kMB;
+    s.shaders = 1650;
+    s.pipelines = 1185;
+    s.framebuffers = 120;
+    s.watch_ranges = 3700;
+    s.watch_nodes = 5200;
+    s.watch_nodes_visited = 1000;
+    s.watch_fires = 10;
+    s.readback_buffers = 12;
+    s.readback_buffer_bytes = 25 * kMB;
+    s.readback_keys = 64;
+    s.guest_virtual_bytes = 1830 * kMB;
+    s.guest_physical_bytes = 410 * kMB;
+    summary.SetStart(1000, 10);
+    double t = 0;
+    int lines = 0;
+    std::string line;
+    auto feed = [&](const cost::Frame& f, double until) {
+      while (t < until) {
+        t += f.ms / 1000.0;
+        if (summary.OnFrame(f, t)) {
+          line = summary.Line(t, s);
+          ++lines;
+        }
+      }
+    };
+    cost::Frame f = Typical(100.0 / 3.0);
+    f.guest_wait_ms = 20;
+    f.textures_created = 1;
+    feed(f, 30);
+    cost::Frame slow = Typical(100);
+    feed(slow, 30.05);
+    s.watch_nodes_visited = 1000 + 1801 * 300;
+    s.watch_fires = 10 + 1801 * 2;
+    feed(f, 59.9);
+    CHECK(lines == 0);
+    feed(f, 60.1);
+    CHECK(lines == 1);
+    CHECK(Has(line, "GPU minute 1: 30.0 fps (1% low 27."));
+    CHECK(Has(line, "worst 100 ms"));
+    CHECK(Has(line, "command processor 8.0 ms CPU (2.00 us a draw), 1.0 ms GPU waits, 20.0 ms game "
+                    "waits, 4000 draws"));
+    CHECK(Has(line, "2.00 MB uploads"));
+    CHECK(Has(line, "300 memory watch nodes checked (2.0 writes)"));
+    CHECK(Has(line, "a second: 30.0 textures new, 60.0 loaded, 0.0 evicted"));
+    CHECK(Has(line, "textures 1873 (312 MB), render targets 39 (553 MB), shaders 1650, pipelines 1185"));
+    CHECK(Has(line, "framebuffers 120, memory watches 3700 (5200 nodes)"));
+    CHECK(Has(line, "readback buffers 12 (25 MB, 64 keys)"));
+    CHECK(Has(line, "guest memory 1830 MB virtual + 410 MB physical"));
+    CHECK(!Has(line, "GPU memory") && !Has(line, "resident") && !Has(line, "clocks"));
+    // The next minute: 20 fps, no watch checks, the device's memory and the process known.
+    s.device_local_usage = 1600 * kMB;
+    s.device_local_budget = 8000 * kMB;
+    s.system_usage = 300 * kMB;
+    s.process_resident_bytes = 2450 * kMB;
+    s.cpu_ghz = 2.8;
+    s.gpu_ghz = 1.6;
+    s.gpu_celsius = 72;
+    s.gpu_watts = 14.84;
+    feed(Typical(50), 120.2);
+    CHECK(lines == 2);
+    CHECK(Has(line, "GPU minute 2: 20.0 fps (1% low 20.0, worst 50 ms)"));
+    CHECK(Has(line, "0 memory watch nodes checked (0.0 writes)"));
+    CHECK(Has(line, "GPU memory 1600 of 8000 MB device-local, 300 MB system, process 2450 MB "
+                    "resident; clocks: CPU up to 2.80 GHz, GPU 1.60 GHz 72 C 14.8 W"));
+    // Only the GPU's clock known.
+    s.cpu_ghz = 0;
+    s.gpu_celsius = 0;
+    s.gpu_watts = 0;
+    feed(Typical(50), 180.3);
+    CHECK(lines == 3);
+    CHECK(Has(line, "resident; clocks: GPU 1.60 GHz") && !Has(line, " C ") && !Has(line, " W"));
   }
   std::printf("frame cost: all checks passed\n");
   return 0;
