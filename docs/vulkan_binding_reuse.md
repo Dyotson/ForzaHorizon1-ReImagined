@@ -5,7 +5,7 @@ Opt-in experiment originally based on main `54d5177`, now integrated with main
 `FORZA_VK_BINDING_REUSE=1` enables sampler acquisition and texture-request reuse.
 Default is off. Texture descriptor reuse has been removed.
 
-## Current correctness blocker, 2026-10-24
+## Foreground regression and descriptor removal, 2026-10-24
 
 Foreground testing on integrated main found tiled/duplicated rendering with
 reuse enabled. The accepted reuse-off capture was clean. Both runs used the
@@ -34,6 +34,14 @@ combined 120-patch stack with #179 produces the same tree in either order. All
 nine Vulkan command-processor consumers were rebuilt for the changed class
 layout and the private GPU DLL linked successfully. The production guard tests
 and descriptor write integration guard pass; the latter rejects the old code.
+
+A final foreground run of revision `6ac17d2` with reuse enabled and interval
+counters, reference execution and API validation disabled completed the full
+60-second AI interval. The final race capture was clean and incorrect-resolve
+warnings remained zero. AI and CPU foreground fractions were both 100%, with the
+audited CPU mask unchanged at 0, 2, 4, 6 and valid frame-clock correlation. This
+is a single NVIDIA correctness check, not a revised performance comparison.
+Default enablement still requires repeatable measurements of the revised patch.
 
 ## Reuse and invalidation
 

@@ -20,7 +20,22 @@
       "cpu_affinity_audited": true,
       "performance_claim": false
     },
-    "resolution": "Descriptor reuse removed from patch; sampler and texture-request reuse retained. Exact underlying binding/lifetime failure remains unproven. Default off and PR draft pending revised-build validation and performance measurement."
+    "revised_production_check": {
+      "revision": "6ac17d2",
+      "reuse_enabled": true,
+      "stats_enabled": false,
+      "reference_execution": false,
+      "api_validation": false,
+      "ai_interval_completed": true,
+      "final_capture": "clean visual spot check",
+      "incorrect_resolve_warnings": 0,
+      "ai_foreground_fraction": 1.0,
+      "cpu_foreground_fraction": 1.0,
+      "audited_cpu_affinity": [0, 2, 4, 6],
+      "frame_clock_audit_passed": true,
+      "performance_claim": false
+    },
+    "resolution": "Descriptor reuse removed; sampler and texture-request reuse retained. Revised production-ON correctness check passed. Exact underlying binding/lifetime failure remains unproven. Default off and PR draft pending repeatable revised-build performance measurements and broader hardware qualification."
   },
   "public_head": "6058849b992c2954da0f2c3f813b7625c7a9e6a2",
   "main": "da9bf350dc5bd94f057270d233ab8df2293dd668",
