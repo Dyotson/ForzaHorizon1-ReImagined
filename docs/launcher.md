@@ -487,8 +487,8 @@ down** for the load order (a lower mod wins over a higher one for the same file)
 **Open mods folder**. A mod the game would skip (no `media/` folder, no files, a file it cannot
 read or over 2 GB) shows "(will not load)" and why. launcher.json keeps the order and the mods
 turned off (`"mods": {"order": [...], "disabled": [...]}`); every start passes
-`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), unless the extra
-arguments in **Settings > Advanced** name either. The game side and the folder layout are in
+`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), unless **Extra command-line
+flags** (**Settings > Advanced**) name either. The game side and the folder layout are in
 [modding.md](modding.md). Tests: `launcher/test_mods.py`.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
