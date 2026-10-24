@@ -1978,7 +1978,7 @@ index 2f12e52..cce72c7 100644
    if (!length) {
      return true;
 diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
-index 408d25b..639905e 100644
+index 408d25b..a6b310c 100644
 --- a/src/graphics/vulkan/texture_cache.cpp
 +++ b/src/graphics/vulkan/texture_cache.cpp
 @@ -534,6 +534,8 @@ VulkanTextureCache::~VulkanTextureCache() {
@@ -2014,7 +2014,7 @@ index 408d25b..639905e 100644
          }
          if (uses_signed && host_format_pair.format_signed.format != VK_FORMAT_UNDEFINED) {
            vulkan_binding.image_view_signed = texture->GetView(true, binding->host_swizzle);
-@@ -3556,4 +3563,305 @@ xenos::ClampMode VulkanTextureCache::NormalizeClampMode(xenos::ClampMode clamp_m
+@@ -3556,4 +3563,308 @@ xenos::ClampMode VulkanTextureCache::NormalizeClampMode(xenos::ClampMode clamp_m
    return clamp_mode;
  }
  
@@ -2256,8 +2256,11 @@ index 408d25b..639905e 100644
 +  packs->CountUploaded(image_info.size);
 +  if (pack_uploads_logged_ < 16) {
 +    ++pack_uploads_logged_;
-+    REXGPU_INFO("Texture packs: {:016x} ({}x{}) drawn from a {}x{} {} file with {} levels ({} KiB)",
-+                decoded.fingerprint, replacement.guest_width, replacement.guest_height,
++    REXGPU_INFO("Texture packs: {:016x} ({}) drawn from a {}x{} {} file with {} levels ({} KiB)",
++                decoded.fingerprint,
++                replacement.guest_width ? std::to_string(replacement.guest_width) + "x" +
++                                              std::to_string(replacement.guest_height)
++                                        : std::string("preloaded"),
 +                decoded.width, decoded.height, texture_pack::FormatName(decoded.format),
 +                decoded.levels.size(), image_info.size >> 10);
 +  }
