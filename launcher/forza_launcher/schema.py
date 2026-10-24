@@ -175,8 +175,8 @@ add("present_dither", "Output dithering", "Display", "bool", False,
 add("scene_msaa", "Scene anti-aliasing (MSAA)", "Display", "choice", "game",
     "The game draws the 3D scene with 4x MSAA in three parts, which costs the most CPU time on "
     "4-core PCs and the Steam Deck. 2x draws it in two parts with 2x MSAA, as the game does for "
-    "its largest races. Off draws it in one pass without MSAA: about half the GPU emulation's "
-    "work and less GPU time, with more jagged edges.", "Picture",
+    "its largest races. Off draws it in one pass without MSAA: about a fifth less CPU time in "
+    "the GPU emulation and less GPU time, with more jagged edges.", "Picture",
     choices=[("game", "4x (game)"), ("2x", "2x"), ("off", "Off (fastest)")], restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
