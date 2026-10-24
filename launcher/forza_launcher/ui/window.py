@@ -17,6 +17,9 @@ from .gallery_page import GalleryPage
 from .catalogs import CatalogsPage, CATALOG_PAGE_ID
 from .controls_page import ControlsPage
 from .saves_page import SavesPage
+from .mods_page import ModsPage
+
+MODS_PAGE_ID = 8
 
 
 class MainWindow(QMainWindow):
@@ -106,15 +109,18 @@ class MainWindow(QMainWindow):
         self.gallery.idle.connect(self._gallery_idle)
         self.catalogs = CatalogsPage(cfg, self)
         self.saves = SavesPage(cfg, self)
+        self.mods = ModsPage(cfg, self)
         self.navs = QButtonGroup(self)
         self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
                        4: self.gallery, 5: self.controls, 6: self.saves,
-                       CATALOG_PAGE_ID: self.catalogs}
+                       CATALOG_PAGE_ID: self.catalogs, MODS_PAGE_ID: self.mods}
+        # In id order, so a page's stack index is its id.
         for page in self._pages.values():
             self.stack.addWidget(page)
         for i, name in ((0, "Play"), (4, "Photo gallery"),
                         (CATALOG_PAGE_ID, "Designs && vinyls"), (1, "Setup"),
-                        (5, "Controls"), (2, "Settings"), (6, "Saves"), (3, "About")):
+                        (5, "Controls"), (2, "Settings"), (6, "Saves"), (MODS_PAGE_ID, "Mods"),
+                        (3, "About")):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -191,6 +197,8 @@ class MainWindow(QMainWindow):
             self.gallery.refresh()
         elif self._pages[i] is self.saves:
             self.saves.refresh()
+        elif self._pages[i] is self.mods:
+            self.mods.refresh()
         self.status("")
 
     def refresh_all(self):

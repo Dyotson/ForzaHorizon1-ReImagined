@@ -41,6 +41,10 @@ void InstallFaultGuard();  // src/debug/fault_guard.cpp
 void LogGuestThreads(const char* why);  // src/debug/fault_guard.cpp
 void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
 void LogDlcPackages(const std::filesystem::path& user_data_root);  // src/debug/dlc_log.cpp
+// The player's mods over update:\media.zip (src/kernel/mod_overlay.cpp, #149).
+void InstallMods(rex::filesystem::VirtualFileSystem* vfs,
+                 const std::filesystem::path& user_data_root,
+                 const std::filesystem::path& cache_root);
 }  // namespace forza
 
 // SDK settings with this game's defaults (src/main.cpp); the GPU plugin's own settings exist
@@ -175,6 +179,8 @@ class ForzaApp : public rex::ReXApp {
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
     auto* vfs = runtime()->file_system();
+    // Before the game opens its first archive.
+    forza::InstallMods(vfs, user_data_root(), cache_root());
     const std::filesystem::path host = cache_root() / "cache";
     std::error_code ec;
     std::filesystem::create_directories(host, ec);
