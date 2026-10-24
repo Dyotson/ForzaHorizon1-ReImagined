@@ -1,0 +1,2322 @@
+diff --git a/include/rex/graphics/pipeline/texture/cache.h b/include/rex/graphics/pipeline/texture/cache.h
+index d37e9e7..61d9dcf 100644
+--- a/include/rex/graphics/pipeline/texture/cache.h
++++ b/include/rex/graphics/pipeline/texture/cache.h
+@@ -28,6 +28,10 @@
+ 
+ namespace rex::graphics {
+ 
++namespace texture_pack {
++class Packs;
++}  // namespace texture_pack
++
+ // Manages host copies of guest textures, performing untiling, format and endian
+ // conversion of textures stored in the shared memory, and also handling
+ // invalidation.
+@@ -251,6 +255,18 @@ class TextureCache {
+ 
+     void LogAction(const char* action) const;
+ 
++    // FH1 (#384): texture packs (command processor thread).
++    struct PackState {
++      uint64_t fingerprint = 0;  // of the loaded picture, 0 if not fingerprinted
++      uint64_t replacement = 0;  // the fingerprint when the pack has a file for it, else 0
++      uint64_t last_load_ms = 0;
++      uint8_t quick_reloads = 0;
++      bool classified = false;
++      bool skipped = false;  // never fingerprinted (its kind, or rewritten as the game runs)
++    };
++    PackState& pack_state() { return pack_state_; }
++    const PackState& pack_state() const { return pack_state_; }
++
+    protected:
+     // If track_usage is false, the texture won't be added to the LRU list.
+     explicit Texture(TextureCache& texture_cache, const TextureKey& key, bool track_usage = true);
+@@ -286,6 +302,8 @@ class TextureCache {
+     // Watch handles for the memory ranges.
+     SharedMemory::WatchHandle base_watch_handle_ = nullptr;
+     SharedMemory::WatchHandle mips_watch_handle_ = nullptr;
++
++    PackState pack_state_;
+   };
+ 
+   // Rules of data access in load shaders:
+@@ -560,6 +578,13 @@ class TextureCache {
+   // implementation to update the internal dependencies of the binding.
+   virtual void UpdateTextureBindingsImpl(uint32_t /*fetch_constant_mask*/) {}
+ 
++  // FH1 (#384): texture packs (texture_pack/pack.h); nullptr when off. A backend that draws
++  // replacements is told when a loaded texture has one, and uploads them at frame starts.
++  texture_pack::Packs* texture_packs() const { return packs_; }
++  virtual bool SupportsTexturePackReplacement() const { return false; }
++  virtual void OnTexturePackReplacement(Texture& /*texture*/) {}
++  virtual void TexturePackBeginFrame() {}
++
+  private:
+   struct PendingTextureLoad {
+     Texture* texture = nullptr;
+@@ -623,6 +648,12 @@ class TextureCache {
+ 
+   uint64_t textures_total_host_memory_usage_ = 0;
+ 
++  // FH1 (#384): texture packs. packs_state_: -1 not looked up yet, 0 off, 1 on.
++  void ResolveTexturePacks();
++  void TexturePackOnLoad(Texture& texture, bool base_loaded);
++  texture_pack::Packs* packs_ = nullptr;
++  int8_t packs_state_ = -1;
++
+   Texture* texture_used_first_ = nullptr;
+   Texture* texture_used_last_ = nullptr;
+ 
+diff --git a/include/rex/graphics/pipeline/texture/pack.h b/include/rex/graphics/pipeline/texture/pack.h
+new file mode 100644
+index 0000000..95a8d07
+--- /dev/null
++++ b/include/rex/graphics/pipeline/texture/pack.h
+@@ -0,0 +1,220 @@
++#pragma once
++// FH1 (#384): texture packs. The texture cache fingerprints a guest texture when it loads its
++// data (texture_dump, texture_replace); with texture_dump, each new texture is written to
++// <texture_pack_root>/dump/<fingerprint>.dds (and .png) on a worker thread; with
++// texture_replace, a file <texture_pack_root>/<fingerprint>.dds or .png is read and decoded on
++// another worker, and the backend (Vulkan) samples it instead of the guest texture.
++//
++// The fingerprint covers what defines the texture's picture, not where it is: the base level's
++// visible blocks as the game wrote them (big-endian), its format, size, pitch, tiling and
++// endianness. Guest addresses change between runs and are left out; so is the mip chain (games
++// bind the same picture with different mip counts).
++#include <array>
++#include <atomic>
++#include <condition_variable>
++#include <deque>
++#include <cstdint>
++#include <filesystem>
++#include <fstream>
++#include <memory>
++#include <mutex>
++#include <string>
++#include <unordered_set>
++#include <vector>
++
++#include <rex/graphics/pipeline/texture/util.h>
++#include <rex/graphics/xenos.h>
++
++namespace rex::graphics::texture_pack {
++
++// Host formats of dumped and replacement files.
++enum class Format : uint8_t {
++  kNone,
++  kR8,
++  kRG8,
++  kRGBA8,
++  kBGRA8,
++  kBC1,
++  kBC2,
++  kBC3,
++  kBC4,
++  kBC5,
++  kBC7,
++};
++bool IsBlockCompressed(Format format);
++// Bytes of one 4x4 block (compressed formats) or one texel.
++uint32_t ElementBytes(Format format);
++uint64_t LevelBytes(Format format, uint32_t width, uint32_t height);
++const char* FormatName(Format format);
++// The file format a guest format is dumped as (kNone: not dumped or replaced yet).
++Format GuestFormatFile(xenos::TextureFormat format);
++
++// The fingerprinted fields of a guest texture (a TextureKey without its addresses).
++struct GuestTexture {
++  xenos::TextureFormat format;
++  xenos::Endian endianness;
++  uint32_t width;
++  uint32_t height;
++  uint32_t pitch;  // the fetch constant's (texels / 32)
++  uint32_t mip_levels;
++  bool tiled;
++  bool packed_mips;
++};
++
++struct Level {
++  uint64_t offset;
++  uint64_t size;
++  uint32_t width;
++  uint32_t height;
++};
++
++// A replacement file, read and decoded on a worker; levels start 16-byte aligned in data.
++struct Decoded {
++  uint64_t fingerprint = 0;
++  bool ok = false;
++  Format format = Format::kNone;
++  uint32_t width = 0;
++  uint32_t height = 0;
++  std::vector<Level> levels;
++  std::vector<uint8_t> data;
++};
++
++// A texture cache's mailbox for decoded replacements (one per cache, kept alive by the cache;
++// the workers hold weak references).
++class Client {
++ public:
++  bool HasReady() const { return ready_count_.load(std::memory_order_acquire) != 0; }
++  std::vector<std::unique_ptr<Decoded>> Take();
++  void Put(std::unique_ptr<Decoded> decoded);
++  // Decoded data not uploaded yet: the decoder waits while it is over a limit (preloading).
++  uint64_t pending_bytes() const { return pending_bytes_.load(std::memory_order_acquire); }
++  void Uploaded(uint64_t bytes) { pending_bytes_.fetch_sub(bytes, std::memory_order_acq_rel); }
++
++ private:
++  std::mutex mutex_;
++  std::vector<std::unique_ptr<Decoded>> ready_;
++  std::atomic<uint32_t> ready_count_{0};
++  std::atomic<uint64_t> pending_bytes_{0};
++};
++
++// Why a texture was not fingerprinted (counted once per texture, kGpuWritten per load).
++enum class Skip : uint32_t {
++  kFormat,      // a format not dumped yet (counted per format too)
++  kShape,       // cube, 3D, array, 1D, or a resolution-scaled resolve target
++  kScreen,      // the size of the screen or a fraction of it: render targets read back
++  kGpuWritten,  // rendered by the GPU (resolves): not art
++  kDynamic,     // reloaded 3 times within a second each: written by the game as it runs
++  kNoBase,      // only the mips are loaded (streaming)
++  kTiny,        // under 8x8
++  kCount,
++};
++// Whether a texture of this size is a render target's copy (1280x720 and its halves).
++bool IsScreenSized(uint32_t width, uint32_t height);
++
++class Packs {
++ public:
++  // nullptr when texture_dump and texture_replace are both off. Created on the first call,
++  // which must come after texture_pack_root is set (the game sets it before the title runs).
++  static Packs* Get();
++
++  bool dumping() const { return dump_; }
++  bool replacing() const { return replace_; }
++  bool preload() const { return preload_; }
++  const std::filesystem::path& root() const { return root_; }
++
++  // Command processor thread.
++  uint64_t Fingerprint(const GuestTexture& texture, const texture_util::TextureGuestLayout& layout,
++                       const uint8_t* base, uint32_t base_size) const;
++  // Queues the dump of a fingerprint not dumped before (copies the guest data); a full queue
++  // drops it (counted, and it is tried again the next time it loads).
++  void Dump(uint64_t fingerprint, const GuestTexture& texture,
++            const texture_util::TextureGuestLayout& layout, const uint8_t* base,
++            uint32_t base_size, const uint8_t* mips, uint32_t mips_size);
++  // Whether the pack has a file for the fingerprint (the folder is listed once, at start).
++  bool HasReplacement(uint64_t fingerprint) const;
++  // Reads and decodes the file on a worker; the result goes to the client. width/height: the
++  // guest texture's, to check the aspect ratio (0: unknown, preloading).
++  void RequestDecode(uint64_t fingerprint, uint32_t width, uint32_t height,
++                     const std::shared_ptr<Client>& client);
++  std::vector<uint64_t> Replacements() const;
++
++  void CountSkip(Skip skip, xenos::TextureFormat format);
++  // The texture cache's time for a load (all of it), and the hashing's part of it.
++  void CountLoad(uint64_t nanoseconds, uint64_t hash_nanoseconds, uint64_t bytes);
++  void CountReplacementUsed(uint64_t fingerprint);
++  void CountUploaded(uint64_t gpu_bytes);
++  void CountUnusable() { ++unusable_; }
++  // Logs the summary at most once a minute (force: now, if anything happened).
++  void LogSummary(bool force);
++
++ private:
++  Packs();
++  struct DumpJob;
++  struct DecodeJob;
++  void DumpWorker();
++  void WriteDump(DumpJob& job, std::ofstream& index, uint32_t& errors_logged);
++  void DecodeWorker();
++
++  bool dump_ = false;
++  bool replace_ = false;
++  bool preload_ = false;
++  bool dump_png_ = true;
++  std::filesystem::path root_;
++  std::filesystem::path dump_dir_;
++  // Fingerprint -> file in root_ (read-only after construction).
++  std::vector<std::pair<uint64_t, std::filesystem::path>> index_;
++
++  std::mutex dump_mutex_;
++  std::unordered_set<uint64_t> dumped_;  // on disk at start, or queued in this run
++  std::deque<std::unique_ptr<DumpJob>> dump_queue_;
++  uint64_t dump_queue_bytes_ = 0;
++  std::vector<std::vector<uint8_t>> spare_buffers_;  // emptied dump copies, to reuse
++  uint64_t spare_bytes_ = 0;
++  std::condition_variable dump_cv_;
++
++  std::mutex decode_mutex_;
++  std::deque<std::unique_ptr<DecodeJob>> decode_queue_;
++  std::condition_variable decode_cv_;
++
++  // Statistics.
++  struct Stats {
++    uint64_t fingerprints = 0;
++    uint64_t fingerprint_ns = 0;
++    uint64_t fingerprint_max_ns = 0;
++    uint64_t hash_ns = 0;
++    uint64_t dump_copy_ns = 0;
++    uint64_t fingerprint_bytes = 0;
++    uint64_t dumps_queued = 0;
++    uint64_t dumps_dropped = 0;
++    uint64_t replacements_used = 0;
++    std::array<uint64_t, size_t(Skip::kCount)> skipped{};
++    std::array<uint32_t, 64> skipped_formats{};
++  };
++  Stats stats_;        // command processor thread
++  Stats stats_logged_;  // as of the last summary
++  std::unordered_set<uint64_t> used_;  // fingerprints with a replacement, seen loading
++  std::atomic<uint64_t> dumps_written_{0};
++  std::atomic<uint64_t> dumps_failed_{0};
++  std::atomic<uint64_t> dump_bytes_written_{0};
++  std::atomic<uint64_t> decodes_ok_{0};
++  std::atomic<uint64_t> decodes_failed_{0};
++  std::atomic<uint64_t> unusable_{0};  // read, but not usable on this GPU
++  std::atomic<uint64_t> uploads_{0};
++  std::atomic<uint64_t> upload_bytes_{0};
++  uint64_t dumps_written_logged_ = 0;
++  uint64_t last_summary_ms_ = 0;
++};
++
++// Exposed for tests: the dump's untiling and the file encoders.
++std::vector<uint8_t> UntileLevel(const GuestTexture& texture,
++                                 const texture_util::TextureGuestLayout& layout,
++                                 const uint8_t* base, uint32_t base_size, const uint8_t* mips,
++                                 uint32_t mips_size, uint32_t level);
++std::vector<uint8_t> EncodeDds(Format format, uint32_t width, uint32_t height,
++                               const std::vector<std::vector<uint8_t>>& levels);
++bool DecodeDds(const uint8_t* data, size_t size, Decoded& out, std::string& error);
++// RGBA8 of a level in a file format (BC decoded).
++std::vector<uint8_t> ToRgba8(Format format, uint32_t width, uint32_t height, const uint8_t* data);
++std::vector<uint8_t> EncodePng(uint32_t width, uint32_t height, const uint8_t* rgba);
++
++}  // namespace rex::graphics::texture_pack
+diff --git a/include/rex/graphics/shared_memory.h b/include/rex/graphics/shared_memory.h
+index 1440ca0..f2763bf 100644
+--- a/include/rex/graphics/shared_memory.h
++++ b/include/rex/graphics/shared_memory.h
+@@ -82,6 +82,12 @@ class SharedMemory {
+   // memory copy. Hold the global critical region if relying on this for state
+   // transitions such as watch installation.
+   bool IsRangeValid(uint32_t start, uint32_t length) const;
++  // FH1 (#384, texture packs): whether a page of the range holds data the GPU wrote
++  // (resolves) that the CPU has not overwritten since, and the guest data itself (big-endian).
++  bool IsRangeGpuWritten(uint32_t start, uint32_t length);
++  const uint8_t* GuestData(uint32_t start) const {
++    return memory_.TranslatePhysical<const uint8_t*>(start);
++  }
+ 
+   // Marks the range and, if not exact_range, potentially its surroundings
+   // (to up to the first GPU-written page, as an access violation exception
+diff --git a/include/rex/graphics/vulkan/texture_cache.h b/include/rex/graphics/vulkan/texture_cache.h
+index 6bb30ab..8e6c436 100644
+--- a/include/rex/graphics/vulkan/texture_cache.h
++++ b/include/rex/graphics/vulkan/texture_cache.h
+@@ -21,6 +21,7 @@
+ #include <rex/graphics/vulkan/shared_memory.h>
+ #include <rex/hash.h>
+ #include <rex/ui/vulkan/mem_alloc.h>
++#include <rex/graphics/pipeline/texture/pack.h>
+ 
+ namespace rex::graphics::vulkan {
+ 
+@@ -78,6 +79,7 @@ class VulkanTextureCache final : public TextureCache {
+   void BeginSubmission(uint64_t new_submission_index) override;
+   void BeginFrame() override;
+   void EndFrame();
++  void CompletedSubmissionUpdated(uint64_t completed_submission_index) override;
+ 
+   // Must be called within a frame - creates and untiles textures needed by
+   // shaders, and enqueues transitioning them into the sampled usage. This may
+@@ -152,6 +154,10 @@ class VulkanTextureCache final : public TextureCache {
+ 
+   void UpdateTextureBindingsImpl(uint32_t fetch_constant_mask) override;
+ 
++  bool SupportsTexturePackReplacement() const override { return true; }
++  void OnTexturePackReplacement(Texture& texture) override;
++  void TexturePackBeginFrame() override;
++
+  private:
+   enum LoadDescriptorSetIndex {
+     kLoadDescriptorSetIndexDestination,
+@@ -405,6 +411,37 @@ class VulkanTextureCache final : public TextureCache {
+   std::vector<uint64_t> scaled_resolve_sparse_allocated_;
+   bool scaled_resolve_last_usage_write_ = false;
+   std::pair<uint64_t, uint64_t> scaled_resolve_last_written_range_{0, 0};
++
++  // FH1 (#384): texture pack replacements, by fingerprint. Uploaded once, then always in
++  // SHADER_READ_ONLY_OPTIMAL; the guest texture keeps its own image (loaded as before), and
++  // bindings of its unsigned view sample the replacement instead.
++  struct Replacement {
++    VkImage image = VK_NULL_HANDLE;
++    VmaAllocation allocation = VK_NULL_HANDLE;
++    VkFormat format = VK_FORMAT_UNDEFINED;
++    uint32_t width = 0;
++    uint32_t height = 0;
++    // The guest texture's size, for the aspect ratio check (0: not seen yet, preloading).
++    uint32_t guest_width = 0;
++    uint32_t guest_height = 0;
++    bool failed = false;
++    std::unordered_map<uint32_t, VkImageView> views;  // by host swizzle
++  };
++  struct PackStaging {
++    uint64_t submission;
++    VkBuffer buffer;
++    VmaAllocation allocation;
++  };
++  VkImageView GetTexturePackView(const Texture& texture, uint32_t host_swizzle);
++  void UploadTexturePackReplacement(const texture_pack::Decoded& decoded);
++  void DestroyTexturePackReplacements();
++  std::unordered_map<uint64_t, Replacement> pack_replacements_;
++  std::shared_ptr<texture_pack::Client> pack_client_;
++  std::deque<std::unique_ptr<texture_pack::Decoded>> pack_uploads_;
++  std::deque<PackStaging> pack_staging_;
++  uint64_t pack_gpu_bytes_ = 0;
++  uint32_t pack_uploads_logged_ = 0;
++  bool pack_preloaded_ = false;
+ };
+ 
+ }  // namespace rex::graphics::vulkan
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index 46a1e7e..c07d333 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -25,6 +25,7 @@ set(REXGPU_XENOS_SOURCES
+     pipeline/render_target/cache.cpp
+     shared_memory.cpp
+     pipeline/texture/cache.cpp
++    pipeline/texture/pack.cpp
+     pipeline/shader/interpreter.cpp
+     pipeline/shader/translator.cpp
+     pipeline/shader/translator_disasm.cpp
+@@ -156,6 +157,7 @@ rexglue_add_version_resource(rexgpu-xenos DESCRIPTION "ReXGlue Xenos GPU emulati
+ 
+ target_include_directories(rexgpu-xenos PRIVATE
+     ${REXGLUE_ROOT}/thirdparty/renderdoc
++    ${REXGLUE_ROOT}/thirdparty/stb  # stb_image.h: texture pack PNG files (pack.cpp)
+     ${REXGLUE_ROOT}  # For thirdparty/dxbc/DXBCChecksum.h include
+ )
+ 
+diff --git a/src/graphics/pipeline/texture/cache.cpp b/src/graphics/pipeline/texture/cache.cpp
+index f8de834..943f060 100644
+--- a/src/graphics/pipeline/texture/cache.cpp
++++ b/src/graphics/pipeline/texture/cache.cpp
+@@ -12,6 +12,7 @@
+ #include "../../fh1_frame_cost.h"
+ #include <algorithm>
+ #include <bit>
++#include <chrono>
+ #include <cstdint>
+ #include <utility>
+ 
+@@ -22,6 +23,7 @@
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/pipeline/texture/cache.h>
+ #include <rex/graphics/pipeline/texture/info.h>
++#include <rex/graphics/pipeline/texture/pack.h>
+ #include <rex/graphics/pipeline/texture/util.h>
+ #include <rex/graphics/register_file.h>
+ #include <rex/graphics/xenos.h>
+@@ -235,6 +237,7 @@ TextureCache::TextureCache(const RegisterFile& register_file, SharedMemory& shar
+ }
+ 
+ TextureCache::~TextureCache() {
++  if (packs_) packs_->LogSummary(true);
+   DestroyAllTextures(true);
+ 
+   if (scaled_resolve_global_watch_handle_) {
+@@ -331,6 +334,12 @@ void TextureCache::BeginFrame() {
+   // sure bindings are reset so a new attempt will surely be made if the texture
+   // is requested again.
+   ResetTextureBindings();
++  // FH1 (#384): replacements decoded since the last frame (bindings take them from now on).
++  if (packs_state_ < 0) ResolveTexturePacks();
++  if (packs_) {
++    TexturePackBeginFrame();
++    packs_->LogSummary(false);
++  }
+ }
+ 
+ void TextureCache::MarkRangeAsResolved(uint32_t start_unscaled, uint32_t length_unscaled) {
+@@ -465,10 +474,127 @@ bool TextureCache::CommitPreparedTextureLoad(const PendingTextureLoad& pending_l
+     return false;
+   }
+   texture.LogAction("Loaded");
++  if (packs_state_) TexturePackOnLoad(texture, pending_load.load_base);
+ 
+   return true;
+ }
+ 
++void TextureCache::ResolveTexturePacks() {
++  packs_ = texture_pack::Packs::Get();
++  packs_state_ = packs_ ? 1 : 0;
++  if (packs_ && packs_->replacing() && !SupportsTexturePackReplacement()) {
++    static bool logged = false;
++    if (!logged) {
++      logged = true;
++      REXGPU_WARN("Texture packs: replacing textures needs the Vulkan renderer; only dumping");
++    }
++  }
++}
++
++// FH1 (#384): fingerprints a texture whose data was just loaded, queues its dump and looks up
++// its replacement. Runs on loads only (creation, or a reload after the game wrote the memory),
++// never per draw.
++void TextureCache::TexturePackOnLoad(Texture& texture, bool base_loaded) {
++  if (packs_state_ < 0) ResolveTexturePacks();
++  if (!packs_) return;
++  Texture::PackState& state = texture.pack_state();
++  if (state.skipped) return;
++  using texture_pack::Skip;
++  // Counts the whole call's time, on every return.
++  struct Timing {
++    texture_pack::Packs* packs;
++    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
++    uint64_t hash_ns = 0, hashed = 0;
++    ~Timing() {
++      packs->CountLoad(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                    std::chrono::steady_clock::now() - start)
++                                    .count()),
++                       hash_ns, hashed);
++    }
++  } timing{packs_};
++  const TextureKey key = texture.key();
++  const uint32_t base_start = key.base_page << 12;
++  const uint32_t base_size = texture.GetGuestBaseSize();
++  if (!state.classified) {
++    // What the texture is never changes: decided at its first load.
++    state.classified = true;
++    Skip skip = Skip::kCount;
++    if (key.scaled_resolve || key.dimension != xenos::DataDimension::k2DOrStacked ||
++        key.depth_or_array_size_minus_1) {
++      skip = Skip::kShape;
++    } else if (!key.base_page) {
++      skip = Skip::kNoBase;
++    } else if (texture_pack::IsScreenSized(key.GetWidth(), key.GetHeight())) {
++      skip = Skip::kScreen;
++    } else if (texture_pack::GuestFormatFile(key.format) == texture_pack::Format::kNone) {
++      // Counted as GPU-written when it is (render targets), so the summary's formats are art.
++      skip = shared_memory().IsRangeGpuWritten(base_start, base_size) ? Skip::kGpuWritten
++                                                                        : Skip::kFormat;
++    } else if (key.GetWidth() < 8 && key.GetHeight() < 8) {
++      skip = Skip::kTiny;
++    }
++    if (skip != Skip::kCount) {
++      state.skipped = true;
++      packs_->CountSkip(skip, key.format);
++      return;
++    }
++  }
++  // Reloaded three times, each within a second of the last: the game writes it as it runs (a
++  // video, a gauge, a render target read back); streaming reuses memory far less often.
++  const uint64_t now = current_submission_time_;
++  if (state.last_load_ms && now - state.last_load_ms < 1000) {
++    if (++state.quick_reloads >= 3) {
++      state.skipped = true;
++      state.fingerprint = 0;
++      state.replacement = 0;
++      packs_->CountSkip(Skip::kDynamic, key.format);
++      return;
++    }
++  } else {
++    state.quick_reloads = 0;
++  }
++  state.last_load_ms = now;
++  if (!base_loaded && state.fingerprint) {
++    return;  // only the mips changed: the picture's fingerprint stays
++  }
++  if (shared_memory().IsRangeGpuWritten(base_start, base_size)) {
++    state.fingerprint = 0;
++    state.replacement = 0;
++    packs_->CountSkip(Skip::kGpuWritten, key.format);
++  } else {
++    texture_pack::GuestTexture guest;
++    guest.format = key.format;
++    guest.endianness = key.endianness;
++    guest.width = key.GetWidth();
++    guest.height = key.GetHeight();
++    guest.pitch = key.pitch;
++    guest.mip_levels = key.mip_max_level + 1;
++    guest.tiled = key.tiled;
++    guest.packed_mips = key.packed_mips;
++    const uint8_t* base = shared_memory().GuestData(base_start);
++    const auto hash_start = std::chrono::steady_clock::now();
++    state.fingerprint = packs_->Fingerprint(guest, texture.guest_layout(), base, base_size);
++    timing.hash_ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                  std::chrono::steady_clock::now() - hash_start)
++                                  .count());
++    timing.hashed = base_size;
++    if (packs_->dumping()) {
++      const bool has_mips = key.mip_page && key.mip_max_level && texture.GetGuestMipsSize();
++      packs_->Dump(state.fingerprint, guest, texture.guest_layout(), base, base_size,
++                   has_mips ? shared_memory().GuestData(key.mip_page << 12) : nullptr,
++                   has_mips ? texture.GetGuestMipsSize() : 0);
++    }
++    state.replacement = packs_->replacing() && SupportsTexturePackReplacement() &&
++                                packs_->HasReplacement(state.fingerprint)
++                            ? state.fingerprint
++                            : 0;
++    if (state.replacement) {
++      packs_->CountReplacementUsed(state.replacement);
++      OnTexturePackReplacement(texture);
++    }
++  }
++}
++
+ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
+   const auto& regs = register_file();
+ 
+diff --git a/src/graphics/pipeline/texture/pack.cpp b/src/graphics/pipeline/texture/pack.cpp
+new file mode 100644
+index 0000000..17da617
+--- /dev/null
++++ b/src/graphics/pipeline/texture/pack.cpp
+@@ -0,0 +1,1368 @@
++/**
++ * FH1 (#384): texture packs (see pack.h). Fingerprints, the dump writer and the replacement
++ * reader; the texture caches call into it, the Vulkan one uploads the replacements.
++ */
++
++#include <rex/graphics/pipeline/texture/pack.h>
++
++#include <algorithm>
++#include <bit>
++#include <cctype>
++#include <chrono>
++#include <cstdlib>
++#include <cstring>
++#include <deque>
++#include <fstream>
++#include <thread>
++#include <unordered_set>
++
++#include <xxhash.h>
++
++#include <rex/chrono/clock.h>
++#include <rex/cvar.h>
++#include <rex/graphics/pipeline/texture/info.h>
++#include <rex/logging.h>
++
++// A private copy (static functions) of the PNG reader the runtime's image_decode.cpp uses.
++#if defined(__clang__) || defined(__GNUC__)
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wunused-function"
++#endif
++#define STB_IMAGE_STATIC
++#define STB_IMAGE_IMPLEMENTATION
++#define STBI_ONLY_PNG
++#define STBI_NO_STDIO
++#define STBI_NO_FAILURE_STRINGS
++#include <stb_image.h>
++#if defined(__clang__) || defined(__GNUC__)
++#pragma GCC diagnostic pop
++#endif
++
++REXCVAR_DEFINE_BOOL(texture_dump, false, "GPU",
++                    "Write each texture the game loads, once, to <texture_pack_root>/dump as "
++                    "<fingerprint>.dds (and a .png of its largest level): the names texture pack "
++                    "files must have")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_BOOL(texture_dump_png, true, "GPU",
++                    "With texture_dump, also write a .png of the largest level for browsing")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_BOOL(texture_replace, false, "GPU",
++                    "Use texture packs: a texture with a file <fingerprint>.dds or .png in "
++                    "texture_pack_root (or a folder in it) is drawn from that file (Vulkan)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_BOOL(texture_replace_preload, false, "GPU",
++                    "Read every texture pack file at start instead of when its texture first "
++                    "loads (more memory, no texture shown at its original resolution first)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_STRING(texture_pack_root, "", "GPU",
++                      "Texture pack folder (default: textures in the user data folder)")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++namespace rex::graphics::texture_pack {
++
++namespace {
++
++constexpr uint32_t kFingerprintVersion = 1;
++// The dump queue: beyond these, new textures are dropped (and dumped when they load again).
++constexpr size_t kDumpQueueMaxJobs = 4096;
++constexpr uint64_t kDumpQueueMaxBytes = uint64_t(256) << 20;
++constexpr uint64_t kSpareBufferBytes = uint64_t(64) << 20;
++constexpr uint32_t kMaxReplacementSize = 16384;
++constexpr uint64_t kMaxPendingDecodedBytes = uint64_t(256) << 20;
++
++constexpr uint32_t FourCC(char a, char b, char c, char d) {
++  return uint32_t(uint8_t(a)) | uint32_t(uint8_t(b)) << 8 | uint32_t(uint8_t(c)) << 16 |
++         uint32_t(uint8_t(d)) << 24;
++}
++
++std::string Hex(uint64_t value) {
++  char text[17];
++  std::snprintf(text, sizeof(text), "%016llx", static_cast<unsigned long long>(value));
++  return text;
++}
++
++// A fingerprint from a file name: 16 hexadecimal digits.
++bool ParseHex(const std::string& text, uint64_t& value) {
++  if (text.size() != 16) return false;
++  value = 0;
++  for (char c : text) {
++    uint32_t digit;
++    if (c >= '0' && c <= '9') {
++      digit = uint32_t(c - '0');
++    } else if (c >= 'a' && c <= 'f') {
++      digit = uint32_t(c - 'a' + 10);
++    } else if (c >= 'A' && c <= 'F') {
++      digit = uint32_t(c - 'A' + 10);
++    } else {
++      return false;
++    }
++    value = value << 4 | digit;
++  }
++  return value != 0;
++}
++
++std::string Lower(std::string text) {
++  for (char& c : text) c = char(std::tolower(uint8_t(c)));
++  return text;
++}
++
++void SwapEndian(uint8_t* data, size_t size, xenos::Endian endian) {
++  switch (endian) {
++    case xenos::Endian::k8in16:
++      for (size_t i = 0; i + 1 < size; i += 2) std::swap(data[i], data[i + 1]);
++      break;
++    case xenos::Endian::k8in32:
++      for (size_t i = 0; i + 3 < size; i += 4) {
++        std::swap(data[i], data[i + 3]);
++        std::swap(data[i + 1], data[i + 2]);
++      }
++      break;
++    case xenos::Endian::k16in32:
++      for (size_t i = 0; i + 3 < size; i += 4) {
++        std::swap(data[i], data[i + 2]);
++        std::swap(data[i + 1], data[i + 3]);
++      }
++      break;
++    default:
++      break;
++  }
++}
++
++bool ReadFile(const std::filesystem::path& path, std::vector<uint8_t>& data) {
++  std::ifstream file(path, std::ios::binary | std::ios::ate);
++  if (!file) return false;
++  const std::streamoff size = file.tellg();
++  if (size <= 0 || size > (std::streamoff(1) << 31)) return false;
++  data.resize(size_t(size));
++  file.seekg(0);
++  return bool(file.read(reinterpret_cast<char*>(data.data()), size));
++}
++
++// Written next to the target and renamed over it, so a crash never leaves half a file.
++bool WriteFile(const std::filesystem::path& path, const std::vector<uint8_t>& data) {
++  std::filesystem::path temp = path;
++  temp += ".tmp";
++  {
++    std::ofstream file(temp, std::ios::binary | std::ios::trunc);
++    if (!file) return false;
++    file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
++    if (!file) return false;
++  }
++  std::error_code error;
++  std::filesystem::rename(temp, path, error);
++  if (error) {
++    std::filesystem::remove(temp, error);
++    return false;
++  }
++  return true;
++}
++
++// --- Block-compressed decoding (for the dump's PNG) ---------------------------------------
++
++void Rgb565(uint16_t color, uint8_t* rgb) {
++  const uint32_t r = color >> 11 & 31, g = color >> 5 & 63, b = color & 31;
++  rgb[0] = uint8_t(r << 3 | r >> 2);
++  rgb[1] = uint8_t(g << 2 | g >> 4);
++  rgb[2] = uint8_t(b << 3 | b >> 2);
++}
++
++// out: 16 RGBA texels. allow_alpha: BC1's 3-color mode with transparent black.
++void DecodeColorBlock(const uint8_t* block, uint8_t (*out)[4], bool allow_alpha) {
++  const uint16_t c0 = uint16_t(block[0] | block[1] << 8);
++  const uint16_t c1 = uint16_t(block[2] | block[3] << 8);
++  uint8_t colors[4][4] = {};
++  Rgb565(c0, colors[0]);
++  Rgb565(c1, colors[1]);
++  colors[0][3] = colors[1][3] = 255;
++  if (c0 > c1 || !allow_alpha) {
++    for (int i = 0; i < 3; ++i) {
++      colors[2][i] = uint8_t((2 * colors[0][i] + colors[1][i]) / 3);
++      colors[3][i] = uint8_t((colors[0][i] + 2 * colors[1][i]) / 3);
++    }
++    colors[2][3] = colors[3][3] = 255;
++  } else {
++    for (int i = 0; i < 3; ++i) colors[2][i] = uint8_t((colors[0][i] + colors[1][i]) / 2);
++    colors[2][3] = 255;
++  }
++  const uint32_t indices = uint32_t(block[4]) | uint32_t(block[5]) << 8 |
++                           uint32_t(block[6]) << 16 | uint32_t(block[7]) << 24;
++  for (int i = 0; i < 16; ++i) std::memcpy(out[i], colors[indices >> (2 * i) & 3], 4);
++}
++
++// out: 16 values, every stride-th byte.
++void DecodeAlphaBlock(const uint8_t* block, uint8_t* out, size_t stride) {
++  uint8_t values[8];
++  values[0] = block[0];
++  values[1] = block[1];
++  if (values[0] > values[1]) {
++    for (int i = 1; i < 7; ++i) values[i + 1] = uint8_t(((7 - i) * values[0] + i * values[1]) / 7);
++  } else {
++    for (int i = 1; i < 5; ++i) values[i + 1] = uint8_t(((5 - i) * values[0] + i * values[1]) / 5);
++    values[6] = 0;
++    values[7] = 255;
++  }
++  uint64_t indices = 0;
++  for (int i = 0; i < 6; ++i) indices |= uint64_t(block[2 + i]) << (8 * i);
++  for (int i = 0; i < 16; ++i) out[i * stride] = values[indices >> (3 * i) & 7];
++}
++
++// --- PNG writing ---------------------------------------------------------------------------
++
++uint32_t Crc32(const uint8_t* data, size_t size, uint32_t crc = 0) {
++  static const auto table = [] {
++    std::array<uint32_t, 256> t{};
++    for (uint32_t i = 0; i < 256; ++i) {
++      uint32_t c = i;
++      for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
++      t[i] = c;
++    }
++    return t;
++  }();
++  crc = ~crc;
++  for (size_t i = 0; i < size; ++i) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
++  return ~crc;
++}
++
++class BitWriter {
++ public:
++  explicit BitWriter(std::vector<uint8_t>& out) : out_(out) {}
++  void Put(uint32_t value, int bits) {
++    buffer_ |= uint64_t(value) << count_;
++    count_ += bits;
++    while (count_ >= 8) {
++      out_.push_back(uint8_t(buffer_));
++      buffer_ >>= 8;
++      count_ -= 8;
++    }
++  }
++  // Huffman codes go most significant bit first.
++  void PutCode(uint32_t code, int bits) {
++    uint32_t reversed = 0;
++    for (int i = 0; i < bits; ++i) reversed |= (code >> i & 1) << (bits - 1 - i);
++    Put(reversed, bits);
++  }
++  void Flush() {
++    if (count_) out_.push_back(uint8_t(buffer_));
++    buffer_ = 0;
++    count_ = 0;
++  }
++
++ private:
++  std::vector<uint8_t>& out_;
++  uint64_t buffer_ = 0;
++  int count_ = 0;
++};
++
++void PutLiteral(BitWriter& bits, uint32_t symbol) {
++  if (symbol < 144) {
++    bits.PutCode(0x30 + symbol, 8);
++  } else if (symbol < 256) {
++    bits.PutCode(0x190 + symbol - 144, 9);
++  } else if (symbol < 280) {
++    bits.PutCode(symbol - 256, 7);
++  } else {
++    bits.PutCode(0xC0 + symbol - 280, 8);
++  }
++}
++
++void PutMatch(BitWriter& bits, uint32_t length, uint32_t distance) {
++  static const uint16_t kLengthBase[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,
++                                           15, 17, 19, 23, 27, 31, 35, 43, 51,  59,
++                                           67, 83, 99, 115, 131, 163, 195, 227, 258};
++  static const uint8_t kLengthExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
++                                           2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
++  static const uint16_t kDistanceBase[30] = {1,    2,    3,    4,    5,    7,     9,     13,
++                                             17,   25,   33,   49,   65,   97,    129,   193,
++                                             257,  385,  513,  769,  1025, 1537,  2049,  3073,
++                                             4097, 6145, 8193, 12289, 16385, 24577};
++  static const uint8_t kDistanceExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2,  3,  3,  4,  4,  5,  5,  6,
++                                             6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
++  int l = 28;
++  while (kLengthBase[l] > length) --l;
++  PutLiteral(bits, 257 + l);
++  if (kLengthExtra[l]) bits.Put(length - kLengthBase[l], kLengthExtra[l]);
++  int d = 29;
++  while (kDistanceBase[d] > distance) --d;
++  bits.PutCode(d, 5);
++  if (kDistanceExtra[d]) bits.Put(distance - kDistanceBase[d], kDistanceExtra[d]);
++}
++
++// zlib stream: one fixed-Huffman block, greedy LZ77 over hash chains.
++std::vector<uint8_t> Zlib(const uint8_t* data, size_t size) {
++  std::vector<uint8_t> out = {0x78, 0x01};
++  out.reserve(size / 2 + 64);
++  BitWriter bits(out);
++  bits.Put(1, 1);  // the final block
++  bits.Put(1, 2);  // fixed Huffman codes
++  constexpr uint32_t kWindow = 32768, kHashBits = 15, kChain = 16;
++  std::vector<int32_t> head(size_t(1) << kHashBits, -1), previous(kWindow, -1);
++  auto hash = [&](size_t i) {
++    return (uint32_t(data[i]) << 10 ^ uint32_t(data[i + 1]) << 5 ^ data[i + 2]) &
++           ((1u << kHashBits) - 1);
++  };
++  auto insert = [&](size_t i) {
++    if (i + 2 >= size) return;
++    const uint32_t h = hash(i);
++    previous[i & (kWindow - 1)] = head[h];
++    head[h] = int32_t(i);
++  };
++  size_t i = 0;
++  while (i < size) {
++    uint32_t best_length = 0, best_distance = 0;
++    if (i + 2 < size) {
++      int32_t candidate = head[hash(i)];
++      const uint32_t limit = uint32_t(std::min<size_t>(258, size - i));
++      for (uint32_t tries = 0; candidate >= 0 && tries < kChain; ++tries) {
++        const size_t distance = i - size_t(candidate);
++        if (distance == 0 || distance > kWindow) break;
++        uint32_t length = 0;
++        while (length < limit && data[size_t(candidate) + length] == data[i + length]) ++length;
++        if (length > best_length) {
++          best_length = length;
++          best_distance = uint32_t(distance);
++          if (length == limit) break;
++        }
++        const int32_t next = previous[size_t(candidate) & (kWindow - 1)];
++        if (next >= candidate) break;
++        candidate = next;
++      }
++    }
++    if (best_length >= 3) {
++      PutMatch(bits, best_length, best_distance);
++      for (uint32_t k = 0; k < best_length; ++k) insert(i + k);
++      i += best_length;
++    } else {
++      PutLiteral(bits, data[i]);
++      insert(i);
++      ++i;
++    }
++  }
++  PutLiteral(bits, 256);
++  bits.Flush();
++  uint32_t a = 1, b = 0;
++  for (size_t k = 0; k < size; ++k) {
++    a = (a + data[k]) % 65521;
++    b = (b + a) % 65521;
++  }
++  const uint32_t adler = b << 16 | a;
++  for (int k = 3; k >= 0; --k) out.push_back(uint8_t(adler >> (8 * k)));
++  return out;
++}
++
++void PutChunk(std::vector<uint8_t>& png, const char* type, const std::vector<uint8_t>& data) {
++  const uint32_t size = uint32_t(data.size());
++  for (int k = 3; k >= 0; --k) png.push_back(uint8_t(size >> (8 * k)));
++  const size_t start = png.size();
++  png.insert(png.end(), type, type + 4);
++  png.insert(png.end(), data.begin(), data.end());
++  const uint32_t crc = Crc32(png.data() + start, png.size() - start);
++  for (int k = 3; k >= 0; --k) png.push_back(uint8_t(crc >> (8 * k)));
++}
++
++// --- Mip generation (uncompressed replacements without mips) -----------------------------
++
++void GenerateMips(Decoded& decoded) {
++  const uint32_t texel = ElementBytes(decoded.format);
++  std::vector<std::vector<uint8_t>> levels;
++  levels.emplace_back(decoded.data.begin(),
++                      decoded.data.begin() + ptrdiff_t(decoded.levels[0].size));
++  uint32_t width = decoded.width, height = decoded.height;
++  while (width > 1 || height > 1) {
++    const uint32_t next_width = std::max(width / 2, 1u), next_height = std::max(height / 2, 1u);
++    const std::vector<uint8_t>& source = levels.back();
++    std::vector<uint8_t> level(size_t(next_width) * next_height * texel);
++    for (uint32_t y = 0; y < next_height; ++y) {
++      const uint32_t y0 = std::min(2 * y, height - 1), y1 = std::min(2 * y + 1, height - 1);
++      for (uint32_t x = 0; x < next_width; ++x) {
++        const uint32_t x0 = std::min(2 * x, width - 1), x1 = std::min(2 * x + 1, width - 1);
++        for (uint32_t c = 0; c < texel; ++c) {
++          const uint32_t sum = source[(size_t(y0) * width + x0) * texel + c] +
++                               source[(size_t(y0) * width + x1) * texel + c] +
++                               source[(size_t(y1) * width + x0) * texel + c] +
++                               source[(size_t(y1) * width + x1) * texel + c];
++          level[(size_t(y) * next_width + x) * texel + c] = uint8_t((sum + 2) / 4);
++        }
++      }
++    }
++    levels.push_back(std::move(level));
++    width = next_width;
++    height = next_height;
++  }
++  decoded.levels.clear();
++  decoded.data.clear();
++  width = decoded.width;
++  height = decoded.height;
++  for (const std::vector<uint8_t>& level : levels) {
++    const uint64_t offset = (decoded.data.size() + 15) & ~uint64_t(15);
++    decoded.data.resize(size_t(offset));
++    decoded.data.insert(decoded.data.end(), level.begin(), level.end());
++    decoded.levels.push_back({offset, level.size(), width, height});
++    width = std::max(width / 2, 1u);
++    height = std::max(height / 2, 1u);
++  }
++}
++
++}  // namespace
++
++bool IsBlockCompressed(Format format) { return format >= Format::kBC1; }
++
++uint32_t ElementBytes(Format format) {
++  switch (format) {
++    case Format::kR8:
++      return 1;
++    case Format::kRG8:
++      return 2;
++    case Format::kRGBA8:
++    case Format::kBGRA8:
++      return 4;
++    case Format::kBC1:
++    case Format::kBC4:
++      return 8;
++    case Format::kBC2:
++    case Format::kBC3:
++    case Format::kBC5:
++    case Format::kBC7:
++      return 16;
++    default:
++      return 0;
++  }
++}
++
++uint64_t LevelBytes(Format format, uint32_t width, uint32_t height) {
++  if (IsBlockCompressed(format)) {
++    return uint64_t((width + 3) / 4) * ((height + 3) / 4) * ElementBytes(format);
++  }
++  return uint64_t(width) * height * ElementBytes(format);
++}
++
++const char* FormatName(Format format) {
++  switch (format) {
++    case Format::kR8:
++      return "R8";
++    case Format::kRG8:
++      return "RG8";
++    case Format::kRGBA8:
++      return "RGBA8";
++    case Format::kBGRA8:
++      return "BGRA8";
++    case Format::kBC1:
++      return "BC1";
++    case Format::kBC2:
++      return "BC2";
++    case Format::kBC3:
++      return "BC3";
++    case Format::kBC4:
++      return "BC4";
++    case Format::kBC5:
++      return "BC5";
++    case Format::kBC7:
++      return "BC7";
++    default:
++      return "none";
++  }
++}
++
++bool IsScreenSized(uint32_t width, uint32_t height) {
++  for (uint32_t shift = 0; shift < 4; ++shift) {
++    if (width == (1280u >> shift) && (height == (720u >> shift) || height == (736u >> shift))) {
++      return true;
++    }
++  }
++  return false;
++}
++
++Format GuestFormatFile(xenos::TextureFormat format) {
++  // Each holds what the host texture's channels hold (the Vulkan texture cache's host formats),
++  // so a replacement in the same layout is sampled through the same swizzle.
++  switch (format) {
++    case xenos::TextureFormat::k_8:
++      return Format::kR8;
++    case xenos::TextureFormat::k_8_8:
++      return Format::kRG8;
++    case xenos::TextureFormat::k_8_8_8_8:
++      return Format::kRGBA8;
++    case xenos::TextureFormat::k_DXT1:
++      return Format::kBC1;
++    case xenos::TextureFormat::k_DXT2_3:
++      return Format::kBC2;
++    case xenos::TextureFormat::k_DXT4_5:
++      return Format::kBC3;
++    case xenos::TextureFormat::k_DXT5A:
++      return Format::kBC4;
++    case xenos::TextureFormat::k_DXN:
++      return Format::kBC5;
++    default:
++      return Format::kNone;
++  }
++}
++
++std::vector<uint8_t> UntileLevel(const GuestTexture& texture,
++                                 const texture_util::TextureGuestLayout& layout,
++                                 const uint8_t* base, uint32_t base_size, const uint8_t* mips,
++                                 uint32_t mips_size, uint32_t level) {
++  const FormatInfo* info = FormatInfo::Get(texture.format);
++  const uint32_t block_width = info->block_width, block_height = info->block_height;
++  const uint32_t block_bytes = info->bytes_per_block();
++  if (!block_bytes || (block_bytes & (block_bytes - 1))) return {};
++  const uint32_t block_bytes_log2 = uint32_t(std::countr_zero(block_bytes));
++  const uint32_t width = std::max(texture.width >> level, 1u);
++  const uint32_t height = std::max(texture.height >> level, 1u);
++  const uint32_t width_blocks = (width + block_width - 1) / block_width;
++  const uint32_t height_blocks = (height + block_height - 1) / block_height;
++  const uint32_t packed = layout.packed_level;
++  const uint8_t* source;
++  size_t source_size;
++  const texture_util::TextureGuestLayout::Level* level_layout;
++  if (level == 0) {
++    source = base;
++    source_size = base_size;
++    level_layout = &layout.base;
++  } else {
++    const uint32_t stored = std::min(level, packed);
++    if (!mips || stored >= xenos::kTextureMaxMips) return {};
++    const uint32_t offset = layout.mip_offsets_bytes[stored];
++    if (offset >= mips_size) return {};
++    source = mips + offset;
++    source_size = mips_size - offset;
++    level_layout = &layout.mips[stored];
++  }
++  uint32_t offset_x = 0, offset_y = 0, offset_z = 0;
++  if (level >= packed) {
++    texture_util::GetPackedMipOffset(texture.width, texture.height, 1, texture.format, level,
++                                     offset_x, offset_y, offset_z);
++  }
++  const uint32_t pitch_bytes = level_layout->row_pitch_bytes;
++  if (!pitch_bytes) return {};
++  std::vector<uint8_t> out(size_t(width_blocks) * height_blocks * block_bytes);
++  for (uint32_t y = 0; y < height_blocks; ++y) {
++    for (uint32_t x = 0; x < width_blocks; ++x) {
++      const uint32_t source_x = x + offset_x, source_y = y + offset_y;
++      const size_t offset =
++          texture.tiled ? size_t(uint32_t(texture_util::GetTiledOffset2D(
++                              int32_t(source_x), int32_t(source_y), pitch_bytes / block_bytes,
++                              block_bytes_log2)))
++                        : size_t(source_y) * pitch_bytes + size_t(source_x) * block_bytes;
++      if (offset + block_bytes <= source_size) {
++        std::memcpy(&out[(size_t(y) * width_blocks + x) * block_bytes], source + offset,
++                    block_bytes);
++      }
++    }
++  }
++  return out;
++}
++
++std::vector<uint8_t> EncodeDds(Format format, uint32_t width, uint32_t height,
++                               const std::vector<std::vector<uint8_t>>& levels) {
++  uint32_t header[31] = {};
++  bool dx10 = false;
++  uint32_t dxgi = 0;
++  header[0] = 124;
++  header[1] = 0x1 | 0x2 | 0x4 | 0x1000;  // caps, height, width, pixel format
++  header[2] = height;
++  header[3] = width;
++  header[6] = uint32_t(levels.size());
++  if (levels.size() > 1) header[1] |= 0x20000;  // mip map count
++  header[18] = 32;
++  if (IsBlockCompressed(format)) {
++    header[1] |= 0x80000;  // linear size
++    header[4] = uint32_t(LevelBytes(format, width, height));
++    header[19] = 0x4;  // four CC
++  } else {
++    header[1] |= 0x8;  // pitch
++    header[4] = width * ElementBytes(format);
++  }
++  switch (format) {
++    case Format::kBC1:
++      header[20] = FourCC('D', 'X', 'T', '1');
++      break;
++    case Format::kBC2:
++      header[20] = FourCC('D', 'X', 'T', '3');
++      break;
++    case Format::kBC3:
++      header[20] = FourCC('D', 'X', 'T', '5');
++      break;
++    case Format::kBC4:
++      header[20] = FourCC('A', 'T', 'I', '1');
++      break;
++    case Format::kBC5:
++      header[20] = FourCC('A', 'T', 'I', '2');
++      break;
++    case Format::kBC7:
++      dx10 = true;
++      dxgi = 98;  // DXGI_FORMAT_BC7_UNORM
++      break;
++    case Format::kRGBA8:
++    case Format::kBGRA8:
++      header[19] = 0x40 | 0x1;  // RGB, alpha pixels
++      header[21] = 32;
++      header[22] = format == Format::kRGBA8 ? 0x000000FF : 0x00FF0000;
++      header[23] = 0x0000FF00;
++      header[24] = format == Format::kRGBA8 ? 0x00FF0000 : 0x000000FF;
++      header[25] = 0xFF000000;
++      break;
++    case Format::kR8:
++      header[19] = 0x20000;  // luminance
++      header[21] = 8;
++      header[22] = 0xFF;
++      break;
++    case Format::kRG8:
++      dx10 = true;
++      dxgi = 49;  // DXGI_FORMAT_R8G8_UNORM
++      break;
++    default:
++      return {};
++  }
++  if (dx10) {
++    header[19] = 0x4;
++    header[20] = FourCC('D', 'X', '1', '0');
++  }
++  header[26] = 0x1000;  // texture
++  if (levels.size() > 1) header[26] |= 0x8 | 0x400000;  // complex, mip map
++  std::vector<uint8_t> out(4 + sizeof(header));
++  std::memcpy(out.data(), "DDS ", 4);
++  std::memcpy(out.data() + 4, header, sizeof(header));
++  if (dx10) {
++    const uint32_t extension[5] = {dxgi, 3 /* 2D */, 0, 1, 0};
++    out.insert(out.end(), reinterpret_cast<const uint8_t*>(extension),
++               reinterpret_cast<const uint8_t*>(extension) + sizeof(extension));
++  }
++  for (const std::vector<uint8_t>& level : levels) out.insert(out.end(), level.begin(), level.end());
++  return out;
++}
++
++bool DecodeDds(const uint8_t* data, size_t size, Decoded& out, std::string& error) {
++  if (size < 128 || std::memcmp(data, "DDS ", 4)) {
++    error = "not a DDS file";
++    return false;
++  }
++  uint32_t header[31];
++  std::memcpy(header, data + 4, sizeof(header));
++  if (header[0] != 124) {
++    error = "bad DDS header";
++    return false;
++  }
++  const uint32_t flags = header[1], height = header[2], width = header[3];
++  const uint32_t pixel_flags = header[19], four_cc = header[20], bits = header[21];
++  if (header[27] & 0x200) {
++    error = "cube maps are not supported yet";
++    return false;
++  }
++  if ((header[27] & 0x200000) || ((flags & 0x800000) && header[5] > 1)) {
++    error = "volume textures are not supported yet";
++    return false;
++  }
++  size_t offset = 128;
++  Format format = Format::kNone;
++  bool fill_alpha = false;
++  if (pixel_flags & 0x4) {
++    if (four_cc == FourCC('D', 'X', 'T', '1')) {
++      format = Format::kBC1;
++    } else if (four_cc == FourCC('D', 'X', 'T', '2') || four_cc == FourCC('D', 'X', 'T', '3')) {
++      format = Format::kBC2;
++    } else if (four_cc == FourCC('D', 'X', 'T', '4') || four_cc == FourCC('D', 'X', 'T', '5')) {
++      format = Format::kBC3;
++    } else if (four_cc == FourCC('A', 'T', 'I', '1') || four_cc == FourCC('B', 'C', '4', 'U')) {
++      format = Format::kBC4;
++    } else if (four_cc == FourCC('A', 'T', 'I', '2') || four_cc == FourCC('B', 'C', '5', 'U')) {
++      format = Format::kBC5;
++    } else if (four_cc == FourCC('D', 'X', '1', '0')) {
++      if (size < 148) {
++        error = "truncated DX10 header";
++        return false;
++      }
++      uint32_t extension[5];
++      std::memcpy(extension, data + 128, sizeof(extension));
++      offset = 148;
++      if (extension[1] != 3 || extension[3] > 1 || (extension[2] & 0x4)) {
++        error = "only single 2D textures are supported (no arrays or cube maps)";
++        return false;
++      }
++      switch (extension[0]) {
++        case 71:  // BC1_UNORM
++        case 72:  // BC1_UNORM_SRGB (sampled as UNORM: the game does its own gamma)
++          format = Format::kBC1;
++          break;
++        case 74:
++        case 75:
++          format = Format::kBC2;
++          break;
++        case 77:
++        case 78:
++          format = Format::kBC3;
++          break;
++        case 80:
++          format = Format::kBC4;
++          break;
++        case 83:
++          format = Format::kBC5;
++          break;
++        case 98:
++        case 99:
++          format = Format::kBC7;
++          break;
++        case 28:
++        case 29:
++          format = Format::kRGBA8;
++          break;
++        case 87:
++        case 91:
++          format = Format::kBGRA8;
++          break;
++        case 61:
++          format = Format::kR8;
++          break;
++        case 49:
++          format = Format::kRG8;
++          break;
++        default:
++          error = "unsupported DXGI format " + std::to_string(extension[0]);
++          return false;
++      }
++    } else {
++      error = "unsupported four CC";
++      return false;
++    }
++  } else if ((pixel_flags & 0x40) && bits == 32) {
++    if (header[22] == 0xFF && header[23] == 0xFF00 && header[24] == 0xFF0000) {
++      format = Format::kRGBA8;
++    } else if (header[22] == 0xFF0000 && header[23] == 0xFF00 && header[24] == 0xFF) {
++      format = Format::kBGRA8;
++    } else {
++      error = "unsupported 32-bit RGB channel order";
++      return false;
++    }
++    fill_alpha = !(pixel_flags & 0x1);
++  } else if ((pixel_flags & 0x20000) && bits == 8) {
++    format = Format::kR8;
++  } else if ((pixel_flags & 0x20000) && (pixel_flags & 0x1) && bits == 16) {
++    format = Format::kRG8;  // luminance + alpha: R and G
++  } else {
++    error = "unsupported pixel format (use BC1-5/7, RGBA8, BGRA8, R8 or RG8)";
++    return false;
++  }
++  if (!width || !height || width > kMaxReplacementSize || height > kMaxReplacementSize) {
++    error = "bad size " + std::to_string(width) + "x" + std::to_string(height);
++    return false;
++  }
++  uint32_t level_count = (flags & 0x20000) && header[6] ? header[6] : 1;
++  level_count = std::min(level_count, uint32_t(std::bit_width(std::max(width, height))));
++  out.format = format;
++  out.width = width;
++  out.height = height;
++  out.levels.clear();
++  out.data.clear();
++  uint32_t level_width = width, level_height = height;
++  for (uint32_t level = 0; level < level_count; ++level) {
++    const uint64_t level_size = LevelBytes(format, level_width, level_height);
++    if (offset + level_size > size) {
++      if (level == 0) {
++        error = "file too short";
++        return false;
++      }
++      break;  // keep the complete levels
++    }
++    const uint64_t out_offset = (out.data.size() + 15) & ~uint64_t(15);
++    out.data.resize(size_t(out_offset));
++    out.data.insert(out.data.end(), data + offset, data + offset + level_size);
++    out.levels.push_back({out_offset, level_size, level_width, level_height});
++    offset += size_t(level_size);
++    level_width = std::max(level_width / 2, 1u);
++    level_height = std::max(level_height / 2, 1u);
++  }
++  if (fill_alpha) {
++    for (const Level& level : out.levels) {
++      for (uint64_t i = 3; i < level.size; i += 4) out.data[size_t(level.offset + i)] = 255;
++    }
++  }
++  return true;
++}
++
++std::vector<uint8_t> ToRgba8(Format format, uint32_t width, uint32_t height, const uint8_t* data) {
++  std::vector<uint8_t> rgba(size_t(width) * height * 4, 255);
++  auto texel = [&](uint32_t x, uint32_t y) { return &rgba[(size_t(y) * width + x) * 4]; };
++  if (!IsBlockCompressed(format)) {
++    const uint32_t bytes = ElementBytes(format);
++    for (uint32_t y = 0; y < height; ++y) {
++      for (uint32_t x = 0; x < width; ++x) {
++        const uint8_t* in = data + (size_t(y) * width + x) * bytes;
++        uint8_t* out = texel(x, y);
++        switch (format) {
++          case Format::kR8:
++            out[0] = out[1] = out[2] = in[0];
++            break;
++          case Format::kRG8:
++            out[0] = in[0];
++            out[1] = in[1];
++            out[2] = 0;
++            break;
++          case Format::kRGBA8:
++            std::memcpy(out, in, 4);
++            break;
++          case Format::kBGRA8:
++            out[0] = in[2];
++            out[1] = in[1];
++            out[2] = in[0];
++            out[3] = in[3];
++            break;
++          default:
++            break;
++        }
++      }
++    }
++    return rgba;
++  }
++  if (format == Format::kBC7) return {};
++  const uint32_t block_bytes = ElementBytes(format);
++  const uint32_t width_blocks = (width + 3) / 4, height_blocks = (height + 3) / 4;
++  for (uint32_t by = 0; by < height_blocks; ++by) {
++    for (uint32_t bx = 0; bx < width_blocks; ++bx) {
++      const uint8_t* block = data + (size_t(by) * width_blocks + bx) * block_bytes;
++      uint8_t texels[16][4];
++      std::memset(texels, 255, sizeof(texels));
++      switch (format) {
++        case Format::kBC1:
++          DecodeColorBlock(block, texels, true);
++          break;
++        case Format::kBC2:
++          DecodeColorBlock(block + 8, texels, false);
++          for (int i = 0; i < 16; ++i) texels[i][3] = uint8_t((block[i / 2] >> (4 * (i & 1)) & 15) * 17);
++          break;
++        case Format::kBC3:
++          DecodeColorBlock(block + 8, texels, false);
++          DecodeAlphaBlock(block, &texels[0][3], 4);
++          break;
++        case Format::kBC4:
++          DecodeAlphaBlock(block, &texels[0][0], 4);
++          for (int i = 0; i < 16; ++i) texels[i][1] = texels[i][2] = texels[i][0];
++          break;
++        case Format::kBC5:
++          DecodeAlphaBlock(block, &texels[0][0], 4);
++          DecodeAlphaBlock(block + 8, &texels[0][1], 4);
++          for (int i = 0; i < 16; ++i) texels[i][2] = 0;
++          break;
++        default:
++          break;
++      }
++      for (uint32_t i = 0; i < 16; ++i) {
++        const uint32_t x = bx * 4 + (i & 3), y = by * 4 + i / 4;
++        if (x < width && y < height) std::memcpy(texel(x, y), texels[i], 4);
++      }
++    }
++  }
++  return rgba;
++}
++
++std::vector<uint8_t> EncodePng(uint32_t width, uint32_t height, const uint8_t* rgba) {
++  // Each row with the filter that gives the smallest sum of absolute differences.
++  const size_t stride = size_t(width) * 4;
++  std::vector<uint8_t> filtered((stride + 1) * height);
++  std::vector<uint8_t> candidate(stride);
++  for (uint32_t y = 0; y < height; ++y) {
++    const uint8_t* row = rgba + y * stride;
++    const uint8_t* above = y ? row - stride : nullptr;
++    uint64_t best_cost = UINT64_MAX;
++    for (uint8_t filter = 0; filter < 5; ++filter) {
++      if (!above && (filter == 2 || filter == 3 || filter == 4)) continue;
++      uint64_t cost = 0;
++      for (size_t i = 0; i < stride; ++i) {
++        const int a = i >= 4 ? row[i - 4] : 0, b = above ? above[i] : 0,
++                  c = (above && i >= 4) ? above[i - 4] : 0;
++        int predicted = 0;
++        switch (filter) {
++          case 1:
++            predicted = a;
++            break;
++          case 2:
++            predicted = b;
++            break;
++          case 3:
++            predicted = (a + b) / 2;
++            break;
++          case 4: {
++            const int p = a + b - c, pa = std::abs(p - a), pb = std::abs(p - b),
++                      pc = std::abs(p - c);
++            predicted = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
++            break;
++          }
++          default:
++            break;
++        }
++        candidate[i] = uint8_t(row[i] - predicted);
++        cost += uint64_t(std::abs(int(int8_t(candidate[i]))));
++      }
++      if (cost < best_cost) {
++        best_cost = cost;
++        uint8_t* out = &filtered[y * (stride + 1)];
++        out[0] = filter;
++        std::memcpy(out + 1, candidate.data(), stride);
++      }
++    }
++  }
++  std::vector<uint8_t> png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
++  std::vector<uint8_t> ihdr(13);
++  for (int k = 0; k < 4; ++k) {
++    ihdr[k] = uint8_t(width >> (24 - 8 * k));
++    ihdr[4 + k] = uint8_t(height >> (24 - 8 * k));
++  }
++  ihdr[8] = 8;  // bits per channel
++  ihdr[9] = 6;  // RGBA
++  PutChunk(png, "IHDR", ihdr);
++  PutChunk(png, "IDAT", Zlib(filtered.data(), filtered.size()));
++  PutChunk(png, "IEND", {});
++  return png;
++}
++
++std::vector<std::unique_ptr<Decoded>> Client::Take() {
++  std::vector<std::unique_ptr<Decoded>> taken;
++  std::lock_guard<std::mutex> lock(mutex_);
++  taken.swap(ready_);
++  ready_count_.store(0, std::memory_order_release);
++  return taken;
++}
++
++void Client::Put(std::unique_ptr<Decoded> decoded) {
++  pending_bytes_.fetch_add(decoded->data.size(), std::memory_order_acq_rel);
++  std::lock_guard<std::mutex> lock(mutex_);
++  ready_.push_back(std::move(decoded));
++  ready_count_.store(uint32_t(ready_.size()), std::memory_order_release);
++}
++
++struct Packs::DumpJob {
++  uint64_t fingerprint;
++  GuestTexture texture;
++  texture_util::TextureGuestLayout layout;
++  std::vector<uint8_t> base;
++  std::vector<uint8_t> mips;
++  uint32_t base_size;
++  uint32_t mips_size;
++};
++
++struct Packs::DecodeJob {
++  uint64_t fingerprint;
++  uint32_t width;
++  uint32_t height;
++  std::weak_ptr<Client> client;
++};
++
++Packs* Packs::Get() {
++  static Packs* packs = [] {
++    if (!REXCVAR_GET(texture_dump) && !REXCVAR_GET(texture_replace)) return static_cast<Packs*>(nullptr);
++    // Never destroyed: the workers are detached and may be writing when the process ends.
++    Packs* created = new Packs();
++    if (!created->dump_ && !created->replace_) return static_cast<Packs*>(nullptr);
++    return created;
++  }();
++  return packs;
++}
++
++Packs::Packs() {
++  dump_ = REXCVAR_GET(texture_dump);
++  replace_ = REXCVAR_GET(texture_replace);
++  preload_ = replace_ && REXCVAR_GET(texture_replace_preload);
++  dump_png_ = REXCVAR_GET(texture_dump_png);
++  std::string root = REXCVAR_GET(texture_pack_root);
++  if (root.empty()) {
++    const std::string user_data = rex::cvar::GetFlagByName("user_data_root");
++    if (!user_data.empty()) root = (std::filesystem::path(user_data) / "textures").string();
++  }
++  if (root.empty()) {
++    REXGPU_WARN("Texture packs: no folder (texture_pack_root is not set): off");
++    dump_ = replace_ = preload_ = false;
++    return;
++  }
++  root_ = std::filesystem::absolute(std::filesystem::path(root)).lexically_normal();
++  dump_dir_ = root_ / "dump";
++  std::error_code error;
++  std::filesystem::create_directories(dump_ ? dump_dir_ : root_, error);
++
++  const auto scan_start = std::chrono::steady_clock::now();
++  size_t duplicates = 0;
++  if (replace_) {
++    // Every <fingerprint>.dds/.png under the folder, except in dump/; a .dds wins over a .png.
++    std::vector<std::pair<uint64_t, std::filesystem::path>> files;
++    for (auto it = std::filesystem::recursive_directory_iterator(
++             root_, std::filesystem::directory_options::skip_permission_denied, error);
++         !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
++      if (it->is_directory(error)) {
++        if (it.depth() == 0 && it->path().filename() == "dump") it.disable_recursion_pending();
++        continue;
++      }
++      const std::string extension = Lower(it->path().extension().string());
++      uint64_t fingerprint;
++      if ((extension == ".dds" || extension == ".png") &&
++          ParseHex(it->path().stem().string(), fingerprint)) {
++        files.emplace_back(fingerprint, it->path());
++      }
++    }
++    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
++      if (a.first != b.first) return a.first < b.first;
++      // .dds before .png, then by path, so the choice is the same every run.
++      const bool a_dds = Lower(a.second.extension().string()) == ".dds";
++      const bool b_dds = Lower(b.second.extension().string()) == ".dds";
++      if (a_dds != b_dds) return a_dds;
++      return a.second < b.second;
++    });
++    for (auto& file : files) {
++      if (!index_.empty() && index_.back().first == file.first) {
++        ++duplicates;
++        continue;
++      }
++      index_.push_back(std::move(file));
++    }
++  }
++  if (dump_) {
++    std::unordered_set<uint64_t>& dumped = dumped_;
++    for (auto it = std::filesystem::directory_iterator(dump_dir_, error);
++         !error && it != std::filesystem::directory_iterator(); it.increment(error)) {
++      uint64_t fingerprint;
++      if (Lower(it->path().extension().string()) == ".dds" &&
++          ParseHex(it->path().stem().string(), fingerprint)) {
++        dumped.insert(fingerprint);
++      }
++    }
++  }
++  const double scan_ms = std::chrono::duration<double, std::milli>(
++                             std::chrono::steady_clock::now() - scan_start)
++                             .count();
++  REXGPU_INFO(
++      "Texture packs: folder {}; dump {}{}; replace {} ({} files{}{}){} (listed in {:.1f} ms)",
++      root_.string(), dump_ ? "on" : "off",
++      dump_ ? " (" + std::to_string(dumped_.size()) + " already dumped)" : std::string(),
++      replace_ ? "on" : "off", index_.size(),
++      duplicates ? ", " + std::to_string(duplicates) + " duplicate names ignored" : std::string(),
++      "", preload_ ? ", preloading" : "", scan_ms);
++  if (dump_) std::thread(&Packs::DumpWorker, this).detach();
++  if (replace_) std::thread(&Packs::DecodeWorker, this).detach();
++}
++
++uint64_t Packs::Fingerprint(const GuestTexture& texture,
++                            const texture_util::TextureGuestLayout& layout, const uint8_t* base,
++                            uint32_t base_size) const {
++  // Only the visible blocks of the base level: the padding around them (to the tile, the
++  // pitch, the packed mip tail) can hold whatever the memory held before, which differs between
++  // runs. When the tiled layout is a permutation of exactly the visible blocks (32-block
++  // multiples, 128 for 1- and 2-byte blocks), the guest data is hashed as it is; otherwise the
++  // blocks are gathered first (small and odd-sized textures).
++  const FormatInfo* info = FormatInfo::Get(texture.format);
++  const uint32_t block_bytes = info->bytes_per_block();
++  const uint32_t width_blocks = (texture.width + info->block_width - 1) / info->block_width;
++  const uint32_t height_blocks = (texture.height + info->block_height - 1) / info->block_height;
++  const uint64_t visible_bytes = uint64_t(width_blocks) * height_blocks * block_bytes;
++  const uint32_t multiple = block_bytes >= 4 ? 32 : 128;
++  uint64_t data;
++  if (layout.packed_level != 0 && layout.base.row_pitch_bytes == width_blocks * block_bytes &&
++      (!texture.tiled || (width_blocks % multiple == 0 && height_blocks % multiple == 0)) &&
++      visible_bytes <= base_size) {
++    data = XXH3_64bits(base, size_t(visible_bytes));
++  } else {
++    const std::vector<uint8_t> blocks = UntileLevel(texture, layout, base, base_size, nullptr, 0, 0);
++    data = XXH3_64bits(blocks.data(), blocks.size());
++  }
++  struct {
++    uint32_t version, format, endianness, width, height, pitch, tiled, packed_mips;
++    uint64_t data;
++  } fields = {kFingerprintVersion,
++              uint32_t(texture.format),
++              uint32_t(texture.endianness),
++              texture.width,
++              texture.height,
++              texture.pitch,
++              uint32_t(texture.tiled),
++              uint32_t(texture.packed_mips),
++              data};
++  static_assert(sizeof(fields) == 40, "no padding in the hashed fields");
++  const uint64_t fingerprint = XXH3_64bits(&fields, sizeof(fields));
++  return fingerprint ? fingerprint : 1;
++}
++
++void Packs::Dump(uint64_t fingerprint, const GuestTexture& texture,
++                 const texture_util::TextureGuestLayout& layout, const uint8_t* base,
++                 uint32_t base_size, const uint8_t* mips, uint32_t mips_size) {
++  if (!dump_) return;
++  // Copied here, rounded up to 16 bytes as the texture cache reads it (within the same pages):
++  // the worker must not read guest memory, which the game may free (and protect) meanwhile.
++  // The copies go into buffers the worker gave back, so they rarely touch new pages.
++  const uint32_t base_copy = (base_size + 15) & ~15u;
++  const uint32_t mips_copy = mips ? (mips_size + 15) & ~15u : 0;
++  auto job = std::make_unique<DumpJob>();
++  {
++    std::lock_guard<std::mutex> lock(dump_mutex_);
++    if (dumped_.count(fingerprint)) return;
++    if (dump_queue_.size() >= kDumpQueueMaxJobs ||
++        dump_queue_bytes_ + base_copy + mips_copy > kDumpQueueMaxBytes) {
++      ++stats_.dumps_dropped;
++      return;
++    }
++    dumped_.insert(fingerprint);
++    dump_queue_bytes_ += base_copy + mips_copy;
++    for (std::vector<uint8_t>* buffer : {&job->base, &job->mips}) {
++      if (spare_buffers_.empty()) break;
++      spare_bytes_ -= spare_buffers_.back().capacity();
++      buffer->swap(spare_buffers_.back());
++      spare_buffers_.pop_back();
++    }
++  }
++  const auto start = std::chrono::steady_clock::now();
++  job->fingerprint = fingerprint;
++  job->texture = texture;
++  job->layout = layout;
++  job->base.assign(base, base + base_copy);
++  job->mips.assign(mips, mips + mips_copy);
++  job->base_size = base_size;
++  job->mips_size = mips ? mips_size : 0;
++  stats_.dump_copy_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                      std::chrono::steady_clock::now() - start)
++                                      .count());
++  {
++    std::lock_guard<std::mutex> lock(dump_mutex_);
++    dump_queue_.push_back(std::move(job));
++    ++stats_.dumps_queued;
++  }
++  dump_cv_.notify_one();
++}
++
++bool Packs::HasReplacement(uint64_t fingerprint) const {
++  auto it = std::lower_bound(index_.begin(), index_.end(), fingerprint,
++                             [](const auto& entry, uint64_t value) { return entry.first < value; });
++  return it != index_.end() && it->first == fingerprint;
++}
++
++std::vector<uint64_t> Packs::Replacements() const {
++  std::vector<uint64_t> fingerprints;
++  fingerprints.reserve(index_.size());
++  for (const auto& entry : index_) fingerprints.push_back(entry.first);
++  return fingerprints;
++}
++
++void Packs::RequestDecode(uint64_t fingerprint, uint32_t width, uint32_t height,
++                          const std::shared_ptr<Client>& client) {
++  if (!replace_) return;
++  auto job = std::make_unique<DecodeJob>();
++  job->fingerprint = fingerprint;
++  job->width = width;
++  job->height = height;
++  job->client = client;
++  {
++    std::lock_guard<std::mutex> lock(decode_mutex_);
++    decode_queue_.push_back(std::move(job));
++  }
++  decode_cv_.notify_one();
++}
++
++void Packs::DumpWorker() {
++  std::ofstream index(dump_dir_ / "index.tsv", std::ios::app);
++  uint32_t errors_logged = 0;
++  while (true) {
++    std::unique_ptr<DumpJob> job;
++    {
++      std::unique_lock<std::mutex> lock(dump_mutex_);
++      dump_cv_.wait(lock, [this] { return !dump_queue_.empty(); });
++      job = std::move(dump_queue_.front());
++      dump_queue_.pop_front();
++    }
++    WriteDump(*job, index, errors_logged);
++    // The buffers go back for the next copies (at most 64 MiB kept).
++    std::lock_guard<std::mutex> lock(dump_mutex_);
++    dump_queue_bytes_ -= job->base.size() + job->mips.size();
++    for (std::vector<uint8_t>* buffer : {&job->base, &job->mips}) {
++      if (buffer->capacity() && spare_bytes_ + buffer->capacity() <= kSpareBufferBytes) {
++        spare_bytes_ += buffer->capacity();
++        buffer->clear();
++        spare_buffers_.push_back(std::move(*buffer));
++      }
++    }
++  }
++}
++
++void Packs::WriteDump(DumpJob& job, std::ofstream& index, uint32_t& errors_logged) {
++  const GuestTexture& texture = job.texture;
++  SwapEndian(job.base.data(), job.base.size(), texture.endianness);
++  SwapEndian(job.mips.data(), job.mips.size(), texture.endianness);
++  const Format format = GuestFormatFile(texture.format);
++  const uint32_t level_count = job.mips.empty() ? 1 : texture.mip_levels;
++  std::vector<std::vector<uint8_t>> levels;
++  for (uint32_t level = 0; level < level_count; ++level) {
++    std::vector<uint8_t> data =
++        UntileLevel(texture, job.layout, job.base.data(), job.base_size,
++                    job.mips.empty() ? nullptr : job.mips.data(), job.mips_size, level);
++    if (data.empty()) break;
++    levels.push_back(std::move(data));
++  }
++  const std::string name = Hex(job.fingerprint);
++  bool ok = !levels.empty();
++  std::vector<uint8_t> dds;
++  if (ok) {
++    dds = EncodeDds(format, texture.width, texture.height, levels);
++    ok = !dds.empty() && WriteFile(dump_dir_ / (name + ".dds"), dds);
++  }
++  uint64_t written = dds.size();
++  if (ok && dump_png_) {
++    std::vector<uint8_t> rgba = ToRgba8(format, texture.width, texture.height, levels[0].data());
++    if (!rgba.empty()) {
++      std::vector<uint8_t> png = EncodePng(texture.width, texture.height, rgba.data());
++      if (WriteFile(dump_dir_ / (name + ".png"), png)) written += png.size();
++    }
++  }
++  if (!ok) {
++    ++dumps_failed_;
++    if (errors_logged++ < 8) {
++      REXGPU_WARN("Texture packs: could not dump {} ({} {}x{}) to {}", name,
++                  FormatInfo::Get(texture.format)->name, texture.width, texture.height,
++                  dump_dir_.string());
++    }
++    return;
++  }
++  ++dumps_written_;
++  dump_bytes_written_ += written;
++  index << name << '\t' << FormatInfo::Get(texture.format)->name << '\t' << texture.width << 'x'
++        << texture.height << '\t' << levels.size() << '\t' << FormatName(format) << '\n';
++  index.flush();
++}
++
++void Packs::DecodeWorker() {
++  uint32_t errors_logged = 0;
++  while (true) {
++    std::unique_ptr<DecodeJob> job;
++    {
++      std::unique_lock<std::mutex> lock(decode_mutex_);
++      decode_cv_.wait(lock, [this] { return !decode_queue_.empty(); });
++      job = std::move(decode_queue_.front());
++      decode_queue_.pop_front();
++    }
++    std::shared_ptr<Client> client = job->client.lock();
++    if (!client) continue;
++    // At most this much decoded and waiting for the frame starts to upload it (32 MiB a frame).
++    while (client->pending_bytes() > kMaxPendingDecodedBytes && job->client.use_count() > 1) {
++      std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
++    auto decoded = std::make_unique<Decoded>();
++    decoded->fingerprint = job->fingerprint;
++    std::string error;
++    auto it = std::lower_bound(
++        index_.begin(), index_.end(), job->fingerprint,
++        [](const auto& entry, uint64_t value) { return entry.first < value; });
++    std::vector<uint8_t> file;
++    if (it == index_.end() || it->first != job->fingerprint) {
++      error = "not in the pack";
++    } else if (!ReadFile(it->second, file)) {
++      error = "could not read the file";
++    } else if (Lower(it->second.extension().string()) == ".png") {
++      int width = 0, height = 0, channels = 0;
++      stbi_uc* pixels = stbi_load_from_memory(file.data(), int(file.size()), &width, &height,
++                                              &channels, 4);
++      if (!pixels) {
++        error = "not a PNG file this reader understands";
++      } else if (width <= 0 || height <= 0 || uint32_t(width) > kMaxReplacementSize ||
++                 uint32_t(height) > kMaxReplacementSize) {
++        error = "bad size";
++        stbi_image_free(pixels);
++      } else {
++        decoded->format = Format::kRGBA8;
++        decoded->width = uint32_t(width);
++        decoded->height = uint32_t(height);
++        const uint64_t size = uint64_t(width) * uint64_t(height) * 4;
++        decoded->data.assign(pixels, pixels + size);
++        decoded->levels.push_back({0, size, uint32_t(width), uint32_t(height)});
++        stbi_image_free(pixels);
++      }
++    } else if (!DecodeDds(file.data(), file.size(), *decoded, error)) {
++      // error set
++    }
++    if (error.empty() && job->width && job->height) {
++      // The same picture at another size: the aspect ratio must match (within a texel).
++      const int64_t cross = int64_t(decoded->width) * job->height - int64_t(decoded->height) * job->width;
++      if (std::abs(cross) > int64_t(std::max(decoded->width, decoded->height))) {
++        error = "its aspect ratio differs from the game's " + std::to_string(job->width) + "x" +
++                std::to_string(job->height);
++      }
++    }
++    if (error.empty() && !IsBlockCompressed(decoded->format) && decoded->levels.size() == 1) {
++      GenerateMips(*decoded);
++    }
++    decoded->ok = error.empty();
++    if (decoded->ok) {
++      ++decodes_ok_;
++    } else {
++      ++decodes_failed_;
++      if (errors_logged++ < 32) {
++        REXGPU_WARN("Texture packs: {} not used: {} ({})", Hex(job->fingerprint), error,
++                    it != index_.end() && it->first == job->fingerprint ? it->second.string()
++                                                                        : std::string());
++      }
++      decoded->data.clear();
++      decoded->data.shrink_to_fit();
++    }
++    client->Put(std::move(decoded));
++  }
++}
++
++void Packs::CountSkip(Skip skip, xenos::TextureFormat format) {
++  ++stats_.skipped[size_t(skip)];
++  if (skip == Skip::kFormat) ++stats_.skipped_formats[uint32_t(format) & 63];
++}
++
++void Packs::CountLoad(uint64_t nanoseconds, uint64_t hash_nanoseconds, uint64_t bytes) {
++  stats_.fingerprint_ns += nanoseconds;
++  stats_.hash_ns += hash_nanoseconds;
++  stats_.fingerprint_max_ns = std::max(stats_.fingerprint_max_ns, nanoseconds);
++  stats_.fingerprint_bytes += bytes;
++  if (bytes) ++stats_.fingerprints;
++}
++
++void Packs::CountReplacementUsed(uint64_t fingerprint) {
++  if (used_.insert(fingerprint).second) ++stats_.replacements_used;
++}
++
++void Packs::CountUploaded(uint64_t gpu_bytes) {
++  ++uploads_;
++  upload_bytes_ += gpu_bytes;
++}
++
++void Packs::LogSummary(bool force) {
++  const uint64_t now = rex::chrono::Clock::QueryHostUptimeMillis();
++  if (!force && now - last_summary_ms_ < 60000) return;
++  const uint64_t written = dumps_written_.load();
++  const bool changed = stats_.fingerprint_ns != stats_logged_.fingerprint_ns ||
++                       written != dumps_written_logged_ ||
++                       stats_.replacements_used != stats_logged_.replacements_used;
++  last_summary_ms_ = now;
++  if (!changed) return;
++  std::string formats;
++  {
++    std::vector<std::pair<uint32_t, uint32_t>> counts;
++    for (uint32_t i = 0; i < 64; ++i) {
++      if (stats_.skipped_formats[i]) counts.emplace_back(stats_.skipped_formats[i], i);
++    }
++    std::sort(counts.rbegin(), counts.rend());
++    for (size_t i = 0; i < counts.size() && i < 6; ++i) {
++      formats += (i ? ", " : "") + std::string(FormatInfo::Get(xenos::TextureFormat(counts[i].second))->name) +
++                 " " + std::to_string(counts[i].first);
++    }
++  }
++  const auto& s = stats_;
++  REXGPU_INFO(
++      "Texture packs: command processor time {:.1f} ms ({:.2f} ms since the last summary; "
++      "hashing {:.1f} ms, dump copies {:.1f} ms; at most {:.0f} us for a load); {} loads "
++      "fingerprinted ({:.1f} MiB); dumped {} ({:.1f} MiB written, {} queued, {} dropped, {} "
++      "failed); replacements for {} textures ({} files read, "
++      "{} not usable, {} uploaded, "
++      "{:.1f} MiB of GPU memory); textures skipped: {} format, {} cube/3D/array/scaled, {} "
++      "screen-sized, {} dynamic, {} mips only, {} tiny; {} GPU-written loads{}{}",
++      double(s.fingerprint_ns) / 1e6,
++      double(s.fingerprint_ns - stats_logged_.fingerprint_ns) / 1e6, double(s.hash_ns) / 1e6,
++      double(s.dump_copy_ns) / 1e6, double(s.fingerprint_max_ns) / 1e3, s.fingerprints,
++      double(s.fingerprint_bytes) / 1048576.0, written,
++      double(dump_bytes_written_.load()) / 1048576.0, s.dumps_queued, s.dumps_dropped,
++      dumps_failed_.load(), s.replacements_used,
++      decodes_ok_.load() + decodes_failed_.load(), decodes_failed_.load() + unusable_.load(),
++      uploads_.load(), double(upload_bytes_.load()) / 1048576.0,
++      s.skipped[size_t(Skip::kFormat)], s.skipped[size_t(Skip::kShape)],
++      s.skipped[size_t(Skip::kScreen)], s.skipped[size_t(Skip::kDynamic)],
++      s.skipped[size_t(Skip::kNoBase)], s.skipped[size_t(Skip::kTiny)],
++      s.skipped[size_t(Skip::kGpuWritten)], formats.empty() ? "" : "; formats not handled: ",
++      formats);
++  stats_logged_ = stats_;
++  dumps_written_logged_ = written;
++}
++
++}  // namespace rex::graphics::texture_pack
+diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
+index 2f12e52..cce72c7 100644
+--- a/src/graphics/shared_memory.cpp
++++ b/src/graphics/shared_memory.cpp
+@@ -525,6 +525,29 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
+   return RequestRanges(&range, 1);
+ }
+ 
++bool SharedMemory::IsRangeGpuWritten(uint32_t start, uint32_t length) {
++  if (!length || start >= kBufferSize) {
++    return false;
++  }
++  length = std::min(length, kBufferSize - start);
++  const uint32_t page_first = start >> page_size_log2_;
++  const uint32_t page_last = (start + length - 1) >> page_size_log2_;
++  auto global_lock = global_critical_region_.Acquire();
++  for (uint32_t i = page_first >> 6; i <= page_last >> 6; ++i) {
++    uint64_t mask = UINT64_MAX;
++    if (i == page_first >> 6) {
++      mask &= ~((uint64_t(1) << (page_first & 63)) - 1);
++    }
++    if (i == page_last >> 6 && (page_last & 63) != 63) {
++      mask &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
++    }
++    if (system_page_flags_valid_and_gpu_written_[i] & mask) {
++      return true;
++    }
++  }
++  return false;
++}
++
+ bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {
+   if (!length) {
+     return true;
+diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
+index 408d25b..639905e 100644
+--- a/src/graphics/vulkan/texture_cache.cpp
++++ b/src/graphics/vulkan/texture_cache.cpp
+@@ -534,6 +534,8 @@ VulkanTextureCache::~VulkanTextureCache() {
+     dfn.vkDestroyPipelineLayout(device, load_pipeline_layout_, nullptr);
+   }
+ 
++  DestroyTexturePackReplacements();
++
+   // Textures memory is allocated using the Vulkan Memory Allocator, destroy all
+   // textures before destroying VMA.
+   DestroyAllTextures(true);
+@@ -2082,8 +2084,11 @@ void VulkanTextureCache::UpdateTextureBindingsImpl(uint32_t fetch_constant_mask)
+     if (IsSignedVersionSeparateForFormat(binding->key)) {
+       if (binding->texture && uses_unsigned &&
+           host_format_pair.format_unsigned.format != VK_FORMAT_UNDEFINED) {
++        VkImageView pack_view = GetTexturePackView(*binding->texture, binding->host_swizzle);
+         vulkan_binding.image_view_unsigned =
+-            static_cast<VulkanTexture*>(binding->texture)->GetView(false, binding->host_swizzle);
++            pack_view ? pack_view
++                      : static_cast<VulkanTexture*>(binding->texture)
++                            ->GetView(false, binding->host_swizzle);
+       }
+       if (binding->texture_signed && uses_signed &&
+           host_format_pair.format_signed.format != VK_FORMAT_UNDEFINED) {
+@@ -2094,7 +2099,9 @@ void VulkanTextureCache::UpdateTextureBindingsImpl(uint32_t fetch_constant_mask)
+       VulkanTexture* texture = static_cast<VulkanTexture*>(binding->texture);
+       if (texture) {
+         if (uses_unsigned && host_format_pair.format_unsigned.format != VK_FORMAT_UNDEFINED) {
+-          vulkan_binding.image_view_unsigned = texture->GetView(false, binding->host_swizzle);
++          VkImageView pack_view = GetTexturePackView(*texture, binding->host_swizzle);
++          vulkan_binding.image_view_unsigned =
++              pack_view ? pack_view : texture->GetView(false, binding->host_swizzle);
+         }
+         if (uses_signed && host_format_pair.format_signed.format != VK_FORMAT_UNDEFINED) {
+           vulkan_binding.image_view_signed = texture->GetView(true, binding->host_swizzle);
+@@ -3556,4 +3563,305 @@ xenos::ClampMode VulkanTextureCache::NormalizeClampMode(xenos::ClampMode clamp_m
+   return clamp_mode;
+ }
+ 
++// --- FH1 (#384): texture pack replacements ----------------------------------------------
++
++namespace {
++
++VkFormat TexturePackVkFormat(texture_pack::Format format) {
++  switch (format) {
++    case texture_pack::Format::kR8:
++      return VK_FORMAT_R8_UNORM;
++    case texture_pack::Format::kRG8:
++      return VK_FORMAT_R8G8_UNORM;
++    case texture_pack::Format::kRGBA8:
++      return VK_FORMAT_R8G8B8A8_UNORM;
++    case texture_pack::Format::kBGRA8:
++      return VK_FORMAT_B8G8R8A8_UNORM;
++    case texture_pack::Format::kBC1:
++      return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
++    case texture_pack::Format::kBC2:
++      return VK_FORMAT_BC2_UNORM_BLOCK;
++    case texture_pack::Format::kBC3:
++      return VK_FORMAT_BC3_UNORM_BLOCK;
++    case texture_pack::Format::kBC4:
++      return VK_FORMAT_BC4_UNORM_BLOCK;
++    case texture_pack::Format::kBC5:
++      return VK_FORMAT_BC5_UNORM_BLOCK;
++    case texture_pack::Format::kBC7:
++      return VK_FORMAT_BC7_UNORM_BLOCK;
++    default:
++      return VK_FORMAT_UNDEFINED;
++  }
++}
++
++VkComponentSwizzle TexturePackSwizzle(uint32_t host_swizzle, uint32_t component) {
++  const uint32_t value = (host_swizzle >> (3 * component)) & 0b111;
++  if (value == component) return VK_COMPONENT_SWIZZLE_IDENTITY;
++  switch (value) {
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_R:
++      return VK_COMPONENT_SWIZZLE_R;
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_G:
++      return VK_COMPONENT_SWIZZLE_G;
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_B:
++      return VK_COMPONENT_SWIZZLE_B;
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_A:
++      return VK_COMPONENT_SWIZZLE_A;
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_0:
++      return VK_COMPONENT_SWIZZLE_ZERO;
++    case xenos::XE_GPU_TEXTURE_SWIZZLE_1:
++      return VK_COMPONENT_SWIZZLE_ONE;
++    default:
++      return VK_COMPONENT_SWIZZLE_IDENTITY;
++  }
++}
++
++// The same picture at another size: the aspect ratio within a texel (0: size not known).
++bool TexturePackAspectMatches(uint32_t width, uint32_t height, uint32_t guest_width,
++                              uint32_t guest_height) {
++  if (!guest_width || !guest_height) return true;
++  const int64_t cross = int64_t(width) * guest_height - int64_t(height) * guest_width;
++  return std::abs(cross) <= int64_t(std::max(width, height));
++}
++
++}  // namespace
++
++void VulkanTextureCache::CompletedSubmissionUpdated(uint64_t completed_submission_index) {
++  TextureCache::CompletedSubmissionUpdated(completed_submission_index);
++  while (!pack_staging_.empty() && pack_staging_.front().submission <= completed_submission_index) {
++    vmaDestroyBuffer(vma_allocator_, pack_staging_.front().buffer,
++                     pack_staging_.front().allocation);
++    pack_staging_.pop_front();
++  }
++}
++
++void VulkanTextureCache::OnTexturePackReplacement(Texture& texture) {
++  Texture::PackState& state = texture.pack_state();
++  auto [it, inserted] = pack_replacements_.try_emplace(state.replacement);
++  Replacement& replacement = it->second;
++  const uint32_t width = texture.key().GetWidth(), height = texture.key().GetHeight();
++  if (!replacement.guest_width) {
++    // Preloaded before any texture had this fingerprint: check now.
++    replacement.guest_width = width;
++    replacement.guest_height = height;
++    if (replacement.image &&
++        !TexturePackAspectMatches(replacement.width, replacement.height, width, height)) {
++      replacement.failed = true;
++      REXGPU_WARN("Texture packs: {:016x} not used: its aspect ratio differs from the game's {}x{}",
++                  state.replacement, width, height);
++    }
++  }
++  if (inserted) {
++    if (!pack_client_) pack_client_ = std::make_shared<texture_pack::Client>();
++    texture_packs()->RequestDecode(state.replacement, width, height, pack_client_);
++  }
++  if (replacement.failed) state.replacement = 0;
++}
++
++void VulkanTextureCache::TexturePackBeginFrame() {
++  texture_pack::Packs* packs = texture_packs();
++  if (!packs || !packs->replacing()) return;
++  if (packs->preload() && !pack_preloaded_) {
++    pack_preloaded_ = true;
++    if (!pack_client_) pack_client_ = std::make_shared<texture_pack::Client>();
++    for (uint64_t fingerprint : packs->Replacements()) {
++      if (pack_replacements_.try_emplace(fingerprint).second) {
++        packs->RequestDecode(fingerprint, 0, 0, pack_client_);
++      }
++    }
++  }
++  if (pack_client_ && pack_client_->HasReady()) {
++    for (auto& decoded : pack_client_->Take()) pack_uploads_.push_back(std::move(decoded));
++  }
++  // At most 32 MiB a frame (and at least one file), so loading a pack does not stall a frame.
++  uint64_t budget = uint64_t(32) << 20;
++  bool first = true;
++  while (!pack_uploads_.empty() && (first || pack_uploads_.front()->data.size() <= budget)) {
++    std::unique_ptr<texture_pack::Decoded> decoded = std::move(pack_uploads_.front());
++    pack_uploads_.pop_front();
++    budget -= std::min<uint64_t>(budget, decoded->data.size());
++    first = false;
++    UploadTexturePackReplacement(*decoded);
++    pack_client_->Uploaded(decoded->data.size());
++  }
++}
++
++void VulkanTextureCache::UploadTexturePackReplacement(const texture_pack::Decoded& decoded) {
++  texture_pack::Packs* packs = texture_packs();
++  auto it = pack_replacements_.find(decoded.fingerprint);
++  if (it == pack_replacements_.end() || it->second.image || it->second.failed) return;
++  Replacement& replacement = it->second;
++  auto fail = [&](const char* reason) {
++    replacement.failed = true;
++    if (reason) {
++      packs->CountUnusable();
++      REXGPU_WARN("Texture packs: {:016x} not used: {}", decoded.fingerprint, reason);
++    }
++  };
++  if (!decoded.ok) {
++    fail(nullptr);  // the worker said why
++    return;
++  }
++  if (!TexturePackAspectMatches(decoded.width, decoded.height, replacement.guest_width,
++                                replacement.guest_height)) {
++    fail("its aspect ratio differs from the game's texture");
++    return;
++  }
++  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
++  const uint32_t max_size = vulkan_device->properties().maxImageDimension2D;
++  if (decoded.width > max_size || decoded.height > max_size) {
++    fail("it is larger than this GPU's textures can be");
++    return;
++  }
++  const VkFormat format = TexturePackVkFormat(decoded.format);
++  VkFormatProperties format_properties = {};
++  if (format != VK_FORMAT_UNDEFINED) {
++    vulkan_device->vulkan_instance()->functions().vkGetPhysicalDeviceFormatProperties(
++        vulkan_device->physical_device(), format, &format_properties);
++  }
++  if (!(format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) {
++    fail("this GPU cannot sample its format");
++    return;
++  }
++  VkImageCreateInfo image_create_info = {};
++  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
++  image_create_info.imageType = VK_IMAGE_TYPE_2D;
++  image_create_info.format = format;
++  image_create_info.extent = {decoded.width, decoded.height, 1};
++  image_create_info.mipLevels = uint32_t(decoded.levels.size());
++  image_create_info.arrayLayers = 1;
++  image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
++  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
++  image_create_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
++  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++  VkImage image;
++  VmaAllocation allocation;
++  if (VkResult result = CreateTextureImage(vma_allocator_, image_create_info, image, allocation)) {
++    device_memory::ReportImageFailure(vulkan_device, device_memory::Use::kTexture,
++                                      image_create_info, result);
++    fail("could not make its image (out of GPU memory?)");
++    return;
++  }
++  VkBufferCreateInfo buffer_create_info = {};
++  buffer_create_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
++  buffer_create_info.size = decoded.data.size();
++  buffer_create_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
++  buffer_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++  VmaAllocationCreateInfo staging_create_info = {};
++  staging_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
++  staging_create_info.flags =
++      VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
++  VkBuffer staging_buffer;
++  VmaAllocation staging_allocation;
++  VmaAllocationInfo staging_info = {};
++  if (vmaCreateBuffer(vma_allocator_, &buffer_create_info, &staging_create_info, &staging_buffer,
++                      &staging_allocation, &staging_info) != VK_SUCCESS ||
++      !staging_info.pMappedData) {
++    vmaDestroyImage(vma_allocator_, image, allocation);
++    fail("no memory to upload it");
++    return;
++  }
++  std::memcpy(staging_info.pMappedData, decoded.data.data(), decoded.data.size());
++  vmaFlushAllocation(vma_allocator_, staging_allocation, 0, VK_WHOLE_SIZE);
++  pack_staging_.push_back(
++      {command_processor_.GetCurrentSubmission(), staging_buffer, staging_allocation});
++
++  const VkImageSubresourceRange range = ui::vulkan::util::InitializeSubresourceRange();
++  command_processor_.PushImageMemoryBarrier(
++      image, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
++      VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
++      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
++  command_processor_.SubmitBarriers(true);
++  std::vector<VkBufferImageCopy> regions(decoded.levels.size());
++  for (size_t level = 0; level < decoded.levels.size(); ++level) {
++    VkBufferImageCopy& region = regions[level];
++    region = {};
++    region.bufferOffset = decoded.levels[level].offset;
++    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, uint32_t(level), 0, 1};
++    region.imageExtent = {decoded.levels[level].width, decoded.levels[level].height, 1};
++  }
++  command_processor_.deferred_command_buffer().CmdVkCopyBufferToImage(
++      staging_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(regions.size()),
++      regions.data());
++  command_processor_.PushImageMemoryBarrier(
++      image, range, VK_PIPELINE_STAGE_TRANSFER_BIT, guest_shader_pipeline_stages_,
++      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
++      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
++
++  VmaAllocationInfo image_info;
++  vmaGetAllocationInfo(vma_allocator_, allocation, &image_info);
++  device_memory::Get().Allocated(device_memory::Use::kTexture, image_info.memoryType,
++                                 image_info.size);
++  replacement.image = image;
++  replacement.allocation = allocation;
++  replacement.format = format;
++  replacement.width = decoded.width;
++  replacement.height = decoded.height;
++  pack_gpu_bytes_ += image_info.size;
++  packs->CountUploaded(image_info.size);
++  if (pack_uploads_logged_ < 16) {
++    ++pack_uploads_logged_;
++    REXGPU_INFO("Texture packs: {:016x} ({}x{}) drawn from a {}x{} {} file with {} levels ({} KiB)",
++                decoded.fingerprint, replacement.guest_width, replacement.guest_height,
++                decoded.width, decoded.height, texture_pack::FormatName(decoded.format),
++                decoded.levels.size(), image_info.size >> 10);
++  }
++}
++
++VkImageView VulkanTextureCache::GetTexturePackView(const Texture& texture,
++                                                   uint32_t host_swizzle) {
++  const uint64_t fingerprint = texture.pack_state().replacement;
++  if (!fingerprint) return VK_NULL_HANDLE;
++  auto it = pack_replacements_.find(fingerprint);
++  if (it == pack_replacements_.end() || !it->second.image || it->second.failed) {
++    return VK_NULL_HANDLE;
++  }
++  Replacement& replacement = it->second;
++  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
++  if (!vulkan_device->properties().imageViewFormatSwizzle) {
++    host_swizzle = xenos::XE_GPU_TEXTURE_SWIZZLE_RGBA;
++  }
++  auto view_it = replacement.views.find(host_swizzle);
++  if (view_it != replacement.views.end()) return view_it->second;
++  VkImageViewCreateInfo view_create_info = {};
++  view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
++  view_create_info.image = replacement.image;
++  // As the guest texture's own view of a 2D texture (VulkanTexture::GetView).
++  view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
++  view_create_info.format = replacement.format;
++  view_create_info.components.r = TexturePackSwizzle(host_swizzle, 0);
++  view_create_info.components.g = TexturePackSwizzle(host_swizzle, 1);
++  view_create_info.components.b = TexturePackSwizzle(host_swizzle, 2);
++  view_create_info.components.a = TexturePackSwizzle(host_swizzle, 3);
++  view_create_info.subresourceRange = ui::vulkan::util::InitializeSubresourceRange();
++  VkImageView view;
++  if (vulkan_device->functions().vkCreateImageView(vulkan_device->device(), &view_create_info,
++                                                   nullptr, &view) != VK_SUCCESS) {
++    return VK_NULL_HANDLE;
++  }
++  replacement.views.emplace(host_swizzle, view);
++  return view;
++}
++
++void VulkanTextureCache::DestroyTexturePackReplacements() {
++  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
++  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
++  const VkDevice device = vulkan_device->device();
++  for (auto& [fingerprint, replacement] : pack_replacements_) {
++    for (const auto& view : replacement.views) dfn.vkDestroyImageView(device, view.second, nullptr);
++    if (replacement.image) {
++      VmaAllocationInfo info;
++      vmaGetAllocationInfo(vma_allocator_, replacement.allocation, &info);
++      device_memory::Get().Freed(device_memory::Use::kTexture, info.memoryType, info.size);
++      vmaDestroyImage(vma_allocator_, replacement.image, replacement.allocation);
++    }
++  }
++  pack_replacements_.clear();
++  for (const PackStaging& staging : pack_staging_) {
++    vmaDestroyBuffer(vma_allocator_, staging.buffer, staging.allocation);
++  }
++  pack_staging_.clear();
++  pack_gpu_bytes_ = 0;
++}
++
+ }  // namespace rex::graphics::vulkan
