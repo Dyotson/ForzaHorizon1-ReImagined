@@ -390,6 +390,17 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         cfg.d["settings"] = real
 
 
+def texture_pack_folder(cfg: Config) -> Path:
+    """Texture packs and dumps (#384): <data folder>/textures, also with a Xenia save (whose user
+    data root is a copy elsewhere); Settings > Display > Open textures folder opens it."""
+    return cfg.data_home() / "textures"
+
+
+def texture_packs_used(cfg: Config) -> bool:
+    settings = cfg.effective_settings()
+    return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
+
+
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
     from . import ingame
     if cfg.gamertag_cleaned:
@@ -477,6 +488,10 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
     dlss.configure(cfg, env, args, notes, write)
     dlss_status_file = Path(env["FORZA_DLSS_STATUS_FILE"]) if "FORZA_DLSS_STATUS_FILE" in env else None
     fsr3.configure(cfg, args, notes)
+    extra_textures = any(a.startswith("--texture_pack_root")
+                         for a in split_args(cfg.advanced.get("extra_args", "")))
+    if texture_packs_used(cfg) and not extra_textures:  # a flag given twice confuses the game
+        args.append(f"--texture_pack_root={texture_pack_folder(cfg)}")
     from . import antialiasing
     antialiasing.configure_runtime(cfg, env, args, write=write)
 

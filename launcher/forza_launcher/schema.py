@@ -210,6 +210,19 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
     "shimmer slightly on fine patterns.", "World detail",
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+# Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
+# --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
+add("texture_dump", "Dump textures", "Display", "bool", False,
+    "Save each texture the game loads, once, to textures/dump in the game's data folder, named "
+    "by its fingerprint: a .dds and a .png to look at. A replacement must have the same name. "
+    "Takes disk space (about 200 MB for the first race) and a little time as textures "
+    "load. The files are the game's art: never share them.", "Texture packs",
+    restart=True)
+add("texture_replace", "Use texture packs", "Display", "bool", False,
+    "Draw textures from the .dds and .png files in the textures folder (and folders inside it) "
+    "instead of the game's: higher resolution, same aspect ratio, named like the dumped "
+    "texture. Uses graphics memory, not the game's. Vulkan only.", "Texture packs",
+    restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "

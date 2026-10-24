@@ -181,6 +181,12 @@ class ForzaApp : public rex::ReXApp {
     forza::PatchSceneResolution();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
+    // Texture packs (#384, docs/texture_packs.md): dumps and replacements live in
+    // <user data>/textures unless texture_pack_root names another folder (the launcher passes
+    // its data folder's, which a Xenia save's user data root is not).
+    if (rex::cvar::GetFlagByName("texture_pack_root").empty()) {
+      rex::cvar::SetFlagByName("texture_pack_root", (user_data_root() / "textures").string());
+    }
     auto* vfs = runtime()->file_system();
     // Before the game opens its first archive.
     forza::InstallMods(vfs, user_data_root(), cache_root());

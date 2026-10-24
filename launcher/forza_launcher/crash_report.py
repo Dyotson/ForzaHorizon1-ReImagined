@@ -16,7 +16,7 @@ SETTING_KEYS = (
     "internal_display_resolution", "draw_resolution_scale_x", "draw_resolution_scale_y",
     "present_effect", "swap_post_effect", "native_2x_msaa", "scene_msaa", "scene_resolution",
     "anisotropic_override",
-    "world_shadow_detail", "world_texture_detail",
+    "world_shadow_detail", "world_texture_detail", "texture_dump", "texture_replace",
     "fh1_upscaler", "fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution",
     "fh1_upscale_quality", "fh1_aa", "resolution", "forza_ultrawide",
     "fullscreen", "audio", "apu", "audio_driver", "time_scalar",
