@@ -62,14 +62,20 @@ void Store32(uint8_t* p, uint32_t v) {
 
 std::mutex mutex;
 std::unordered_map<uint32_t, sock::Handle> fds;  // guest handle -> host socket
-// Connections to the title servers: each request gets the X-Friends-Key line.
-std::unordered_map<uint32_t, std::shared_ptr<LspRequestHeader>> title_requests;
+// Connections to the title servers: each request gets the X-Friends-Key line, and what the
+// socket has not taken yet waits in the stream (lsp_request_header.h LspTitleStream).
+struct Title {
+  explicit Title(std::string line) : stream(std::move(line)) {}
+  std::mutex mutex;
+  LspTitleStream stream;
+};
+std::unordered_map<uint32_t, std::shared_ptr<Title>> titles;
 uint32_t next_handle = 1;
 
-std::shared_ptr<LspRequestHeader> TitleRequests(uint32_t handle) {
+std::shared_ptr<Title> TitleOf(uint32_t handle) {
   std::lock_guard<std::mutex> lock(mutex);
-  auto it = title_requests.find(handle);
-  return it == title_requests.end() ? nullptr : it->second;
+  auto it = titles.find(handle);
+  return it == titles.end() ? nullptr : it->second;
 }
 
 // The friends key line, or empty without a Live identity.
@@ -85,22 +91,30 @@ std::string FriendsKeyLine() {
   return line + "\r\n";
 }
 
-// Sends all of `data` on a nonblocking socket, waiting for room up to 10 s.
-bool SendAll(sock::Handle fd, const std::string& data) {
-  size_t sent = 0;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-  while (sent < data.size()) {
-    const int64_t n = sock::Send(fd, data.data() + sent, data.size() - sent);
-    if (n > 0) {
-      sent += size_t(n);
-      continue;
+// The socket write a title stream uses: bytes written, or -1 (would_block when it is full;
+// the error stays in the socket's last error otherwise).
+struct SocketSend {
+  sock::Handle fd;
+  uint32_t* error;
+  int64_t operator()(const char* data, size_t size, bool& would_block) const {
+    const int64_t n = sock::Send(fd, data, size);
+    if (n < 0) {
+      *error = sock::LastError();
+      would_block = *error == sock::kEWouldBlock;
     }
-    if (n < 0 && sock::LastError() != sock::kEWouldBlock) return false;
-    if (std::chrono::steady_clock::now() > deadline) return false;
-    sock::PollFd p{fd, POLLOUT, 0};
-    sock::Poll(&p, 1, 100);
+    return n;
   }
-  return true;
+};
+
+// Moves a title stream's waiting output on (nothing waits). True while some of it still
+// waits for room in the socket (false when none is left, or the socket failed: the game's
+// next send or recv gets the error).
+bool TitleWaiting(uint32_t handle, sock::Handle fd) {
+  const auto title = TitleOf(handle);
+  if (!title) return false;
+  std::lock_guard<std::mutex> lock(title->mutex);
+  uint32_t error = 0;
+  return title->stream.Flush(SocketSend{fd, &error}) == LspTitleStream::kWouldBlock;
 }
 
 sock::Handle Fd(uint32_t handle) {
@@ -156,7 +170,7 @@ int32_t Connect(uint32_t handle, uint32_t ip, uint16_t port) {
     const std::string line = FriendsKeyLine();
     if (!line.empty()) {
       std::lock_guard<std::mutex> lock(mutex);
-      title_requests[handle] = std::make_shared<LspRequestHeader>(line);
+      titles[handle] = std::make_shared<Title>(line);
     }
   }
   sockaddr_in a{};
@@ -186,11 +200,16 @@ int32_t Ioctl(uint32_t handle, uint32_t cmd, uint8_t* arg) {
 int32_t Send(uint32_t handle, const uint8_t* data, uint32_t size) {
   sock::Handle fd = Fd(handle);
   if (fd == sock::kInvalid) return Fail(kENotSock);
-  if (const auto title = TitleRequests(handle)) {
-    // The request stream with the key line: all of it is taken (a head is held until it is
-    // complete), and what is ready goes out now.
-    if (!SendAll(fd, title->Feed(data, size))) return Fail(sock::LastError());
-    return int32_t(size);
+  if (const auto title = TitleOf(handle)) {
+    // The request stream with the key line, nonblocking: the game's bytes are taken once
+    // older output has gone out (else WSAEWOULDBLOCK, nothing taken), and what the socket
+    // does not take now waits for the next send, recv or select.
+    std::lock_guard<std::mutex> lock(title->mutex);
+    uint32_t error = 0;
+    const int64_t n = title->stream.Send(data, size, SocketSend{fd, &error});
+    if (n == LspTitleStream::kWouldBlock) return Fail(sock::kEWouldBlock);
+    if (n == LspTitleStream::kError) return Fail(error ? error : kENotConn);
+    return int32_t(n);
   }
   const int64_t n = sock::Send(fd, data, size);
   return n < 0 ? Fail(sock::LastError()) : int32_t(n);
@@ -199,6 +218,7 @@ int32_t Send(uint32_t handle, const uint8_t* data, uint32_t size) {
 int32_t Recv(uint32_t handle, uint8_t* data, uint32_t size) {
   sock::Handle fd = Fd(handle);
   if (fd == sock::kInvalid) return Fail(kENotSock);
+  TitleWaiting(handle, fd);  // the rest of a request the answer waits for
   const int64_t n = sock::Recv(fd, data, size);
   return n < 0 ? Fail(sock::LastError()) : int32_t(n);
 }
@@ -222,7 +242,7 @@ int32_t Close(uint32_t handle) {
     if (it == fds.end()) return Fail(kENotSock);
     fd = it->second;
     fds.erase(it);
-    title_requests.erase(handle);
+    titles.erase(handle);
   }
   sock::Close(fd);
   return 0;
@@ -260,18 +280,48 @@ int32_t Select(uint8_t* base, uint32_t readfds, uint32_t writefds, uint32_t exce
                  int32_t(Load32(GuestPtr(base, timeout + 4)));
     wait_ms = int(std::max<int64_t>(0, (us + 999) / 1000));
   }
-  const int n = sock::Poll(polls.data(), polls.size(), wait_ms);
-  if (n < 0) return Fail(sock::LastError());
+  // A title stream with output waiting (a request the socket has not taken all of) is not
+  // writable for the game, and its output has to move on while the game waits, also when it
+  // only waits for the answer: then the wait goes in short slices, each followed by a flush.
+  std::vector<short> events;
+  for (const auto& p : polls) events.push_back(p.events);
+  const auto start = std::chrono::steady_clock::now();
   std::vector<uint32_t> ready[3];
-  for (size_t i = 0; i < polls.size(); ++i) {
-    const short r = polls[i].revents;
-    const int s = owners[i].first;
-    bool hit = false;
-    if (s == 0) hit = r & (POLLIN | POLLHUP | POLLERR);
-    // A failed nonblocking connect shows in the except set on Winsock, not as writable.
-    if (s == 1) hit = (r & POLLOUT) && !(r & POLLERR);
-    if (s == 2) hit = r & (sock::kPollExcept | POLLERR);
-    if (hit) ready[s].push_back(owners[i].second);
+  for (;;) {
+    bool waiting = false;
+    for (size_t i = 0; i < polls.size(); ++i) {
+      polls[i].revents = 0;
+      polls[i].events = events[i];
+      if (TitleWaiting(owners[i].second, polls[i].fd)) {
+        waiting = true;
+        polls[i].events |= POLLOUT;
+      }
+    }
+    int left = -1;
+    if (wait_ms >= 0) {
+      const int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - start)
+                                  .count();
+      left = int(std::max<int64_t>(0, wait_ms - elapsed));
+    }
+    const int slice = waiting ? (left < 0 ? 10 : std::min(10, left)) : left;
+    const int n = sock::Poll(polls.data(), polls.size(), slice);
+    if (n < 0) return Fail(sock::LastError());
+    for (auto& r : ready) r.clear();
+    for (size_t i = 0; i < polls.size(); ++i) {
+      const short r = polls[i].revents;
+      const int s = owners[i].first;
+      // writable for the game only once its waiting output is gone
+      const bool still = (r & POLLOUT) && TitleWaiting(owners[i].second, polls[i].fd);
+      bool hit = false;
+      if (s == 0) hit = r & (POLLIN | POLLHUP | POLLERR);
+      // A failed nonblocking connect shows in the except set on Winsock, not as writable.
+      if (s == 1) hit = (r & POLLOUT) && !(r & POLLERR) && !still;
+      if (s == 2) hit = r & (sock::kPollExcept | POLLERR);
+      if (hit) ready[s].push_back(owners[i].second);
+    }
+    const bool any = !ready[0].empty() || !ready[1].empty() || !ready[2].empty();
+    if (any || !waiting || left == 0) break;
   }
   WriteSet(base, readfds, ready[0]);
   WriteSet(base, writefds, ready[1]);

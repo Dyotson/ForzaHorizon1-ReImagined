@@ -1,11 +1,19 @@
 // Standalone: c++ -std=c++17 tools/test_lsp_request_header.cpp -o test_lsp_request_header
-// The friends key line added to the game's title server requests
-// (forza-recomp/src/kernel/lsp_request_header.h).
+// The friends key line added to the game's title server requests, and the nonblocking stream
+// that sends them (forza-recomp/src/kernel/lsp_request_header.h).
 #include "../forza-recomp/src/kernel/lsp_request_header.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+
+#ifndef _WIN32
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); std::exit(1); } } while (false)
 
@@ -26,6 +34,47 @@ std::string Expected(const std::string& body) {
   std::string r = Request(body);
   r.insert(r.find("\r\n\r\n") + 2, kLine);
   return r;
+}
+
+// A socket with `room` bytes of buffer: send takes what fits and says "would block" when full.
+struct FakeSocket {
+  size_t room = 1000;
+  size_t used = 0;
+  std::string wire;   // what the peer has received
+  bool broken = false;
+  int64_t operator()(const char* data, size_t size, bool& would_block) {
+    if (broken) return -1;
+    if (used >= room) {
+      would_block = true;
+      return -1;
+    }
+    const size_t n = std::min(size, room - used);
+    wire.append(data, n);
+    used += n;
+    return int64_t(n);
+  }
+  void Drain() { used = 0; }  // the peer read everything
+};
+
+// The game's send loop: chunks of `chunk` bytes, a WSAEWOULDBLOCK means try the same bytes
+// again once the socket has room (the peer reads, `on_block`).
+template <class Send, class OnBlock>
+void GuestSend(forza::LspTitleStream& stream, Send& send, const std::string& data, size_t chunk,
+               OnBlock on_block, size_t* max_pending = nullptr) {
+  size_t at = 0;
+  while (at < data.size()) {
+    const size_t n = std::min(chunk, data.size() - at);
+    const auto t0 = std::chrono::steady_clock::now();
+    const int64_t took = stream.Send(reinterpret_cast<const uint8_t*>(data.data()) + at, n, send);
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(50));  // never waits
+    if (max_pending) *max_pending = std::max(*max_pending, stream.Pending());
+    if (took == forza::LspTitleStream::kWouldBlock) {
+      on_block();
+      continue;
+    }
+    CHECK(took == int64_t(n));  // all or nothing
+    at += n;
+  }
 }
 }  // namespace
 
@@ -74,6 +123,79 @@ int main() {
     CHECK(Feed(h, junk) == junk);
     CHECK(Feed(h, "more\r\n\r\n") == "more\r\n\r\n");
   }
+  {  // a full socket: the game's bytes are taken all or none, the stream goes out once
+    forza::LspTitleStream stream(kLine);
+    FakeSocket sock;
+    std::string body(200000, '\0');
+    for (size_t i = 0; i < body.size(); ++i) body[i] = char(i * 7);
+    const std::string two = Request(body) + Request("tail");
+    size_t blocked = 0, max_pending = 0;
+    GuestSend(stream, sock, two, 4096, [&] { ++blocked; sock.Drain(); }, &max_pending);
+    while (stream.Pending()) {
+      CHECK(stream.Flush(sock) == forza::LspTitleStream::kWouldBlock);
+      sock.Drain();
+      if (stream.Flush(sock) == 0) break;
+    }
+    CHECK(sock.wire == Expected(body) + Expected("tail"));
+    CHECK(blocked > 100);
+    CHECK(max_pending <= 4096 + kLine.size());  // one send's worth, no more
+  }
+  {  // a socket that fails after taking bytes: those are not taken twice, the error follows
+    forza::LspTitleStream stream(kLine);
+    FakeSocket sock;
+    sock.room = 10;
+    const std::string req = Request("abc");
+    CHECK(stream.Send(reinterpret_cast<const uint8_t*>(req.data()), req.size(), sock) == int64_t(req.size()));
+    sock.broken = true;
+    CHECK(stream.Flush(sock) == forza::LspTitleStream::kError);
+    CHECK(stream.Send(reinterpret_cast<const uint8_t*>(req.data()), req.size(), sock) == forza::LspTitleStream::kError);
+    CHECK(sock.wire == Expected("abc").substr(0, 10));
+  }
+#ifndef _WIN32
+  {  // a real nonblocking socket whose peer stops reading: no call waits, nothing is lost or
+     // sent twice, the line goes in once per request
+    int sv[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+    int small = 4096;
+    setsockopt(sv[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small));
+    CHECK(fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK) == 0);
+    CHECK(fcntl(sv[1], F_SETFL, fcntl(sv[1], F_GETFL) | O_NONBLOCK) == 0);
+    auto send = [&](const char* data, size_t size, bool& would_block) -> int64_t {
+      const ssize_t n = ::send(sv[0], data, size, MSG_NOSIGNAL);
+      if (n < 0) would_block = errno == EAGAIN || errno == EWOULDBLOCK;
+      return n;
+    };
+    std::string received;
+    auto read_some = [&] {
+      char buf[65536];
+      ssize_t n;
+      while ((n = ::recv(sv[1], buf, sizeof(buf), 0)) > 0) received.append(buf, size_t(n));
+    };
+    forza::LspTitleStream stream(kLine);
+    std::string body(1 << 20, 'b');
+    const std::string req = Request(body) + Request("second");
+    // the peer reads nothing at first: the stream fills the socket, then says "would block"
+    int64_t took = 0;
+    size_t at = 0, blocked = 0;
+    while (blocked == 0) {
+      const auto t0 = std::chrono::steady_clock::now();
+      took = stream.Send(reinterpret_cast<const uint8_t*>(req.data()) + at, 4096, send);
+      CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(50));
+      if (took == forza::LspTitleStream::kWouldBlock) ++blocked;
+      else at += size_t(took);
+    }
+    // then it reads as the rest goes out
+    GuestSend(stream, send, req.substr(at), 4096, read_some);
+    while (stream.Pending()) {
+      stream.Flush(send);
+      read_some();
+    }
+    read_some();
+    CHECK(received == Expected(body) + Expected("second"));
+    close(sv[0]);
+    close(sv[1]);
+  }
+#endif
   std::puts("lsp_request_header: OK");
   return 0;
 }
