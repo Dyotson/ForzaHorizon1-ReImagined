@@ -484,11 +484,15 @@ user save were not modified.
 **Mods** lists the folders in `<data folder>/mods` (name, version, author from each mod's
 `mod.toml`, and its file count), each with a tick to turn it on or off, **Move up** / **Move
 down** for the load order (a lower mod wins over a higher one for the same file), **Refresh** and
-**Open mods folder**. A mod the game would skip (no `media/` folder, no files, a file it cannot
-read or over 2 GB) shows "(will not load)" and why. launcher.json keeps the order and the mods
+**Open mods folder**. A mod the game would skip shows "(will not load)" and why: the same rules as the
+game's (`mod_archive.h` ScanMod): no `media/` folder or no usable file (non-ASCII names, paths
+over 255 characters and `.zip` files are left out), a file it cannot read, two names that differ
+only in case, a file over 64 MB that replaces no loose file in the game's `media` folder, a folder
+named `*` or with a `|`. launcher.json keeps the order and the mods
 turned off (`"mods": {"order": [...], "disabled": [...]}`); every start passes
-`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), unless **Extra command-line
-flags** (**Settings > Advanced**) name either. The game side and the folder layout are in
+`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), except an option that
+**Extra command-line flags** (**Settings > Advanced**) name, as `--name=value` or `--name value`
+(the game refuses an option given twice). The game side and the folder layout are in
 [modding.md](modding.md). Tests: `launcher/test_mods.py`.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)

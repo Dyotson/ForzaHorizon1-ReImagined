@@ -220,6 +220,25 @@ class NavigationTests(unittest.TestCase):
         self.assertIs(self.app.focusWidget(), self.win.play.play)
         self.assertTrue(self.win.isVisible())
 
+    def test_shoulders_visit_every_page_in_sidebar_order(self):
+        # Designs (id 7) and Mods (id 8) included: the stack index of a page is its id.
+        buttons = sorted(self.win.navs.buttons(), key=lambda b: b.parentWidget().layout().indexOf(b))
+        pages = [self.win._pages[self.win.navs.id(b)] for b in buttons]
+        for page_id, page in self.win._pages.items():
+            self.assertEqual(self.win.stack.indexOf(page), page_id)
+        seen = [self.win.stack.currentWidget()]
+        for _ in pages[1:]:
+            self.press("next")
+            seen.append(self.win.stack.currentWidget())
+        self.assertEqual(seen, pages)
+        self.press("next")
+        self.assertIs(self.win.stack.currentWidget(), pages[0])
+        backwards = []
+        for _ in pages:
+            self.press("previous")
+            backwards.append(self.win.stack.currentWidget())
+        self.assertEqual(backwards, pages[::-1])
+
     def test_focus_skips_disabled_hidden_controls_and_scrolls(self):
         from PySide6.QtWidgets import QScrollArea, QPushButton
         self.win.show_page(2)

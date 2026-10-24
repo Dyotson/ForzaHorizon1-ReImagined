@@ -1,5 +1,5 @@
 """Mods (#149): the mods in the mods folder, on or off, and their load order."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -54,6 +54,9 @@ class ModsPage(QWidget):
                                     border-bottom: 1px solid {theme.BORDER}; color: {theme.MUTED}; }}
         ''')
         self.table.itemChanged.connect(self._toggled)
+        # A controller's A arrives as Return (ui/gamepad.py), which a check box in a table
+        # does not take: Return or Enter turns the selected mod on or off.
+        self.table.installEventFilter(self)
         self.table.itemSelectionChanged.connect(self._selected)
         cl.addWidget(self.table)
         row = QHBoxLayout()
@@ -98,7 +101,7 @@ class ModsPage(QWidget):
     # ---- the list -------------------------------------------------------------------------
     def refresh(self):
         selected = self._current()
-        self.mods = mods.ordered(self.cfg, mods.scan(mods.mods_dir(self.cfg)))
+        self.mods = mods.ordered(self.cfg, mods.scan(mods.mods_dir(self.cfg), mods.game_media(self.cfg)))
         self._fill(selected.folder if selected else None)
         if not self.mods:
             self.message.setText(f"No mods yet. Put each mod in its own folder in {mods.mods_dir(self.cfg)}, "
@@ -137,6 +140,15 @@ class ModsPage(QWidget):
         m.enabled = item.checkState() == Qt.Checked
         self._save()
         self.refresh()
+
+    def eventFilter(self, obj, event):
+        if (obj is self.table and event.type() == QEvent.KeyPress
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+            item = self.table.item(self.table.currentRow(), 0)
+            if item is not None:
+                item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+            return True
+        return super().eventFilter(obj, event)
 
     def move(self, step):
         r = self.table.currentRow()

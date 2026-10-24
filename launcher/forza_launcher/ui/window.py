@@ -112,8 +112,9 @@ class MainWindow(QMainWindow):
         self.mods = ModsPage(cfg, self)
         self.navs = QButtonGroup(self)
         self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
-                       4: self.gallery, 5: self.controls, 6: self.saves, MODS_PAGE_ID: self.mods,
-                       CATALOG_PAGE_ID: self.catalogs}
+                       4: self.gallery, 5: self.controls, 6: self.saves,
+                       CATALOG_PAGE_ID: self.catalogs, MODS_PAGE_ID: self.mods}
+        # In id order, so a page's stack index is its id.
         for page in self._pages.values():
             self.stack.addWidget(page)
         for i, name in ((0, "Play"), (4, "Photo gallery"),

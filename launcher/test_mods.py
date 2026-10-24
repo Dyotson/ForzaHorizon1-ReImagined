@@ -108,14 +108,78 @@ class ModFolders(unittest.TestCase):
         self.assertIn("--forza_mods=Beta|Alpha", plan_args())
         self.cfg.d["mods"]["disabled"] = ["Beta"]
         self.assertIn("--forza_mods=Alpha", plan_args())
-        # The player's own extra arguments win.
+        # The player's own extra arguments win, in either form, and only for the option named.
+        def mod_args():
+            return [a for a in plan_args() if a.startswith("--forza_mods")]
+
         self.cfg.advanced["extra_args"] = "--forza_mods=Beta"
-        self.assertEqual([a for a in plan_args() if a.startswith("--forza_mods")], ["--forza_mods=Beta"])
+        self.assertEqual(mod_args(), [f"--forza_mods_dir={self.dir}", "--forza_mods=Beta"])
+        self.cfg.advanced["extra_args"] = "--forza_mods Beta"
+        self.assertEqual(mod_args(), [f"--forza_mods_dir={self.dir}", "--forza_mods"])
+        self.cfg.advanced["extra_args"] = "--forza_mods_dir /elsewhere"
+        self.assertEqual(mod_args(), ["--forza_mods=Alpha", "--forza_mods_dir"])
 
     def test_a_config_without_mods_loads(self):
-        self.cfg.path.write_text('{"mods": "bad"}', encoding="utf-8")
-        cfg = Config(self.cfg.path)
-        self.assertEqual(mods.state(cfg), {"order": [], "disabled": []})
+        for text in ('{"mods": "bad"}', '{"mods": {"order": null, "disabled": "Alpha"}}',
+                     '{"mods": {"order": 5, "disabled": [1, "B"]}}'):
+            self.cfg.path.write_text(text, encoding="utf-8")
+            cfg = Config(self.cfg.path)
+            s = mods.state(cfg)
+            self.assertEqual(s["order"], [])
+            self.assertIn(s["disabled"], ([], ["B"]))
+            mods.launch_args(cfg)
+
+    def test_the_launcher_agrees_with_the_game(self):
+        """The rules of the game's ScanMod (mod_archive.h): the launcher says "will not load"
+        for the same mods."""
+        if os.name != "nt":
+            make_mod(self.dir, "Case", files=("media/A.xml", "media/a.xml"))
+            make_mod(self.dir, "*")
+            work = self.dir.parent / "work" / "stringtables"
+            (work / "en").mkdir(parents=True)
+            (work / "en" / "main.str").write_bytes(b"x")
+            (make_mod(self.dir, "Linked", files=()) / "media").mkdir()
+            (self.dir / "Linked" / "media" / "stringtables").symlink_to(work, target_is_directory=True)
+        make_mod(self.dir, "Accents", files=("media/caf\u00e9.xml",))
+        make_mod(self.dir, " Spaced", files=("media/a.xml",))
+        make_mod(self.dir, "Long", files=("media/" + "d/" * 130 + "x.xml", "media/ok.xml"))
+        found = {m.folder: m for m in mods.scan(self.dir)}
+        self.assertIn("no files", found["Accents"].problem)
+        self.assertIn("plain ASCII", found["Accents"].note)
+        self.assertEqual((found[" Spaced"].problem, found[" Spaced"].files), ("", 1))
+        self.assertEqual((found["Long"].problem, found["Long"].files), ("", 1))
+        self.assertIn("255", found["Long"].note)
+        if os.name != "nt":
+            self.assertIn("differ only in case", found["Case"].problem)
+            self.assertIn("*", found["*"].problem)
+            self.assertEqual((found["Linked"].problem, found["Linked"].files), ("", 1))
+
+    def test_big_files_only_replace_loose_files(self):
+        big = make_mod(self.dir, "Big", files=()) / "media" / "audio" / "radio" / "radio_music.fsb"
+        big.parent.mkdir(parents=True)
+        with open(big, "wb") as f:
+            f.truncate(mods.MAX_MEMBER + 1)  # sparse
+        game = Path(self.tmp.name) / "game" / "media"
+        self.assertIn("over 64 MB", mods.scan(self.dir, game)[0].problem)
+        (game / "audio" / "radio").mkdir(parents=True)
+        (game / "audio" / "radio" / "Radio_Music.fsb").write_bytes(b"x")
+        found = mods.scan(self.dir, game)[0]
+        self.assertEqual((found.problem, found.files), ("", 1))
+
+    def test_an_unreadable_folder_is_a_problem_not_a_crash(self):
+        make_mod(self.dir, "Locked")
+        real = Path.is_dir
+
+        def is_dir(p):
+            if p.name == "media" and p.parent.name == "Locked":
+                raise PermissionError(13, "Permission denied", str(p))
+            return real(p)
+
+        from unittest import mock
+        with mock.patch.object(Path, "is_dir", is_dir):
+            found = mods.scan(self.dir)
+        self.assertEqual(len(found), 1)
+        self.assertIn("could not be read", found[0].problem)
 
 
 @unittest.skipIf(QApplication is None, "PySide6 is not installed")
@@ -157,6 +221,15 @@ class ModsPageTests(unittest.TestCase):
         self.assertEqual(self.cfg.d["mods"]["order"], ["Beta", "Alpha"])
         self.assertFalse(self.page.up_button.isEnabled())
         self.assertIn("1 of 2", self.page.message.text())
+
+    def test_return_turns_a_mod_on_and_off(self):
+        """A controller's A arrives as Return (ui/gamepad.py)."""
+        from PySide6.QtGui import QKeyEvent
+        self.page.table.selectRow(1)
+        for key, want in ((Qt.Key_Return, ["Beta"]), (Qt.Key_Enter, [])):
+            QApplication.sendEvent(self.page.table, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
+            self.assertEqual(self.cfg.d["mods"]["disabled"], want)
+        self.assertEqual(self.page.table.currentRow(), 1)
 
     def test_new_folders_appear_on_refresh(self):
         make_mod(self.dir, "Gamma", files=())
