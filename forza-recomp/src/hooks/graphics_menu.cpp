@@ -2,6 +2,7 @@
 // tu_address_map: TU4 addresses
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
+#include "../platform/native_car_tuning_menu.h"
 #include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
@@ -532,19 +533,25 @@ extern "C" REX_FUNC(MenuBind) {
   from_main_menu = false;
   Native ui(ctx, base);
   if (ui) {
+    const bool tuning = forza::car_tuning_menu::Available(ctx, base, active_menu);
+    if (tuning)
+      ui.Add(active_menu, forza::car_tuning_menu::kMenuAction, "CAR TUNING");
     ui.Add(active_menu, kGraphics, "GRAPHICS");
     // The TU4 data source keeps display order in a vector of row pointers at
-    // +0x28, independently of its ID lookup. Move our appended row above Quit
+    // +0x28, independently of its ID lookup. Move our appended rows above Quit
     // before the original bind publishes the list to the native component.
     const uint32_t rows = active_menu + 0x174 + 0x28;
     const uint32_t begin = Read(base, rows);
     const uint32_t end = Read(base, rows + 4);
-    if (begin && end >= begin && end - begin >= 8 &&
+    const uint32_t added = tuning ? 2 : 1;
+    if (begin && end >= begin && end - begin >= (added + 1) * 4 &&
         (end - begin) % 4 == 0) {
       const uint32_t graphics = Read(base, end - 4);
-      const uint32_t previous = Read(base, end - 8);
+      const uint32_t previous_address = end - (added + 1) * 4;
+      const uint32_t previous = Read(base, previous_address);
       if (graphics && Read(base, graphics + 8) == kGraphics) {
-        Write(base, end - 8, graphics);
+        for (uint32_t address = previous_address; address < end - 4; address += 4)
+          Write(base, address, Read(base, address + 4));
         Write(base, end - 4, previous);
       }
     }
@@ -801,6 +808,7 @@ extern "C" REX_FUNC(__imp__sub_827142C0);
 extern "C" REX_FUNC(__imp__sub_82736B08);
 
 extern "C" REX_FUNC(sub_827303E8) {
+  if (forza::car_tuning_menu::TryBind(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (!opening_graphics) {
     __imp__sub_827303E8(ctx, base);
@@ -857,6 +865,7 @@ extern "C" REX_FUNC(sub_827303E8) {
               native_rows.size());
 }
 extern "C" REX_FUNC(sub_82739190) {
+  if (forza::car_tuning_menu::TryNotify(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_82739190(ctx, base);
@@ -877,6 +886,7 @@ extern "C" REX_FUNC(sub_82739190) {
   }
 }
 extern "C" REX_FUNC(sub_827142C0) {
+  if (forza::car_tuning_menu::TryDestroy(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_827142C0(ctx, base);
@@ -906,6 +916,7 @@ extern "C" REX_FUNC(sub_827142C0) {
   save_requested = false;
 }
 extern "C" REX_FUNC(sub_82736B08) {
+  if (forza::car_tuning_menu::TryInput(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_82736B08(ctx, base);
@@ -956,6 +967,11 @@ void OpenGraphics(PPCContext &ctx, uint8_t *base) {
 }
 extern "C" REX_FUNC(MenuSelect) {
   using namespace forza::graphics_menu;
+  if (ctx.r3.u32 == active_menu && ctx.r4.u32 == 2 &&
+      ctx.r6.u32 == forza::car_tuning_menu::kMenuAction) {
+    forza::car_tuning_menu::Open(ctx, base, active_menu);
+    return;
+  }
   if (ctx.r3.u32 == active_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics) {
     from_main_menu = false;
     OpenGraphics(ctx, base);
@@ -1017,6 +1033,7 @@ extern "C" REX_FUNC(sub_82836928) {
 
 namespace forza::graphics_menu {
 void Tick(PPCContext& ctx, uint8_t* base) {
+  forza::car_tuning_menu::Tick(ctx, base);
   UpdatePerformanceOverlay();
   RefreshRelevance(ctx, base);
   if (title_layout_pending && main_menu && Read(base, main_menu + 0x260) == 12) {
