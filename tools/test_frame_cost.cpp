@@ -359,18 +359,142 @@ int main() {
     CHECK(lines == 3);
     CHECK(Has(line, "resident; clocks: GPU 1.60 GHz") && !Has(line, " C ") && !Has(line, " W"));
   }
+  // The command processor's CPU time from the platform's clocks (#400).
   {
-    // Windows' thread CPU time (#400): thread cycles at the time stamp counter's rate, the rate
-    // from 2 ms of it against a 10 MHz performance counter.
+    // Windows' precise clock: thread cycles at the time stamp counter's rate, the rate from 2 ms
+    // of it against a 10 MHz performance counter.
     const double rate = cost::CyclesPerMs(1000, 1000 + 2 * 3187654, 50, 50 + 20000, 10000000);
     CHECK(rate > 3187653.9 && rate < 3187654.1);  // a 3.19 GHz counter
     CHECK(cost::CyclesToMs(uint64_t(3187654) * 7, rate) > 6.999 &&
           cost::CyclesToMs(uint64_t(3187654) * 7, rate) < 7.001);
-    // Samples that cannot tell: no rate, no CPU time (unknown, as before).
+    // Samples that cannot tell: no rate, no precise clock.
     CHECK(cost::CyclesPerMs(1000, 2000, 50, 50, 10000000) == 0);
     CHECK(cost::CyclesPerMs(2000, 1000, 50, 70, 10000000) == 0);
     CHECK(cost::CyclesPerMs(1000, 2000, 50, 70, 0) == 0);
-    CHECK(cost::CyclesToMs(123456, 0) == 0);
+    CHECK(cost::CyclesToMs(123456, 0) < 0);
+    // Only with an invariant time stamp counter (CPUID 0x80000007 EDX bit 8).
+    CHECK(cost::InvariantTsc(0x80000008u, 0x100));
+    CHECK(!cost::InvariantTsc(0x80000008u, 0x0FF));
+    CHECK(!cost::InvariantTsc(0x80000006u, 0x100));
+    // The coarse clock: GetThreadTimes' 100 ns units.
+    CHECK(cost::ThreadTimesToMs(100000, 56250) == 15.625);
+  }
+  // A precise clock alone (Linux, macOS): each frame's own CPU time.
+  {
+    cost::CpuClock clock;
+    cost::Frame f;
+    clock.EndFrame(1000.0, -1, f);
+    clock.EndFrame(1006.5, -1, f);
+    CHECK(f.cpu_per_frame && f.cpu_ms == 6.5);
+    clock.EndFrame(1009.0, -1, f);
+    CHECK(f.cpu_per_frame && f.cpu_ms == 2.5);
+  }
+  // Neither clock: unknown (0, not per frame).
+  {
+    cost::CpuClock clock;
+    cost::Frame f;
+    clock.EndFrame(-1, -1, f);
+    clock.EndFrame(-1, -1, f);
+    CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+  }
+  // The coarse clock alone (Windows without an invariant counter): its 15.6 ms steps, not per
+  // frame, but right summed over many frames.
+  {
+    cost::CpuClock clock;
+    cost::Frame f, sum;
+    double coarse = 1000;
+    clock.EndFrame(-1, coarse, f);
+    for (int i = 1; i <= 600; ++i) {  // 6 ms a frame, the clock steps every 15.625 ms
+      const double real = 1000 + 6.0 * i;
+      coarse = 1000 + 15.625 * double(int((real - 1000) / 15.625));
+      clock.EndFrame(-1, coarse, f);
+      CHECK(!f.cpu_per_frame);
+      CHECK(f.cpu_ms == 0 || f.cpu_ms == 15.625);
+      sum.Add(f);
+    }
+    CHECK(!sum.cpu_per_frame);
+    CHECK(sum.cpu_ms > 3600 - 15.7 && sum.cpu_ms <= 3600);
+  }
+  // Both (Windows with an invariant counter): the coarse clock until the cycles have agreed
+  // with it over 5 s of its time, then the cycles per frame.
+  {
+    cost::CpuClock clock;
+    cost::Frame f;
+    double precise = 100, coarse = 100;
+    clock.EndFrame(precise, coarse, f);
+    int frames = 0;
+    while (clock.check().state() == cost::CpuTimeCheck::State::kUnchecked && frames < 2000) {
+      precise += 6.0;
+      coarse = 100 + 15.625 * double(int((precise - 100) / 15.625));
+      clock.EndFrame(precise, coarse, f);
+      if (clock.check().state() == cost::CpuTimeCheck::State::kUnchecked) CHECK(!f.cpu_per_frame);
+      ++frames;
+    }
+    CHECK(clock.check().state() == cost::CpuTimeCheck::State::kAgrees);
+    CHECK(frames > 800 && frames < 860);  // 5 s of CPU time at 6 ms a frame
+    CHECK(f.cpu_per_frame && f.cpu_ms > 5.99 && f.cpu_ms < 6.01);
+    precise += 4.0;
+    clock.EndFrame(precise, coarse, f);
+    CHECK(f.cpu_per_frame && f.cpu_ms > 3.99 && f.cpu_ms < 4.01);
+  }
+  // Cycles that do not run at the counter's rate (here 1.8 times as fast): never per frame,
+  // also when a later stretch would agree.
+  {
+    cost::CpuClock clock;
+    cost::Frame f;
+    double real = 100;
+    clock.EndFrame(real * 1.8, real, f);
+    for (int i = 0; i < 1000; ++i) {
+      real += 6.0;
+      clock.EndFrame(real * 1.8, 100 + 15.625 * double(int((real - 100) / 15.625)), f);
+      CHECK(!f.cpu_per_frame);
+    }
+    CHECK(clock.check().state() == cost::CpuTimeCheck::State::kDisagrees);
+    CHECK(clock.check().ratio() > 1.7 && clock.check().ratio() < 1.9);
+    const double offset = real * 0.8;
+    for (int i = 0; i < 1000; ++i) {
+      real += 6.0;
+      clock.EndFrame(real + offset, real, f);
+      CHECK(!f.cpu_per_frame);
+    }
+    CHECK(clock.check().state() == cost::CpuTimeCheck::State::kDisagrees);
+  }
+  // The report with coarse CPU time: no cause from it (here the idle test would say "the game"
+  // and the per-draw cost "more draws"), and the window's average per frame in the line.
+  {
+    Run run;
+    cost::Frame typical = Typical();
+    typical.cpu_per_frame = false;
+    run.Feed(typical, 60);
+    cost::Frame late = typical;
+    late.ms = 150;
+    late.cpu_ms = 9;
+    late.guest_wait_ms = 100;
+    run.One(late);
+    run.Feed(typical, 75);
+    CHECK(run.lines == 1);
+    CHECK(run.last_cause == cost::Cause::kUnclear);
+    CHECK(Has(run.last, "each: command processor CPU not timed per frame (8.0 ms a frame in the "
+                        "window), "));
+    cost::Frame busy = typical;
+    busy.draws = 9000;
+    busy.cpu_ms = 40;
+    busy.gpu_wait_ms = 2;
+    busy.ms = 55;
+    for (int i = 0; i < 20; ++i) run.One(busy);
+    run.Feed(typical, 90);
+    CHECK(run.lines == 2);
+    CHECK(run.last_cause == cost::Cause::kUnclear);
+    // Per-frame times again: the causes come back once the typical CPU time has some frames.
+    run.Feed(Typical(), 150);
+    cost::Frame late2 = Typical(150);
+    late2.cpu_ms = 9;
+    late2.guest_wait_ms = 100;
+    run.One(late2);
+    run.Feed(Typical(), 165);
+    CHECK(run.lines == 3);
+    CHECK(run.last_cause == cost::Cause::kGame);
+    CHECK(Has(run.last, "each: command processor 9 ms CPU, "));
   }
   std::printf("frame cost: all checks passed\n");
   return 0;
