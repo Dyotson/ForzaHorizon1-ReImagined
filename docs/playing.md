@@ -218,6 +218,29 @@ race and signed in to a local server (free roam and a hosted Horizon World); not
 comes back (the game plays on the system's default output, which SDL follows when it changes), that the GPU
 survives the sleep without a "device lost", and that the Deck's controls come back.
 
+## Auto-pause (#328)
+
+The launcher's **Controls > Auto-pause** offers **Pause when window loses focus** and
+**Pause when controller disconnects**. Both are off by default; restart the game after changing them.
+The matching `forza.toml` settings are `forza_pause_on_focus_loss` and
+`forza_pause_on_controller_disconnect`.
+
+While driving, a selected event requests the game's normal pause menu. Resume manually; returning
+to the window or reconnecting a controller never resumes the game. The disconnect option watches
+the physical pad or wheel last used, including when keyboard emulation keeps player 1 connected.
+Keyboard-only play and unplugging an idle spare controller do not trigger it. Menus, loading,
+rewind, text/invite/friends dialogs and benchmark input do not request another pause.
+Online sessions keep the game's usual pause behavior: opening the menu does not stop other players.
+Controller detection requires SDK patch 0148; an older runtime logs a warning once and still supports
+focus auto-pause.
+
+Validation (Windows x64, 2026-10-23): `tools/tests/auto-pause` runs the event policy,
+the patched SDK's real device assignment with a fixture driver, and the production pause
+poller against mapped guest-world flags. It checks an active pad lost while the keyboard
+remains connected, idle spare removal, reconnect, manual START, already paused, loading,
+rewind and an inaccessible cached world. These inject events: live Alt-Tab and physical
+USB/Bluetooth unplug checks are still pending. Changed hooks compile for disc and TU4.
+
 ## Keyboard and mouse
 
 `mnk_mode = true` makes the SDK present the keyboard (and mouse) as a controller on player 1.

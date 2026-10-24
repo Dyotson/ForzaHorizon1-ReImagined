@@ -28,6 +28,7 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/benchmark.h"
+#include "../platform/auto_pause.h"
 
 #include "../platform/telemetry.h"
 #include "../platform/wheel_bridge.h"
@@ -361,6 +362,9 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     }
   }
   if (user == 0 && forza::benchmark::WantsPad()) connected = true;
+  const bool auto_pause = user == 0 && forza::auto_pause::Poll(
+      base, state.buttons, PadPerUser() ? 1u : 15u);
+  if (auto_pause) connected = true;
   if (!connected) {
     if (user == 0) forza::telemetry::Input(false, 0, 0, 0, 0);
     ctx.r3.u64 = kErrorDeviceNotConnected;
@@ -388,6 +392,14 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       const auto buttons = forza::benchmark::Pad(state.buttons, capture);
       if (capture) state = PadState{};
       state.buttons = buttons;
+    }
+    if (auto_pause) {
+      if (!block_all && !forza::benchmark::WantsPad()) {
+        state = PadState{};
+        state.buttons = 0x10;  // START: let FH1 open its own pause menu.
+      } else {
+        forza::auto_pause::Cancel();
+      }
     }
   }
   if (user == 0) forza::telemetry::Input(true, state.triggers[0], state.triggers[1], state.buttons, state.sticks[0]);
