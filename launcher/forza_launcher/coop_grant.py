@@ -81,7 +81,8 @@ class Change:
     xp: int
     credits: int
     unlocked: tuple   # CareerEventUnlocks rows added
-    online: int = 0   # what the online race itself paid (onlineWinnings), less from the prize
+    online: object = 0  # what the online race itself paid (onlineWinnings), less from the
+                        # prize; None: not known, so no prize
 
 
 @dataclass(frozen=True)
@@ -137,25 +138,33 @@ def event_unlocks(gamedb, db, event_id):
     return tuple(added)
 
 
-def online_paid(result, online_now=None):
-    """What the co-op round's online race paid the player itself: its onlineWinnings before
-    the race paid and at the player's next race (the server's `winnings`), or, before a next
-    race, the save's Main/OnlineWinnings now. 0 when the server did not say."""
+def online_paid(result, online_now=None, after_ok=True, now_ok=True):
+    """What the co-op round's online race paid the player itself (onlineWinnings), or None
+    when that is not known. Before the race paid: the round's report (the server's
+    `winnings`[0]). After it: the player's next race (`winnings`[1]), only when that race was
+    in this save (after_ok: every save of the PC shares the Forza Live identity), or the save's
+    Main/OnlineWinnings when the grant runs right after the session the result was earned in
+    (now_ok). A value below the one before is another save's: not known either."""
     w = result.get('winnings')
     if not (isinstance(w, list) and len(w) == 2 and type(w[0]) is int):
-        return 0
+        return None
     before, after = w
-    if type(after) is not int:
-        after = online_now if type(online_now) is int else before
-    return max(0, after - before)
+    if type(after) is int and after_ok and after >= before:
+        return after - before
+    if type(online_now) is int and now_ok and online_now >= before:
+        return online_now - before
+    return None
 
 
-def career(gamedb, db, xp, credits, results, locked=None, online_now=None):
+def career(gamedb, db, xp, credits, results, locked=None, online_now=None, trusted=None):
     """Applies results ([{"id", "event", "place", "places", "code", "winnings"}]) to a
     PlayerDatabase connection. Returns (changes, unchanged ids, xp, credits) after them; the
     ids of results for events the save has not unlocked go to `locked` (a list) and change
     nothing. The prize is less what the round's online race already paid (online_paid, with
-    the save's Main/OnlineWinnings as online_now): the player gets the larger of the two, once."""
+    the save's Main/OnlineWinnings as online_now and trusted(result) -> (after_ok, now_ok)):
+    the player gets the larger of the two, once. When that is not known, no prize: the
+    online race paid something, and paying the prize too could pay twice."""
+    trusted = trusted or (lambda result: (True, True))
     changes, unchanged = [], []
     locked = [] if locked is None else locked
     for result in results[:MAX_RESULTS]:
@@ -187,8 +196,8 @@ def career(gamedb, db, xp, credits, results, locked=None, online_now=None):
         else:
             db.execute('UPDATE Career_EventResults SET Place=? WHERE EventId=?', (place, event_id))
         gained = max(0, points(gamedb, level, place) - points(gamedb, level, old))
-        online = online_paid(result, online_now)
-        prize = max(0, payout(cash or 0, place, cars, style) - online)
+        online = online_paid(result, online_now, *trusted(result))
+        prize = 0 if online is None else max(0, payout(cash or 0, place, cars, style) - online)
         xp = min(MAX_XP, xp + gained)
         credits = min(MAX_CREDITS, credits + prize)
         added = event_unlocks(gamedb, db, event_id)
@@ -209,7 +218,7 @@ def _written(path, edited):
     return temporary
 
 
-def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: None):
+def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: None, trusted=None):
     """Applies the results to the profile's save (closed game). GrantResult."""
     with saves.locked(profile):
         saves._recover(profile)
@@ -230,7 +239,7 @@ def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: No
             with closing(sqlite3.connect(source.as_uri()+'?mode=ro', uri=True)) as gamedb:
                 locked = []
                 changes, unchanged, new_xp, new_credits = career(gamedb, db, xp, credits, results, locked,
-                                                                 online_now)
+                                                                 online_now, trusted)
             if not changes:
                 return GrantResult((), tuple(unchanged), locked=tuple(locked))
             db.commit()
@@ -368,34 +377,64 @@ def after_session(cfg, profile, log=print, base=None, identity=None, request=Non
     if not fetched:
         return 'nothing'
     sessions = load_sessions(cfg)
-    results, waiting = [], 0
+    results, waiting, stray = [], 0, []
     for r in fetched:
-        if owners(sessions, r.get('at')) == {profile.key}:
+        found = owners(sessions, r.get('at'))
+        if found == {profile.key}:
             results.append(r)
-        else:  # another save's session, several, or a game the launcher did not start
+        elif len(found) == 1:  # another save's session: its next session applies it
             waiting += 1
+        else:  # a game the launcher did not start, or two saves' sessions at that time
+            stray.append(r)
     if waiting:
-        log(f'Co-op results: {waiting} result(s) from another save or a game started elsewhere wait '
-            'for that save\'s next session')
+        log(f'Co-op results: {waiting} result(s) earned with another save wait for that save\'s '
+            'next session')
+    if stray:  # no save of this launcher can take them: told once, and the server drops them
+        log(f'Co-op results: {len(stray)} result(s) from a game the launcher did not start (or '
+            'while two saves were in use) cannot go to a career and were dropped')
+        _confirm_quietly(base, identity, [r.get('id') for r in stray if isinstance(r.get('id'), str)])
+    dropped = f', dropped {len(stray)}' if stray else ''
     if not results:
-        return f'applied 0, waiting {waiting}'
-    result = apply(cfg, profile, results)
-    settled = {c.event for c in result.applied}
-    done = [r.get('id') for r in results if isinstance(r.get('id'), str)
-            and (r.get('id') in result.unchanged or r.get('event') in settled)]
-    if done:
-        confirm(base, identity, done)
-    for change in result.applied:
+        return f'applied 0, waiting {waiting}{dropped}'
+    mine = [s for s in sessions if s['profile'] == profile.key]
+    latest = max(mine, key=lambda s: s['end'], default=None)
+
+    def trusted(r):
+        """(the server's next race was in this save, the grant runs right after the result's
+        session)"""
+        at, next_at = r.get('at'), r.get('winnings_at')
+        after_ok = isinstance(next_at, (int, float)) and owners(sessions, next_at) == {profile.key}
+        now_ok = (latest is not None and isinstance(at, (int, float))
+                  and latest['start'] - SESSION_SLACK <= at <= latest['end'] + SESSION_SLACK)
+        return after_ok, now_ok
+    result = apply(cfg, profile, results, trusted=trusted)
+    for change in result.applied:  # the save has changed: told before anything else can fail
         was = f'{change.old}' if change.old else 'not raced'
+        note = ('no prize: what the online race paid is not known' if change.online is None else
+                f'the prize less the {change.online:,} CR the online race paid' if change.online else '')
         log(f'Co-op results: {change.code} at place {change.place} (was {was}): +{change.xp} XP, '
-            f'+{change.credits:,} CR'
-            + (f' (the prize less the {change.online:,} CR the online race paid)' if change.online else '')
+            f'+{change.credits:,} CR' + (f' ({note})' if note else '')
             + (f', {len(change.unlocked)} event(s) unlocked' if change.unlocked else ''))
     for r in results:
         if r.get('id') in result.locked:
             log(locked_note(r))
+    settled = {c.event for c in result.applied}
+    done = [r.get('id') for r in results if isinstance(r.get('id'), str)
+            and (r.get('id') in result.unchanged or r.get('event') in settled)]
+    if done:  # not confirmed: they come back "unchanged" at the next session and settle then
+        _confirm_quietly(base, identity, done)
     return (f'applied {len(result.applied)}, unchanged {len(result.unchanged)}, '
-            f'locked {len(result.locked)}, waiting {waiting}')
+            f'locked {len(result.locked)}, waiting {waiting}{dropped}')
+
+
+def _confirm_quietly(base, identity, ids):
+    if not ids:
+        return 0
+    try:
+        return confirm(base, identity, ids)
+    except (OSError, ValueError, urllib.error.URLError) as e:
+        paths.log_error('confirm co-op results', e)
+        return 0
 
 
 def after_session_quietly(cfg, profile, log=print):

@@ -15,6 +15,7 @@ import unittest
 import forza_chat as ch
 import forza_coop_ledger as ledger
 import forza_live_lsp as lsp
+import forza_live_server as srv
 import forza_stats as stats
 import forza_world as world
 from test_forza_campaign import CoopWorldCase
@@ -177,6 +178,9 @@ class LedgerTest(CoopWorldCase):
         self.race_report(self.a, 2, b"lobby-01", hopper=1, key=False, winnings=99999)  # not its own
         self.assertEqual([(e["id"], e["winnings"]) for e in ledger.LEDGER.pending(self.a.xuid)],
                          [(rid, [13750, 16250])])
+        at = ledger.LEDGER.pending(self.a.xuid)[0]["winnings_at"]  # when: the launcher checks the save
+        self.assertLessEqual(abs(at - time.time()), 5)
+        self.assertNotIn("winnings_at", ledger.LEDGER.pending(self.b.xuid)[0])
         self.assertEqual([e["winnings"] for e in ledger.LEDGER.pending(self.b.xuid)], [[6250, None]])
 
     def test_a_street_race_gives_no_career_result(self):
@@ -191,6 +195,24 @@ class LedgerTest(CoopWorldCase):
         self.assertEqual(ledger.LEDGER.check(r, "%016X" % self.a.xuid), "a street race without traffic")
         self.end_round()
         self.assertNotIn(rid, ledger.LEDGER.rounds)
+
+    def test_a_host_write_from_an_unproven_xuid_is_ignored(self):
+        """A second client that claims the host's XUID without its friends key can't confirm a
+        guest's place (nor deny it): only the host's proven game counts."""
+        body = struct.pack(">HQQIH", srv.VERSION, 99, self.a.xuid, 0, 0)
+        body += bytes([4]) + b"#TU4" + bytes([7]) + b"DriverA" + bytes([lsp.COOP_FEATURE | 0x04])
+        body += bytes([16]) + bytes(16)  # not A's key
+        self.server.datagram_received(srv.MAGIC + bytes([srv.HELLO]) + body, ("127.0.0.1", 20099))
+        fake = self.server.by_addr.get(("127.0.0.1", 20099))
+        self.assertFalse(fake.friends_ok)
+        rid = self.run_round()
+        self.stats_write(fake, {self.b: 1})             # "the host's game saw B 1st"
+        self.race_report(self.b, 1, self.sid)
+        self.assertEqual(ledger.LEDGER.rounds[rid]["host"], {})
+        self.assertEqual(self.pending(self.b), [])
+        self.stats_write(self.a, {self.a: 7, self.b: 8})  # the real host's game
+        self.assertEqual(ledger.LEDGER.check(ledger.LEDGER.rounds[rid], "%016X" % self.b.xuid),
+                         "the host's game wrote place 8")
 
     def test_the_host_s_write_must_agree_with_its_report(self):
         rid = self.run_round()
@@ -243,7 +265,13 @@ class LedgerTest(CoopWorldCase):
             next(iter(ledger.LEDGER.rounds.values()))["results"]["%016X" % self.a.xuid] = \
                 {"place": 2, "finished": True, "at": time.time()}
             self.say(self.a, "/event FR50")
-            self.assertIn("co-op results waiting for your launcher", self.notices(self.a)[0])
+            until = time.strftime("%d %b %Y", time.gmtime(
+                next(iter(ledger.LEDGER.rounds.values()))["started"] + ledger.KEEP_DAYS * 86400))
+            self.assertEqual(self.notices(self.a)[0],
+                             "1 results of co-op events you started still wait for your launcher "
+                             "(an event your career has not unlocked keeps its result until it is "
+                             "unlocked). The oldest expires on %s; start more events after that, "
+                             "or after your launcher has applied some" % until)
         finally:
             ledger.MAX_WAITING = old
 
@@ -265,7 +293,45 @@ class LedgerTest(CoopWorldCase):
         self.assertEqual([e["place"] for e in lg.pending(2)], [1] * ledger.MAX_WAITING)
         self.assertEqual(min(e["at"] for e in lg.pending(2)), int(t0 + 5))  # its oldest five went
         self.assertEqual([e["id"] for e in lg.pending(3)], [first])  # an older one of another
-        self.assertEqual((lg.waiting_for(1), lg.waiting_for(2)), (0, ledger.MAX_WAITING))
+        # /event counts the rounds a player asked for: 2's guest results never block it
+        self.assertEqual((lg.waiting_for(1), lg.waiting_for(2), lg.waiting_for(3)), (0, 0, 1))
+
+    def test_the_cap_drops_guest_results_before_the_player_s_own(self):
+        lg = ledger.Ledger()
+        event = type("E", (), {"id": 4, "code": "FR05", "drivers": 7})
+        t0 = time.time() - 3600
+        for n in range(ledger.MAX_WAITING):  # 2 asks for 20 rounds, the oldest results
+            sid = b"own-%02d" % n
+            lg.start_round(sid, event, 2, "B", {2: "B"}, now=t0 + n)
+            lg.report(2, sid, 3, True, now=t0 + n)
+            lg.close_round(sid)
+        sid = b"guest-01"  # then a newer round as 1's guest
+        lg.start_round(sid, event, 1, "A", {1: "A", 2: "B"}, now=t0 + 100)
+        lg.report(2, sid, 3, True, now=t0 + 100)
+        lg.host_score(1, int(sid.hex(), 16), 2, 5, now=t0 + 100)
+        lg.close_round(sid)
+        self.assertEqual(sorted({r["by"] for r in lg.rounds.values() if "%016X" % 2 in r["results"]}),
+                         ["%016X" % 2])  # the guest result went, all 20 own ones stay
+        self.assertEqual(lg.waiting_for(2), ledger.MAX_WAITING)
+
+    def test_an_open_round_s_result_does_not_push_out_a_valid_one(self):
+        """A report in a round still open may never become grantable (not finished, no host
+        write): it doesn't count toward the cap until its round closes grantable."""
+        lg = ledger.Ledger()
+        event = type("E", (), {"id": 4, "code": "FR05", "drivers": 7})
+        t0 = time.time() - 600  # the last round is open (OPEN_LIMIT)
+        for n in range(ledger.MAX_WAITING):
+            sid = b"world-%02d" % n
+            lg.start_round(sid, event, 1, "A", {1: "A", 2: "B"}, now=t0 + n)
+            lg.report(2, sid, 2, True, now=t0 + n)
+            lg.host_score(1, int(sid.hex(), 16), 2, 6, now=t0 + n)
+            lg.close_round(sid)
+        lg.start_round(b"world-dn", event, 1, "A", {1: "A", 2: "B"}, now=t0 + 100)
+        lg.report(2, b"world-dn", 8, False, now=t0 + 100)  # did not finish
+        lg.start_round(b"other-01", event, 3, "C", {3: "C"})  # another world: expire() runs
+        self.assertEqual(len(lg.pending(2)), ledger.MAX_WAITING)
+        lg.close_round(b"world-dn")
+        self.assertEqual(len(lg.pending(2)), ledger.MAX_WAITING)
 
     def test_a_result_waits_at_most_keep_days(self):
         rid = self.run_round()

@@ -358,6 +358,8 @@ class CoopFestivalTest(CoopWorldCase):
         world.WORLDS.rounds.update(older)
         found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid)
         self.assertEqual((found[0], found[1].code), (sid, "FR05"))
+        # a race in a world without a campaign round names none (not another world's)
+        self.assertIsNone(world.WORLDS.result(self.b.xuid, 3, 8, 1, session=b"world-03"))
 
     def test_event_is_refused(self):
         sid = self.coop_world()

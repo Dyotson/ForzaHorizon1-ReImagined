@@ -260,12 +260,13 @@ class Worlds:
         if coop and trusted and session:
             ledger.LEDGER.report(xuid, session, place, finished, winnings=winnings)
         now = time.monotonic()
-        # the round of the reported world first: an earlier world's round may still list the
-        # player (a session left and a new world opened within RESULT_WINDOW)
-        rounds = sorted(self.rounds.items(), key=lambda kv: kv[0] != session)
-        for sid, (campaign, since, members, by) in rounds:
+        for sid, (campaign, since, members, by) in list(self.rounds.items()):
             if now - since > self.RESULT_WINDOW:
                 del self.rounds[sid]
+                continue
+            # only the round of the world it was reported in: an earlier world's round may
+            # still list the player (it left and raced elsewhere within RESULT_WINDOW)
+            if session is not None and sid != session:
                 continue
             if xuid in members:
                 log.info("co-op: world %s campaign event %d (%s, asked by %s): %s place %d/%d "

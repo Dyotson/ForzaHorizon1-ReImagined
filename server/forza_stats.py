@@ -207,9 +207,11 @@ def int_value(kind, value):
     return 0
 
 
-def write(xuid, gamertag, body, allowed=None, now=None):
+def write(xuid, gamertag, body, allowed=None, now=None, verified=True):
     """A write from a player (body after the op byte). allowed: the XUIDs this player may
-    write for (itself and the players of its room); others are ignored."""
+    write for (itself and the players of its room); others are ignored. verified: the writer
+    proved its XUID (its HELLO's friends key); only such writes reach on_skill_write (the
+    co-op ledger takes a host's write as a guest's second-console check)."""
     session, target, views = parse_write(body)
     now = time.monotonic() if now is None else now
     if allowed is not None and target not in allowed:
@@ -222,7 +224,7 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             values = {pid: int_value(kind, v) for pid, kind, v in props}
             if RELATIVE_SCORE not in values:
                 continue
-            if on_skill_write:  # the co-op ledger takes its own first write after a round's start
+            if on_skill_write and verified:  # the co-op ledger: its first write after a start
                 on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             key = (session, view)
             if session and now - STORE.rated.get(key, -RATED_MEMORY) < RATED_MEMORY:

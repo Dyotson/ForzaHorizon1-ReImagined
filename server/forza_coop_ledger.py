@@ -26,16 +26,18 @@ The launcher asks for its player's pending results and confirms the ones it sett
                                  until: when the server drops it unapplied, host: the
                                  world's host who started it, winnings: the player's
                                  onlineWinnings before that race paid and at its next race
-                                 (null until there is one): what the online race itself paid
+                                 (null until there is one): what the online race itself paid,
+                                 winnings_at: when that next race was (any save of the PC
+                                 shares the identity: the launcher uses it only for its own)
     POST /coop/results/applied   {"ids": [...]} -> {"applied": n}: these are not sent again
 
 The launcher applies a result only to the save of the session it was earned in, only for an
 event that save has unlocked, and only when it improves the save's place, so a result applied
 twice changes nothing. A result waits on the server until it is confirmed (the launcher does not
 confirm one for an event its save has not unlocked yet), for KEEP_DAYS at most, and at most
-MAX_WAITING per player: beyond them a player's oldest waiting result is dropped. The host's
-/event is refused while MAX_WAITING of its own results wait, so its own rounds never drop its
-results. Kept in DATA_DIR/coop_ledger.json (written at most every SAVE_EVERY seconds, from the
+MAX_WAITING per player (grantable results of closed rounds; the ones earned as a guest go
+first, then the oldest). The host's /event is refused while MAX_WAITING results of rounds it
+asked for wait, so its own rounds never drop its own results. Kept in DATA_DIR/coop_ledger.json (written at most every SAVE_EVERY seconds, from the
 server's tick), with MAX_ROUNDS rounds in all.
 """
 
@@ -115,12 +117,14 @@ class Ledger:
 
     def expire(self, now=None):
         now = time.time() if now is None else now
-        by = {}  # each player's waiting results, newest first: beyond MAX_WAITING they drop
-        for r in sorted(self.rounds.values(), key=lambda r: r["started"], reverse=True):
+        by = {}  # each player's grantable results of closed rounds: beyond MAX_WAITING they drop
+        for r in self.rounds.values():
             for x in r["members"]:
-                if self.waiting(r, x, now):
+                if self.capped(r, x, now):
                     by.setdefault(x, []).append(r)
         for x, rounds in by.items():
+            # kept first: the rounds the player asked for, then the newest
+            rounds.sort(key=lambda r: (r["by"] == x, r["started"]), reverse=True)
             for r in rounds[MAX_WAITING:]:
                 r["dropped"].append(x)
                 log.info("co-op ledger: round %s (%s): %s's result dropped unapplied (%d newer "
@@ -142,6 +146,12 @@ class Ledger:
         may still come)."""
         return (x in r["results"] and x not in r["applied"] and x not in r["dropped"]
                 and not (self.closed(r, now) and self.check(r, x) is not None))
+
+    def capped(self, r, x, now):
+        """Player x's result in round r counts toward its MAX_WAITING: the round is closed and
+        the result is grantable and not settled. A result of a round still open does not count
+        yet (it may never become grantable: not finished, off the grid, no host write)."""
+        return self.closed(r, now) and self.waiting(r, x, now)
 
     def settled(self, r, now):
         """The round is closed and no result of it waits."""
@@ -200,6 +210,7 @@ class Ledger:
                 res = r["results"].get(x)
                 if res is not None and "ow" in res and "ow_after" not in res:
                     res["ow_after"] = winnings
+                    res["ow_at"] = time.time()
                     self.dirty = True
 
     def report(self, xuid, session, place, finished, now=None, winnings=None):
@@ -276,6 +287,8 @@ class Ledger:
                                 "host": r.get("by_name") or r["by"]})
                     if "ow" in res:  # [before the race paid, at the player's next race]
                         out[-1]["winnings"] = [res["ow"], res.get("ow_after")]
+                        if "ow_at" in res:  # when: the launcher checks it was the same save
+                            out[-1]["winnings_at"] = int(res["ow_at"])
         return sorted(out, key=lambda e: e["at"])[-MAX_PENDING:]
 
     def applied(self, xuid, ids):
@@ -296,12 +309,25 @@ class Ledger:
         return n
 
     def waiting_for(self, xuid):
-        """This player's results that wait for its launcher (its /event is refused at
-        MAX_WAITING, so that its own rounds never drop one)."""
+        """This player's results of rounds it asked for that wait for its launcher (its
+        /event is refused at MAX_WAITING, so that its own rounds never drop one; results it
+        earned as a guest don't count: the cap drops those first)."""
         x = hx(xuid)
         now = time.time()
         with self.lock:
-            return sum(1 for r in self.rounds.values() if self.waiting(r, x, now))
+            return sum(1 for r in self.rounds.values() if r["by"] == x and self.capped(r, x, now))
+
+    def refusal(self, xuid):
+        """The /event notice at MAX_WAITING: why, and until when."""
+        x = hx(xuid)
+        now = time.time()
+        with self.lock:
+            mine = [r for r in self.rounds.values() if r["by"] == x and self.capped(r, x, now)]
+        oldest = min((r["started"] for r in mine), default=now) + KEEP_DAYS * 86400
+        return ("%d results of co-op events you started still wait for your launcher (an event "
+                "your career has not unlocked keeps its result until it is unlocked). The oldest "
+                "expires on %s; start more events after that, or after your launcher has applied "
+                "some" % (len(mine), time.strftime("%d %b %Y", time.gmtime(oldest))))
 
 
 LEDGER = Ledger()

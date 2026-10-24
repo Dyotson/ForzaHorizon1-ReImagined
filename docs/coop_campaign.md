@@ -697,12 +697,16 @@ host's. The milestone 1 rules stay:
 
 A guest's place must also agree with the host's game. Only the requester's game writes
 `XSessionWriteStats` for every human at the race's end (phase A), so a guest's own report is
-checked by a second console. Without that write (the host's game left before the end) the
+checked by a second console. Only a write from a game that proved its XUID with its friends key
+counts (`forza_stats.write(verified=...)`): a second client claiming the host's XUID can neither
+confirm nor deny a guest's place. Without that write (the host's game left before the end) the
 guest's result is not offered. The host's own place still counts without it, as in milestone 1,
 because its own game wrote both. The stats store skips a session's writes for a minute after
 rating it; the ledger now gets every write first (`forza_stats.write`), so that skip can't hide
 the race's write from it. `GET /coop/results` now also gives each result's `until` (when the
-server drops it unapplied) and `host` (the gamertag of the host who started it).
+server drops it unapplied) and `host` (the gamertag of the host who started it). The co-op log
+line names the campaign round of the world the result was reported in, and none when that world
+had no campaign round.
 
 **A guest whose career has not reached the event.** `/event` can start any of the 70 festival
 events. A guest at a lower wristband may not have the event unlocked: style-1 events unlock a
@@ -716,10 +720,17 @@ until 23 Nov 2026."
 The bounds on waiting results:
 
 - they are kept for 30 days (`KEEP_DAYS`);
-- a player has at most 20 (`MAX_WAITING`); beyond that the oldest is dropped, with a log line;
-- the host's `/event` is refused while 20 of its own results wait, so a host's own rounds never
-  drop its own results. A guest's waiting results no longer hold up the host: milestone 1
-  counted the rounds the host had asked for;
+- a player has at most 20 (`MAX_WAITING`) grantable results of closed rounds. Beyond that, the
+  ones earned as a guest are dropped first, then the oldest, with a log line. A report in a round
+  that is still open doesn't count yet, since it may never become grantable (not finished, no
+  host write);
+- the host's `/event` is refused while 20 results of rounds it asked for wait, so its own rounds
+  never drop its own results. Results it earned as a guest don't count, since the cap drops those
+  first. The notice says why they wait (an event the career has not unlocked) and when the oldest
+  expires;
+- the launcher drops, with a note, a result it can never apply: one from a game it did not start,
+  or from a time when two saves' sessions overlapped. A result earned with another save waits for
+  that save's next session;
 - a round leaves the ledger once it is closed and none of its results waits (each one confirmed,
   dropped, expired or not grantable).
 
@@ -752,10 +763,15 @@ Two ways to stop paying both were checked:
   `onlineWinnings`, written before that race pays: A's FR05 write in the second session said
   649,731 credits and 13,750 winnings, and its save after the race had 652,231 and 16,250. So
   the ledger keeps each result's value at the round's report and at the player's next race,
-  from any playlist (`winnings` in `GET /coop/results`). The launcher pays the event's prize less the difference: the save's
-  `Main/OnlineWinnings` stands in when no race has followed yet, as at the end of a session. The
-  player gets the larger of the two once, never both. A result from an older server, without
-  `winnings`, pays the whole prize, as in milestone 1.
+  from any playlist, with that race's time (`winnings`, `winnings_at` in `GET /coop/results`).
+  The launcher pays the event's prize less the difference. Every save of a PC shares the Forza
+  Live identity, so it trusts the next race only when its time falls in a session of the same
+  save, and only when the value grew. Otherwise the save's own `Main/OnlineWinnings` stands in,
+  but only when the grant runs right after the session the result was earned in. When neither
+  applies (a locked result applied weeks later, after races in another save), or the result has
+  no `winnings` (an older server, or a milestone 1 ledger's round), what the race paid is not
+  known. The grant then adds the result and the XP but no prize: "+0 CR (no prize: what the
+  online race paid is not known)". The player gets the larger of the two at most, never both.
 
 What stays:
 
@@ -803,18 +819,26 @@ Tests: `server/test_forza_coop_ledger.py`:
 
 - each player's result goes to that player's launcher only, and once;
 - a guest's place needs the host's agreeing write; the host's own place doesn't;
+- a write from a client that claims the host's XUID without its key is ignored;
 - the host's write counts even within the stats store's one-minute repeat filter;
 - street races give no result;
-- waiting results are capped per player without touching others;
+- waiting results are capped per player without touching others: guest results go first, and a
+  report in a round still open doesn't push out a valid one;
 - 30 days at most;
-- a guest's waiting results don't hold up the host's `/event`;
+- `/event` counts only the rounds the player asked for, and its notice says why and until when;
 - a milestone 1 ledger file still loads;
-- the online winnings around a round: its report and the player's next race.
+- the online winnings around a round: its report and the player's next race, with its time.
 
-`server/test_forza_campaign.py`: the reported world's round names a result. In
-`launcher/test_coop_grant.py`: a guest's locked result waits unconfirmed and applies at a later
-session once unlocked; the prize less what the online race paid (from the server's bracket or
-the save's `Main/OnlineWinnings`, never below 0); the notes' wording and places.
+`server/test_forza_campaign.py`: the reported world's round names a result, and a world without
+a campaign round names none. In `launcher/test_coop_grant.py`:
+
+- a guest's locked result waits unconfirmed and applies at a later session once unlocked;
+- the prize is less what the online race paid, using the server's bracket only when its race was
+  in the same save, or the save's `Main/OnlineWinnings` only right after the result's session;
+- otherwise, or without `winnings`, no prize;
+- the notes are shown even when the confirmation fails;
+- results of a game the launcher did not start are dropped with a note;
+- the notes' wording and places.
 
 ### What milestone 3 needs
 

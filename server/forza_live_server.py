@@ -603,7 +603,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             room = {p.xuid: p.name for p in self.room_peers(peer)}
             room[peer.xuid] = peer.name
             stats.write(peer.xuid, lambda x: room.get(x) or lsp.gamertag_of(x), body[1:],
-                        allowed=set(room))
+                        allowed=set(room), verified=bool(getattr(peer, "friends_ok", False)))
         elif body[0] == 2:
             names = {p.xuid: p.name for p in self.peers.values()}
             reply = stats.read(peer.xuid, body[1:], lambda x: names.get(x) or lsp.gamertag_of(x))
@@ -762,8 +762,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             self.chat.notice(peer, "An event is running in this world: start the next one when "
                                    "you are back in the free roam")
         elif coop_ledger.LEDGER.waiting_for(peer.xuid) >= coop_ledger.MAX_WAITING:
-            self.chat.notice(peer, "You have %d co-op results waiting for your launcher: play a "
-                                   "session from it first" % coop_ledger.MAX_WAITING)
+            self.chat.notice(peer, coop_ledger.LEDGER.refusal(peer.xuid))
         else:
             event = campaign.find(arg)
             if event is None:
