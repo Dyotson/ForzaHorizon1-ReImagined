@@ -187,24 +187,7 @@ void ConfigurePaths(rex::PathConfig &paths) {
     }
     // DLC packages are immutable game inputs. Hard links avoid duplicating
     // large installations; writable profiles above are always independent.
-    const auto packages =
-        source_root / "0000000000000000" / "4D5309C9" / "00000002";
-    if (std::filesystem::is_directory(packages)) {
-      for (const auto &item :
-           std::filesystem::recursive_directory_iterator(packages)) {
-        if (item.is_symlink())
-          throw std::runtime_error(
-              "DLC package folder contains a symbolic link");
-        const auto target =
-            folder / item.path().lexically_relative(source_root);
-        if (item.is_directory())
-          std::filesystem::create_directories(target);
-        else if (item.is_regular_file()) {
-          std::filesystem::create_directories(target.parent_path());
-          std::filesystem::create_hard_link(item.path(), target);
-        }
-      }
-    }
+    LinkPackages(source_root, folder);
     for (auto key : {"FORZA_NET", "FORZA_SERVER", "FORZA_GRAPHICS_SETTINGS",
                      "FORZA_DLSS_STATUS_FILE"}) {
       const char *original = std::getenv(key);
