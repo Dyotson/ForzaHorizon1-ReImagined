@@ -154,16 +154,40 @@ _NO_DLC = ("No DLC found in that folder or its subfolders. Pick the folder of yo
 
 
 def _dlc_key(folder: str):
+    """The folder plus the names and modification times of the folders and zips the scan visits
+    (the same bounded walk, directory listings only; extracted package folders are not entered)."""
     p = Path(folder).expanduser()
-    try:
-        return (str(p), p.stat().st_mtime_ns)
-    except OSError:
-        return (str(p), 0)
+    parts = []
+
+    def walk(d, depth):
+        try:
+            st = os.stat(d)
+            parts.append((str(d), st.st_mtime_ns))
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return
+        for e in entries:
+            try:
+                if e.is_symlink() or e.name.startswith(".") or e.name.lower() in dlcscan.SYSTEM_NAMES:
+                    continue
+                if e.is_file():
+                    if dlcscan.is_zip(e.name):
+                        s = e.stat()
+                        parts.append((e.path, s.st_mtime_ns, s.st_size))
+                elif e.is_dir() and depth < dlcscan.MAX_DEPTH and not install_dlc.NAME_RE.fullmatch(e.name):
+                    walk(e.path, depth + 1)
+                elif e.is_dir():
+                    parts.append((e.path, e.stat().st_mtime_ns))
+            except OSError:
+                continue
+
+    walk(p, 0)
+    return (str(p), tuple(parts))
 
 
 def dlc_cached(folder: str):
     """describe_dlc_folder's result if this folder was read already (and did not change), else None.
-    Starts no file reads beyond one stat."""
+    Reads directory listings only (see _dlc_key)."""
     return _DLC_CACHE.get(_dlc_key(folder))
 
 

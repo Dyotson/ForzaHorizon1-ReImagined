@@ -87,6 +87,18 @@ class Folders(Base):
         self.assertNotIn("readme", " ".join(n for n, _ in skipped))   # junk files are ignored quietly
         self.assertEqual(self.install(), 1)
 
+    def test_cache_notices_a_package_added_two_folders_deep(self):
+        packed(self.src / "a", A, "A")
+        found, _ = installer.describe_dlc_folder(str(self.src))
+        self.assertEqual([n for n, _ in found], [A])
+        packed(self.src / "b" / "c", B, "B")
+        self.assertIsNone(installer.dlc_cached(str(self.src)))
+        found, _ = installer.describe_dlc_folder(str(self.src))
+        self.assertEqual(sorted(n for n, _ in found), sorted([A, B]))
+        packed(self.src / "b" / "c", C, "C")
+        found, _ = installer.describe_dlc_folder(str(self.src))
+        self.assertEqual(len(found), 3)
+
     def test_duplicates_install_once(self):
         packed(self.src / "one", A, "A")
         packed(self.src / "two", A, "A")
