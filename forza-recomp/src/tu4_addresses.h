@@ -25,6 +25,8 @@
 #define __imp__sub_8247C678 __imp__sub_824ABBD8
 #define sub_8247F018 sub_825A1EB8
 #define __imp__sub_8247F018 __imp__sub_825A1EB8
+#define sub_824B87A8 sub_82525C98
+#define __imp__sub_824B87A8 __imp__sub_82525C98
 #define sub_824F1A80 sub_8255D7E8
 #define __imp__sub_824F1A80 __imp__sub_8255D7E8
 #define sub_82502DD8 sub_8256D008
@@ -187,6 +189,8 @@ constexpr uint32_t Tu4Address(uint32_t a) {
     case 0x8288DCD8: return 0x8293EEB0;  // code
     case 0x82893B20: return 0x82944EF8;  // code
     case 0x829A48F4: return 0x82A58E34;  // code
+    case 0x82D1CE18: return 0x82DDED58;  // code  // check
+    case 0x82D2A788: return 0x82DEC860;  // code
     case 0x832AAC24: return 0x8339664C;  // data
     case 0x832DF00C: return 0x833CAACC;  // data
     case 0x832DF024: return 0x833CAAE4;  // data

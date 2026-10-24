@@ -92,6 +92,17 @@ namespace forza::benchmark {
 void Show() { ++benchmark_calls; }
 void TitleReady(uint32_t, uint32_t) { Unexpected(); }
 }
+// Tuning is a pause-only dependency of graphics_menu.cpp. Title selections must
+// never enter its runtime; fail immediately if this fixture reaches that path.
+namespace forza::car_tuning_menu {
+bool Available(const PPCContext&, uint8_t*, uint32_t) { Unexpected(); return false; }
+bool Open(const PPCContext&, uint8_t*, uint32_t) { Unexpected(); return false; }
+bool TryBind(PPCContext&, uint8_t*) { Unexpected(); return false; }
+bool TryNotify(PPCContext&, uint8_t*) { Unexpected(); return false; }
+bool TryDestroy(PPCContext&, uint8_t*) { Unexpected(); return false; }
+bool TryInput(PPCContext&, uint8_t*) { Unexpected(); return false; }
+void Tick(const PPCContext&, uint8_t*) { Unexpected(); }
+}
 namespace forza::ultrawide {
 Extent OutputSize() { Unexpected(); return {}; }
 Extent DrawingSize() { Unexpected(); return {}; }

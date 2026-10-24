@@ -142,7 +142,7 @@ class LeaderboardsTest(unittest.TestCase):
 
     def test_cache_and_expiry(self):
         _, first = get("/leaderboards/speed-trap-230")
-        seed(XUIDS[3], "Newcomer", 1, 230, 100.0)
+        seed(XUIDS[3], "Newcomer", 1, 230, 96.0)   # 345.6 km/h, under the record
         self.assertEqual(get("/leaderboards/speed-trap-230")[1], first)  # still cached
         self.now += lb.CACHE_SECONDS + 1
         _, later = get("/leaderboards/speed-trap-230")

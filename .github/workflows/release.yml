@@ -52,6 +52,12 @@ jobs:
           cmake -S tools/native_renderer -B build/native-renderer-tests -DCMAKE_BUILD_TYPE=Release
           cmake --build build/native-renderer-tests --config Release
           ctest --test-dir build/native-renderer-tests -C Release --output-on-failure
+      - name: Standalone car tuning model, library and donor checks
+        shell: bash
+        run: |
+          cmake -S forza-recomp/tests/car-tuning -B "$RUNNER_TEMP/car-tuning" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/car-tuning" --config Release --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/car-tuning" -C Release --output-on-failure
       - if: runner.os == 'Linux'
         name: Resource cache eviction lifetime regression
         run: |
@@ -92,6 +98,11 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/car_view_test.cpp -o "$RUNNER_TEMP/car-view-test"
           "$RUNNER_TEMP/car-view-test"
+      - if: runner.os == 'Linux'
+        name: Scene MSAA and tiling choice
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/scene_tiling_test.cpp -o "$RUNNER_TEMP/scene-tiling-test"
+          "$RUNNER_TEMP/scene-tiling-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from the SDK
   # source with this repository's patches (tools/build_rexglue_sdk.sh). Cached on the patches.
@@ -451,6 +462,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: assets
@@ -464,4 +476,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
           # The SDK overlays are artifacts only for the packaging jobs; every package carries its own.
           rm -f assets/rexglue-overlay-*.tar.gz
+          python3 launcher/packaging/release_checksums.py assets
           gh release upload "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --clobber
