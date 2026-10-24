@@ -1,0 +1,21 @@
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -899,7 +899,16 @@
+       thread_->set_affinity_mask(uint64_t(1) << cpu_index);
+     }
+   } else {
+-    REXSYS_WARN("Too few processor cores - scheduling will be wonky");
++    // FH1 (#367): once per process. The game calls this for every thread it makes and
++    // reschedules, thousands of times in a minute; on four logical processors the line filled
++    // the log (28,466 lines in 90 s) and cost time on exactly the machines that are short of it.
++    static std::atomic<bool> warned_few_cpus{false};
++    if (!warned_few_cpus.exchange(true, std::memory_order_relaxed)) {
++      REXSYS_WARN(
++          "{} logical processors: guest threads are not pinned to cores (scheduling will be "
++          "wonky; this is logged once)",
++          rex::thread::logical_processor_count());
++    }
+   }
+ }
+ 
