@@ -8,6 +8,7 @@ import subprocess
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -20,8 +21,11 @@ from test_garage import KEYS, envelope
 from test_save_editor import field, profile_bytes
 
 
-def profile_body(xp=1000, credits=5000, wristband=2):
-    main = struct.pack('>I', 3) + field('Credits', 3, credits) + field('XP', 7, xp) + field('WristbandLevel', 7, wristband)
+def profile_body(xp=1000, credits=5000, wristband=2, online=None):
+    fields = field('Credits', 3, credits) + field('XP', 7, xp) + field('WristbandLevel', 7, wristband)
+    if online is not None:
+        fields += field('OnlineWinnings', 3, online)
+    main = struct.pack('>I', 3 if online is None else 4) + fields
     return struct.pack('>I', 1) + field('Main', 15, main) + b'opaque class state'
 
 
@@ -94,8 +98,8 @@ class GrantTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def write(self, xp=1000, credits=5000, wristband=2, **database):
-        (self.folder/'ForzaProfile').write_bytes(profile_bytes(profile_body(xp, credits, wristband)))
+    def write(self, xp=1000, credits=5000, wristband=2, online=None, **database):
+        (self.folder/'ForzaProfile').write_bytes(profile_bytes(profile_body(xp, credits, wristband, online)))
         (self.folder/'PlayerDatabase').write_bytes(envelope(player_database(**database)))
 
     def state(self):
@@ -224,16 +228,77 @@ class GrantTests(unittest.TestCase):
         out, sent, lines = self.serve([
             {'id': 'other', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8, 'at': 1500},
             {'id': 'outside', 'event': 4, 'code': 'FR05', 'place': 1, 'places': 8, 'at': 3500},
-            {'id': 'locked', 'event': 231, 'code': 'FR50', 'place': 1, 'places': 8, 'at': 5500},
+            {'id': 'locked', 'event': 231, 'code': 'FR50', 'place': 3, 'places': 8, 'at': 5500,
+             'host': 'DriverA', 'until': 5500 + 30 * 86400},
             {'id': 'mine', 'event': 4, 'code': 'FR05', 'place': 2, 'places': 8, 'at': 5600}])
         self.assertEqual(out, 'applied 1, unchanged 0, locked 1, waiting 2')
         self.assertEqual(sent[-1][2:], ('/coop/results/applied', b'{"ids": ["mine"]}'))
         self.assertEqual(self.state()['events'], {4: 2})
-        self.assertIn('Co-op results: 2 result(s) from another save or a game started elsewhere wait', lines)
-        self.assertIn('Co-op results: 1 result(s) for events this career has not unlocked wait', lines)
+        self.assertIn('Co-op results: 2 result(s) from another save or a game started elsewhere wait '
+                      "for that save's next session", lines)
+        until = time.strftime('%d %b %Y', time.localtime(5500 + 30 * 86400))
+        self.assertEqual(lines[-1], "Co-op results: FR50 (3rd in DriverA's world) waits: this career "
+                                    'has not unlocked FR50 yet. It is added at the first session after '
+                                    f'you unlock it; the server keeps it until {until}.')
         # nothing of this save's: nothing confirmed, no edit
         out, sent, _ = self.serve([{'id': 'other', 'event': 4, 'place': 1, 'places': 8, 'at': 1500}])
         self.assertEqual((out, [s[2] for s in sent]), ('applied 0, waiting 1', ['/coop/results']))
+
+    def test_a_guest_s_locked_result_applies_once_its_career_unlocks_the_event(self):
+        """Milestone 2: a guest's result for an event its career has not reached waits on the
+        server (not confirmed) and goes in at a later session, once the event is unlocked."""
+        coop_grant.record_session(self.cfg, self.profile, 5000, 6000, now=6100)
+        guest = [{'id': 'g1', 'event': 231, 'code': 'FR50', 'place': 2, 'places': 8, 'at': 5500,
+                  'host': 'DriverA', 'until': 5500 + 30 * 86400}]
+        out, sent, lines = self.serve(guest)
+        self.assertEqual((out, [s[2] for s in sent]), ('applied 0, unchanged 0, locked 1, waiting 0',
+                                                       ['/coop/results']))
+        self.assertIn('waits: this career has not unlocked FR50 yet', lines[-1])
+        self.assertEqual(self.state()['events'], {})
+        # the career unlocks FR50 (its wristband), and the next session's grant applies it
+        self.write(unlocks=(4, 31, 231))
+        coop_grant.record_session(self.cfg, self.profile, 7000, 8000, now=8100)
+        out, sent, lines = self.serve(guest)
+        self.assertEqual(out, 'applied 1, unchanged 0, locked 0, waiting 0')
+        self.assertEqual(sent[-1][2:], ('/coop/results/applied', b'{"ids": ["g1"]}'))
+        self.assertEqual(lines, ['Co-op results: FR50 at place 2 (was not raced): +215 XP, +13,000 CR'])
+        self.assertEqual((self.state()['events'], self.state()['xp'], self.state()['credits']),
+                         ({231: 2}, 1215, 18000))
+        out, sent, lines = self.serve([dict(guest[0], id='g2', place=1, winnings=[1000, 6000])])
+        self.assertEqual(lines, ['Co-op results: FR50 at place 1 (was 2): +10 XP, +10,000 CR '
+                                 '(the prize less the 5,000 CR the online race paid)'])
+
+    def test_the_prize_is_less_what_the_online_race_paid(self):
+        """The co-op round's online race paid online winnings of its own: the grant pays the
+        rest of the event's prize (the larger of the two, once), never both."""
+        self.write(online=20000, unlocks=(4, 31, 231))
+        result = coop_grant.apply(self.cfg, self.profile, [
+            # FR50 at 2nd: prize 13,000 (15,000 x 7/8); the race paid 2,500 (its next race said)
+            {'id': 'r1', 'event': 231, 'place': 2, 'places': 8, 'winnings': [13750, 16250]},
+            # FR05 at 2nd: prize 2,600; the last race of the session: the save says 20,000 - 18,000
+            {'id': 'r2', 'event': 4, 'place': 2, 'places': 8, 'winnings': [18000, None]}])
+        self.assertEqual([(c.code, c.credits, c.online) for c in result.applied],
+                         [('FR50', 10500, 2500), ('FR05', 600, 2000)])
+        self.assertEqual(self.state()['credits'], 5000 + 10500 + 600)
+        # an online race that paid more than the prize: no credits, the result and XP still
+        self.write(online=30000)
+        result = coop_grant.apply(self.cfg, self.profile, [
+            {'id': 'r3', 'event': 4, 'place': 8, 'places': 8, 'winnings': [25000, 30000]}])
+        self.assertEqual([(c.place, c.xp, c.credits, c.online) for c in result.applied], [(8, 30, 0, 5000)])
+        self.assertEqual(coop_grant.online_paid({'winnings': 'x'}), 0)          # an older server
+        self.assertEqual(coop_grant.online_paid({'winnings': [100, None]}), 0)  # nothing to compare
+        self.assertEqual(coop_grant.online_paid({'winnings': [100, 50]}, 0), 0)
+
+    def test_notes_name_the_place_and_cope_with_missing_fields(self):
+        self.assertEqual([coop_grant.ordinal(n) for n in (1, 2, 3, 4, 8, 11, 12, 13, 21)],
+                         ['1st', '2nd', '3rd', '4th', '8th', '11th', '12th', '13th', '21st'])
+        self.assertEqual(coop_grant.locked_note({'event': 231}),
+                         'Co-op results: 231 waits: this career has not unlocked 231 yet. It is added '
+                         'at the first session after you unlock it; the server keeps it.')
+        self.assertTrue(coop_grant.locked_note({'event': 4, 'code': 'FR05', 'place': 7}).startswith(
+            'Co-op results: FR05 (7th) waits:'))
+        self.assertTrue(coop_grant.locked_note({'event': 4, 'code': 'FR05', 'host': 'DriverA'}).startswith(
+            "Co-op results: FR05 (in DriverA's world) waits:"))
 
     def test_sessions_are_kept_for_a_month(self):
         coop_grant.record_session(self.cfg, self.profile, 1000, 2000, now=2000)

@@ -222,6 +222,8 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             values = {pid: int_value(kind, v) for pid, kind, v in props}
             if RELATIVE_SCORE not in values:
                 continue
+            if on_skill_write:  # the co-op ledger takes its own first write after a round's start
+                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             key = (session, view)
             if session and now - STORE.rated.get(key, -RATED_MEMORY) < RATED_MEMORY:
                 log.info("stats: %016X wrote view %08X for %016X again: session %016X is rated",
@@ -233,8 +235,6 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             match["at"] = now
             match["writes"][target] = (values[RELATIVE_SCORE], values.get(SESSION_TEAM, -1))
             match["tags"][target] = tag
-            if on_skill_write:
-                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             log.info("stats: %016X wrote view %08X for %016X '%s': relative score %d team %d "
                      "(session %016X)", xuid, view, target, tag, values[RELATIVE_SCORE],
                      values.get(SESSION_TEAM, -1), session)

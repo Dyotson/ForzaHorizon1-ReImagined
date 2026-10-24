@@ -314,10 +314,13 @@ def user_write_race_stats(xuid, body):
              stats["userFinishPosition"], stats["maxPlaces"], stats["finished"],
              stats["userLevel"], stats["userXP"], stats["currentCredits"],
              "" if caller_trusted() else " (unverified caller)")
+    if caller_trusted():  # what the player's last co-op round paid online (forza_coop_ledger)
+        coop_ledger.LEDGER.race_written(xuid, stats["onlineWinnings"])
     if stats["hopperId"] in WORLD_HOPPERS:
         world.WORLDS.result(xuid, stats["userFinishPosition"], stats["maxPlaces"],
                             stats["finished"], session=stats["sessionId"],
-                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER)
+                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER,
+                            winnings=stats["onlineWinnings"])
     return x.reply()
 
 

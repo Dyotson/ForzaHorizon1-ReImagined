@@ -761,9 +761,9 @@ class ForzaLive(asyncio.DatagramProtocol):
         elif coop_ledger.LEDGER.open_round(sid):
             self.chat.notice(peer, "An event is running in this world: start the next one when "
                                    "you are back in the free roam")
-        elif coop_ledger.LEDGER.unsettled(peer.xuid) >= coop_ledger.MAX_ROUNDS_PER_PLAYER:
+        elif coop_ledger.LEDGER.waiting_for(peer.xuid) >= coop_ledger.MAX_WAITING:
             self.chat.notice(peer, "You have %d co-op results waiting for your launcher: play a "
-                                   "session from it first" % coop_ledger.MAX_ROUNDS_PER_PLAYER)
+                                   "session from it first" % coop_ledger.MAX_WAITING)
         else:
             event = campaign.find(arg)
             if event is None:

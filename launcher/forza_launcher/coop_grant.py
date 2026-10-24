@@ -1,9 +1,10 @@
-"""Co-op campaign results (#309, docs/coop_campaign.md "Milestone 1 progress", phase B).
+"""Co-op campaign results (#309, docs/coop_campaign.md "Milestone 1 progress" and "Milestone 2").
 
 A festival event raced in a Co-op Festival world is an online race: the game writes no career
-state for it. The Forza Live server keeps the result of the player who started it
-(server/forza_coop_ledger.py), and after the session this applies it to the save the way the
-career's own race end would have:
+state for it. The Forza Live server keeps every player's result (server/forza_coop_ledger.py:
+the host's, and each guest's once the host's game agrees with it), and after the session each
+player's launcher applies that player's own result to its save the way the career's own race end
+would have:
 
 - `Career_RaceResults` and `Career_EventResults` at the new place, only when it is better than
   the save's (the career writer, sub_826ADDD0, keeps the best place);
@@ -21,15 +22,22 @@ after every race, so the player's next race catches up, and the Nemesis races th
 conditions of their own (a test grant that wrote them by XP alone unlocked five the game had
 not). When the XP passes the next wristband threshold the free roam says so and Race Central
 awards it with its own unlocks and reward. A result that does not
-improve the save changes nothing, so applying one twice is harmless. The online race already
-paid its online credits and XP; the prize here is the career's, once per improvement.
+improve the save changes nothing, so applying one twice is harmless. The online race paid
+online winnings of its own (Main/OnlineWinnings, into Main/Credits; the playlist's
+payoutModifier does not change them, measured), so the prize here is the event's prize less
+what that race paid online (the server brackets it with the player's onlineWinnings in that
+race's stats and the next race's; before a next race, the save's Main/OnlineWinnings): the
+player gets the larger of the two, once. The online race's XP is the online track's
+(Main/OnlineXP); the wristband XP here is the career's, once per improvement.
 
 Which save: a result is applied only to the save of the launcher session it was earned in (the
 launcher keeps its sessions, `coop_sessions.json`: the save profile, start and end), never to
 another career sharing the PC's Forza Live identity; results of another save's session wait for
 that save's next session, results of a game the launcher did not start wait unapplied. Only an
 event the save has unlocked (CareerEventUnlocks) takes a result: /event can start any festival
-event, and a locked one waits until the career unlocks it. Results that wait are not confirmed.
+event, and a guest's career may not have reached the host's. A locked one waits on the server
+until this career unlocks it (for 30 days, and at most 20 waiting results a player), and the
+Play page says so after the session. Results that wait are not confirmed.
 
 The edit is the save editor's: the save lock, both files read, decoded and verified with the
 player's own keys, one backup of the save ("Before co-op results"), both files checked unchanged
@@ -73,6 +81,7 @@ class Change:
     xp: int
     credits: int
     unlocked: tuple   # CareerEventUnlocks rows added
+    online: int = 0   # what the online race itself paid (onlineWinnings), less from the prize
 
 
 @dataclass(frozen=True)
@@ -128,10 +137,25 @@ def event_unlocks(gamedb, db, event_id):
     return tuple(added)
 
 
-def career(gamedb, db, xp, credits, results, locked=None):
-    """Applies results ([{"id", "event", "place", "places", "code"}]) to a PlayerDatabase
-    connection. Returns (changes, unchanged ids, xp, credits) after them; the ids of results
-    for events the save has not unlocked go to `locked` (a list) and change nothing."""
+def online_paid(result, online_now=None):
+    """What the co-op round's online race paid the player itself: its onlineWinnings before
+    the race paid and at the player's next race (the server's `winnings`), or, before a next
+    race, the save's Main/OnlineWinnings now. 0 when the server did not say."""
+    w = result.get('winnings')
+    if not (isinstance(w, list) and len(w) == 2 and type(w[0]) is int):
+        return 0
+    before, after = w
+    if type(after) is not int:
+        after = online_now if type(online_now) is int else before
+    return max(0, after - before)
+
+
+def career(gamedb, db, xp, credits, results, locked=None, online_now=None):
+    """Applies results ([{"id", "event", "place", "places", "code", "winnings"}]) to a
+    PlayerDatabase connection. Returns (changes, unchanged ids, xp, credits) after them; the
+    ids of results for events the save has not unlocked go to `locked` (a list) and change
+    nothing. The prize is less what the round's online race already paid (online_paid, with
+    the save's Main/OnlineWinnings as online_now): the player gets the larger of the two, once."""
     changes, unchanged = [], []
     locked = [] if locked is None else locked
     for result in results[:MAX_RESULTS]:
@@ -163,11 +187,13 @@ def career(gamedb, db, xp, credits, results, locked=None):
         else:
             db.execute('UPDATE Career_EventResults SET Place=? WHERE EventId=?', (place, event_id))
         gained = max(0, points(gamedb, level, place) - points(gamedb, level, old))
-        prize = payout(cash or 0, place, cars, style)
+        online = online_paid(result, online_now)
+        prize = max(0, payout(cash or 0, place, cars, style) - online)
         xp = min(MAX_XP, xp + gained)
         credits = min(MAX_CREDITS, credits + prize)
         added = event_unlocks(gamedb, db, event_id)
-        changes.append(Change(event_id, result.get('code') or code or str(event_id), place, old, gained, prize, added))
+        changes.append(Change(event_id, result.get('code') or code or str(event_id), place, old, gained, prize,
+                              added, online))
     return changes, unchanged, xp, credits
 
 
@@ -197,12 +223,14 @@ def apply(cfg, profile, results, cancelled=lambda: False, progress=lambda *_: No
             xp, credits = values['Main/XP'].value, values['Main/Credits'].value
         except KeyError as exc:
             raise saves.SaveError('This profile has no career values to update.') from exc
+        online_now = values['Main/OnlineWinnings'].value if 'Main/OnlineWinnings' in values else None
         db = garage._open(garage_doc.database)
         try:
             source = (cfg.game_files()/'media/db/gamedb.slt').resolve()
             with closing(sqlite3.connect(source.as_uri()+'?mode=ro', uri=True)) as gamedb:
                 locked = []
-                changes, unchanged, new_xp, new_credits = career(gamedb, db, xp, credits, results, locked)
+                changes, unchanged, new_xp, new_credits = career(gamedb, db, xp, credits, results, locked,
+                                                                 online_now)
             if not changes:
                 return GrantResult((), tuple(unchanged), locked=tuple(locked))
             db.commit()
@@ -305,9 +333,29 @@ def owners(sessions, at):
             if isinstance(at, (int, float)) and s['start'] - SESSION_SLACK <= at <= s['end'] + SESSION_SLACK}
 
 
+def ordinal(n):
+    return '%d%s' % (n, 'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th'))
+
+
+def locked_note(result):
+    """What the player reads about a result waiting for an event this career has not unlocked."""
+    code = str(result.get('code') or result.get('event'))
+    place = result.get('place')
+    host = result.get('host')
+    until = result.get('until')
+    where = ' '.join(([ordinal(place)] if type(place) is int else [])
+                     + ([f"in {host}'s world"] if isinstance(host, str) and host else []))
+    keep = (time.strftime(' until %d %b %Y', time.localtime(until))
+            if isinstance(until, (int, float)) and until > 0 else '')
+    return (f'Co-op results: {code}{f" ({where})" if where else ""} waits: this career has not '
+            f'unlocked {code} yet. It is added at the first session after you unlock it; the '
+            f'server keeps it{keep}.')
+
+
 def after_session(cfg, profile, log=print, base=None, identity=None, request=None):
     """Fetches the player's pending co-op results and applies those earned in this save's
-    sessions to it. Returns a short result (for the log)."""
+    sessions to it. Returns a short result (for the log); `log` gets the lines the player
+    reads (the Play page shows them)."""
     base = shader_share.server_base(cfg) if base is None else base
     if not base:
         return 'no server'
@@ -327,7 +375,8 @@ def after_session(cfg, profile, log=print, base=None, identity=None, request=Non
         else:  # another save's session, several, or a game the launcher did not start
             waiting += 1
     if waiting:
-        log(f'Co-op results: {waiting} result(s) from another save or a game started elsewhere wait')
+        log(f'Co-op results: {waiting} result(s) from another save or a game started elsewhere wait '
+            'for that save\'s next session')
     if not results:
         return f'applied 0, waiting {waiting}'
     result = apply(cfg, profile, results)
@@ -336,12 +385,15 @@ def after_session(cfg, profile, log=print, base=None, identity=None, request=Non
             and (r.get('id') in result.unchanged or r.get('event') in settled)]
     if done:
         confirm(base, identity, done)
-    if result.locked:
-        log(f'Co-op results: {len(result.locked)} result(s) for events this career has not unlocked wait')
     for change in result.applied:
         was = f'{change.old}' if change.old else 'not raced'
         log(f'Co-op results: {change.code} at place {change.place} (was {was}): +{change.xp} XP, '
-            f'+{change.credits:,} CR' + (f', {len(change.unlocked)} event(s) unlocked' if change.unlocked else ''))
+            f'+{change.credits:,} CR'
+            + (f' (the prize less the {change.online:,} CR the online race paid)' if change.online else '')
+            + (f', {len(change.unlocked)} event(s) unlocked' if change.unlocked else ''))
+    for r in results:
+        if r.get('id') in result.locked:
+            log(locked_note(r))
     return (f'applied {len(result.applied)}, unchanged {len(result.unchanged)}, '
             f'locked {len(result.locked)}, waiting {waiting}')
 

@@ -1,4 +1,4 @@
-"""The co-op campaign's ledger (#309, milestone 1 phase B; docs/coop_campaign.md).
+"""The co-op campaign's ledger (#309, milestones 1 and 2; docs/coop_campaign.md).
 
 A Co-op Festival campaign round (forza_campaign.py) runs as an online race, which writes no
 career state. The server keeps what the career needs instead, and the player's launcher
@@ -12,21 +12,31 @@ applies it to the save after the session (launcher/forza_launcher/coop_grant.py)
   friends key, forza_live_lsp.caller_trusted, for this world's session id, while the round is
   open), and the requester's own XSessionWriteStats for the session (forza_stats: relative
   score = cars - place; first write after the start, from the requester's game only);
-- which results are the career's: milestone 1 grants only the requester's (the host's own
-  career; GRANT), when its report and its game's write agree (or there is no write).
+- which results are a career's (check): every human's own (milestone 2: the host's and each
+  guest's), finished, on the grid, and agreeing with the requester's game's write. The
+  requester's own place may stand without that write (milestone 1); a guest's needs it, so a
+  guest's place is always confirmed by a second console. A street race (--coop-street) gives
+  none: the online race flow turns traffic off, so it is not the career's street race.
 
 The launcher asks for its player's pending results and confirms the ones it settled:
 
     GET  /coop/results           {"results": [{"id", "event", "code", "place", "places",
-                                 "at"}]} for the player of X-Xuid / X-Friends-Key (the same
-                                 proof as the shader list upload)
+                                 "at", "until", "host", "winnings"}]} for the player of X-Xuid /
+                                 X-Friends-Key (the same proof as the shader list upload);
+                                 until: when the server drops it unapplied, host: the
+                                 world's host who started it, winnings: the player's
+                                 onlineWinnings before that race paid and at its next race
+                                 (null until there is one): what the online race itself paid
     POST /coop/results/applied   {"ids": [...]} -> {"applied": n}: these are not sent again
 
 The launcher applies a result only to the save of the session it was earned in, only for an
 event that save has unlocked, and only when it improves the save's place, so a result applied
-twice changes nothing. Kept in DATA_DIR/coop_ledger.json (written at most every SAVE_EVERY
-seconds, from the server's tick): rounds for KEEP_DAYS, at most MAX_ROUNDS_PER_PLAYER asked by
-one player (its oldest go first) and MAX_ROUNDS in all.
+twice changes nothing. A result waits on the server until it is confirmed (the launcher does not
+confirm one for an event its save has not unlocked yet), for KEEP_DAYS at most, and at most
+MAX_WAITING per player: beyond them a player's oldest waiting result is dropped. The host's
+/event is refused while MAX_WAITING of its own results wait, so its own rounds never drop its
+results. Kept in DATA_DIR/coop_ledger.json (written at most every SAVE_EVERY seconds, from the
+server's tick), with MAX_ROUNDS rounds in all.
 """
 
 import hashlib
@@ -43,11 +53,10 @@ FILE = "coop_ledger.json"
 OPEN_LIMIT = 30 * 60.0      # a round left open this long (its world gone) takes no more reports
 KEEP_DAYS = 30
 MAX_ROUNDS = 2000
-MAX_ROUNDS_PER_PLAYER = 20  # rounds one player asked for and has not settled
+MAX_WAITING = 20            # results of one player waiting for its launcher
 MAX_PENDING = 50
 MAX_IDS = 100               # ids in one confirmation
 SAVE_EVERY = 2.0
-GRANT = "requester"         # whose result goes to the career (milestone 1: the host's own)
 
 
 def hx(xuid):
@@ -73,6 +82,7 @@ class Ledger:
             self.rounds = {r["id"]: r for r in data.get("rounds", []) if isinstance(r, dict)}
             for r in self.rounds.values():  # version 1 kept no open flag: closed
                 r.setdefault("open", False)
+                r.setdefault("dropped", [])
             self.expire()
             log.info("co-op ledger: %d round(s) from %s", len(self.rounds), self.path)
         except FileNotFoundError:
@@ -90,7 +100,7 @@ class Ledger:
         try:
             tmp = self.path + ".tmp"
             with open(tmp, "w") as f:
-                json.dump({"version": 2, "rounds": list(self.rounds.values())}, f)
+                json.dump({"version": 3, "rounds": list(self.rounds.values())}, f)
             os.replace(tmp, self.path)
         except OSError as e:
             log.warning("cannot write %s: %s", self.path, e)
@@ -105,27 +115,37 @@ class Ledger:
 
     def expire(self, now=None):
         now = time.time() if now is None else now
+        by = {}  # each player's waiting results, newest first: beyond MAX_WAITING they drop
+        for r in sorted(self.rounds.values(), key=lambda r: r["started"], reverse=True):
+            for x in r["members"]:
+                if self.waiting(r, x, now):
+                    by.setdefault(x, []).append(r)
+        for x, rounds in by.items():
+            for r in rounds[MAX_WAITING:]:
+                r["dropped"].append(x)
+                log.info("co-op ledger: round %s (%s): %s's result dropped unapplied (%d newer "
+                         "ones wait)", r["id"], r["code"], r["members"].get(x) or x, MAX_WAITING)
         for k in [k for k, r in self.rounds.items()
                   if now - r["started"] > KEEP_DAYS * 86400 or self.settled(r, now)]:
             del self.rounds[k]
-        by = {}
-        for r in sorted(self.rounds.values(), key=lambda r: r["started"], reverse=True):
-            by.setdefault(r["by"], []).append(r["id"])
-        for ids in by.values():
-            for k in ids[MAX_ROUNDS_PER_PLAYER:]:
-                del self.rounds[k]
         if len(self.rounds) > MAX_ROUNDS:
             for k in sorted(self.rounds, key=lambda k: self.rounds[k]["started"])[:len(self.rounds) - MAX_ROUNDS]:
                 del self.rounds[k]
 
     @staticmethod
-    def grantees(r):
-        return [r["by"]] if GRANT == "requester" else list(r["members"])
+    def closed(r, now):
+        return not r["open"] or now - r["started"] > OPEN_LIMIT
+
+    def waiting(self, r, x, now):
+        """Player x has a result in round r that may still go to its career: reported, not
+        confirmed or dropped, and grantable (or the round is still open, so its game's write
+        may still come)."""
+        return (x in r["results"] and x not in r["applied"] and x not in r["dropped"]
+                and not (self.closed(r, now) and self.check(r, x) is not None))
 
     def settled(self, r, now):
-        """Every grantee's result was confirmed, or the round closed without one."""
-        closed = not r["open"] or now - r["started"] > OPEN_LIMIT
-        return all(x in r["applied"] or (closed and x not in r["results"]) for x in self.grantees(r))
+        """The round is closed and no result of it waits."""
+        return self.closed(r, now) and not any(self.waiting(r, x, now) for x in r["members"])
 
     # --- the game's side ---
 
@@ -142,9 +162,10 @@ class Ledger:
                     r["open"] = False
             self.rounds[rid] = {
                 "id": rid, "sid": sid.hex(), "event": event.id, "code": event.code,
-                "cars": event.drivers + 1, "by": hx(by_xuid), "by_name": by_name,
+                "cars": event.drivers + 1, "street": bool(getattr(event, "street", False)),
+                "by": hx(by_xuid), "by_name": by_name,
                 "members": {hx(x): n for x, n in members.items()}, "started": now, "open": True,
-                "results": {}, "host": {}, "applied": []}
+                "results": {}, "host": {}, "applied": [], "dropped": []}
             self.expire(now)
             self.dirty = True
         log.info("co-op ledger: round %s: %s (event %d) in world %s, asked by %s, %d human(s)",
@@ -152,18 +173,39 @@ class Ledger:
         return rid
 
     def close_round(self, sid):
-        """The world's next round started: its campaign round takes no more reports."""
+        """The world's next round started: its campaign round takes no more reports (and is
+        dropped if none of its results waits)."""
+        with self.lock:
+            closed = [r for r in self.rounds.values() if r["open"] and r["sid"] == sid.hex()]
+            for r in closed:
+                r["open"] = False
+                log.info("co-op ledger: round %s (%s) closed with %d result(s)%s", r["id"],
+                         r["code"], len(r["results"]), "".join(
+                             "; %s %s" % (r["members"].get(x) or x, self.check(r, x) or "place %d/%d"
+                                          % (r["results"][x]["place"], r["cars"]))
+                             for x in r["results"]))
+            if closed:
+                self.expire()
+                self.dirty = True
+
+    def race_written(self, xuid, winnings):
+        """Any race's User.WriteRaceStatsEx from the player's own game: its onlineWinnings
+        (written before that race pays) closes the online winnings of the player's previous
+        campaign round. Call it before report()."""
+        if type(winnings) is not int:
+            return
+        x = hx(xuid)
         with self.lock:
             for r in self.rounds.values():
-                if r["open"] and r["sid"] == sid.hex():
-                    r["open"] = False
+                res = r["results"].get(x)
+                if res is not None and "ow" in res and "ow_after" not in res:
+                    res["ow_after"] = winnings
                     self.dirty = True
-                    log.info("co-op ledger: round %s (%s) closed with %d result(s)", r["id"],
-                             r["code"], len(r["results"]))
 
-    def report(self, xuid, session, place, finished, now=None):
+    def report(self, xuid, session, place, finished, now=None, winnings=None):
         """A player's own User.WriteRaceStatsEx (verified by the caller) in world `session`
-        (8 bytes): its place. The first one counts. Returns the round id or None."""
+        (8 bytes): its place, and its online winnings before this race pays (onlineWinnings).
+        The first one counts. Returns the round id or None."""
         now = time.time() if now is None else now
         x = hx(xuid)
         with self.lock:
@@ -173,6 +215,8 @@ class Ledger:
             if x in r["results"]:
                 return r["id"]
             r["results"][x] = {"place": place, "finished": finished, "at": now}
+            if type(winnings) is int:
+                r["results"][x]["ow"] = winnings
             self.dirty = True
         log.info("co-op ledger: round %s (%s): %s place %d/%d%s", r["id"], r["code"],
                  r["members"].get(x) or x, place, r["cars"], "" if finished else " (not finished)")
@@ -197,17 +241,24 @@ class Ledger:
     # --- the launcher's side ---
 
     def check(self, r, x):
-        """None for a grantable result of player x in round r, or the reason it is not."""
+        """None for a grantable result of player x in round r, or the reason it is not. The
+        requester's game writes every human's place: a guest's place needs that write to
+        agree; the requester's own stands without it (its own game wrote both)."""
         res = r["results"].get(x)
         if res is None:
             return "no report"
+        if r.get("street"):  # the online race flow turns traffic off: not the career's race
+            return "a street race without traffic"
         if not res["finished"]:
             return "not finished"
         if not 1 <= res["place"] <= r["cars"]:
             return "place %d of %d" % (res["place"], r["cars"])
         host = r["host"].get(x)
-        if host is not None and r["cars"] - host["score"] != res["place"]:
-            return "its game wrote place %d" % (r["cars"] - host["score"])
+        if host is None:
+            return None if x == r["by"] else "no place from the host's game"
+        if r["cars"] - host["score"] != res["place"]:
+            return "%s game wrote place %d" % ("its" if x == r["by"] else "the host's",
+                                               r["cars"] - host["score"])
         return None
 
     def pending(self, xuid):
@@ -215,12 +266,16 @@ class Ledger:
         out = []
         with self.lock:
             for r in self.rounds.values():
-                if x not in self.grantees(r) or x in r["applied"]:
+                if x not in r["members"] or x in r["applied"] or x in r["dropped"]:
                     continue
                 if self.check(r, x) is None:
                     res = r["results"][x]
                     out.append({"id": r["id"], "event": r["event"], "code": r["code"],
-                                "place": res["place"], "places": r["cars"], "at": int(res["at"])})
+                                "place": res["place"], "places": r["cars"], "at": int(res["at"]),
+                                "until": int(r["started"] + KEEP_DAYS * 86400),
+                                "host": r.get("by_name") or r["by"]})
+                    if "ow" in res:  # [before the race paid, at the player's next race]
+                        out[-1]["winnings"] = [res["ow"], res.get("ow_after")]
         return sorted(out, key=lambda e: e["at"])[-MAX_PENDING:]
 
     def applied(self, xuid, ids):
@@ -229,7 +284,8 @@ class Ledger:
         with self.lock:
             for rid in ids[:MAX_IDS]:
                 r = self.rounds.get(rid) if isinstance(rid, str) else None
-                if r is not None and x in self.grantees(r) and x not in r["applied"]:
+                if (r is not None and x in r["results"] and x not in r["applied"]
+                        and x not in r["dropped"]):
                     r["applied"].append(x)
                     n += 1
             if n:
@@ -239,13 +295,13 @@ class Ledger:
             log.info("co-op ledger: %s settled %d result(s)", x, n)
         return n
 
-    def unsettled(self, xuid):
-        """Rounds this player asked for that are not settled (its /event is refused beyond
-        MAX_ROUNDS_PER_PLAYER)."""
+    def waiting_for(self, xuid):
+        """This player's results that wait for its launcher (its /event is refused at
+        MAX_WAITING, so that its own rounds never drop one)."""
         x = hx(xuid)
         now = time.time()
         with self.lock:
-            return sum(1 for r in self.rounds.values() if r["by"] == x and not self.settled(r, now))
+            return sum(1 for r in self.rounds.values() if self.waiting(r, x, now))
 
 
 LEDGER = Ledger()
