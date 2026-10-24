@@ -865,14 +865,21 @@ registers like a broken `longjmp` landing (lr = r31 = mid-function `0x824469B8`)
 of the libjpeg crash fixed after v0.1.6 (CRT setjmp/longjmp as host calls, PROJECT.md
 2026-10-15). Not confirmed: whether that load decodes a JPEG (the save's car pictures).
 
-The country is not involved (#392): with Country ID 88 (Russia) every online action said
+Country ID 88 (#392, not solved): with Country ID 88 (Russia) every online action said
 "the Forza Horizon server is currently unavailable", and the player's log had no
 `signed in to` in any of 12 sessions: not one datagram of the public server reached the
-game. Nothing in the client or the server reads `user_country` (the SDK hands it to the
-game's XConfig and XamGetLocale only), and a game with `--user_country=88
---user_language=12` on a local server signs in, logs on to the title servers (`Logon2`) and
-opens Multiplayer, Find Game and its playlists. The client now names the address it sends
-to (`FORZA_LIVE: server <name>:<port> is <address>`), looks the name up again every 30 s
+game. Later the player wrote that the default country works. The log does not say which
+country each session had, and the working start came after the log. What we checked: the
+launcher's plan (`game.build_plan`) for 88 differs from the default only by
+`user_country = 88` in forza.toml (no other flag, variable, language, profile or server);
+nothing in the client or the server reads the country (the SDK hands it to the game's
+XConfig and XamGetLocale only; HELLO carries none, and `Logon2`'s region, locale and LCID,
+sent after the sign-in, are not looked at); HELLO and WELCOME are under 100 bytes. With
+the launcher's forza.toml for 88 (and also with `--user_language=12`) a game on a local
+server signs in, logs on to the title servers and opens Multiplayer, Find Game and its
+playlists. The client now names the address it sends to and the profile's country and
+language (`FORZA_LIVE: server <name>:<port> is <address> (country 88, language 1)`), looks
+the name up again every 30 s
 while the server stays silent, and after 30 s without a datagram from it says so once:
 `<server> (<address>:<port>) has not answered in 30 s; online stays unavailable until it
 does`, with the usual causes (a firewall or antivirus, a VPN or proxy, a network or

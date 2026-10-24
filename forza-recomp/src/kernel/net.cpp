@@ -47,6 +47,7 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+#include <rex/system/flags.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xevent.h>
 #include <rex/system/xthread.h>
@@ -910,8 +911,10 @@ class VNet {
     freeaddrinfo(result);
     std::lock_guard<std::mutex> lock(mutex_);
     if (ip != server_.ip) {
-      // The address the game sends to, for reports where the server never answers (#392).
-      REXLOG_INFO("FORZA_LIVE: server {} is {}", ServerName(), IpString(ip));
+      // The address the game sends to, and the profile's country and language (the launcher's
+      // Country ID and Language ID), for reports where the server never answers (#392).
+      REXLOG_INFO("FORZA_LIVE: server {} is {} (country {}, language {})", ServerName(),
+                  IpString(ip), REXCVAR_GET(user_country), REXCVAR_GET(user_language));
     }
     server_ = {ip, server_port_};
     return true;
