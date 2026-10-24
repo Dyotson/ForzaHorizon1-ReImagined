@@ -58,7 +58,6 @@ REXCVAR_DEFINE_BOOL(world_drop_in, true, "Network/Forza Live",
                     "that players drop into (JUMP IN) and that starts with one player");
 
 namespace {
-constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
 constexpr uint8_t kPresetFreeRoam = 7;          // GameTypePreset of the round (kPreset below)
 constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);    // pointer to the online game object
@@ -92,7 +91,7 @@ bool Trace() {
 // Game's mode, a free-roam round), else 0. A round of another game type served on the
 // world's playlist (docs/online_vision.md, phase 2) stays a Find Game round.
 uint32_t WorldGame(uint8_t* base) {
-  if (!REXCVAR_GET(world_drop_in) || forza::LiveMatchPlaylist() != kWorldPlaylist) return 0;
+  if (!REXCVAR_GET(world_drop_in) || !forza::LiveIsWorldPlaylist(forza::LiveMatchPlaylist())) return 0;
   const uint32_t game = Load32(forza::GuestPtr(base, kOnlineGame));
   if (!game) return 0;
   const uint8_t* g = forza::GuestPtr(base, game);
@@ -182,7 +181,7 @@ extern "C" REX_FUNC(sub_82875FB8) {
 // sub_825F5AA8(options): sets the class of each bucket that restricts to "any" (255) from the
 // options' recommended class range (see 4. above). The world keeps "any".
 extern "C" REX_FUNC(sub_825F5AA8) {
-  if (REXCVAR_GET(world_drop_in) && forza::LiveMatchPlaylist() == kWorldPlaylist) {
+  if (REXCVAR_GET(world_drop_in) && forza::LiveIsWorldPlaylist(forza::LiveMatchPlaylist())) {
     if (Trace()) REXLOG_INFO("WORLD: the buckets keep any car class");
     return;
   }
