@@ -183,3 +183,6 @@ The bug report template asks for your OS, CPU, GPU and log.
 Forza Horizon is © Microsoft. This project is not affiliated with, endorsed by or
 sponsored by Microsoft, Playground Games or Turn 10 Studios. Forza, Forza Horizon, Xbox and Xbox LIVE are trademarks of Microsoft. It contains no game code or
 assets; you must own the game. See [`LICENSE`](LICENSE).
+
+
+<!-- Automated fix for issue #389: Progress for Lamborghini Day Trip got reset after fail at next Day Trip - Ferrari Day Trip - Custom Free Roam -->
