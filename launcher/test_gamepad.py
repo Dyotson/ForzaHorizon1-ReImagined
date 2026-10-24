@@ -239,6 +239,35 @@ class NavigationTests(unittest.TestCase):
             backwards.append(self.win.stack.currentWidget())
         self.assertEqual(backwards, pages[::-1])
 
+    def test_mods_page_works_with_a_controller(self):
+        from forza_launcher import mods
+        from forza_launcher.ui.window import MODS_PAGE_ID
+        folder = mods.mods_dir(self.win.cfg) / "Pad" / "media"
+        folder.mkdir(parents=True)
+        (folder / "a.xml").write_text("a")
+        self.win.show_page(MODS_PAGE_ID)
+        page = self.win.mods
+        page.refresh()
+        self.app.processEvents()
+        # Down walks the page's controls: Add mod..., the list, the order buttons.
+        reached = set()
+        self.nav.focus(page.add_button)
+        for _ in range(12):
+            reached.add(self.app.focusWidget())
+            self.press("down")
+        self.assertTrue({page.add_button, page.table, page.refresh_button} <= reached)
+        with patch.object(page, "add_dialog") as dialog:
+            self.nav.focus(page.add_button)
+            self.press("accept")
+        dialog.assert_called_once()
+        # A on the selected mod turns it off and on.
+        self.nav.focus(page.table)
+        page.table.selectRow(0)
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["mods"]["disabled"], ["Pad"])
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["mods"]["disabled"], [])
+
     def test_focus_skips_disabled_hidden_controls_and_scrolls(self):
         from PySide6.QtWidgets import QScrollArea, QPushButton
         self.win.show_page(2)

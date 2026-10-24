@@ -482,17 +482,32 @@ user save were not modified.
 ### Mods (#149)
 
 **Mods** lists the folders in `<data folder>/mods` (name, version, author from each mod's
-`mod.toml`, and its file count), each with a tick to turn it on or off, **Move up** / **Move
-down** for the load order (a lower mod wins over a higher one for the same file), **Refresh** and
-**Open mods folder**. A mod the game would skip shows "(will not load)" and why: the same rules as the
-game's (`mod_archive.h` ScanMod): no `media/` folder or no usable file (non-ASCII names, paths
-over 255 characters and `.zip` files are left out), a file it cannot read, two names that differ
-only in case, a file over 64 MB that replaces no loose file in the game's `media` folder, a folder
-named `*` or with a `|`. launcher.json keeps the order and the mods
-turned off (`"mods": {"order": [...], "disabled": [...]}`); every start passes
-`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), except an option that
-**Extra command-line flags** (**Settings > Advanced**) name, as `--name=value` or `--name value`
-(the game refuses an option given twice). The game side and the folder layout are in
+`mod.toml`, and its files), each with a tick to turn it on or off (Return, Enter or a controller's
+A on the selected row too), **Move up** / **Move down** for the load order (a lower mod wins over
+a higher one for the same file), **Add mod…**, **Remove**, **Refresh** and **Open mods folder**.
+The details under the list name the files a mod shares with other mods and whose copy is used.
+
+- **Add mod…** asks for a **Zip file…** or a **Folder…** (dropping either on the page does the
+  same). `mods.install` finds the mod in it (a folder with `media/` or `mod.toml`, at the top or
+  one folder down), unpacks or copies it into a hidden `.adding-*` folder in the mods folder,
+  checks it with the game's rules (`read_mod`) and only then moves it into place; a mod of that
+  name is replaced only after the player says yes (never while the game runs). A zip with an
+  absolute path, `..`, a link, more than 200,000 files or more than 8 GB unpacked is refused.
+  Errors are said under the list ("Not added: ...").
+- **Remove** asks first and deletes the mod's folder (a linked folder: only the link); it is off
+  while the game runs.
+- With no mods the page says how to add one and links the guide; while the game runs, a notice
+  says changes apply at its next start.
+- A mod the game would skip shows "(will not load)" and why, by the game's rules
+  (`mod_archive.h` ScanMod): no `media/` folder or no usable file (non-ASCII names, paths over 255
+  characters and `.zip` files are left out), a file it cannot read, two names that differ only in
+  case, a file over 64 MB that replaces no loose file in the game's `media` folder, a folder named
+  `*` or with a `|`.
+
+launcher.json keeps the order and the mods turned off (`"mods": {"order": [...], "disabled":
+[...]}`); every start passes `--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone:
+none), except an option that **Extra command-line flags** (**Settings > Advanced**) name, as
+`--name=value` or `--name value` (the game refuses an option given twice). The player's guide is
 [modding.md](modding.md). Tests: `launcher/test_mods.py`.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)

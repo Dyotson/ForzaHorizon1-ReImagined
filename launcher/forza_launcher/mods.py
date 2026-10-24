@@ -7,8 +7,12 @@ order and the mods turned off ("mods": {"order": [...], "disabled": [...]}); the
 as --forza_mods_dir and --forza_mods (the folders to load in load order, '|'-separated, a later
 one winning over an earlier one for the same file)."""
 import os
-from dataclasses import dataclass
-from pathlib import Path
+import shutil
+import stat
+import tempfile
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -34,6 +38,7 @@ class Mod:
     problem: str = ""   # why the game would skip it ("" when it loads)
     note: str = ""      # a warning that does not stop it loading
     enabled: bool = True
+    names: list = field(default_factory=list)  # its files' game paths, lower case, under media/
 
     @property
     def title(self) -> str:
@@ -159,6 +164,7 @@ def _read_files(folder: Path, mod: Mod, media_of_game: Path | None):
                 mod.problem = f"two files differ only in case: {shown} and media/{seen[game_name]}"
                 return
             seen[game_name] = rel
+            mod.names.append(game_name)
             mod.files += 1
             mod.size += size
     if left_out:
@@ -224,3 +230,188 @@ def launch_args(cfg, named=()) -> list:
     if "forza_mods" not in named:
         args.append("--forza_mods=" + ("|".join(m.folder for m in enabled(cfg)) or NONE))
     return args
+
+
+def conflicts(mods: list) -> dict:
+    """For each mod that loads, the files another loading mod has too: {folder: [(file, other
+    folder, True when this one wins)]}. Later in the list wins, as in the game."""
+    loading = [m for m in mods if m.enabled and not m.problem]
+    owners = {}
+    for i, m in enumerate(loading):
+        for name in m.names:
+            owners.setdefault(name, []).append(i)
+    out = {}
+    for name, idx in sorted(owners.items()):
+        if len(idx) < 2:
+            continue
+        last = idx[-1]
+        for i in idx:
+            for j in idx:
+                if i != j:
+                    out.setdefault(loading[i].folder, []).append((name, loading[j].folder, i == last))
+    return out
+
+
+# --- adding and removing mods (the Mods page) -----------------------------------------------
+
+MAX_INSTALL = 8 << 30        # a mod archive or folder at most this big unpacked
+MAX_ENTRIES = 200_000
+
+
+class InstallError(Exception):
+    """Why a mod could not be added, in words for the player."""
+
+
+class ModExists(Exception):
+    def __init__(self, folder):
+        super().__init__(folder)
+        self.folder = folder
+
+
+def _is_root(p: Path) -> bool:
+    return (p / "media").is_dir() or (p / MANIFEST).is_file()
+
+
+def find_root(folder: Path) -> Path | None:
+    """The mod in `folder`: itself when it holds media/ or mod.toml, else its only subfolder
+    that does (a zip's contents usually sit in one folder)."""
+    if _is_root(folder):
+        return folder
+    found = [p for p in sorted(folder.iterdir()) if p.is_dir() and _is_root(p)]
+    return found[0] if len(found) == 1 else None
+
+
+def _check_name(name: str):
+    if not name or name.startswith(".") or name == "*" or "|" in name:
+        raise InstallError(f'"{name}" cannot be a mod\'s folder name (no "|", not "*", not starting '
+                           'with a dot): rename it and add it again')
+
+
+def _safe_members(z: zipfile.ZipFile) -> list:
+    """The zip's members, refused when one would land outside the folder it is unpacked in
+    (an absolute path, "..", a link) or the whole is too big."""
+    infos = z.infolist()
+    if len(infos) > MAX_ENTRIES:
+        raise InstallError(f"The zip holds {len(infos)} files, more than a mod can have.")
+    total = 0
+    for info in infos:
+        name = info.filename.replace("\\", "/")
+        parts = PurePosixPath(name).parts
+        if (name.startswith("/") or (len(name) > 1 and name[1] == ":") or ".." in parts):
+            raise InstallError(f'The zip has a file outside its own folder ("{info.filename}"); it was '
+                               'not added. Get the mod from its author again.')
+        mode = info.external_attr >> 16
+        if stat.S_ISLNK(mode):
+            raise InstallError(f'The zip has a link ("{info.filename}"), which mods cannot hold; it was '
+                               'not added.')
+        total += info.file_size
+        if total > MAX_INSTALL:
+            raise InstallError("The zip unpacks to more than 8 GB, more than a mod can be.")
+    return infos
+
+
+def _unpack(source: Path, into: Path) -> Path:
+    """Copies or unpacks `source` into the empty folder `into`; returns the mod's root in it."""
+    if source.is_dir():
+        root = find_root(source)
+        if root is None:
+            raise InstallError(f'"{source.name}" is not a mod: a mod folder holds a media folder (and '
+                               'usually mod.toml).')
+        size = 0
+        for dirpath, _, files in os.walk(root, followlinks=True):
+            for f in files:
+                size += os.path.getsize(os.path.join(dirpath, f))
+                if size > MAX_INSTALL:
+                    raise InstallError("The folder holds more than 8 GB, more than a mod can be.")
+        _check_name(root.name)
+        shutil.copytree(root, into / root.name, symlinks=False)
+        return into / root.name
+    if not zipfile.is_zipfile(source):
+        raise InstallError(f'"{source.name}" is not a zip file or a folder.')
+    try:
+        with zipfile.ZipFile(source) as z:
+            infos = _safe_members(z)
+            unpacked = into / ".contents"  # no mod's name starts with a dot
+            unpacked.mkdir()
+            for info in infos:
+                z.extract(info, unpacked)
+    except NotImplementedError:
+        raise InstallError("The zip uses a compression this launcher cannot unpack; repack it as a "
+                           "normal zip.") from None
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError, EOFError) as e:
+        raise InstallError(f"The zip could not be read ({e}).") from None
+    root = find_root(unpacked)
+    if root is None:
+        raise InstallError(f'"{source.name}" holds no mod: there is no media folder at its top or in '
+                           'its one folder.')
+    name = source.stem if root == unpacked else root.name
+    _check_name(name)
+    final = into / name
+    root.rename(final)
+    return final
+
+
+def install(source: Path, directory: Path, replace=False, media_of_game: Path | None = None) -> Mod:
+    """Adds the mod in `source` (a folder or a .zip) to the mods folder `directory`. The files
+    are checked with the game's rules first and land in place only when all is well. Raises
+    InstallError (with words for the player) or ModExists (call again with replace=True)."""
+    source = Path(source)
+    directory = Path(directory)
+    if not source.exists():
+        raise InstallError(f'"{source}" is not there any more.')
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if source.is_dir() and directory.resolve() in (source.resolve(), *source.resolve().parents):
+            raise InstallError("That folder is already in the mods folder: it is listed on this page "
+                               "(press Refresh).")
+        staging = Path(tempfile.mkdtemp(prefix=".adding-", dir=directory))
+    except OSError as e:
+        raise InstallError(f"The mods folder could not be written ({e}).") from None
+    try:
+        try:
+            root = _unpack(source, staging)
+        except OSError as e:
+            raise InstallError(f"The mod could not be copied ({e}).") from None
+        mod = read_mod(root, media_of_game)
+        if mod.problem:
+            raise InstallError(f"This mod would not load: {mod.problem}.")
+        target = directory / root.name
+        try:
+            if target.exists() or target.is_symlink():
+                if not replace:
+                    raise ModExists(root.name)
+                old = staging / ".old"
+                target.rename(old)
+                try:
+                    root.rename(target)
+                except OSError:
+                    old.rename(target)  # put the mod that was there back
+                    raise
+            else:
+                root.rename(target)
+        except OSError as e:
+            raise InstallError(f"The mod could not be put in the mods folder ({e}). Is a file of the "
+                               "old one open?") from None
+        return read_mod(target, media_of_game)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def remove(cfg, folder: str):
+    """Deletes a mod's folder from the mods folder (a linked folder: only the link) and forgets
+    its place in the load order."""
+    directory = mods_dir(cfg)
+    target = directory / folder
+    if target.parent != directory or folder in ("", ".", ".."):
+        raise InstallError(f'"{folder}" is not a mod in the mods folder.')
+    try:
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+    except OSError as e:
+        raise InstallError(f"The mod could not be removed ({e}). Is a file of it open?") from None
+    s = state(cfg)
+    cfg.d["mods"] = {"order": [f for f in s["order"] if f != folder],
+                     "disabled": [f for f in s["disabled"] if f != folder]}
+    cfg.save()

@@ -4,7 +4,9 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -182,6 +184,105 @@ class ModFolders(unittest.TestCase):
         self.assertIn("could not be read", found[0].problem)
 
 
+def make_zip(path: Path, members: dict):
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            if isinstance(data, zipfile.ZipInfo):
+                z.writestr(data, b"target")
+            else:
+                z.writestr(name, data)
+    return path
+
+
+class AddAndRemove(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t = Path(self.tmp.name)
+        self.cfg = Config(self.t / "launcher.json")
+        self.cfg.advanced["data_root"] = str(self.t / "home")
+        self.dir = mods.mods_dir(self.cfg)
+        self.src = self.t / "downloads"
+        self.src.mkdir()
+
+    def listed(self):
+        return sorted(p.name for p in self.dir.iterdir())
+
+    def test_a_folder_and_a_folder_holding_one_mod(self):
+        make_mod(self.src, "Plain", 'name = "Plain mod"\n')
+        mod = mods.install(self.src / "Plain", self.dir)
+        self.assertEqual((mod.folder, mod.title, mod.files), ("Plain", "Plain mod", 1))
+        make_mod(self.src / "Download", "Inner")
+        self.assertEqual(mods.install(self.src / "Download", self.dir).folder, "Inner")
+        self.assertEqual(self.listed(), ["Inner", "Plain"])  # nothing left behind
+
+    def test_a_zip_with_the_mod_at_its_top_or_in_one_folder(self):
+        top = make_zip(self.src / "Top Mod.zip", {"mod.toml": 'name = "Top"\n', "media/a.xml": "a"})
+        self.assertEqual(mods.install(top, self.dir).folder, "Top Mod")
+        nested = make_zip(self.src / "nested.zip", {"Nested/mod.toml": "", "Nested/media/db/b.xml": "b"})
+        mod = mods.install(nested, self.dir)
+        self.assertEqual((mod.folder, mod.names), ("Nested", ["db/b.xml"]))
+        self.assertEqual(self.listed(), ["Nested", "Top Mod"])
+
+    def test_refused_in_plain_words_and_nothing_written(self):
+        bad = self.src / "bad.zip"
+        bad.write_bytes(b"PK\x03\x04 not really")
+        nomod = make_zip(self.src / "readme.zip", {"readme.txt": "x"})
+        slip = make_zip(self.src / "slip.zip", {"media/../../evil.xml": "x"})
+        absolute = make_zip(self.src / "abs.zip", {"/etc/evil.xml": "x"})
+        link = zipfile.ZipInfo("media/link.xml")
+        link.external_attr = (0o120777) << 16
+        linked = make_zip(self.src / "link.zip", {"media/link.xml": link})
+        unusable = make_zip(self.src / "unusable.zip", {"media/caf\u00e9.xml": "x"})
+        cases = {bad: "not a zip", nomod: "holds no mod", slip: "outside its own folder",
+                 absolute: "outside its own folder", linked: "link", unusable: "would not load",
+                 self.src / "missing.zip": "not there"}
+        for source, words in cases.items():
+            with self.subTest(source=source.name):
+                with self.assertRaises(mods.InstallError) as e:
+                    mods.install(source, self.dir)
+                self.assertIn(words, str(e.exception))
+        self.assertEqual(self.listed(), [])
+        self.assertFalse((self.t / "evil.xml").exists())
+        with mock.patch.object(mods, "MAX_INSTALL", 10):
+            big = make_zip(self.src / "big.zip", {"media/a.xml": "x" * 20})
+            with self.assertRaises(mods.InstallError) as e:
+                mods.install(big, self.dir)
+            self.assertIn("8 GB", str(e.exception))
+
+    def test_a_name_clash_asks_and_replaces(self):
+        make_mod(self.src, "Same", files=("media/old.xml",))
+        mods.install(self.src / "Same", self.dir)
+        newer = make_zip(self.src / "Same.zip", {"media/new.xml": "n"})
+        with self.assertRaises(mods.ModExists) as e:
+            mods.install(newer, self.dir)
+        self.assertEqual(e.exception.folder, "Same")
+        mod = mods.install(newer, self.dir, replace=True)
+        self.assertEqual(mod.names, ["new.xml"])
+        self.assertEqual(self.listed(), ["Same"])
+
+    def test_remove_deletes_the_folder_and_its_place(self):
+        make_mod(self.dir, "Gone")
+        make_mod(self.dir, "Kept")
+        self.cfg.d["mods"] = {"order": ["Gone", "Kept"], "disabled": ["Gone"]}
+        mods.remove(self.cfg, "Gone")
+        self.assertEqual(self.listed(), ["Kept"])
+        self.assertEqual(self.cfg.d["mods"], {"order": ["Kept"], "disabled": []})
+        if os.name != "nt":  # a linked mod: only the link goes
+            make_mod(self.src, "Elsewhere")
+            (self.dir / "Linked").symlink_to(self.src / "Elsewhere", target_is_directory=True)
+            mods.remove(self.cfg, "Linked")
+            self.assertTrue((self.src / "Elsewhere" / "media").is_dir())
+
+    def test_conflicts_name_the_files_and_who_wins(self):
+        make_mod(self.dir, "A", files=("media/x.xml", "media/a.xml"))
+        make_mod(self.dir, "B", files=("media/X.xml",))
+        make_mod(self.dir, "C", files=("media/x.xml",))
+        listed = mods.ordered(self.cfg, mods.scan(self.dir))
+        listed[2].enabled = False  # C is off: no clash
+        self.assertEqual(mods.conflicts(listed), {"A": [("x.xml", "B", False)], "B": [("x.xml", "A", True)]})
+
+
 @unittest.skipIf(QApplication is None, "PySide6 is not installed")
 class ModsPageTests(unittest.TestCase):
     @classmethod
@@ -197,7 +298,7 @@ class ModsPageTests(unittest.TestCase):
         self.cfg.advanced["data_root"] = str(t / "home")
         self.dir = mods.mods_dir(self.cfg)
         self.dir.mkdir(parents=True)
-        make_mod(self.dir, "Alpha", 'name = "Alpha mod"\n')
+        make_mod(self.dir, "Alpha", 'name = "Alpha mod"\n', files=("media/gamemodes/a.xml",))
         make_mod(self.dir, "Beta")
         self.page = ModsPage(self.cfg, window=None)
 
@@ -230,6 +331,61 @@ class ModsPageTests(unittest.TestCase):
             QApplication.sendEvent(self.page.table, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
             self.assertEqual(self.cfg.d["mods"]["disabled"], want)
         self.assertEqual(self.page.table.currentRow(), 1)
+
+    def test_add_remove_and_their_messages(self):
+        src = Path(self.tmp.name) / "downloads"
+        make_mod(src, "Gamma", 'name = "Gamma mod"\n', files=("media/gamemodes/a.xml",))
+        self.assertTrue(self.page.add_path(src / "Gamma"))
+        self.assertEqual(self.names(), ["Alpha mod", "Beta", "Gamma mod"])
+        self.assertEqual(self.page.table.currentRow(), 2)
+        self.assertIn("Added Gamma mod", self.page.message.text())
+        # The same name again: asked, kept when the answer is no.
+        with mock.patch.object(self.page, "_confirm", return_value=False) as asked:
+            self.assertFalse(self.page.add_path(src / "Gamma"))
+        asked.assert_called_once()
+        self.assertIn("kept", self.page.message.text())
+        bad = src / "bad.zip"
+        bad.write_bytes(b"nope")
+        self.assertFalse(self.page.add_path(bad))
+        self.assertIn('Not added: "bad.zip" is not a zip file', self.page.message.text())
+        # Alpha and Gamma change the same file: the details say so.
+        self.page.table.selectRow(0)
+        self.assertIn("Same file(s) as Gamma mod: media/gamemodes/a.xml; Gamma mod's copy is used",
+                      self.page.details.text())
+        # Remove asks first.
+        self.page.table.selectRow(2)
+        with mock.patch.object(self.page, "_confirm", return_value=False):
+            self.page.remove_selected()
+        self.assertEqual(len(self.names()), 3)
+        with mock.patch.object(self.page, "_confirm", return_value=True):
+            self.page.remove_selected()
+        self.assertEqual(self.names(), ["Alpha mod", "Beta"])
+        self.assertFalse((self.dir / "Gamma").exists())
+
+    def test_a_dropped_zip_is_added(self):
+        from PySide6.QtCore import QMimeData, QPointF, QUrl
+        from PySide6.QtGui import QDropEvent
+        z = make_zip(Path(self.tmp.name) / "Dropped.zip", {"media/x.xml": "x"})
+        data = QMimeData()
+        data.setUrls([QUrl.fromLocalFile(str(z))])
+        event = QDropEvent(QPointF(5, 5), Qt.CopyAction, data, Qt.LeftButton, Qt.NoModifier)
+        self.page.dropEvent(event)
+        self.assertIn("Dropped", self.names())
+
+    def test_empty_state_and_running_game(self):
+        for name in ("Alpha", "Beta"):
+            mods.remove(self.cfg, name)
+        self.page.refresh()
+        self.assertTrue(self.page.table.isHidden())
+        self.assertIn("No mods yet. Use <b>Add mod…</b>", self.page.empty.text())
+        self.assertIn("modding.md", self.page.empty.text())
+        self.page.window = mock.Mock(running=mock.Mock(return_value=True))
+        self.page._running_changed()
+        self.assertFalse(self.page.running_notice.isHidden())
+        make_mod(self.dir, "Delta")
+        self.page.refresh()
+        self.page.table.selectRow(0)
+        self.assertFalse(self.page.remove_button.isEnabled())
 
     def test_new_folders_appear_on_refresh(self):
         make_mod(self.dir, "Gamma", files=())
