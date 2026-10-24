@@ -167,6 +167,14 @@ layer to be installed or supplied through `VK_LAYER_PATH`.
 The runner's CLI smoke check verifies alternating modes and warm-ups, unchanged
 resume, and rejection of changed constants/counter/validation controls on resume.
 
+For constrained runs, the runner reapplies the requested CPU mask only during
+startup, because SDK initialization can restore the system mask. It records the
+observed mask during polling and rejects any escape after the startup deadline
+or throughout the CPU/AI scored interval. Resume rejects constrained manifests
+from before this affinity audit. `tools/vulkan_bindings/test_affinity.py` tests
+startup restoration, scored-interval rejection, matching masks and unrestricted
+runs without launching a game.
+
 Raw build logs, provenance, captures, manifests, CPU/frame samples and AI reports
 remain under `build/vulkan-bindings`. No binaries, generated game code, captures
 or personal saves are included in the source change.
@@ -190,3 +198,43 @@ open SDK-changing PRs together, including #157's 0117-0126, #192's 0094 and #286
 0114-0115, with unique numbers. This is an ordered-application check, not combined
 runtime qualification. Dynamic constants remain off by default and the PR stays
 draft pending its existing runtime gate.
+
+## Main integration, 2026-10-24
+
+Integrated main `da9bf350dc5bd94f057270d233ab8df2293dd668` with a signed
+forward merge; patch 0092 and the default-off flag are unchanged. All 119 SDK
+patches apply in numerical order to pinned SDK `bd833a2`. The resulting SDK tree
+is `73b6656fbc8df1f43cdc1416e3cc38d0f70b6f62`; all 1,369 tracked source blobs
+were checked against that tree without mismatches.
+
+The exact public series passes a fresh isolated Windows x64 Release build of
+`rexgpu-xenos` and `rexruntime`, with Vulkan and D3D12 enabled and one compile
+job. The [integration record](benchmarks/vulkan-dynamic-constants-integration-2026-10-24.json)
+pins the SDK tree, runtime hashes and checks. Integrated game/race validation is
+still pending for this revision; the PR remains a draft.
+
+The source audit checked each uploaded slice's device uniform alignment and
+explicit range, the 32-bit offset rejection, deferred copying of offsets,
+constant-set invalidation after uploads, descriptor-layout compatibility, the
+256-entry memo bound, frame/pool clearing, and fence-retired set ownership.
+Pipeline layouts all use the device-setup constants layout; the experiment never
+changes descriptor types during the device lifetime. No corrective code change
+was identified in this audit.
+
+The standalone fixture was rebuilt and executed on the RTX 5060 Ti with Khronos
+synchronization validation: all 1,600 dispatches matched across five dynamic
+bindings, buffer/range variants and eight fenced frames, without validation
+errors. This checks the Vulkan binding contract; it does not execute the game's
+descriptor memo. The runner's alternating-mode, warm-up and resume smoke checks
+also pass without launching the game.
+
+The sibling binding-reuse PR #192 keeps patch 0094. Each PR's 119-patch series
+applies independently to main. Their combined 120-patch series also applies with
+strict whitespace checking and produces SDK tree
+`3b2f41813315cc38897ce655e55c809475476efb` in either branch order. Existing SDK
+cache keys already include `patches/rexglue-sdk/**`. This verifies source
+compatibility, not combined runtime behavior.
+
+The measurements above remain results from the older frozen SDK snapshot.
+Four physical desktop P cores do not establish Steam Deck or BC250 performance.
+The feature remains opt-in.
