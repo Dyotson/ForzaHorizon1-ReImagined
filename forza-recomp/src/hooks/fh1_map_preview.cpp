@@ -5,6 +5,8 @@
 
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
+#include "../platform/fh1_menu_components.h"
+#include "../platform/native_pause_edges.h"
 #include <rex/logging.h>
 #include <rex/ppc/func.h>
 #include <rex/system/kernel_state.h>
@@ -36,6 +38,9 @@ struct Layout {
 constexpr float kCanvasCenterX = 640.f, kCanvasCenterY = 360.f;
 constexpr float kPaperExtent = 100.f;
 constexpr float kIconPadding = 8.f;  // Design pixels, converted to source pixels.
+float RenderWidth() {
+  return float(layout.bounds.width)+fh1_menu_components::kMenuShear*float(layout.bounds.height);
+}
 float ImageCenterX() {
   return float(layout.bounds.x + layout.bounds.width * .5) - kCanvasCenterX;
 }
@@ -104,6 +109,7 @@ public:
       case 3: ctx.r6.u64 = value; break;
       case 4: ctx.r7.u64 = value; break;
       case 5: ctx.r8.u64 = value; break;
+      case 6: ctx.r9.u64 = value; break;
     }
     rex::runtime::ResolveIndirectFunction(address)(ctx, base);
     return ctx.r3.u32;
@@ -446,7 +452,7 @@ uint32_t PreviewRecord(Native& ui) {
     if (!record || Read(ui.base, record) != kPreviewMapId) continue;
     preview.map_record = record;
     GuestPtr(ui.base,record+0x1C)[0]=1;
-    Write(ui.base,record+12,uint32_t(std::ceil(layout.bounds.width)));
+    Write(ui.base,record+12,uint32_t(std::ceil(RenderWidth())));
     Write(ui.base,record+16,uint32_t(std::ceil(layout.bounds.height)));
     const auto map = Read(ui.base, record + 0x20);
     if (!map || !Read(ui.base, map + 4) || !Read(ui.base, record + 0x24) ||
@@ -594,7 +600,11 @@ bool MirrorMap(Native& ui, uint32_t record) {
   ui.ctx.f6.f64 = Float(ui.base, image + 0xC4);
   ui.ctx.f7.f64 = Float(ui.base, image + 0xC8);
   ui.Call(0x82F1C600, {ui.scratch + 640, Read(ui.base, image + 0xCC)});
-  std::copy_n(GuestPtr(ui.base, ui.scratch + 640), 64, GuestPtr(ui.base, image + 0x70));
+  std::array<float,16> uv{};
+  for(unsigned i=0;i<uv.size();++i)uv[i]=Float(ui.base,ui.scratch+640+i*4);
+  uv=fh1_menu_components::UprightShearUV(uv,
+      fh1_menu_components::kMenuShear*float(layout.bounds.height/layout.bounds.width));
+  for(unsigned i=0;i<uv.size();++i)Write(ui.base,image+0x70+i*4,std::bit_cast<uint32_t>(uv[i]));
   const std::array<uint32_t, 7> signature{record, x, y, width, height, tw, th};
   if (!preview.mirrored || signature != preview.mirror_signature || preview.frames == 120) {
     REXLOG_INFO("FH1 map preview: fullscreen preview record={:08X} rect={} {} {} {} target={} {} crop={} {} {} {} image={:08X} player={} {} projected={} icon={}",
@@ -837,6 +847,9 @@ void MaintainDisplay(Native& ui) {
   }
   if (layout.caption) ui.CaptionFont();
 }
+void ShearDisplay(Native& ui) {
+  native_pause_edges::MapMesh(Read(ui.base,preview.display+4));
+}
 } // namespace
 
 bool SetBounds(const menu::Rect& bounds, bool caption) {
@@ -858,7 +871,7 @@ bool SetBounds(const menu::Rect& bounds, bool caption) {
     preview.positioned = false;
   }
   layout.caption = caption;
-  requested_extent.store((uint64_t(uint32_t(std::ceil(bounds.width)))<<32)|uint32_t(std::ceil(bounds.height)),std::memory_order_release);
+  requested_extent.store((uint64_t(uint32_t(std::ceil(RenderWidth())))<<32)|uint32_t(std::ceil(bounds.height)),std::memory_order_release);
   return true;
 }
 
@@ -909,8 +922,10 @@ void Update(const PPCContext& context, uint8_t* base, uint32_t screen, bool visi
   // membership before preparing geometry at its actual material pass.
   requested_map_record.store(preview.mirrored ? record : 0, std::memory_order_release);
   Visibility(ui, preview.mirrored);
+  if(preview.mirrored)ShearDisplay(ui);
 }
 void Release(const PPCContext& context, uint8_t* base) {
+  native_pause_edges::MapMesh(0);
   requested_map_record.store(0, std::memory_order_release);
   rendered_extent.store(0,std::memory_order_release);
   if (!base || !preview.screen) return;

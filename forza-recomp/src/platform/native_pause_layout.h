@@ -39,9 +39,9 @@ inline CarContent Car(const menu::Rect& panel) {
 inline menu::Rect Map(const menu::Rect& panel) {
   using namespace fh1_menu_components;
   const double x=panel.x+12,y=panel.y+54,w=panel.width-24,h=panel.height-66;
-  // Inscribe an upright image inside the slanted, padded panel. Its center
-  // follows the composition while neither pixels nor map heading are skewed.
-  const double width=kMenuScaleX*w-kMenuShear*h;
+    // The image quad follows the padded panel's two slanted edges. Its texture
+    // mapping compensates this shear so map labels and markers stay upright.
+    const double width=kMenuScaleX*w;
   const double center=640+kMenuTranslateX+kMenuScaleX*(x+w/2-640)+kMenuShear*(360-y-h/2);
   return {center-width/2,y,width,h};
 }

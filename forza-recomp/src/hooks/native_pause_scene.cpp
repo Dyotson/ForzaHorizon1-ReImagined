@@ -13,6 +13,7 @@
 #include "../platform/fh1_pause_actions.h"
 #include "../platform/fh1_current_car.h"
 #include "../platform/fh1_map_preview.h"
+#include "../platform/native_pause_edges.h"
 #include "../platform/fh1_festival_travel.h"
 #include "../platform/fh1_car_recovery.h"
 #include "../platform/offline_cars.h"
@@ -797,6 +798,7 @@ void Visibility(Native& ui, bool visible) {
   if (state.ready) StockVisibility(ui, false);
 }
 void Release(Native& ui, bool restore) {
+  native_pause_edges::ClearTabs();
   fh1_map_preview::Release(ui.ctx, ui.base);
   if (restore) {
     for (const auto& [node,visible]:state.stock_nodes) ui.Show(state.engine,node,visible);
@@ -1271,7 +1273,9 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
   state.tab_bar.Paint(tab_bounds, layout::kTabCapacity,
       [&](size_t slot, fh1_menu_components::Rect r, uint32_t color) {
+        r=fh1_menu_components::MenuQuad(r);
         auto& tab = state.tabs[slot];
+        native_pause_edges::TabMeshes(slot,Read(ui.base,tab.paper+4),Read(ui.base,tab.grain+4));
         tab.donor.Layer(ui,Read(ui.base,state.screen+0x110)+(color==0xff007a?3:2));
         tab.donor.Tick(ui, [&] {
           StyleCard(ui, tab, {r.x,r.y,r.w,r.h}, "", false, true, true);
@@ -1284,6 +1288,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       [&](size_t slot, unsigned index, fh1_menu_components::Rect r, float size,
           const std::string& text, uint32_t color) {
         if (index) return; // Pause capabilities disable a page rather than lock it.
+        r=fh1_menu_components::MenuQuad(r);
         auto& tab = state.tabs[slot];
         Label(ui, tab.donor, tab.title, {r.x,r.y,r.w,r.h}, size, text, color, 1);
       }, 20.f);
@@ -1293,14 +1298,16 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     const bool before=slot==0&&state.tab_bar.MoreBefore();
     const bool after=slot+1==cells.size()&&state.tab_bar.MoreAfter();
     ui.Show(tab.donor.presentation,tab.caption,before||after);
-    if(before||after)Label(ui,tab.donor,tab.caption,
-        {after?838.:38.,114,22,38},20,after?">":"<",0xffffff,1);
+    if(before||after){
+      const auto r=fh1_menu_components::MenuQuad({after?838.f:38.f,114,22,38});
+      Label(ui,tab.donor,tab.caption,{r.x,r.y,r.w,r.h},20,after?">":"<",0xffffff,1);
+    }
   }
   for(auto& card:state.cards)if(card.donor.visible)
     ui.MenuComposition(card.donor.presentation,card.donor.root,
         &card==&state.cards[0]?Read(ui.base,state.car.image+12):0);
-  for(auto& tab:state.tabs)if(tab.donor.visible)
-    ui.MenuComposition(tab.donor.presentation,tab.donor.root);
+  // Tab papers/grain have explicit slanted geometry above. Their labels use
+  // projected anchors only, preserving the native font rather than shearing it.
   ui.MenuComposition(state.header.presentation,state.header.root);
   bool map_visible = false, map_selected = false;
   if (page->id == "home") {

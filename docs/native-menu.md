@@ -33,6 +33,27 @@ Keep the feature opt-in and the PR draft pending the user's screenshot review.
 
 ## Structure
 
+### Slanted map and tab boundaries
+
+The Home map and pause tab papers use the same 7-degree edges as the cards.
+Their mesh transforms are rebuilt at the final native transform boundary, scoped
+to nine registered map/tab instances. Rebuilding from authored properties avoids
+accumulating shear across animation frames. Registrations clear before their
+presentations are freed. Other native UI instances retain their original path.
+Tab labels use projected anchors without shearing the font. The map renders a
+small horizontal margin and counter-transforms its texture coordinates, keeping
+terrain, labels and player markers upright inside its slanted boundary. The car
+photo is not registered for this transform.
+
+A copied-profile offline 1280x720 run verified Home, Cars, Social and Settings,
+shoulder navigation, full-map entry/return, settled tuning simulation and return
+with Tune Car selected, and resume/reopen. No tuning changes were applied. The
+new hook and affected sources pass seven TU4 syntax checks, 19 focused CTests,
+62 launcher tests and two base/disabled-build stub tests. The private runtime
+uses a symbol-only alias for the original transform body alongside the previously
+documented keyboard bridge and silent audio fixture; a clean production link is
+still unqualified. Screenshots are attached to the draft PR, outside the repo.
+
 The pause strip has Home, Cars, Social and Settings. The four native
 tab presentations scroll to keep the selected logical tab visible. Social uses a larger
 Friends activity panel, Horizon World/Create Game actions, direct Requests and
