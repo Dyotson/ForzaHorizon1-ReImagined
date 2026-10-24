@@ -210,8 +210,9 @@ were checked against that tree without mismatches.
 The exact public series passes a fresh isolated Windows x64 Release build of
 `rexgpu-xenos` and `rexruntime`, with Vulkan and D3D12 enabled and one compile
 job. The [integration record](benchmarks/vulkan-dynamic-constants-integration-2026-10-24.json)
-pins the SDK tree, runtime hashes and checks. Integrated game/race validation is
-still pending for this revision; the PR remains a draft.
+pins the SDK tree, runtime hashes and checks. Integrated correctness validation
+is recorded below; foreground race performance qualification remains pending,
+so the PR remains a draft.
 
 The source audit checked each uploaded slice's device uniform alignment and
 explicit range, the 32-bit offset rejection, deferred copying of offsets,
@@ -238,3 +239,43 @@ compatibility, not combined runtime behavior.
 The measurements above remain results from the older frozen SDK snapshot.
 Four physical desktop P cores do not establish Steam Deck or BC250 performance.
 The feature remains opt-in.
+
+### Integrated correctness diagnostic
+
+The rebuilt 119-patch SDK completed a valid 60-second native AI race on four
+distinct physical P cores (logical processors 0, 2, 4 and 6), using the current
+main authored game host, a copied offline profile, 720p, cap 240, VSync off and
+IMMEDIATE presentation. The host retains the disclosed shared controller,
+silent-audio and import fixtures listed in the integration record.
+
+The log confirms dynamic constants and the Khronos validation device layer.
+There are no validation errors or VUID-tagged messages. It logs ten
+`Undefined-Value-ShaderOutputNotConsumed-DynamicRendering` warnings, reaching
+the duplicate-message limit; the same unused-fragment-output warning appears
+in the sibling #192 diagnostic. This is not a warning-free run.
+
+Across 18 logged counter windows spanning the whole launch, 11,487,647 constant
+set requests hit the memo and 1,064,839 allocate new sets. These windows are not
+an exact AI-only interval. A post-race capture shows no obvious visual corruption;
+it is not a pixel-identical correctness comparison.
+
+All observed affinity masks match the requested four cores. Foreground coverage
+is 0%, and validation/counters are enabled, so this run supplies no performance
+score. The current host also lacks the legacy frame-clock epoch sidecar; no
+offset was guessed to align its relative CSV with CPU samples. The child process
+closed and a host-visible process check confirmed the GPU slot was released.
+
+`--diagnostic-only` now produces an explicitly unqualified correctness summary
+without CPU/FPS metrics. Scored runs refuse missing/non-finite clock epochs or
+a wall-clock jump. An optional `RECOMP_PERF_EPOCH` sidecar in `frame_stats.cpp`
+correlates the first steady-clock event with wall time for future scored runs;
+it has no output when the environment variable is absent. Eleven Python regression
+checks cover affinity, the current relative CSV clock and diagnostic summaries.
+CLI smoke checks also verify that diagnostic mode runs only excluded warm-ups
+and cannot resume across the diagnostic/performance boundary. The exact marker
+source passes an isolated production-function harness (disabled output, finite
+nine-decimal epoch, steady-clock mapping and one-time origin), plus compilation
+of the full authored debug object and a shared private host relink. That new
+host has not been run on the GPU; the diagnostic above used the earlier host.
+Foreground repeated A/B measurements, target hardware and maintainer acceptance
+remain pending; the default stays off and the PR stays draft.

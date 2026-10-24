@@ -80,6 +80,24 @@ def focused(pid):
     return owner.value == pid
 
 
+def diagnostic_summary(label, audit, ai_result, require_foreground=False):
+    if not ai_result or not ai_result.get("valid") or ai_result.get("reason") != "completed":
+        raise RuntimeError("Correctness diagnostic requires a completed valid AI race")
+    observed = sorted({tuple(row["cpu_affinity"]) for row in audit
+                       if row.get("cpu_affinity") is not None})
+    focus = [row["focused"] for row in audit if row.get("focused") is not None]
+    focused_fraction = sum(focus) / len(focus) if focus else None
+    if require_foreground and focused_fraction != 1:
+        raise RuntimeError("Correctness diagnostic was not entirely in the foreground")
+    # Current main has a relative frame CSV clock but no wall-clock epoch.
+    # Correctness evidence needs neither a guessed clock offset nor FPS/CPU data.
+    return {"label": label, "warmup": True, "run_kind": "correctness_diagnostic",
+            "qualified_for_performance": False,
+            "ai_race_completed": True, "ai_source": ai_result.get("source"),
+            "audited_cpu_affinities": [list(mask) for mask in observed],
+            "focused_fraction": focused_fraction}
+
+
 def frame_stats(rows):
     values = sorted(float(row["ms"]) for row in rows)
     if not values:
@@ -89,6 +107,17 @@ def frame_stats(rows):
             "low1_fps": 1000 / statistics.mean(tail),
             "p99_ms": values[min(len(values) - 1, math.ceil(len(values) * .99) - 1)],
             "worst_ms": max(values), "over50ms": sum(v > 50 for v in values)}
+
+
+def select_clock_samples(samples, epoch_text, begin, end):
+    epoch = float(epoch_text)
+    if not math.isfinite(epoch):
+        raise RuntimeError("Frame-clock epoch must be finite")
+    duration = end[2] - begin[2]
+    if duration <= 0 or abs(end[0] - begin[0] - duration) > .1:
+        raise RuntimeError("Wall clock changed during measurement")
+    return [row for row in samples
+            if begin[0] - epoch <= float(row["t"]) <= end[0] - epoch], duration
 
 
 def run_one(args, label, runtime, warmup):
@@ -166,6 +195,7 @@ def run_one(args, label, runtime, warmup):
                 "gpu_wait": gpu_wait,
                 "gpu_wait_log": env.get("FORZA_GPU_WAIT_LOG") == "1",
                 "dynamic_constants": dynamic_constants, "binding_stats": binding_stats,
+                "diagnostic_only": getattr(args, "diagnostic_only", False),
                 "vulkan_validation": validate}
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2))
     with (folder / "stdout.log").open("w") as log:
@@ -269,16 +299,22 @@ def run_one(args, label, runtime, warmup):
             (folder / "process_audit.json").write_text(json.dumps(audit, indent=2))
             (folder / "cpu_samples.json").write_text(json.dumps({"begin": begin, "end": end}, indent=2))
     (folder / "cpu_samples.json").write_text(json.dumps({"begin": begin, "end": end}, indent=2))
+    if getattr(args, "diagnostic_only", False):
+        result = diagnostic_summary(label, audit, ai_result,
+                                    getattr(args, "require_foreground", False))
+        (folder / "result.json").write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2), flush=True)
+        return result
     # Forced shutdown of the disposable child can leave the final stdio buffer
     # ending in a partial record. Keep complete records only, never a partial row.
     raw = (folder / "frames.csv").read_text()
     complete = raw[:raw.rfind("\n") + 1]
     samples = list(csv.DictReader(io.StringIO(complete)))
-    epoch = float((folder / "epoch.txt").read_text())
-    duration = end[2] - begin[2]
-    if abs(end[0] - begin[0] - duration) > .1:
-        raise RuntimeError("Wall clock changed during measurement")
-    selected = [r for r in samples if begin[0] - epoch <= float(r["t"]) <= end[0] - epoch]
+    epoch_path = folder / "epoch.txt"
+    if not epoch_path.is_file():
+        raise RuntimeError("Runtime omitted RECOMP_PERF_EPOCH; cannot align CPU and frame clocks. "
+                           "Use --diagnostic-only for excluded correctness evidence.")
+    selected, duration = select_clock_samples(samples, epoch_path.read_text(), begin, end)
     result = {"label": label, "variant": label.rsplit("-", 1)[0], "warmup": warmup,
               "audited_cpu_affinity": getattr(args, "cpu_affinity", None),
               "guest": frame_stats([r for r in selected if r["src"] == "guest"]),
@@ -338,6 +374,8 @@ def main():
     p.add_argument("--present-mode", choices=["default", "immediate"], default="default")
     p.add_argument("--require-foreground", action="store_true")
     p.add_argument("--ai-race", action="store_true", help="Require existing native-AI benchmark hooks; settle starts at its measured phase")
+    p.add_argument("--diagnostic-only", action="store_true",
+                   help="Run excluded AI warm-ups only; report audits without performance metrics or a frame-clock epoch")
     p.add_argument("--rounds", type=int, default=2, help="Runs per variant, alternating variant order each round")
     p.add_argument("--stack-sampler", type=lambda s: Path(s).resolve(), help="Windows stack sampler, run only in excluded warm-ups")
     p.add_argument("--profile-seconds", type=float, default=20)
@@ -359,6 +397,8 @@ def main():
         p.error("Foreground verification currently requires Windows")
     if args.rounds < 1:
         p.error("Use at least one round")
+    if args.diagnostic_only and (not args.ai_race or args.warmup == "none"):
+        p.error("--diagnostic-only requires --ai-race and an excluded warm-up")
     if args.ai_race and args.settle + args.seconds > 55:
         p.error("Keep the CPU window inside the AI benchmark's 60-second interval")
     if args.stack_sampler and (sys.platform != "win32" or not args.ai_race or not args.stack_sampler.is_file()):
@@ -383,7 +423,7 @@ def main():
     results = []
     warmups = variants if args.warmup == "all" else variants[:1] if args.warmup == "first" else []
     sequence = [(name + "-warmup", runtime, True) for name, runtime in warmups]
-    for number in range(1, args.rounds + 1):
+    for number in range(1, (0 if args.diagnostic_only else args.rounds) + 1):
         order = variants if number % 2 else reversed(variants)
         sequence += [(f"{name}-{number}", runtime, False) for name, runtime in order]
     default_gpu_wait = args.gpu_wait
@@ -409,6 +449,7 @@ def main():
                 manifest.get("ai_race", False) != args.ai_race or
                 manifest.get("gpu_wait", "default") != args.gpu_wait or
                 manifest.get("dynamic_constants", False) != args.dynamic_constants or
+                manifest.get("diagnostic_only", False) != args.diagnostic_only or
                 manifest.get("binding_stats", False) != (warmup and args.binding_stats) or
                 manifest.get("vulkan_validation", False) !=
                     (warmup and args.dynamic_constants and args.validate_warmup) or

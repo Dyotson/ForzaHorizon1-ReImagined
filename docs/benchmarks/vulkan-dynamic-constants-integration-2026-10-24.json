@@ -1,6 +1,5 @@
 {
   "main": "da9bf350dc5bd94f057270d233ab8df2293dd668",
-  "head": "4048fb5864903dc71b0c81f1d00a3c024833ed97",
   "sdk_base": "bd833a2ab69d305f99ddf57418fc38ffec8af93d",
   "sdk_tree": "73b6656fbc8df1f43cdc1416e3cc38d0f70b6f62",
   "patch_count": 119,
@@ -41,7 +40,10 @@
   },
   "runner": {
     "affinity_regression_tests": 4,
-    "cli_resume_smoke": "passed"
+    "cli_resume_smoke": "passed",
+    "regression_tests": 11,
+    "diagnostic_only": "No CPU/FPS fields; explicit foreground requirement remains enforced",
+    "frame_clock": "Optional RECOMP_PERF_EPOCH marker; missing or invalid clock correlation refuses scoring"
   },
   "combined_with_pr192": {
     "patch_count": 120,
@@ -50,6 +52,83 @@
     "runtime_qualified": false
   },
   "default_enabled": false,
-  "integrated_runtime_validation": "pending",
-  "performance_results": "No new measurements; earlier2026-10-19 snapshot provenance retained"
+  "integrated_runtime_validation": {
+    "passed": true,
+    "qualification": "correctness only; excluded from all performance results",
+    "AI_completed_seconds": 59.9762,
+    "cpu_affinity": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "foreground_fraction": 0.0,
+    "host_main": "da9bf350dc5bd94f057270d233ab8df2293dd668",
+    "host_authored_objects": 82,
+    "host_private_instrumentation": [
+      "controller queue and cvar graphics request polling",
+      "silent audio driver because host has no audio endpoint",
+      "symbol-only keyboard/import rewiring (same known fixture as standalone-car-tuning)"
+    ],
+    "runtime_sha256": {
+      "forza.exe": "0d1fd457eccb54adbf495981e72e430bcea4138b4bc554b88ac85722992aa211",
+      "forza_SpeechFacade_default.dll": "aed3c9169e31f6bee8ea38f185128de1f4e1703753469868e4a6fc5f6c5c55d9",
+      "forza_XMediaFacade_default.dll": "40e80d107636af2022e3856ca5f20ec43ccf3863ed5d78324de3f5f43e463c17",
+      "rexgpu-xenos.dll": "475b37f636d6f94e4dd46f7fc65000c5141da74d05050ed29101666f5b3a05a9",
+      "rexruntime.dll": "ba2d657a2de6c6566c8817ce8b01c95e00d9d5e9fc804a5897df7596c2bba163",
+      "TracyClient.dll": "1c705440aefdb14f7c568e67d20564f156bfa1adea614e8ac8125aa4c7feec3d"
+    },
+    "seed": {
+      "files": 71,
+      "tree_sha256": "bc967022f6e3eacd13c55bc8771029c94d7d21522ab886f75ac1b4cc36f33d20"
+    },
+    "configuration": {
+      "resolution": "1280x720",
+      "scale": 1,
+      "frame_cap": 240,
+      "vsync": false,
+      "present_mode": "IMMEDIATE",
+      "fence_wait": "yield",
+      "offline_copied_profile": true,
+      "API_validation": true,
+      "binding_counters": true
+    },
+    "validation_errors": 0,
+    "VUID_tagged_messages": 0,
+    "validation_warning": {
+      "id": "Undefined-Value-ShaderOutputNotConsumed-DynamicRendering",
+      "logged_entries": 10,
+      "duplicate_limit_reached": true,
+      "also_observed_in_sibling_pr192": true
+    },
+    "binding_counter_windows": {
+      "count": 18,
+      "draws": 13014424,
+      "new_constant_sets": 1064839,
+      "cache_hits": 11487647,
+      "scope": "logged windows across the whole launch; not an exact AI-race interval"
+    },
+    "screenshot_spotcheck": "Race scene has no obvious visual corruption; not a pixel-identical comparison",
+    "performance_qualified": false,
+    "performance_limitations": [
+      "background for all observed samples",
+      "API validation and binding counters enabled",
+      "host does not emit legacy epoch.txt; no CPU/frame alignment derived"
+    ],
+    "private_evidence_sha256": {
+      "manifest.json": "41d4681da0777696796fd5d6f87eb24e49f72d15e7458e766ecc34d6524df4be",
+      "game.log": "ad822a9abe3acd6e391b664830007691a6cbcafe1d20debbcf15590c28088360",
+      "process_audit.json": "3dde66618074a94e391d1b24bfc5fce19cb576198b4c8d10b7c3cba99300874b",
+      "ai/result.json": "73123f656efb2a1fb9aba868267167acb95eb9c364162f9670d3d51ca20b586c"
+    }
+  },
+  "performance_results": "No new qualified measurements; earlier 2026-10-19 snapshot provenance retained",
+  "sdk_patch_series_head": "4048fb5864903dc71b0c81f1d00a3c024833ed97",
+  "frame_clock_marker_validation": {
+    "source_sha256": "4efb3e4d0544c9e9a088dfedac811fde0427ebeb101096809a303a8378eaabb8",
+    "authored_object_compile_and_host_relink": "passed",
+    "production_function_harness": "passed: disabled writes no file; enabled emits nine-decimal finite epoch; steady +2s mapping; one-time origin",
+    "shared_host_sha256": "699c41e1b597a5f954d61d79ab21454dab38034a7328908403190e8acac64813",
+    "new_host_GPU_execution": false
+  }
 }
