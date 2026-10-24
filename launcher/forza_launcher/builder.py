@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -106,6 +107,12 @@ def runtime_dir(root: Path) -> Path:
 
 
 EXCLUDE_DIRS = {"out", "__pycache__"}
+# Original resource preparation shipped with the project; no generated game assets.
+NATIVE_MENU_FILES = ("native_menu_scene.py", "offline_cars_flow.py", "lzx_delta.py",
+                     "native_menu/fh1_donors.json", "native_menu/icons/ATTRIBUTION.md",
+                     "native_menu/icons/FONT-AWESOME-LICENSE.txt",
+                     *(f"native_menu/icons/{name}.xds" for name in
+                       ("change_car", "tune_car", "garage", "autoshow", "social_friends", "social_world", "social_game", "social_requests", "social_chat", "social_connection")))
 
 
 def source_files(proj: Path):
@@ -130,7 +137,8 @@ def sources_hash(proj: Path) -> str:
     """SHA-1 of the build sources. The window asks at every page change, so the files are read again
     only when one changed (size or modification time), not every time (#124)."""
     base = proj / "forza-recomp"
-    cm = proj / "tools" / "cmake" / "windows-native-clang-cl.cmake"
+    extras = [proj / "tools" / "cmake" / "windows-native-clang-cl.cmake"]
+    extras += [proj / "tools" / name for name in NATIVE_MENU_FILES]
     rels, sig = sorted(source_files(proj)), []
     for rel in rels:
         try:
@@ -138,11 +146,12 @@ def sources_hash(proj: Path) -> str:
             sig.append((str(rel), st.st_mtime_ns, st.st_size))
         except OSError:
             sig.append((str(rel), 0, 0))
-    try:
-        st = cm.stat()
-        sig.append((str(cm), st.st_mtime_ns, st.st_size))
-    except OSError:
-        pass
+    for extra in extras:
+        try:
+            st = extra.stat()
+            sig.append((str(extra), st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append((str(extra), 0, 0))
     key = str(proj)
     hit = _SOURCES_MEMO.get(key)
     if hit and hit[0] == sig:
@@ -151,8 +160,10 @@ def sources_hash(proj: Path) -> str:
     for rel in rels:
         h.update(str(rel).replace("\\", "/").encode())
         h.update((base / rel).read_bytes())
-    if cm.is_file():
-        h.update(cm.read_bytes())
+    for extra in extras:
+        if extra.is_file():
+            h.update(extra.relative_to(proj).as_posix().encode())
+            h.update(extra.read_bytes())
     _SOURCES_MEMO[key] = (sig, h.hexdigest())
     return h.hexdigest()
 
@@ -660,6 +671,104 @@ def apply_title_update(opts: Options, rep: Reporter, game_files: Path) -> Path |
     return out.parent
 
 
+def native_menu_script() -> Path | None:
+    """Prefer the tool belonging to the shipped project (also used in its source hash)."""
+    proj = project_dir()
+    locations = ([proj / "tools"] if proj else []) + [paths.LAUNCHER_ROOT / "tools"]
+    for folder in locations:
+        if all((folder / name).is_file() for name in NATIVE_MENU_FILES):
+            return folder / "native_menu_scene.py"
+    return None
+
+
+def _scoped_path(parent: Path, child: Path) -> Path:
+    """Check resolved targets before replacing or removing launcher-owned directories."""
+    parent, child = parent.resolve(), child.resolve()
+    if child == parent or not child.is_relative_to(parent):
+        raise BuildError(f"Build output {child} is outside {parent}.")
+    return child
+
+
+def _publish_runtime_update(root: Path, source: Path | None, rep: Reporter):
+    """Copy completely before replacing the old update; retain it if copying/publishing fails."""
+    rt = _scoped_path(root, runtime_dir(root))
+    rt.mkdir(parents=True, exist_ok=True)
+    target = _scoped_path(rt, rt / "update")
+    if target != rt / "update":
+        raise BuildError("runtime/update must be a regular directory, not a directory link.")
+    if source is not None:
+        source = source.resolve()
+        if source.is_relative_to(rt) or rt.is_relative_to(source):
+            raise BuildError("The source title update must be outside the runtime directory.")
+    temporary = _scoped_path(rt, Path(tempfile.mkdtemp(prefix=".update-install-", dir=rt)))
+    candidate, previous = temporary / "new", temporary / "previous"
+    retain_previous = False
+    try:
+        if source is not None:
+            shutil.copytree(source, candidate)
+        if rep.cancelled():
+            raise Cancelled()
+        if target.exists():
+            os.replace(target, previous)
+        try:
+            if source is not None:
+                os.replace(candidate, target)
+        except OSError:
+            if previous.exists():
+                try:
+                    os.replace(previous, target)
+                except OSError as error:
+                    retain_previous = True
+                    raise BuildError(f"Could not restore the previous update; it is preserved at {previous}: "
+                                     f"{error}") from error
+            raise
+    finally:
+        if not retain_previous:
+            _rmtree(_scoped_path(rt, temporary))
+
+
+def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
+    """Prepare original native menu resources from FH1 only; fall back to the stock TU.
+
+    The preparation tool only sees a new private output directory. Its source TU is also
+    the codegen input and is never modified. Return whether native resources were installed.
+    """
+    if tu is None:
+        _publish_runtime_update(opts.root, None, rep)
+        return False
+    work = _scoped_path(opts.root, build_dir(opts.root))
+    if work.is_relative_to(tu.resolve()):
+        raise BuildError("The source title update must not contain the build workspace.")
+    work.mkdir(parents=True, exist_ok=True)
+    script = native_menu_script()
+    if script is None:
+        rep.log("Native menu unavailable: preparation tools are missing; installing the stock FH1 update.")
+        _publish_runtime_update(opts.root, tu, rep)
+        return False
+    with tempfile.TemporaryDirectory(prefix="native-menu-", dir=work) as directory:
+        prepared = Path(directory) / "overlay"
+        rep.status("Preparing native menu resources from your FH1 update")
+        try:
+            cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
+                script, tu, "--output", prepared]
+            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority)
+            required = (*TU_EXECUTABLES, "media.zip", "native-menu-provenance.json")
+            missing = [name for name in required if not (prepared / name).is_file()]
+            if missing:
+                raise BuildError("Preparation did not produce " + ", ".join(missing))
+            report = json.loads((prepared / "native-menu-provenance.json").read_text(encoding="utf-8"))
+            if not isinstance(report, dict) or report.get("schema") != 1 or \
+                    report.get("backend") != "fh1-native-menu-resources":
+                raise BuildError("Preparation produced an unrecognized resource manifest")
+        except (BuildError, OSError, ValueError) as error:
+            rep.log(f"Native menu unavailable: {error}; installing the stock FH1 update.")
+            _publish_runtime_update(opts.root, tu, rep)
+            return False
+        _publish_runtime_update(opts.root, prepared, rep)
+    rep.log("Installed native menu resources prepared from FH1; no other game files are needed.")
+    return True
+
+
 def sync_sources(opts: Options, rep: Reporter, game_files: Path, tu: Path | None = None) -> Path:
     """Copies the project sources into the build folder, pointing the manifests at the player's
     files: forza_manifest.toml at the extracted game, forza_manifest_tu4.toml (used with a title
@@ -895,13 +1004,12 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     rt = stage_runtime(opts, rep, bdir, sdk)
     # runtime/update is the game's update: (--update_data_root): the patched executables and the
     # update's media.zip. A base build has none.
-    shutil.rmtree(rt / "update", ignore_errors=True)
-    if tu is not None:
-        shutil.copytree(tu, rt / "update")
+    native_menu = stage_runtime_update(opts, rep, tu)
     wall = time.time() - t0
     peak = monitor.get("peak", 0)
     write_state(root, {"started": t0, "id": cid, "complete": True,
                        "when": time.strftime("%Y-%m-%d %H:%M"), "tu4": tu is not None, "cpu_target": target,
+                       "native_menu": native_menu,
                        "seconds": round(wall), "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
     (rt / "version.txt").write_text(f"built {time.strftime('%Y-%m-%d')} (sources {sources_hash(project_dir())[:8]})\n")
     rep.progress(1.0, "done")

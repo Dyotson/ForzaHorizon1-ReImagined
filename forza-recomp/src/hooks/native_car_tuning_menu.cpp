@@ -2,6 +2,7 @@
 // tu_address_map: TU4 addresses
 #include "../platform/native_car_tuning_menu.h"
 #include "../platform/native_car_tuning.h"
+#include "../platform/native_pause_scene.h"
 #include "../platform/guest_addr.h"
 
 #if FORZA_TU4
@@ -140,6 +141,7 @@ native_tuning_components::Workspace workspace;
 uint64_t next_generation = 0;
 
 void ParentRows(UI& ui, bool show) {
+  if (native_pause_scene::Page(ui.ctx, ui.base, form.parent, show)) return;
   const bool valid = form.parent && Read(ui.base, form.parent) == 0x82061F94;
   const auto component = valid ? Read(ui.base, form.parent + 0x170) : 0;
   if (!show) {

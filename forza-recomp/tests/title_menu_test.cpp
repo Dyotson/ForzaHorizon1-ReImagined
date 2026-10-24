@@ -111,6 +111,12 @@ namespace forza::frame_time {
 int VblankHz() { Unexpected(); return 60; }
 void ResetRenderTiming() { Unexpected(); }
 }
+// graphics_menu.cpp also defines pause/tuning hooks. Keep those paths forbidden
+// in this title-only harness, including when the linker retains unused functions.
+namespace forza::native_pause_scene {
+bool Owns(uint32_t) { Unexpected(); return false; }
+bool Page(PPCContext&, uint8_t*, uint32_t, bool) { Unexpected(); return false; }
+}
 namespace forza {
 void UpdatePerformanceOverlay() { Unexpected(); }
 }

@@ -2,6 +2,7 @@
 // tu_address_map: TU4 addresses
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
+#include "../platform/native_pause_scene.h"
 #include "../platform/native_car_tuning_menu.h"
 #include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
@@ -315,7 +316,8 @@ void Snapshot() {
        "resolution",
        "Output resolution",
        "",
-       {{"1080p", "1920 x 1080"},
+       {{"720p", "1280 x 720"},
+        {"1080p", "1920 x 1080"},
         {"1440p", "2560 x 1440"},
         {"4k", "3840 x 2160"}}},
       {"upscaler", "fh1_upscaler", "Upscaling", "", {{"off", "Off"}}},
@@ -531,6 +533,7 @@ extern "C" REX_FUNC(MenuBind) {
   using namespace forza::graphics_menu;
   active_menu = ctx.r3.u32;
   from_main_menu = false;
+  if(forza::native_pause_scene::Owns(active_menu))return;
   Native ui(ctx, base);
   if (ui) {
     const bool tuning = forza::car_tuning_menu::Available(ctx, base, active_menu);
@@ -567,6 +570,7 @@ std::vector<uint32_t> native_rows;
 std::vector<uint32_t> retired_choices;
 uint32_t empty_pause_source = 0;
 void PauseRows(Native &ui, uint8_t *base, bool show) {
+  if(forza::native_pause_scene::Page(ui.context(),base,active_menu,show))return;
   auto component = Read(base, active_menu + 0x170);
   const auto source = from_main_menu ? Read(base, active_menu + 0x174) : active_menu + 0x174;
   if (!show && !empty_pause_source) {
@@ -599,6 +603,7 @@ std::string Help(size_t i) {
   if (i == 1 || i == 2 || i == kAntiAliasing) {
     const auto mode = BackendMode();
     const auto output = settings[0].value == "4k" ? "3840 x 2160" :
+        settings[0].value == "720p" ? "1280 x 720" :
         settings[0].value == "1080p" ? "1920 x 1080" : "2560 x 1440";
     std::string scene;
     if (mode == "off") {
@@ -890,12 +895,13 @@ extern "C" REX_FUNC(sub_827142C0) {
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_827142C0(ctx, base);
+    forza::native_pause_scene::Page(ctx,base,active_menu,true);
     return;
   }
   Native ui(ctx, base);
   if (!ui)
     return;
-  if (empty_pause_source)
+  if (empty_pause_source || forza::native_pause_scene::Owns(active_menu))
     PauseRows(ui, base, true);
   RestorePreview();
   for (uint32_t row : native_rows) {
@@ -987,7 +993,11 @@ extern "C" REX_FUNC(__imp__sub_82836928);
 extern "C" REX_FUNC(sub_8283CB68) {
   using namespace forza::graphics_menu;
   const uint32_t menu = ctx.r3.u32;
-  RestoreTitle(base);
+  // A mode transition can destroy the old title scene before rebuilding this
+  // list (for example, Exit Multiplayer). Its cached nodes are no longer ours
+  // to restore; only the new scene may receive the layout adjustment below.
+  title_layout_pending = false;
+  title_offsets.clear();
   __imp__sub_8283CB68(ctx, base);
   main_menu = menu;
   const auto source = Read(base, menu + 0x174);
@@ -1106,8 +1116,10 @@ void Tick(PPCContext& ctx, uint8_t* base) {
       message = "Live graphics requires the updated Vulkan renderer.";
     } else {
       const auto output = settings[0].value;
-      const auto width = output == "4k" ? "3840" : output == "1080p" ? "1920" : output == "720p" ? "1280" : "2560";
-      const auto height = output == "4k" ? "2160" : output == "1080p" ? "1080" : output == "720p" ? "720" : "1440";
+      const auto width = output == "4k" ? "3840" : output == "720p" ? "1280" :
+          output == "1080p" ? "1920" : "2560";
+      const auto height = output == "4k" ? "2160" : output == "720p" ? "720" :
+          output == "1080p" ? "1080" : "1440";
       applying_settings = settings;
       applying_request = std::to_string(++request_id) + " " + width + " " + height +
           " " + settings[2].value + " " + BackendMode();
