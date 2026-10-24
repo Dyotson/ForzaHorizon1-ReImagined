@@ -21,6 +21,11 @@ paper white, display peak, highlight strength, source gamma, comparison and
 calibration controls. It defaults off and falls back to SDR on unsupported
 surfaces. See [HDR setup, Windows online steps and validation](hdr.md).
 
+**Texture packs (#384):** Settings > Display > Texture packs has **Dump textures**
+(`texture_dump`), **Use texture packs** (`texture_replace`, Vulkan only) and **Open textures
+folder** (`textures` in the data folder, passed to the game as `texture_pack_root` while
+either option is on). Both default off. See [texture packs](texture_packs.md).
+
 No prebuilt game is ever shipped (the generated C++ is translated game code). The release
 holds only the **launcher**, the project's own sources, the Forza Live server and the patched
 ReXGlue SDK pieces (SDK code, BSD-3-Clause). The launcher builds the game on the player's

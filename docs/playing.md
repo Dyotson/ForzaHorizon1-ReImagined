@@ -184,6 +184,11 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - Render scale 2 adds real detail for about 30 % fewer fps (42 fps at a 60 fps target on an
   RX 9060 XT); fine at 30 fps. Above 2 is experimental and halves the frame rate (#47).
 - **AMD FSR 3 (temporal)** is a heavier, temporal upscaler; on integrated graphics and the Deck, FSR 1 is the better choice. `cas` only sharpens. See `docs/rendering.md`.
+- **3D scene resolution** 540p (Display > Picture, `scene_resolution = "540"`) is for
+  integrated graphics that can't hold the frame rate: the 3D scene is drawn smaller and scaled to
+  720p, the HUD and menus stay sharp at 720p. It only saves GPU time; a PC limited by its CPU gains
+  nothing. Not with FSR 3, DLSS, SMAA or ultrawide. Measurements in
+  [perf.md](perf.md#scene-resolution-below-720p-scene_resolution-347-2026-10-24).
 
 ## Steam Deck
 
