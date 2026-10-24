@@ -744,7 +744,7 @@ class ForzaLive(asyncio.DatagramProtocol):
             return False
         arg = text[len(word):].strip()
         if channel != chat.WORLD:
-            self.chat.notice(peer, "Type /event in World chat, in a Co-op Festival world")
+            self.chat.notice(peer, campaign.NOT_WORLD_CHAT)
             return True
         if word == "/events" or not arg or arg.lower() == "help":
             if word == "/event":
@@ -757,9 +757,9 @@ class ForzaLive(asyncio.DatagramProtocol):
         sid = self.world_of_peer(peer.id)
         worlds = self.world_sessions()
         if sid is None or sid not in worlds:
-            self.chat.notice(peer, "You are not in a Horizon World")
+            self.chat.notice(peer, campaign.NOT_IN_WORLD)
         elif self.world_keys.get(sid) != lsp.COOP_HOPPER:
-            self.chat.notice(peer, "Events start from a Co-op Festival world (Find Game)")
+            self.chat.notice(peer, campaign.IN_HORIZON_WORLD)
         elif worlds[sid][0].xuid != peer.xuid:
             self.chat.notice(peer, "Only the world's host (%s) can start an event" %
                              worlds[sid][0].name)

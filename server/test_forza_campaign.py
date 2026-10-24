@@ -391,7 +391,7 @@ class CoopFestivalTest(CoopWorldCase):
         self.say(self.a, "/event SHOWCASE_01")
         self.assertIn("No festival or street race", self.notices(self.a)[0])
         self.say(self.a, "/event FR05", channel=ch.SESSION)
-        self.assertEqual(self.notices(self.a), ["Type /event in World chat, in a Co-op Festival world"])
+        self.assertEqual(self.notices(self.a), [cp.NOT_WORLD_CHAT])
         self.say(self.a, "/event FR05")
         self.say(self.a, "/event FR50")
         self.assertEqual(self.notices(self.a), ["An event is already starting in this world"])
@@ -399,9 +399,40 @@ class CoopFestivalTest(CoopWorldCase):
         # the public Horizon World takes no /event
         self.publish(self.c, lsp.WORLD_HOPPER, b"world-03", 1)
         self.say(self.c, "/event FR05")
-        self.assertEqual(self.notices(self.c), ["Events start from a Co-op Festival world (Find Game)"])
+        self.assertEqual(self.notices(self.c), [cp.IN_HORIZON_WORLD])
         self.say(self.old, "/event FR05")
-        self.assertEqual(self.notices(self.old), ["You are not in a Horizon World"])
+        self.assertEqual(self.notices(self.old), [cp.NOT_IN_WORLD])
+
+    def test_a_custom_free_roam_is_told_where_events_start(self):
+        """#395: the host of a Custom Free Roam (game type 8) typed /event FR05 in World chat
+        and was told only "You are not in a Horizon World"."""
+        self.server.friends.store.befriend(self.a.xuid, self.b.xuid)
+        self.publish(self.a, 8, b"custom08", 2)  # Create Custom Game > Free Roam
+        self.standby(self.b, 8, b"custom08")
+        for peer in (self.a, self.b):
+            self.say(peer, "/event FR05")
+            self.assertEqual(self.notices(peer), [cp.NOT_IN_WORLD])
+            self.assertIn("Multiplayer > Find Game > Co-op Festival", cp.NOT_IN_WORLD)
+        self.assertEqual(world.WORLDS.state, {})
+        # World chat reaches no one there and says what to use instead
+        self.say(self.a, "yo")
+        self.assertEqual(self.notices(self.a), [ch.NO_WORLD])
+        self.assertEqual(self.messages(self.b), [])
+        # the menu names are the game's own: one notice line each, as long as the usage at most
+        for text in (cp.NOT_IN_WORLD, cp.IN_HORIZON_WORLD, cp.NOT_WORLD_CHAT, ch.NO_WORLD):
+            self.assertLessEqual(len(text), len(cp.USAGE))
+
+    def test_the_game_s_new_host_can_start_an_event(self):
+        """A Co-op Festival world whose host left: the member the game made its host (op 4)
+        leads the world, and /event is its."""
+        sid = self.coop_world()
+        self.server.on_match(self.a, srv.MATCH_PUBLISH, bytes([0]))  # A left the world
+        body = bytes([4]) + struct.pack(">I", lsp.COOP_HOPPER) + record(sid, 1)
+        self.server.on_match(self.b, srv.MATCH_PUBLISH, body)
+        self.say(self.b, "/event FR05")
+        self.assertEqual(self.notices(self.b), ["Driver2 starts FR05: B class, AWD, 7 CPU drivers, "
+                                                "2 laps, Sunset"])
+        self.assertEqual(world.WORLDS.pending(sid)[0], 4)
 
     def test_help_and_list(self):
         self.coop_world()
