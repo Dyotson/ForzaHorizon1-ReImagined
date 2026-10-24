@@ -144,6 +144,7 @@ set(FORZA_SOURCES
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_resolution.cpp
     src/hooks/scene_tiling.cpp
     src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp

@@ -9,7 +9,8 @@
 //
 // scene_msaa = game (default) keeps the game's choice; 2x lowers the 4x scenario to the
 // game's own 2x MSAA one (two tiles, used by its 12- and 16-car races); off lowers 4x and 2x
-// to its one-pass scenario without MSAA. Two hooks:
+// to its one-pass scenario without MSAA. With scene_resolution below 720p the full-screen
+// scenarios become its smaller one-pass scene instead (src/hooks/scene_resolution.cpp). Two hooks:
 // - Each integer render setting reads its "value" from the XML with one virtual function
 //   (sub_82D7DD68, TU4 sub_82E40028); for the TilingScenario setting (its name function,
 //   vtable +8, sub_82D80DD8, TU4 sub_82E42F98) the value is lowered after the read. It
@@ -32,6 +33,7 @@
 
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
+#include "../platform/scene_resolution.h"
 #include "../platform/scene_tiling.h"
 
 #include <rex/cvar.h>
@@ -91,6 +93,10 @@ extern "C" REX_FUNC(OriginalProceduralDrawPass);
 extern "C" REX_FUNC(OriginalResetPassFixups);
 extern "C" REX_FUNC(OriginalRunRecordedList);
 
+namespace forza::scene_resolution {
+bool Active();  // src/hooks/scene_resolution.cpp: the scene is drawn below 720p
+}  // namespace forza::scene_resolution
+
 namespace {
 namespace tiling = forza::scene_tiling;
 
@@ -118,14 +124,18 @@ extern "C" REX_FUNC(ReadIntSetting) {
   const uint32_t setting = ctx.r3.u32;
   OriginalReadIntSetting(ctx, base);
   const tiling::Mode mode = tiling::ParseMode(REXCVAR_GET(scene_msaa));
-  if (mode == tiling::Mode::kGame) return;
+  const bool smaller_scene = forza::scene_resolution::Active();
+  if (mode == tiling::Mode::kGame && !smaller_scene) return;
   const uint32_t vtable = Load32(base, setting);
   if (vtable < 0x82000000 || vtable >= 0x84000000 ||
       Load32(base, vtable + 8) != kTilingScenarioName) {
     return;
   }
   const uint32_t scenario = Load32(base, setting + 4);
-  const uint32_t chosen = tiling::SceneScenario(mode, scenario);
+  // Below 720p the full-screen scenarios draw the smaller scene in one pass, whose MSAA follows
+  // scene_msaa (src/hooks/scene_resolution.cpp).
+  const uint32_t chosen = smaller_scene ? forza::scene_resolution::SceneScenario(scenario)
+                                        : tiling::SceneScenario(mode, scenario);
   if (chosen == scenario) return;
   Store32(base, setting + 4, chosen);
   static std::atomic<bool> logged{false};

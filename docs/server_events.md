@@ -128,7 +128,9 @@ interval rather than replacing invite/chat HUD overlays.
 
 ## Protocol and practical limits
 
-Forza Live feature `0x10` (`0x08` remains Co-op Festival support), datagram kind 24:
+Forza Live feature `0x20`, datagram kind 24. The lower bits remain reserved: `0x01` invite selection,
+`0x02` friends, `0x04` chat, `0x08` Co-op Festival, and `0x10` current lobby descriptions (#394).
+Clients without `0x20` never claim event-unlock enforcement.
 
 For capable clients, WELCOME appends the required-policy byte after its existing
 HTTP-port extension. The client installs it before completing sign-in, so loss

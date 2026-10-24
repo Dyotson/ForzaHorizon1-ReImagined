@@ -43,7 +43,7 @@ class EventsTest(unittest.TestCase):
         self.events = self.server.events
         self.events.create(self.data); self.events.transition(self.data["id"], "active")
 
-    def join(self, key=b"A" * 16, features=31, address=20001):
+    def join(self, key=b"A" * 16, features=47, address=20001):
         body = struct.pack(">HQQIH", 1, address, 0x9000000000001, 0, 0)
         body += b"\x04#TU4\x06Driver" + bytes([features, len(key)]) + key
         self.server.datagram_received(b"RLV1\x01" + body, ("127.0.0.1", address))
@@ -92,6 +92,21 @@ class EventsTest(unittest.TestCase):
         self.events.required = False
         self.server.transport.sent.clear()
         peer = self.join(features=0x0F, address=20004)
+        self.assertIsNotNone(peer)
+        welcome = next(d[5:] for _, d in self.server.transport.sent if d[4] == srv.WELCOME)
+        motd_length = struct.unpack_from(">H", welcome, 12)[0]
+        self.assertEqual(len(welcome), 14 + motd_length + 2)
+        self.assertFalse(any(d[4] == ev.KIND for _, d in self.server.transport.sent))
+        self.server.transport.sent.clear()
+        self.poll(peer)
+        self.assertFalse(any(d[4] == ev.KIND for _, d in self.server.transport.sent))
+
+    def test_current_lobby_capability_is_not_event_unlock_support(self):
+        # #394 clients advertise 0x10 for current lobby details, without event enforcement.
+        self.assertIsNone(self.join(features=0x1F, address=20005))
+        self.events.required = False
+        self.server.transport.sent.clear()
+        peer = self.join(features=0x1F, address=20005)
         self.assertIsNotNone(peer)
         welcome = next(d[5:] for _, d in self.server.transport.sent if d[4] == srv.WELCOME)
         motd_length = struct.unpack_from(">H", welcome, 12)[0]

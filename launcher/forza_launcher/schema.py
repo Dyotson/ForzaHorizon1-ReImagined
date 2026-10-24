@@ -120,6 +120,14 @@ add("resolution_scale", "Render scale", "Display", "int", 1,
     "Draws at 1x to 8x the guest resolution. 1 with FSR 1 is the fast default; 2 is real extra detail "
     "for about 40% fewer fps; above 2 is experimental (flicker on NVIDIA, issue #47).", "Picture",
     lo=1, hi=8, restart=True)
+add("scene_resolution", "3D scene resolution", "Display", "choice", "720",
+    "For integrated graphics that can't hold the frame rate: 540p draws the 3D scene at 960x540 "
+    "(about half the pixels) and scales it to 720p; the HUD, text and menus stay at 720p, and the "
+    "upscaling filter (AMD FSR 1 is the sharpest) takes the picture to the window. It saves GPU time "
+    "only: a PC limited by its CPU (Steam Deck) gets nothing. The scene is drawn in one pass with 2x "
+    "MSAA (Scene anti-aliasing Off removes it). Not with AMD FSR 3, NVIDIA DLSS, a separate "
+    "anti-aliasing method or Ultrawide gameplay, which keep 720p.", "Picture",
+    choices=[("720", "720p (game)"), ("540", "540p")], restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
     choices=[(-1, "Game default"), (0, "Off"), (1, "1x"), (2, "2x"), (3, "4x"), (4, "8x"),
@@ -202,6 +210,19 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
     "shimmer slightly on fine patterns.", "World detail",
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+# Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
+# --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
+add("texture_dump", "Dump textures", "Display", "bool", False,
+    "Save each texture the game loads, once, to textures/dump in the game's data folder, named "
+    "by its fingerprint: a .dds and a .png to look at. A replacement must have the same name. "
+    "Takes disk space (about 200 MB for the first race) and a little time as textures "
+    "load. The files are the game's art: never share them.", "Texture packs",
+    restart=True)
+add("texture_replace", "Use texture packs", "Display", "bool", False,
+    "Draw textures from the .dds and .png files in the textures folder (and folders inside it) "
+    "instead of the game's: higher resolution, same aspect ratio, named like the dumped "
+    "texture. Uses graphics memory, not the game's. Vulkan only.", "Texture packs",
+    restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "

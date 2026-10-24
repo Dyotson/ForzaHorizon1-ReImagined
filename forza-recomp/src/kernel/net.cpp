@@ -940,7 +940,7 @@ class VNet {
     // playlist runs as a Horizon World (world_drop_in.cpp, world_events.cpp, #309): the
     // server lists it only to games that say so.
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
-    body.push_back(0x1F);  // 0x10: validated TU4 event-unlock eligibility hook
+    body.push_back(0x2F);  // 0x20: TU4 event unlocks (0x10 reserved for lobby details, #394)
 #else
     body.push_back(0x0F);
 #endif
