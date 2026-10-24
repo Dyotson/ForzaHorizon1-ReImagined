@@ -7,6 +7,30 @@ by this build. The older FH2 experiment is documented in
 [horizon2-menu-port.md](horizon2-menu-port.md) for reference. Its translated
 runtime adapters and build configuration have been retired.
 
+## Current scope and validation
+
+The pause feature adds four pages: Home, Cars, Social and Settings. Car Tuning
+comes from the standalone implementation merged in #363; this feature adds only
+the parent visibility bridge needed to enter and return from the Cars tile.
+The tuning implementation and shared components otherwise match current main.
+
+Against main `f8f1834`, a fresh offline copied-profile 1280x720 run verified all
+four pages, shoulder navigation, Cars to Tune Car with a settled performance
+simulation, and Back restoring the selected Tune Car tile. Difficulty, Graphics,
+Audio, Controls, HUD and Video each opened and returned. The full map returned
+to Home; resume restored the gameplay HUD and Start reopened the four-page menu.
+No tuning or option changes were applied. Fresh captures are attached to #235,
+outside the repository.
+
+The current check passed 19 focused CTests, 62 launcher tests, six TU4 syntax
+checks and two disabled/base-build stub tests. All 86 authored runtime translation
+units compiled, with at most two workers. The private runtime required the same
+symbol-only keyboard import bridge used for standalone tuning and a private silent
+audio fixture because the host had no audio endpoint. Those fixtures are not
+production changes; this does not qualify a clean production link. Online sessions,
+quit-to-title/reload and extended lifetime checks were not repeated on this build.
+Keep the feature opt-in and the PR draft pending the user's screenshot review.
+
 ## Structure
 
 The pause strip has Home, Cars, Social and Settings. The four native
