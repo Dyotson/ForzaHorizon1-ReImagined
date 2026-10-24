@@ -53,6 +53,9 @@ MAX_PENDING = 256      # sessions waiting to be rated
 MAX_ROWS_BYTES = 1400  # an answer fits one datagram
 
 RELATIVE_SCORE, SESSION_TEAM = 0x1000800A, 0x1000800B
+# Called with (writer XUID, session, target XUID, relative score) for every skill-view write
+# taken (forza_coop_ledger.Ledger.host_score: a campaign round's places, cars - score).
+on_skill_write = None
 COL_SKILL, COL_GAMES, COL_MU, COL_SIGMA = 61, 62, 63, 64
 TYPE_INT32, TYPE_INT64, TYPE_DOUBLE, TYPE_NULL = 1, 2, 3, 0xFF
 MU0, SIGMA0 = 3.0, 1.0      # X_STATS_SKILL_MU_DEFAULT, X_STATS_SKILL_SIGMA_DEFAULT
@@ -230,6 +233,8 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             match["at"] = now
             match["writes"][target] = (values[RELATIVE_SCORE], values.get(SESSION_TEAM, -1))
             match["tags"][target] = tag
+            if on_skill_write:
+                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             log.info("stats: %016X wrote view %08X for %016X '%s': relative score %d team %d "
                      "(session %016X)", xuid, view, target, tag, values[RELATIVE_SCORE],
                      values.get(SESSION_TEAM, -1), session)

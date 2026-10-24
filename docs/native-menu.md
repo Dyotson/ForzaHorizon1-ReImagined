@@ -29,7 +29,35 @@ symbol-only keyboard import bridge used for standalone tuning and a private sile
 audio fixture because the host had no audio endpoint. Those fixtures are not
 production changes; this does not qualify a clean production link. Online sessions,
 quit-to-title/reload and extended lifetime checks were not repeated on this build.
-Keep the feature opt-in and the PR draft pending the user's screenshot review.
+Keep the feature opt-in. The user has now seen the fresh screenshots; draft
+readiness is gated by the production-link assessment below.
+
+### Main merge and ordinary Windows link assessment
+
+Integrated main `e142fe6` without changing the four-page layout, map/tab slant,
+car image, tuning implementation or Bucket List exclusion. The world-session
+conflict combines main's Co-op Festival playlist 20 with invited-session detection
+when no local playlist has been searched. Both world playlists still require
+Find Game mode and a free-roam preset; campaign races keep race rules.
+
+All 87 Windows authored runtime translation units compile without controller,
+audio or symbol-renaming test fixtures. An ordinary link against the untouched
+generated-object cache and installed SDK reports only duplicate imports
+`__imp__XamIsUIActive` and `__imp__XamShowKeyboardUI` from `xam_keyboard.cpp`
+and `rexruntime.lib`. A separate build of all current-main Windows authored
+sources against that same cache/SDK reproduces exactly those two errors, and
+the keyboard source is identical to main. No introduced link failure was found.
+The generated transform body already exports `__imp__sub_82FE6238` and its weak
+public alias: the additional private alias used in earlier screenshot harnesses
+is unnecessary for the ordinary link. No SDK or generated object was modified
+for this comparison. This is not a successful clean production link.
+
+Post-merge checks pass: 19 focused CTests, 62 launcher controls/menu tests, seven
+TU4 syntax checks, two base/disabled-build tests, 21 co-op grant tests and 36
+campaign/ledger/title-identity server tests. The 720p screenshots remain those
+of `3e12c71`; rendering sources are unchanged by this merge, so no game/GPU run
+or new captures were needed. Keep draft until the baseline Windows import-link
+blocker is resolved or an ordinary matching production build succeeds.
 
 ## Structure
 

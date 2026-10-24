@@ -59,7 +59,6 @@ REXCVAR_DEFINE_BOOL(world_drop_in, true, "Network/Forza Live",
                     "that players drop into (JUMP IN) and that starts with one player");
 
 namespace {
-constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
 constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);    // pointer to the online game object
 constexpr uint32_t kGameModeInfo = FORZA_ADDR(0x832DF00C);  // pointer; +52 is the HUD/game mode value
@@ -182,7 +181,8 @@ extern "C" REX_FUNC(sub_82875FB8) {
 // sub_825F5AA8(options): sets the class of each bucket that restricts to "any" (255) from the
 // options' recommended class range (see 4. above). The world keeps "any".
 extern "C" REX_FUNC(sub_825F5AA8) {
-  if (REXCVAR_GET(world_drop_in) && (forza::LiveMatchPlaylist() == kWorldPlaylist || WorldGame(base))) {
+  if (REXCVAR_GET(world_drop_in) &&
+      (forza::LiveIsWorldPlaylist(forza::LiveMatchPlaylist()) || WorldGame(base))) {
     if (Trace()) REXLOG_INFO("WORLD: the buckets keep any car class");
     return;
   }

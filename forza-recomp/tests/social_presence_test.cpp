@@ -4,6 +4,8 @@
 
 int main(){
   assert(forza::world_session::IsWorld(3,7,7));
+  assert(forza::world_session::IsWorld(20,7,7)); // Co-op campaign's world playlist.
+  assert(!forza::world_session::IsWorld(20,7,1)); // Campaign races keep race rules.
   assert(forza::world_session::IsWorld(0,7,7)); // Invite, no local search.
   assert(!forza::world_session::IsWorld(2,7,7));
   assert(!forza::world_session::IsWorld(0,7,1));

@@ -6,6 +6,6 @@ namespace forza::world_session {
 // case the native mode/preset identify the world; a known other playlist must
 // still fail closed.
 inline bool IsWorld(uint32_t playlist,uint32_t mode,uint8_t preset) {
-  return (!playlist||playlist==3)&&mode==7&&preset==7;
+  return (!playlist||playlist==3||playlist==20)&&mode==7&&preset==7;
 }
 }
