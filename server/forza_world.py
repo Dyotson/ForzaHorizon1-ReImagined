@@ -46,6 +46,7 @@ PENDING_TIMEOUT = 120.0
 GAME_DB = None          # path of gamedb.slt, or None
 EVENT_MINUTES = 0.0     # schedule: an event every N minutes of a world (0: off)
 EVENT_LAPS = 0          # override the events' lap count (tests), 0: the event's own
+EMPTY_ROUND = 90.0      # a campaign round closed this soon without a report: nobody raced it
 EVENT_IDS = []          # restrict the rotation to these event ids (empty: all)
 EVENT_AI = MAX_PLAYERS - 1  # MaxAIPlayers of an event
 EVENT_PLAYERS = MAX_PLAYERS  # an event's grid (MaxPlayers)
@@ -188,6 +189,7 @@ class Worlds:
         self.started = {}     # session id -> when its current free roam started
         self.members = {}     # session id -> {xuid: gamertag} (forza_live_server.world_tick)
         self.dropped = []     # campaign requests the last tick dropped
+        self.empty = []       # (sid, campaign event) of campaign rounds that ended at once
         self.rounds = {}      # session id -> (campaign event, when it started, members)
 
     def request(self, sid, event_id=None, campaign=None, by="", by_xuid=0):
@@ -236,8 +238,13 @@ class Worlds:
                 ledger.LEDGER.start_round(sid, st["campaign"], st.get("by_xuid", 0),
                                           st.get("by", ""), members)
             del self.state[sid]
-        elif trusted:
-            ledger.LEDGER.close_round(sid)  # the world's round after a campaign round
+        elif trusted:  # the world's round after a campaign round
+            for r in ledger.LEDGER.close_round(sid):
+                if not r["results"] and time.time() - r["started"] < EMPTY_ROUND:
+                    campaign = self.rounds.get(sid, (None,))[0]
+                    log.info("world %s: campaign round %s (%s) ended at once, nobody raced",
+                             sid.hex(), r["id"], r["code"])
+                    self.empty.append((sid, campaign, r["code"]))
         self.started[sid] = time.monotonic()
         return None
 
