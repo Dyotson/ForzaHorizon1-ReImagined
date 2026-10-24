@@ -309,11 +309,29 @@ def open_package(path):
     return Stfs(path, hdr)
 
 
+def extraction_path(outdir, path):
+    """Keep package-controlled paths under the extraction root, including existing links."""
+    parts = path.split("/")
+    # Packages use forward-slash relative paths. Reject Windows drive/stream syntax
+    # on every host too, so a package cannot extract differently after being copied.
+    if any(not p or p in (".", "..") or any(c in p for c in "\\:\0") for p in parts):
+        raise SystemExit(f"unsafe package path: {path!r}")
+    root = os.path.realpath(outdir)
+    dest = os.path.realpath(os.path.join(root, *parts))
+    try:
+        inside = os.path.normcase(os.path.commonpath((root, dest))) == os.path.normcase(root)
+    except ValueError:  # a Windows directory link can resolve onto another drive
+        inside = False
+    if not inside:
+        raise SystemExit(f"unsafe package path: {path!r}")
+    return dest
+
+
 def extract(pkg, entry, outdir):
     """Extract one entry. Returns the list of file block numbers (4 KB each, counted from the start
     of the file) whose data does not match the package's own SHA-1 hash table: a damaged package
     (a bad download or archive copy) extracts with those blocks wrong, which no reader can repair."""
-    dest = os.path.join(outdir, *entry.path.split("/"))
+    dest = extraction_path(outdir, entry.path)
     if entry.is_dir:
         os.makedirs(dest, exist_ok=True)
         return []

@@ -287,6 +287,13 @@ single-block and multi-block packages cover damaged tails, damaged padding, inta
 extraction and truncation. This closes a validation gap; it does not establish the
 source of the distinct compressed-data mismatch reported in #327.
 
+Package entry paths are checked before creating an output file or directory. Extraction
+rejects absolute paths, parent traversal, Windows drive/stream syntax and existing links
+that resolve outside the chosen output folder. This applies to STFS and SVOD extraction;
+valid nested paths retain their package layout. Synthetic-package tests verify that a
+parent-path entry cannot overwrite an existing sibling file. Link tests use symlinks or
+Windows junctions when available.
+
 ### The 1000 Club (#17)
 
 Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam
