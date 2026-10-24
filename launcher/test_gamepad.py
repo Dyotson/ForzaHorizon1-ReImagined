@@ -162,10 +162,21 @@ class NavigationTests(unittest.TestCase):
         self.backend.read.return_value = State(1)
         self.nav = Navigation(self.win, self.backend)
         self.addCleanup(self.nav.close)
+        self.addCleanup(self.wait_for_gallery)
         self.win.show()
         self.win.activateWindow()
         self.app.processEvents()
         self.nav.focus(self.win.play.play)
+
+    def wait_for_gallery(self):
+        # A test that passes the photo gallery starts its folder scan (a QThread child of the
+        # page): let it end before the window can go, or a running QThread is destroyed.
+        import time
+        self.win.gallery.shutdown()
+        deadline = time.monotonic() + 10
+        while self.win.gallery.task is not None and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.005)
 
     def press(self, button):
         self.nav.dispatch(button, self.win)
