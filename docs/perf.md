@@ -1201,7 +1201,8 @@ was dropped when other games started):
 
 ## Scene resolution below 720p: `scene_resolution` (#347, 2026-10-24)
 
-**Status: experimental, not in the launcher.** `scene_resolution = "540"` draws the 3D scene and
+**Status: experimental** (launcher Display > Picture, "3D scene resolution").
+`scene_resolution = "540"` draws the 3D scene and
 its effects at 960x540 under the 720p HUD and works in free roam, the pause menu, the map, photo
 mode, car select and the event screens, but loading a race crashes in the game's heap (3 of 3
 tries, below). Default `"720"` changes nothing (the hooks pass through).
