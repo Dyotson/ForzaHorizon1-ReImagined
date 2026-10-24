@@ -13,7 +13,7 @@ from forza_launcher import game, mods  # noqa: E402
 from forza_launcher.config import Config  # noqa: E402
 
 try:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
     from PySide6.QtWidgets import QApplication
 except ImportError:
     QApplication = None
@@ -136,6 +136,12 @@ class ModsPageTests(unittest.TestCase):
         make_mod(self.dir, "Alpha", 'name = "Alpha mod"\n')
         make_mod(self.dir, "Beta")
         self.page = ModsPage(self.cfg, window=None)
+
+    def tearDown(self):
+        # Delete the page now, while the QApplication exists: a top-level widget left to the
+        # interpreter's exit is destroyed after it, and PySide6 6.12 then crashes (exit 139).
+        self.page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
     def names(self):
         return [self.page.table.item(r, 0).text() for r in range(self.page.table.rowCount())]
