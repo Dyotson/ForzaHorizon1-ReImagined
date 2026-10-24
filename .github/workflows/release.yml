@@ -86,6 +86,11 @@ jobs:
         name: Title Update 4 car view statements
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/car_view_test.cpp -o "$RUNNER_TEMP/car-view-test"
+      - if: runner.os == 'Linux'
+        name: Title service request header
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src tools/test_lsp_request_header.cpp -o "$RUNNER_TEMP/lsp-request-header-test"
+          "$RUNNER_TEMP/lsp-request-header-test"
           "$RUNNER_TEMP/car-view-test"
       - if: runner.os == 'Linux'
         name: Scene MSAA and tiling choice
