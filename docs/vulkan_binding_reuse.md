@@ -2,7 +2,38 @@
 
 Opt-in experiment originally based on main `54d5177`, now integrated with main
 `da9bf35`. SDK patch 0094.
-`FORZA_VK_BINDING_REUSE=1` enables all three reuse paths. Default is off.
+`FORZA_VK_BINDING_REUSE=1` enables sampler acquisition and texture-request reuse.
+Default is off. Texture descriptor reuse has been removed.
+
+## Current correctness blocker, 2026-10-24
+
+Foreground testing on integrated main found tiled/duplicated rendering with
+reuse enabled. The accepted reuse-off capture was clean. Both runs used the
+same binaries and settings, four distinct physical CPU cores, and fully audited
+foreground AI and CPU windows. The reference-checking warm-up also rendered
+incorrectly despite zero sampler/texture mismatches or Vulkan API errors.
+Those checks therefore do not establish visual correctness.
+
+The observed reuse-on slowdown is not an equal-quality performance comparison.
+The older measurements below describe their original builds and cannot justify
+enabling this integrated version by default. The PR remains draft and reuse
+remains off pending measurements of the revised patch.
+
+A foreground diagnostic disabled descriptor reuse alone while keeping sampler
+and texture-request reuse enabled. Its final race capture was clean, with zero
+incorrect-resolve warnings (the full reuse-on run had 26,561). Counters recorded
+71,114,357 sampler hits and 43,219,868 texture-request hits, zero descriptor hits,
+and no reference execution. Both audited foreground windows were 100% and the
+four-core affinity remained correct. This stats-enabled control establishes a
+correctness distinction; its timings are excluded from performance claims.
+The patch now removes descriptor reuse entirely. The exact underlying descriptor
+lifetime/binding failure is not established by this control.
+
+The revised 119-patch stack applies with source whitespace checks enabled. Its
+combined 120-patch stack with #179 produces the same tree in either order. All
+nine Vulkan command-processor consumers were rebuilt for the changed class
+layout and the private GPU DLL linked successfully. The production guard tests
+and descriptor write integration guard pass; the latter rejects the old code.
 
 ## Reuse and invalidation
 
@@ -24,10 +55,9 @@ shared-memory watch invalidation; eviction and frame reset clear synchronized
 bindings. A miss runs ordinary ownership selection, uploads, resource marking
 and barriers. There is no new persistent texture-object memo.
 
-Texture/sampler descriptors reuse only the existing immutable set whose shader,
-cache, exact ordered image views, samplers and layouts match. Existing descriptor
-validity must still hold. Image-info derivation runs normally, so this path saves
-allocation/writes rather than assuming fetch constants establish image identity.
+Texture/sampler descriptors always use the normal allocation/write path and bind
+the fresh sets. Ordered payload equality was insufficient to establish safe
+descriptor reuse in foreground testing.
 Pipeline-layout changes clear bound-set flags from the first incompatible set
 onward. This prevents an unchanged pixel payload from retaining a stale bound
 flag after a vertex-layout change. External graphics pipelines and native-HUD
@@ -41,12 +71,14 @@ on predicted hits. It compares sampler parameters and handles, texture binding
 views, and usage epochs. A mismatch logs an error; that invocation has already
 used the fresh normal path. `FORZA_VK_BINDING_STATS=1` emits interval counters
 once per 300 frames. Neither diagnostic is enabled in scored measurements.
-The descriptor path compares every ordered payload field on every candidate hit.
 
 The CPU-only `tools/binding_reuse` test exercises production sampler and texture
 request guards across shaders, caches, filtering policies, submissions, image
 usage changes, invalidation, subset requests and all 32 mask bits. It also checks
-each ordered descriptor field and reordered payloads. Configure with `-DSDK_SOURCE=<patched SDK>`, build Release and run
+the compatible descriptor-layout prefix. A source integration regression guard
+keeps the texture descriptor write decisions outside the reuse experiment and
+checks the normal write/bind calls remain present; it does not replace GPU
+validation. Configure with `-DSDK_SOURCE=<patched SDK>`, build Release and run
 CTest. The benchmark runner also has checked alternating modes, diagnostics and
 resume compatibility using a fake executor without launching a game.
 
@@ -70,7 +102,8 @@ formats, timing-window boundaries, invalid clocks and unqualified diagnostics.
 The optional production epoch writer passed a CPU-only isolated-function harness
 with the marker disabled and enabled, including nine-decimal output and steady
 clock alignment. The changed authored debug object compiles and the private
-shared host relinks successfully. That host has not been run on the GPU.
+shared host relinks successfully. Foreground testing with that host passed the
+clock and affinity audits, but exposed the rendering blocker described above.
 
 ## Overlap
 

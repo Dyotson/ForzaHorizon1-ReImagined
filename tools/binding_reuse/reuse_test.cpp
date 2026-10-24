@@ -49,18 +49,5 @@ int main() {
     check(!sampler.Matches(&shader, &cache, 1, -1, sampler.dirty));
     check(sampler.Matches(&shader, &cache, 1, -1, ~sampler.dirty));
   }
-  struct Image { uint64_t sampler, imageView; uint32_t imageLayout; };
-  Image a[3] = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}};
-  Image b[3] = {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}};
-  using rex::graphics::vulkan::BindingImageInfosEqual;
-  check(BindingImageInfosEqual(a, b, 3));
-  check(BindingImageInfosEqual<Image>(nullptr, nullptr, 0));
-  for (int i = 0; i < 3; ++i) {
-    ++b[i].sampler; check(!BindingImageInfosEqual(a, b, 3)); --b[i].sampler;
-    ++b[i].imageView; check(!BindingImageInfosEqual(a, b, 3)); --b[i].imageView;
-    ++b[i].imageLayout; check(!BindingImageInfosEqual(a, b, 3)); --b[i].imageLayout;
-  }
-  Image temporary = b[0]; b[0] = b[2]; b[2] = temporary;
-  check(!BindingImageInfosEqual(a, b, 3));
-  std::puts("PASS: descriptor layout compatibility; sampler shader/cache/submission/policy/fetch guards; ordered descriptor fields; texture request masks, invalidation and usage transitions");
+  std::puts("PASS: descriptor layout compatibility; sampler shader/cache/submission/policy/fetch guards; texture request masks, invalidation and usage transitions");
 }

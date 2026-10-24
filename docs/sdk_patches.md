@@ -334,8 +334,10 @@ USB, Bluetooth and Xbox Wireless output and Linux builds remain untested.
 reuse acquired samplers within one submission while their shaders, texture cache,
 sampled fetch constants and anisotropy override remain unchanged. Texture requests
 can skip repeated work only while their bindings remain synchronized, no texture
-is outdated, and their sampled image usages and submission still match. Exact
-ordered descriptor payload comparisons retain immutable texture/sampler sets.
+is outdated, and their sampled image usages and submission still match. Texture
+descriptors always follow the normal allocation, write and bind path. Descriptor
+reuse was removed after a foreground control isolated tiled rendering to that
+path despite matching payloads and zero reference/API errors.
 `FORZA_VK_BINDING_REUSE=1` enables the experiment; `FORZA_VK_BINDING_VERIFY=1`
 runs normal acquisition/request paths on predicted hits, and
 `FORZA_VK_BINDING_STATS=1` logs counters. All switches default off.

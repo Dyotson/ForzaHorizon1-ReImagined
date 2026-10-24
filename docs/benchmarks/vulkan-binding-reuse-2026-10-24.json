@@ -1,6 +1,27 @@
 {
   "date": "2026-10-24",
   "scope": "Excluded background correctness diagnostic; no performance scores",
+  "superseded_visual_qualification": {
+    "reason": "Subsequent foreground testing found tiled/duplicated rendering with full reuse enabled, including with reference checks reporting zero mismatches. Reuse-off was clean.",
+    "full_reuse_on_incorrect_resolve_warnings": 26561,
+    "descriptor_off_control": {
+      "sampler_reuse": true,
+      "texture_request_reuse": true,
+      "descriptor_reuse": false,
+      "reference_execution": false,
+      "stats_enabled": true,
+      "final_capture": "clean visual spot check",
+      "incorrect_resolve_warnings": 0,
+      "sampler_hits": 71114357,
+      "texture_request_hits": 43219868,
+      "descriptor_hits": 0,
+      "ai_foreground_fraction": 1.0,
+      "cpu_foreground_fraction": 1.0,
+      "cpu_affinity_audited": true,
+      "performance_claim": false
+    },
+    "resolution": "Descriptor reuse removed from patch; sampler and texture-request reuse retained. Exact underlying binding/lifetime failure remains unproven. Default off and PR draft pending revised-build validation and performance measurement."
+  },
   "public_head": "6058849b992c2954da0f2c3f813b7625c7a9e6a2",
   "main": "da9bf350dc5bd94f057270d233ab8df2293dd668",
   "sdk": {
