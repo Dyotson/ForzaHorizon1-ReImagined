@@ -1,0 +1,1760 @@
+Vulkan: build the pipelines of queued draws ahead (#378). When a draw needs a pipeline that does
+not exist yet, walk the commands already queued behind it on shadow registers and start building
+every missing pipeline at once on the creation threads. The idea is ReGPU's
+(https://github.com/zer0ducksgiven/ReGPU, MIT, renderer.cpp GpuLookahead).
+
+diff --git a/include/rex/graphics/pipeline/render_target/cache.h b/include/rex/graphics/pipeline/render_target/cache.h
+index 3bbd52e..d3138c9 100644
+--- a/include/rex/graphics/pipeline/render_target/cache.h
++++ b/include/rex/graphics/pipeline/render_target/cache.h
+@@ -180,6 +180,20 @@ class RenderTargetCache {
+   // each.
+   uint32_t GetLastUpdateBoundRenderTargets(uint32_t* depth_and_color_formats_out = nullptr) const;
+ 
++  // FH1 (#378): what Update would bind for a draw that has not run yet, for building its
++  // pipeline ahead (vulkan/fh1_pipeline_lookahead.cpp). The accumulated bindings Update keeps
++  // (the render target keys, 0 for none; depth first, then the colors), as they are now
++  // (GetBindingPrediction) and as Update would change them (PredictUpdate, from the current
++  // registers), without creating, transferring or binding anything. Host render targets only.
++  struct BindingPrediction {
++    uint32_t accumulated_keys[5] = {};
++    bool valid = false;
++  };
++  void GetBindingPrediction(BindingPrediction& prediction) const;
++  bool PredictUpdate(BindingPrediction& prediction, bool is_rasterization_done,
++                     reg::RB_DEPTHCONTROL normalized_depth_control,
++                     uint32_t normalized_color_mask) const;
++
+  protected:
+   RenderTargetCache(const RegisterFile& register_file, const memory::Memory& memory,
+                     uint32_t draw_resolution_scale_x, uint32_t draw_resolution_scale_y)
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index b0f9ecd..f26f786 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -288,6 +288,11 @@ class VulkanCommandProcessor : public CommandProcessor {
+   // Returns the text to display in the GPU backend name in the window title.
+   std::string GetWindowTitleText() const;
+ 
++  // FH1 (#378): called by the pipeline cache, inside a draw whose pipeline does not exist yet:
++  // walks the commands queued behind the draw and starts building the pipelines they need
++  // (VulkanPipelineCache::QueuePipelineAhead). fh1_pipeline_lookahead.cpp.
++  void Fh1PipelineLookahead();
++
+  protected:
+   bool SetupContext() override;
+   void ShutdownContext() override;
+diff --git a/include/rex/graphics/vulkan/pipeline_cache.h b/include/rex/graphics/vulkan/pipeline_cache.h
+index 0d413bc..f1ab1ee 100644
+--- a/include/rex/graphics/vulkan/pipeline_cache.h
++++ b/include/rex/graphics/vulkan/pipeline_cache.h
+@@ -83,6 +83,13 @@ class VulkanPipelineCache {
+                            uint32_t dword_count);
+   // Own a separate translation for this render scale, preserving native-endian ucode.
+   VulkanShader* LoadShaderForDraw(const Shader& shader);
++  // FH1 (#378): a shader the pipeline lookahead found queued (guest-endian words), without the
++  // command processor's memo of loads by address.
++  VulkanShader* LoadShaderAhead(xenos::ShaderType shader_type, const uint32_t* words,
++                                uint32_t dword_count) {
++    return LoadShader(shader_type, words, dword_count,
++                      XXH3_64bits(words, dword_count * sizeof(uint32_t)));
++  }
+   // Analyze shader microcode on the translator thread.
+   void AnalyzeShaderUcode(Shader& shader) { shader.AnalyzeUcode(ucode_disasm_buffer_); }
+ 
+@@ -105,6 +112,18 @@ class VulkanPipelineCache {
+       VulkanRenderTargetCache::RenderPassKey render_pass_key, VkPipeline& pipeline_out,
+       const PipelineLayoutProvider*& pipeline_layout_out, void** pipeline_handle_out = nullptr);
+   bool IsCreatingPipelines() const;
++  // FH1 (#378): for a draw queued behind the current one (fh1_pipeline_lookahead.cpp), on the
++  // command processor thread with the registers as they will be at that draw: translates its
++  // shaders and, if its pipeline does not exist yet, hands it to the creation threads, without a
++  // placeholder. A draw that meets it before it is built is skipped as with a placeholder, or
++  // waits for it when pipelines are created synchronously.
++  enum class AheadResult { kKnown, kQueued, kFailed };
++  bool CanQueuePipelinesAhead() const { return !creation_threads_.empty(); }
++  AheadResult QueuePipelineAhead(
++      VulkanShader::VulkanTranslation* vertex_shader, VulkanShader::VulkanTranslation* pixel_shader,
++      const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
++      reg::RB_DEPTHCONTROL normalized_depth_control, uint32_t normalized_color_mask,
++      VulkanRenderTargetCache::RenderPassKey render_pass_key);
+   void GetPipelineAndLayoutByHandle(void* handle, VkPipeline& pipeline_out,
+                                     const PipelineLayoutProvider*& pipeline_layout_out,
+                                     bool* is_placeholder_out = nullptr) const;
+@@ -256,13 +275,18 @@ class VulkanPipelineCache {
+     // destroyed by it while the pipeline cache is active.
+     std::atomic<const PipelineLayoutProvider*> pipeline_layout{nullptr};
+     std::atomic<bool> is_placeholder{false};
++    // FH1 (#378): built ahead of its draw (QueuePipelineAhead) and no draw has used it yet: it
++    // is stored at the first. While being built, is_placeholder is set with no pipeline.
++    // Command processor thread only.
++    bool fh1_ahead = false;
+     Pipeline() = default;
+     Pipeline(const PipelineLayoutProvider* pipeline_layout_provider)
+         : pipeline_layout(pipeline_layout_provider) {}
+     Pipeline(const Pipeline& other)
+         : pipeline(other.pipeline.load(std::memory_order_acquire)),
+           pipeline_layout(other.pipeline_layout.load(std::memory_order_acquire)),
+-          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)) {}
++          is_placeholder(other.is_placeholder.load(std::memory_order_acquire)),
++          fh1_ahead(other.fh1_ahead) {}
+     Pipeline& operator=(const Pipeline& other) {
+       if (this == &other) {
+         return *this;
+@@ -272,6 +296,7 @@ class VulkanPipelineCache {
+                             std::memory_order_release);
+       is_placeholder.store(other.is_placeholder.load(std::memory_order_acquire),
+                            std::memory_order_release);
++      fh1_ahead = other.fh1_ahead;
+       return *this;
+     }
+   };
+@@ -471,6 +496,16 @@ class VulkanPipelineCache {
+ 
+   // Previously used pipeline, to avoid lookups if the state wasn't changed.
+   const std::pair<const PipelineDescription, Pipeline>* last_pipeline_ = nullptr;
++
++  // FH1 (#378): the pipelines the last lookahead started (QueuePipelineAhead), for the wait for
++  // all of them with synchronous creation, and that wait.
++  std::vector<Pipeline*> fh1_ahead_set_;
++  static bool Fh1IsBeingBuiltAhead(const Pipeline& pipeline) {
++    return pipeline.is_placeholder.load(std::memory_order_acquire) &&
++           pipeline.pipeline.load(std::memory_order_acquire) == VK_NULL_HANDLE;
++  }
++  bool Fh1WaitForAhead(Pipeline* first);
++  void Fh1StoreDrawnAhead(std::pair<const PipelineDescription, Pipeline>& pipeline);
+   // <Submission index, pipeline>.
+   std::deque<std::pair<uint64_t, VkPipeline>> deferred_destroy_pipelines_;
+   std::mutex deferred_destroy_lock_;
+diff --git a/include/rex/graphics/vulkan/render_target_cache.h b/include/rex/graphics/vulkan/render_target_cache.h
+index 36b1980..b6d0900 100644
+--- a/include/rex/graphics/vulkan/render_target_cache.h
++++ b/include/rex/graphics/vulkan/render_target_cache.h
+@@ -149,6 +149,11 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
+ 
+   bool Update(bool is_rasterization_done, reg::RB_DEPTHCONTROL normalized_depth_control,
+               uint32_t normalized_color_mask, const Shader& vertex_shader) override;
++  // FH1 (#378): the render pass key Update would use for a draw that has not run yet, from the
++  // current registers (RenderTargetCache::PredictUpdate), for building its pipeline ahead.
++  bool PredictRenderPassKey(BindingPrediction& prediction, bool is_rasterization_done,
++                            reg::RB_DEPTHCONTROL normalized_depth_control,
++                            uint32_t normalized_color_mask, RenderPassKey& key_out) const;
+   // Binding information for the last successful update.
+   RenderPassKey last_update_render_pass_key() const { return last_update_render_pass_key_; }
+   VkRenderPass last_update_render_pass() const { return last_update_render_pass_; }
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index 46a1e7e..bada8cf 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -46,6 +46,7 @@ set(REXGPU_XENOS_VULKAN_SOURCES
+     vulkan/graphics_system.cpp
+     vulkan/deferred_command_buffer.cpp
+     vulkan/fh1_device_memory.cpp
++    vulkan/fh1_pipeline_lookahead.cpp
+     vulkan/fh1_dlss.cpp
+     vulkan/fh1_fsr3.cpp
+     vulkan/fh1_smaa.cpp
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index cea354f..69f91c2 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include "fh1_command_cursor.h"
+ #include "fh1_frame_cost.h"
+ #include <algorithm>
+ #include <cinttypes>
+@@ -723,14 +724,24 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+   memory::RingBuffer reader(memory_->TranslatePhysical(primary_buffer_ptr_), primary_buffer_size_);
+   reader.set_read_offset(read_index * sizeof(uint32_t));
+   reader.set_write_offset(write_index * sizeof(uint32_t));
+-  do {
+-    if (!ExecutePacket(&reader)) {
+-      // This probably should be fatal - but we're going to continue anyways.
+-      REXGPU_ERROR("**** PRIMARY RINGBUFFER: Failed to execute packet.");
+-      assert_always();
+-      break;
+-    }
+-  } while (reader.read_count());
++  {
++    // FH1 (#378): the pipeline lookahead's view of the ring (fh1_command_cursor.h).
++    fh1_command_cursor::cursor.ring_start = read_index;
++    fh1_command_cursor::cursor.ring = &reader;
++    fh1_command_cursor::Scope cursor_scope(&reader);
++    do {
++      if (!ExecutePacket(&reader)) {
++        // This probably should be fatal - but we're going to continue anyways.
++        REXGPU_ERROR("**** PRIMARY RINGBUFFER: Failed to execute packet.");
++        assert_always();
++        break;
++      }
++    } while (reader.read_count());
++    fh1_command_cursor::cursor.ring = nullptr;
++  }
++  fh1_command_cursor::cursor.ring_done +=
++      (write_index + primary_buffer_size_ / sizeof(uint32_t) - read_index) %
++      (primary_buffer_size_ / sizeof(uint32_t));
+ 
+   OnPrimaryBufferEnd();
+ 
+@@ -743,6 +754,7 @@ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
+   reader.set_write_offset(count * sizeof(uint32_t));
++  fh1_command_cursor::Scope cursor_scope(&reader);  // FH1 (#378)
+   do {
+     if (!ExecutePacket(&reader)) {
+       // Return up a level if we encounter a bad packet.
+@@ -757,6 +769,7 @@ void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
+   reader.set_write_offset(count * sizeof(uint32_t));
++  fh1_command_cursor::Scope cursor_scope(&reader);  // FH1 (#378)
+   do {
+     if (!ExecutePacket(&reader)) {
+       REXGPU_ERROR("**** ExecutePacket: Failed to execute packet.");
+diff --git a/src/graphics/fh1_command_cursor.h b/src/graphics/fh1_command_cursor.h
+new file mode 100644
+index 0000000..16f30b5
+--- /dev/null
++++ b/src/graphics/fh1_command_cursor.h
+@@ -0,0 +1,42 @@
++// FH1 (#378): where the command processor is in the commands it executes, for the pipeline
++// lookahead (vulkan/fh1_pipeline_lookahead.cpp): the ring buffer and the indirect buffers being
++// executed, outermost first, and the ring position in dwords since the start, which only grows.
++// When a draw runs, each of these readers is at the end of its current packet (the draw, or the
++// INDIRECT_BUFFER that called the next one). One command processor per process; its thread alone
++// changes this.
++#pragma once
++
++#include <cstdint>
++
++#include <rex/memory/ring_buffer.h>
++
++namespace rex::graphics::fh1_command_cursor {
++
++constexpr uint32_t kMaxBuffers = 8;
++
++struct Cursor {
++  const memory::RingBuffer* buffers[kMaxBuffers] = {};
++  uint32_t depth = 0;
++  // The ring's reader while ExecutePrimaryBuffer runs (buffers[0] then), else nullptr.
++  const memory::RingBuffer* ring = nullptr;
++  // Ring dwords executed by the finished ExecutePrimaryBuffer calls, and the ring index the
++  // current one started at.
++  uint64_t ring_done = 0;
++  uint32_t ring_start = 0;
++};
++
++inline Cursor cursor;
++
++// For the time a buffer is executed.
++class Scope {
++ public:
++  explicit Scope(const memory::RingBuffer* buffer) {
++    if (cursor.depth < kMaxBuffers) cursor.buffers[cursor.depth] = buffer;
++    ++cursor.depth;
++  }
++  ~Scope() { --cursor.depth; }
++  Scope(const Scope&) = delete;
++  Scope& operator=(const Scope&) = delete;
++};
++
++}  // namespace rex::graphics::fh1_command_cursor
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 953c5fd..c24275c 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -393,6 +393,155 @@ void RenderTargetCache::ClearCache() {
+   }
+ }
+ 
++void RenderTargetCache::GetBindingPrediction(BindingPrediction& prediction) const {
++  prediction.valid = are_accumulated_render_targets_valid_;
++  for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++    const RenderTarget* render_target = last_update_accumulated_render_targets_[i];
++    prediction.accumulated_keys[i] = render_target ? render_target->key().key : 0;
++  }
++}
++
++bool RenderTargetCache::PredictUpdate(BindingPrediction& prediction, bool is_rasterization_done,
++                                      reg::RB_DEPTHCONTROL normalized_depth_control,
++                                      uint32_t normalized_color_mask) const {
++  // Update's choice of render targets and its accumulation, on keys instead of render targets
++  // (one render target per key).
++  if (GetPath() != Path::kHostRenderTargets) {
++    return true;
++  }
++  const RegisterFile& regs = register_file();
++  auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
++  xenos::MsaaSamples msaa_samples = rb_surface_info.msaa_samples;
++  if (msaa_samples > xenos::MsaaSamples::k4X) {
++    return false;
++  }
++  uint32_t msaa_samples_x_log2 = uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);
++  uint32_t pitch_pixels = rb_surface_info.surface_pitch;
++  if (!pitch_pixels) {
++    is_rasterization_done = false;
++  } else if (pitch_pixels > xenos::kTexture2DCubeMaxWidthHeight) {
++    return false;
++  }
++  uint32_t pitch_tiles_at_32bpp =
++      ((pitch_pixels << msaa_samples_x_log2) + (xenos::kEdramTileWidthSamples - 1)) /
++      xenos::kEdramTileWidthSamples;
++
++  uint32_t depth_and_color_rts_used_bits = 0;
++  uint32_t edram_bases[1 + xenos::kMaxColorRenderTargets];
++  uint32_t resource_formats[1 + xenos::kMaxColorRenderTargets];
++  if (is_rasterization_done) {
++    if (normalized_depth_control.z_enable || normalized_depth_control.stencil_enable) {
++      depth_and_color_rts_used_bits |= 1;
++      auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
++      edram_bases[0] = rb_depth_info.depth_base;
++      resource_formats[0] = uint32_t(rb_depth_info.depth_format);
++    }
++    for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
++      if (!(normalized_color_mask & (uint32_t(0b1111) << (4 * i)))) {
++        continue;
++      }
++      auto color_info = regs.Get<reg::RB_COLOR_INFO>(reg::RB_COLOR_INFO::rt_register_indices[i]);
++      uint32_t rt_bit_index = 1 + i;
++      depth_and_color_rts_used_bits |= uint32_t(1) << rt_bit_index;
++      edram_bases[rt_bit_index] = color_info.color_base;
++      resource_formats[rt_bit_index] =
++          uint32_t(GetColorResourceFormat(xenos::GetStorageColorFormat(color_info.color_format)));
++    }
++  }
++  uint32_t rts_remaining = depth_and_color_rts_used_bits & ~(uint32_t(1));
++  uint32_t rt_index;
++  while (rex::bit_scan_forward(rts_remaining, &rt_index)) {
++    rts_remaining &= ~(uint32_t(1) << rt_index);
++    uint32_t edram_base = edram_bases[rt_index];
++    uint32_t rts_other_remaining =
++        depth_and_color_rts_used_bits & (~((uint32_t(1) << (rt_index + 1)) - 1) | uint32_t(1));
++    uint32_t rt_other_index;
++    while (rex::bit_scan_forward(rts_other_remaining, &rt_other_index)) {
++      rts_other_remaining &= ~(uint32_t(1) << rt_other_index);
++      if (edram_bases[rt_other_index] == edram_base) {
++        depth_and_color_rts_used_bits &= ~(uint32_t(1) << rt_other_index);
++      }
++    }
++  }
++
++  uint32_t* accumulated = prediction.accumulated_keys;
++  if (!depth_and_color_rts_used_bits) {
++    if (prediction.valid) {
++      for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++        if (!accumulated[i]) {
++          continue;
++        }
++        RenderTargetKey rt_key;
++        rt_key.key = accumulated[i];
++        if (rt_key.pitch_tiles_at_32bpp != pitch_tiles_at_32bpp ||
++            rt_key.msaa_samples != msaa_samples) {
++          prediction.valid = false;
++          break;
++        }
++      }
++    }
++    if (!prediction.valid) {
++      std::memset(accumulated, 0, sizeof(prediction.accumulated_keys));
++    }
++    return true;
++  }
++
++  uint32_t used[1 + xenos::kMaxColorRenderTargets] = {};
++  for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++    if (!(depth_and_color_rts_used_bits & (uint32_t(1) << i))) {
++      continue;
++    }
++    RenderTargetKey rt_key;
++    rt_key.base_tiles = edram_bases[i];
++    rt_key.pitch_tiles_at_32bpp = pitch_tiles_at_32bpp;
++    rt_key.msaa_samples = msaa_samples;
++    rt_key.is_depth = i == 0;
++    rt_key.resource_format = resource_formats[i];
++    used[i] = rt_key.key;
++  }
++  if (prediction.valid) {
++    for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++      if (!accumulated[i]) {
++        if (used[i]) {
++          prediction.valid = false;
++          break;
++        }
++        continue;
++      }
++      if (used[i]) {
++        if (used[i] != accumulated[i]) {
++          prediction.valid = false;
++          break;
++        }
++      } else {
++        RenderTargetKey rt_key;
++        rt_key.key = accumulated[i];
++        if (rt_key.pitch_tiles_at_32bpp != pitch_tiles_at_32bpp ||
++            rt_key.msaa_samples != msaa_samples) {
++          prediction.valid = false;
++          break;
++        }
++      }
++    }
++    for (uint32_t i = 1; prediction.valid && i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++      if (!accumulated[i]) {
++        continue;
++      }
++      for (uint32_t j = 0; j < i; ++j) {
++        if (accumulated[j] == accumulated[i]) {
++          prediction.valid = false;
++          break;
++        }
++      }
++    }
++  }
++  if (!prediction.valid) {
++    std::memcpy(accumulated, used, sizeof(used));
++    prediction.valid = true;
++  }
++  return true;
++}
++
+ void RenderTargetCache::BeginFrame() {
+   ResetAccumulatedRenderTargets();
+ }
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 6dbb9d8..7a376f8 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -40,6 +40,7 @@
+ #include <rex/graphics/util/fh1_hud.h>
+ #include "fh1_device_memory.h"
+ #include "fh1_render_target_trim.h"
++#include "fh1_pipeline_lookahead.h"
+ #include "fh1_submission_watch.h"
+ #include <rex/platform.h>
+ #include "../fh1_frame_cost.h"
+@@ -3374,6 +3375,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+   bool skip_present_due_async_placeholder = REXCVAR_GET(async_shader_compilation) &&
+                                             REXCVAR_GET(vulkan_async_skip_incomplete_frames) &&
+                                             frame_used_async_placeholder_pipeline_;
++  // FH1 (#378): the log's pipeline summary (fh1_pipeline_lookahead.h).
++  ++fh1_pipeline_lookahead::stats.frames;
++  if (skip_present_due_async_placeholder) {
++    ++fh1_pipeline_lookahead::stats.skipped_frames;
++  }
++  fh1_pipeline_lookahead::LogSummary();
+   if (skip_present_due_async_placeholder) {
+     static bool skipped_incomplete_frame_logged = false;
+     if (!skipped_incomplete_frame_logged) {
+@@ -5452,6 +5459,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+   }
+   if (REXCVAR_GET(async_shader_compilation) && pipeline_is_placeholder) {
+     frame_used_async_placeholder_pipeline_ = true;
++    ++fh1_pipeline_lookahead::stats.skipped_draws;  // FH1 (#378)
+     return true;
+   }
+   if (pipeline == VK_NULL_HANDLE || pipeline_layout_provider == nullptr) {
+diff --git a/src/graphics/vulkan/fh1_pipeline_lookahead.cpp b/src/graphics/vulkan/fh1_pipeline_lookahead.cpp
+new file mode 100644
+index 0000000..906fd53
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_pipeline_lookahead.cpp
+@@ -0,0 +1,617 @@
++// FH1 (#378): building the pipelines of queued draws before the command processor reaches them
++// (fh1_pipeline_lookahead.h). The idea is ReGPU's (github.com/zer0ducksgiven/ReGPU, MIT;
++// renderer.cpp GpuLookahead): at a pipeline miss, walk what is queued on shadow registers and
++// build everything missing at once.
++//
++// The walk runs on the command processor thread, inside the draw whose pipeline is missing,
++// because it uses the command processor's shader cache, translator and render target state. It
++// puts the registers it finds into the command processor's own register file (the context
++// registers only, which no other thread reads) and restores them before the draw goes on, so the
++// pipeline cache works out each queued draw's pipeline with the same code as the draw itself.
++// It is bounded in packets, draws, pipelines and time, and the pipelines are built on the
++// pipeline creation threads, never on this one.
++
++#include "fh1_pipeline_lookahead.h"
++
++#include <algorithm>
++#include <chrono>
++#include <cstring>
++#include <string>
++#include <vector>
++
++#include <fmt/format.h>
++
++#include <rex/cvar.h>
++#include <rex/graphics/flags.h>
++#include <rex/graphics/register_file.h>
++#include <rex/graphics/registers.h>
++#include <rex/graphics/util/draw.h>
++#include <rex/graphics/vulkan/command_processor.h>
++#include <rex/graphics/vulkan/pipeline_cache.h>
++#include <rex/graphics/vulkan/primitive_processor.h>
++#include <rex/graphics/vulkan/render_target_cache.h>
++#include <rex/graphics/xenos.h>
++#include <rex/logging.h>
++#include <rex/memory.h>
++
++#include "../fh1_command_cursor.h"
++
++REXCVAR_DEFINE_BOOL(vulkan_pipeline_lookahead, true, "GPU/Vulkan",
++                    "When a draw needs a pipeline that is not built yet, look through the draws "
++                    "already queued behind it and start building every pipeline they need at "
++                    "once, in the background (with synchronous creation: wait once for all)")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload);
++REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_packets, 262144, "GPU/Vulkan",
++                      "Pipeline lookahead: command packets looked at in one walk at most "
++                      "(padding words included)")
++    .debug_only();
++REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_pipelines, 64, "GPU/Vulkan",
++                      "Pipeline lookahead: pipelines started by one walk at most")
++    .debug_only();
++REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_draws, 4096, "GPU/Vulkan",
++                      "Pipeline lookahead: draws whose pipeline one walk works out at most")
++    .debug_only();
++REXCVAR_DEFINE_BOOL(vulkan_pipeline_lookahead_past_waits, false, "GPU/Vulkan",
++                    "Pipeline lookahead: go on past a wait for a value the game has not written "
++                    "yet (the commands after it may not be complete)")
++    .debug_only();
++REXCVAR_DEFINE_UINT32(vulkan_pipeline_lookahead_ms, 8, "GPU/Vulkan",
++                      "Pipeline lookahead: time limit of one walk (it delays the draw that "
++                      "started it), in milliseconds")
++    .debug_only();
++
++// primitive_processor.cpp.
++REXCVAR_DECLARE(bool, tessellated_strips_and_fans_as_lists);
++REXCVAR_DECLARE(bool, skip_adaptive_triangle_tessellation);
++
++namespace rex::graphics::vulkan {
++
++namespace {
++
++using namespace fh1_pipeline_lookahead;
++
++// Where the last walk that reached the end of the queue stopped, and the state there: the next
++// miss before the command processor gets there walks only what was queued since.
++struct Resume {
++  bool valid = false;
++  uint64_t position = 0;  // ring dwords since the start
++  uint32_t registers[kRegisterCount];
++  Shader* vertex_shader = nullptr;
++  Shader* pixel_shader = nullptr;
++  uint64_t bin_mask = 0, bin_select = 0;
++  RenderTargetCache::BindingPrediction bindings;
++  bool scene_composited = false;
++  uint32_t scene_base = UINT32_MAX;
++  const void* pipeline_cache = nullptr;
++  uint64_t shader_epoch = 0;
++};
++Resume resume;
++// The furthest ring position a walk reached, and whether and when the last one stopped early.
++uint64_t walked_until = 0;
++bool last_walk_early = false;
++std::chrono::steady_clock::time_point last_walk_time{};
++uint32_t saved_registers[kRegisterCount];
++
++// The fields of PrimitiveProcessor::Process's result that a pipeline depends on, from the
++// registers alone (Process also converts and uploads indices). False where Process fails.
++bool PredictPrimitiveProcessing(const RegisterFile& regs, const PrimitiveProcessor& processor,
++                                PrimitiveProcessor::ProcessingResult& result) {
++  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
++  xenos::PrimitiveType guest_primitive_type = vgt_draw_initiator.prim_type;
++  xenos::PrimitiveType host_primitive_type = guest_primitive_type;
++  bool tessellation_enabled =
++      xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type) &&
++      regs.Get<reg::VGT_OUTPUT_PATH_CNTL>().path_select ==
++          xenos::VGTOutputPath::kTessellationEnable;
++  xenos::TessellationMode tessellation_mode = regs.Get<reg::VGT_HOS_CNTL>().tess_mode;
++  Shader::HostVertexShaderType host_vertex_shader_type = Shader::HostVertexShaderType(-1);
++  if (tessellation_enabled) {
++    switch (guest_primitive_type) {
++      case xenos::PrimitiveType::kTriangleList:
++      case xenos::PrimitiveType::kTriangleFan:
++      case xenos::PrimitiveType::kTriangleStrip:
++        if (guest_primitive_type != xenos::PrimitiveType::kTriangleList) {
++          if (!REXCVAR_GET(tessellated_strips_and_fans_as_lists)) {
++            return false;
++          }
++          host_primitive_type = xenos::PrimitiveType::kTriangleList;
++        }
++        if (tessellation_mode == xenos::TessellationMode::kDiscrete ||
++            tessellation_mode == xenos::TessellationMode::kContinuous) {
++          host_vertex_shader_type = Shader::HostVertexShaderType::kTriangleDomainCPIndexed;
++        }
++        break;
++      case xenos::PrimitiveType::kQuadList:
++        if (tessellation_mode == xenos::TessellationMode::kDiscrete ||
++            tessellation_mode == xenos::TessellationMode::kContinuous) {
++          host_vertex_shader_type = Shader::HostVertexShaderType::kQuadDomainCPIndexed;
++        }
++        break;
++      case xenos::PrimitiveType::kTrianglePatch:
++        if (tessellation_mode == xenos::TessellationMode::kAdaptive &&
++            REXCVAR_GET(skip_adaptive_triangle_tessellation)) {
++          return false;
++        }
++        host_vertex_shader_type = Shader::HostVertexShaderType::kTriangleDomainPatchIndexed;
++        break;
++      case xenos::PrimitiveType::kQuadPatch:
++        host_vertex_shader_type = Shader::HostVertexShaderType::kQuadDomainPatchIndexed;
++        break;
++      default:
++        break;
++    }
++    if (host_vertex_shader_type == Shader::HostVertexShaderType(-1)) {
++      return false;
++    }
++  } else {
++    host_vertex_shader_type = Shader::HostVertexShaderType::kVertex;
++    switch (guest_primitive_type) {
++      case xenos::PrimitiveType::kPointList:
++        if (processor.IsExpandingPointSpritesInVS()) {
++          host_primitive_type = xenos::PrimitiveType::kTriangleStrip;
++          host_vertex_shader_type = Shader::HostVertexShaderType::kPointListAsTriangleStrip;
++        }
++        break;
++      case xenos::PrimitiveType::kLineList:
++      case xenos::PrimitiveType::kLineStrip:
++      case xenos::PrimitiveType::kTriangleList:
++      case xenos::PrimitiveType::kTriangleStrip:
++        break;
++      case xenos::PrimitiveType::kRectangleList:
++        if (processor.IsExpandingRectangleListsInVS()) {
++          host_primitive_type = xenos::PrimitiveType::kTriangleStrip;
++          host_vertex_shader_type = Shader::HostVertexShaderType::kRectangleListAsTriangleStrip;
++        }
++        break;
++      case xenos::PrimitiveType::kTriangleFan:
++        if (processor.IsConvertingTriangleFansToLists()) {
++          host_primitive_type = xenos::PrimitiveType::kTriangleList;
++        }
++        break;
++      case xenos::PrimitiveType::kLineLoop:
++        if (processor.IsConvertingLineLoopsToStrips()) {
++          host_primitive_type = xenos::PrimitiveType::kLineStrip;
++        }
++        break;
++      case xenos::PrimitiveType::kQuadList:
++        if (processor.IsConvertingQuadListsToTriangleLists()) {
++          host_primitive_type = xenos::PrimitiveType::kTriangleList;
++        }
++        break;
++      default:
++        return false;
++    }
++  }
++
++  uint32_t vertex_count = vgt_draw_initiator.num_indices;
++  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
++  bool dma = vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA;
++  if (dma) {
++    vertex_count = std::min(vertex_count, uint32_t(vgt_dma_size.num_words));
++  } else if (vgt_draw_initiator.source_select != xenos::SourceSelect::kAutoIndex) {
++    return false;  // immediate indices: not supported by the draw either
++  }
++  if (!vertex_count) {
++    return false;
++  }
++  bool primitive_reset = false;
++  if (host_vertex_shader_type == Shader::HostVertexShaderType::kPointListAsTriangleStrip ||
++      host_vertex_shader_type == Shader::HostVertexShaderType::kRectangleListAsTriangleStrip) {
++    primitive_reset = true;
++  } else if (dma) {
++    if (tessellation_enabled && tessellation_mode == xenos::TessellationMode::kAdaptive) {
++      if (vgt_draw_initiator.index_size != xenos::IndexFormat::kInt32) {
++        return false;
++      }
++    } else if (regs.Get<reg::PA_SU_SC_MODE_CNTL>().multi_prim_ib_ena &&
++               host_primitive_type == guest_primitive_type) {
++      // Process keeps the guest's primitive reset unless it converts the primitive type.
++      switch (guest_primitive_type) {
++        case xenos::PrimitiveType::kLineStrip:
++        case xenos::PrimitiveType::kTriangleFan:
++        case xenos::PrimitiveType::kTriangleStrip:
++        case xenos::PrimitiveType::kLineLoop:
++        case xenos::PrimitiveType::kQuadStrip:
++        case xenos::PrimitiveType::kPolygon:
++        case xenos::PrimitiveType::k2DLineStrip:
++        case xenos::PrimitiveType::k2DTriStrip:
++          if (vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16) {
++            xenos::Endian endian = vgt_dma_size.swap_mode;
++            if (endian != xenos::Endian::kNone && endian != xenos::Endian::k8in16) {
++              endian = endian == xenos::Endian::k8in32 ? xenos::Endian::k8in16
++                                                       : xenos::Endian::kNone;
++            }
++            primitive_reset =
++                xenos::GpuSwap(regs.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx,
++                               endian) <= UINT16_MAX;
++          } else {
++            primitive_reset = true;
++          }
++          break;
++        default:
++          break;
++      }
++    }
++  }
++  result.guest_primitive_type = guest_primitive_type;
++  result.host_primitive_type = host_primitive_type;
++  result.host_vertex_shader_type = host_vertex_shader_type;
++  result.tessellation_mode = tessellation_mode;
++  result.host_primitive_reset_enabled = primitive_reset;
++  return true;
++}
++
++}  // namespace
++
++void VulkanCommandProcessor::Fh1PipelineLookahead() {
++  const auto walk_start = std::chrono::steady_clock::now();
++  auto& cursor = fh1_command_cursor::cursor;
++  const memory::RingBuffer* ring = cursor.ring;
++  if (!ring || !cursor.depth || cursor.depth > fh1_command_cursor::kMaxBuffers ||
++      cursor.buffers[0] != ring || !pipeline_cache_ || !render_target_cache_ ||
++      !primitive_processor_) {
++    return;
++  }
++  uint32_t ring_dwords = uint32_t(ring->capacity() / sizeof(uint32_t));
++  uint32_t write_index = write_ptr_index_.load(std::memory_order_acquire);
++  if (!ring_dwords || write_index == 0xBAADF00D) {
++    return;
++  }
++  write_index %= ring_dwords;
++  uint32_t cp_index = uint32_t(ring->read_offset() / sizeof(uint32_t));
++  uint64_t cp_position =
++      cursor.ring_done + RingDistance(cursor.ring_start, cp_index, ring_dwords);
++  uint64_t write_position = cp_position + RingDistance(cp_index, write_index, ring_dwords);
++
++  VulkanPipelineCache& pipelines = *pipeline_cache_;
++  const uint64_t epoch = shader_epoch.load(std::memory_order_relaxed);
++  bool resumed = resume.valid && resume.pipeline_cache == &pipelines &&
++                 resume.shader_epoch == epoch && cp_position <= resume.position &&
++                 resume.position <= write_position;
++  if (resumed && resume.position == write_position) {
++    return;  // walked up to the write pointer already, nothing queued since
++  }
++  if (!resumed) {
++    // A walk cut short covers this point already (or, at the same ring position, inside the same
++    // indirect buffers, did so moments ago).
++    if (cp_position < walked_until ||
++        (cp_position == walked_until && last_walk_early &&
++         walk_start - last_walk_time < std::chrono::milliseconds(20))) {
++      return;
++    }
++  }
++
++  // Draws are looked at only when their pipeline state may differ from the previous draw's.
++  struct Hooks {
++    VulkanCommandProcessor& cp;
++    RegisterFile& regs;
++    VulkanPipelineCache& pipelines;
++    Shader* vertex_shader;
++    Shader* pixel_shader;
++    RenderTargetCache::BindingPrediction bindings;
++    bool scene_composited;
++    uint32_t scene_base;
++    uint32_t max_pipelines, max_draws;
++    std::chrono::steady_clock::time_point deadline;
++    bool dirty = true;
++    uint32_t last_draw_bits = 0;
++    Shader* last_vertex_shader = nullptr;
++    Shader* last_pixel_shader = nullptr;
++    uint32_t draws = 0, queued = 0;
++    bool out = false;
++
++    void Register(uint32_t index, uint32_t value) {
++      uint32_t& r = regs.values[index];
++      if (r != value) {
++        r = value;
++        dirty = true;
++      }
++    }
++    const uint32_t* Translate(uint32_t physical, uint32_t bytes) {
++      if (physical >= 0x20000000u || bytes > 0x20000000u - physical) {
++        return nullptr;
++      }
++      return cp.memory_->TranslatePhysical<const uint32_t*>(physical);
++    }
++    void LoadShader(uint32_t type, const uint32_t* words, uint32_t dwords) {
++      if (type > uint32_t(xenos::ShaderType::kPixel)) {
++        return;
++      }
++      // A copy: the game may change the memory under the hash.
++      std::vector<uint32_t> ucode(words, words + dwords);
++      Shader* shader =
++          pipelines.LoadShaderAhead(xenos::ShaderType(type), ucode.data(), dwords);
++      (type == uint32_t(xenos::ShaderType::kVertex) ? vertex_shader : pixel_shader) = shader;
++    }
++    // Asked by the walker every few packets and after each draw looked at (which may have
++    // translated shaders).
++    bool Out() {
++      if (!out) {
++        out = std::chrono::steady_clock::now() >= deadline;
++      }
++      return out;
++    }
++    End Swap() {
++      // With split rendering, the next frame starts in the scene partition. (The render
++      // targets Update accumulates are kept across frames: the Vulkan backend does not call
++      // RenderTargetCache::BeginFrame.)
++      dirty = true;
++      if (cp.fh1_other_render_targets_) {
++        if (cp.fh1_native_hud_active_) {
++          return End::kPartition;
++        }
++        scene_composited = false;
++        scene_base = UINT32_MAX;
++      }
++      return End::kQueueEnd;
++    }
++    End Draw(uint32_t initiator, bool dma, uint32_t dma_base, uint32_t dma_size) {
++      // Written by the draw packet: not state changes by themselves.
++      regs.values[kRegisterDrawInitiator] = initiator;
++      if (dma) {
++        regs.values[kRegisterDmaBase] = dma_base;
++        regs.values[kRegisterDmaSize] = dma_size;
++      }
++      // The same state as the previous draw looked at: the same pipeline.
++      uint32_t draw_bits = (initiator & 0xFFF) | ((dma ? dma_size >> 30 : 0) << 12) |
++                           (uint32_t((initiator >> 16) != 0) << 14);
++      if (!dirty && draw_bits == last_draw_bits && vertex_shader == last_vertex_shader &&
++          pixel_shader == last_pixel_shader) {
++        return End::kQueueEnd;
++      }
++      dirty = false;
++      last_draw_bits = draw_bits;
++      last_vertex_shader = vertex_shader;
++      last_pixel_shader = pixel_shader;
++      if (++draws > max_draws) {
++        return End::kDraws;
++      }
++      End end = PredictDraw();
++      if (end != End::kQueueEnd) {
++        return end;
++      }
++      return Out() ? End::kTime : End::kQueueEnd;
++    }
++
++    // As VulkanCommandProcessor::IssueDraw up to ConfigurePipeline, with predictions where
++    // the draw changes state (primitive processing, render target bindings).
++    End PredictDraw() {
++      const RegisterFile& r = regs;
++      if (r.Get<reg::PA_SC_VIZ_QUERY>().viz_query_ena &&
++          r.Get<reg::PA_SC_VIZ_QUERY>().kill_pix_post_hi_z) {
++        return End::kQueueEnd;  // dropped by ExecutePacketType3Draw
++      }
++      xenos::EdramMode edram_mode = r.Get<reg::RB_MODECONTROL>().edram_mode;
++      if (edram_mode == xenos::EdramMode::kCopy || !vertex_shader) {
++        return End::kQueueEnd;
++      }
++      auto* vs = static_cast<VulkanShader*>(vertex_shader);
++      pipelines.AnalyzeShaderUcode(*vs);
++      bool memexport_used_vertex = vs->memexport_eM_written() != 0;
++      bool primitive_polygonal = draw_util::IsPrimitivePolygonal(r);
++      bool is_rasterization_done =
++          draw_util::IsRasterizationPotentiallyDone(r, primitive_polygonal);
++      if (r.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0 && is_rasterization_done) {
++        return End::kQueueEnd;
++      }
++      VulkanShader* ps = nullptr;
++      if (is_rasterization_done) {
++        if (edram_mode == xenos::EdramMode::kColorDepth && pixel_shader) {
++          ps = static_cast<VulkanShader*>(pixel_shader);
++          pipelines.AnalyzeShaderUcode(*ps);
++          if (!draw_util::IsPixelShaderNeededWithRasterization(*ps, r)) {
++            ps = nullptr;
++          }
++        }
++      } else if (!memexport_used_vertex) {
++        return End::kQueueEnd;
++      }
++      reg::RB_DEPTHCONTROL normalized_depth_control = draw_util::GetNormalizedDepthControl(r);
++      uint32_t ps_param_gen_pos = UINT32_MAX;
++      uint32_t interpolator_mask =
++          ps ? (vs->writes_interpolators() &
++                ps->GetInterpolatorInputMask(r.Get<reg::SQ_PROGRAM_CNTL>(),
++                                             r.Get<reg::SQ_CONTEXT_MISC>(), ps_param_gen_pos))
++             : 0;
++      // FH1's split rendering: the HUD partition has its own caches; stop where it begins.
++      if (cp.fh1_other_render_targets_ && is_rasterization_done && ps &&
++          !cp.fh1_native_hud_active_) {
++        const auto color = r.Get<reg::RB_COLOR_INFO>();
++        const auto surface = r.Get<reg::RB_SURFACE_INFO>();
++        const bool front_buffer =
++            surface.surface_pitch == 1280 && surface.msaa_samples == xenos::MsaaSamples::k1X;
++        if (front_buffer && color.color_format == xenos::ColorRenderTargetFormat::k_2_10_10_10) {
++          scene_composited = true;
++          scene_base = color.color_base;
++        } else if (front_buffer &&
++                   color.color_format ==
++                       xenos::ColorRenderTargetFormat::k_2_10_10_10_AS_10_10_10_10 &&
++                   (!scene_composited || color.color_base == scene_base)) {
++          return End::kPartition;
++        }
++      }
++      if (cp.fh1_other_pipelines_) {
++        vs = pipelines.LoadShaderForDraw(*vs);
++        pipelines.AnalyzeShaderUcode(*vs);
++        if (ps) {
++          ps = pipelines.LoadShaderForDraw(*ps);
++          pipelines.AnalyzeShaderUcode(*ps);
++        }
++      }
++      PrimitiveProcessor::ProcessingResult primitive_processing_result;
++      if (!PredictPrimitiveProcessing(r, *cp.primitive_processor_, primitive_processing_result)) {
++        return End::kQueueEnd;
++      }
++      Shader::HostVertexShaderType host_vertex_shader_type =
++          primitive_processing_result.host_vertex_shader_type;
++      if (host_vertex_shader_type != Shader::HostVertexShaderType::kVertex &&
++          host_vertex_shader_type != Shader::HostVertexShaderType::kPointListAsTriangleStrip &&
++          host_vertex_shader_type != Shader::HostVertexShaderType::kRectangleListAsTriangleStrip &&
++          !Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
++        return End::kQueueEnd;
++      }
++      auto vertex_shader_modification = pipelines.GetCurrentVertexShaderModification(
++          *vs, host_vertex_shader_type, interpolator_mask, ps_param_gen_pos != UINT32_MAX);
++      auto pixel_shader_modification =
++          ps ? pipelines.GetCurrentPixelShaderModification(*ps, interpolator_mask,
++                                                           ps_param_gen_pos,
++                                                           normalized_depth_control)
++             : SpirvShaderTranslator::Modification(0);
++      auto* vertex_shader_translation = static_cast<VulkanShader::VulkanTranslation*>(
++          vs->GetOrCreateTranslation(vertex_shader_modification.value));
++      auto* pixel_shader_translation =
++          ps ? static_cast<VulkanShader::VulkanTranslation*>(
++                   ps->GetOrCreateTranslation(pixel_shader_modification.value))
++             : nullptr;
++      uint32_t normalized_color_mask =
++          ps ? draw_util::GetNormalizedColorMask(r, ps->writes_color_targets()) : 0;
++      VulkanRenderTargetCache::RenderPassKey render_pass_key;
++      if (!cp.render_target_cache_->PredictRenderPassKey(bindings, is_rasterization_done,
++                                                         normalized_depth_control,
++                                                         normalized_color_mask,
++                                                         render_pass_key)) {
++        return End::kQueueEnd;
++      }
++      if (pipelines.QueuePipelineAhead(vertex_shader_translation, pixel_shader_translation,
++                                       primitive_processing_result, normalized_depth_control,
++                                       normalized_color_mask, render_pass_key) ==
++              VulkanPipelineCache::AheadResult::kQueued &&
++          ++queued >= max_pipelines) {
++        return End::kPipelines;
++      }
++      return End::kQueueEnd;
++    }
++  };
++
++  uint32_t* live = register_file_->values + kFirstRegister;
++  std::memcpy(saved_registers, live, sizeof(saved_registers));
++  Hooks hooks{*this,
++              *register_file_,
++              pipelines,
++              active_vertex_shader_,
++              active_pixel_shader_,
++              {},
++              fh1_scene_composited_,
++              fh1_scene_base_,
++              std::max(REXCVAR_GET(vulkan_pipeline_lookahead_pipelines), uint32_t(1)),
++              REXCVAR_GET(vulkan_pipeline_lookahead_draws),
++              walk_start + std::chrono::milliseconds(REXCVAR_GET(vulkan_pipeline_lookahead_ms))};
++  uint64_t bin_mask = bin_mask_, bin_select = bin_select_;
++  uint64_t ring_position = cp_position;
++  uint32_t ring_index = cp_index;
++  if (resumed) {
++    std::memcpy(live, resume.registers, sizeof(resume.registers));
++    hooks.vertex_shader = resume.vertex_shader;
++    hooks.pixel_shader = resume.pixel_shader;
++    hooks.bindings = resume.bindings;
++    hooks.scene_composited = resume.scene_composited;
++    hooks.scene_base = resume.scene_base;
++    bin_mask = resume.bin_mask;
++    bin_select = resume.bin_select;
++    ring_position = resume.position;
++    ring_index = uint32_t((cp_index + (resume.position - cp_position)) % ring_dwords);
++  } else {
++    render_target_cache_->GetBindingPrediction(hooks.bindings);
++  }
++  Walker<Hooks> walker(hooks, REXCVAR_GET(vulkan_pipeline_lookahead_packets), bin_mask,
++                       bin_select);
++  walker.set_stop_at_unmet_waits(!REXCVAR_GET(vulkan_pipeline_lookahead_past_waits));
++  End end = End::kQueueEnd;
++  if (!resumed) {
++    // First the rest of the indirect buffers being executed, innermost first. A finished one's
++    // read offset is back at its start.
++    for (uint32_t k = std::min(cursor.depth, fh1_command_cursor::kMaxBuffers) - 1;
++         k >= 1 && end == End::kQueueEnd; --k) {
++      const memory::RingBuffer* buffer = cursor.buffers[k];
++      uint32_t at = uint32_t(buffer->read_offset() / sizeof(uint32_t));
++      uint32_t dwords = uint32_t(buffer->capacity() / sizeof(uint32_t));
++      if (!at || at >= dwords) {
++        continue;
++      }
++      end = walker.Walk(reinterpret_cast<const uint32_t*>(buffer->buffer()), at, dwords - at, 0,
++                        k);
++      if (end == End::kBadPacket) {
++        end = End::kQueueEnd;  // that buffer's end
++      }
++    }
++  }
++  uint64_t reached = ring_position;
++  if (end == End::kQueueEnd && write_position > ring_position) {
++    end = walker.Walk(reinterpret_cast<const uint32_t*>(ring->buffer()), ring_index,
++                      uint32_t(write_position - ring_position), ring_dwords);
++    reached = ring_position + walker.stopped();
++  }
++
++  if (end == End::kQueueEnd) {
++    resume.valid = true;
++    resume.position = write_position;
++    std::memcpy(resume.registers, live, sizeof(resume.registers));
++    resume.vertex_shader = hooks.vertex_shader;
++    resume.pixel_shader = hooks.pixel_shader;
++    resume.bin_mask = walker.bin_mask();
++    resume.bin_select = walker.bin_select();
++    resume.bindings = hooks.bindings;
++    resume.scene_composited = hooks.scene_composited;
++    resume.scene_base = hooks.scene_base;
++    resume.pipeline_cache = &pipelines;
++    resume.shader_epoch = epoch;
++    walked_until = write_position;
++  } else {
++    resume.valid = false;
++    walked_until = std::max(walked_until, reached);
++  }
++  last_walk_early = end != End::kQueueEnd;
++  std::memcpy(live, saved_registers, sizeof(saved_registers));
++
++  const auto walk_end = std::chrono::steady_clock::now();
++  last_walk_time = walk_end;
++  ++stats.walks;
++  stats.walk_packets += walker.packets();
++  stats.walk_draws += hooks.draws;
++  stats.walk_unmet_waits += walker.unmet_waits();
++  stats.queued_ahead += hooks.queued;
++  ++stats.ends[uint32_t(end)];
++  stats.walk_ms += std::chrono::duration<double, std::milli>(walk_end - walk_start).count();
++}
++
++namespace fh1_pipeline_lookahead {
++
++void LogSummary() {
++  static auto last_log = std::chrono::steady_clock::time_point{};
++  static uint64_t last_created = 0, last_skipped_draws = 0, last_placeholders = 0;
++  const auto now = std::chrono::steady_clock::now();
++  if (now - last_log < std::chrono::seconds(10)) {
++    return;
++  }
++  uint64_t created = stats.created.load(std::memory_order_relaxed);
++  uint64_t placeholders = stats.placeholders.load(std::memory_order_relaxed);
++  if (created == last_created && stats.skipped_draws == last_skipped_draws &&
++      placeholders == last_placeholders) {
++    return;
++  }
++  last_log = now;
++  last_created = created;
++  last_skipped_draws = stats.skipped_draws;
++  last_placeholders = placeholders;
++  std::string ends;
++  for (uint32_t i = 0; i < uint32_t(End::kCount); ++i) {
++    if (stats.ends[i]) {
++      ends += fmt::format("{}{} {}", ends.empty() ? "" : ", ", EndName(End(i)), stats.ends[i]);
++    }
++  }
++  REXGPU_INFO(
++      "Pipelines: {} built, {} of them ahead of their draws ({} drawn with so far, {} failed), "
++      "{} placeholders; {} draws skipped and {} of {} frames not shown while pipelines were "
++      "built; lookahead: {} walks ({}), {} packets, {} draws, {} queued, {} unmet waits, {:.1f} ms; "
++      "{} waits {:.1f} ms",
++      created, stats.created_ahead.load(std::memory_order_relaxed), stats.drawn_ahead,
++      stats.failed_ahead.load(std::memory_order_relaxed), placeholders, stats.skipped_draws,
++      stats.skipped_frames, stats.frames, stats.walks, ends.empty() ? "none" : ends,
++      stats.walk_packets, stats.walk_draws, stats.queued_ahead, stats.walk_unmet_waits,
++      stats.walk_ms, stats.waits,
++      stats.wait_ms);
++}
++
++}  // namespace fh1_pipeline_lookahead
++
++}  // namespace rex::graphics::vulkan
+diff --git a/src/graphics/vulkan/fh1_pipeline_lookahead.h b/src/graphics/vulkan/fh1_pipeline_lookahead.h
+new file mode 100644
+index 0000000..fec8310
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_pipeline_lookahead.h
+@@ -0,0 +1,349 @@
++// FH1 (#378): building the pipelines of queued draws before the command processor reaches them.
++//
++// When a draw needs a pipeline that does not exist yet, the command processor walks the commands
++// the game has already queued behind it (the rest of the indirect buffers being executed and the
++// ring up to the write pointer, and the indirect buffers those call) on a copy of the context
++// registers, works out each draw's pipeline the way the draw itself will, and hands every one not
++// built yet to the pipeline creation threads together, instead of meeting them one draw at a time.
++// The idea is ReGPU's (github.com/zer0ducksgiven/ReGPU, MIT; renderer.cpp GpuLookahead).
++//
++// This header holds the parts without SDK types, for tools/test_pipeline_lookahead.cpp: the PM4
++// walk over guest command words (Walker) and the ring position arithmetic. The register copy, the
++// draws' pipelines and the creation are in fh1_pipeline_lookahead.cpp and pipeline_cache.cpp.
++#pragma once
++
++#include <atomic>
++#include <cstdint>
++#include <vector>
++
++namespace rex::graphics::vulkan::fh1_pipeline_lookahead {
++
++// Why a walk stopped.
++enum class End : uint32_t {
++  kQueueEnd,   // everything queued was walked
++  kPackets,    // the packet limit
++  kPipelines,  // the limit of pipelines started by one walk
++  kDraws,      // the limit of draws looked at
++  kTime,       // the time limit
++  kWait,       // a WAIT_REG_MEM on guest memory not satisfied yet: what follows may not be ready
++  kPartition,  // FH1's split rendering switches to the other render partition (its own caches)
++  kBadPacket,  // a packet longer than its buffer
++  kCount,
++};
++
++inline const char* EndName(End end) {
++  switch (end) {
++    case End::kQueueEnd: return "queue end";
++    case End::kPackets: return "packets";
++    case End::kPipelines: return "pipelines";
++    case End::kDraws: return "draws";
++    case End::kTime: return "time";
++    case End::kWait: return "wait";
++    case End::kPartition: return "partition";
++    case End::kBadPacket: return "bad packet";
++    default: return "?";
++  }
++}
++
++// What the log's pipeline summary counts (since the start; one command processor per process).
++struct Stats {
++  // Any thread (the creation threads too).
++  std::atomic<uint64_t> created{0};        // pipelines built (placeholders not counted)
++  std::atomic<uint64_t> created_ahead{0};  // of those, started by a lookahead
++  std::atomic<uint64_t> failed_ahead{0};   // started by a lookahead, creation failed
++  std::atomic<uint64_t> placeholders{0};   // placeholders built on the command processor thread
++  // The command processor thread.
++  uint64_t walks = 0, walk_packets = 0, walk_draws = 0, queued_ahead = 0, drawn_ahead = 0;
++  uint64_t walk_unmet_waits = 0;
++  uint64_t ends[uint32_t(End::kCount)] = {};
++  double walk_ms = 0, wait_ms = 0;
++  uint64_t waits = 0;
++  uint64_t frames = 0, skipped_frames = 0, skipped_draws = 0;
++};
++inline Stats stats;
++
++// Advanced when a pipeline cache deletes its shaders: a walk's saved state is stale then.
++inline std::atomic<uint64_t> shader_epoch{0};
++
++// The log's pipeline summary, at most every 10 s while pipelines are being built (the swaps).
++void LogSummary();
++
++// Ring dwords from index `from` to index `to` (exclusive), wrapping at `size` dwords.
++inline uint32_t RingDistance(uint32_t from, uint32_t to, uint32_t size) {
++  return size ? (to + size - from) % size : 0;
++}
++
++// The registers a walk keeps: the context registers (render state, VGT, SQ, RB, PA).
++// Constants (0x4000 and up) do not change pipelines; the ones below are the command processor's.
++constexpr uint32_t kFirstRegister = 0x2000;
++constexpr uint32_t kRegisterCount = 0x2000;
++constexpr uint32_t kRegisterDrawInitiator = 0x21FC;  // VGT_DRAW_INITIATOR
++constexpr uint32_t kRegisterDmaBase = 0x21FA;        // VGT_DMA_BASE
++constexpr uint32_t kRegisterDmaSize = 0x21FB;        // VGT_DMA_SIZE
++constexpr uint32_t kMaxDepth = 4;                    // indirect buffers in indirect buffers
++
++// PM4 type-3 opcodes the walk follows (xenos.h).
++namespace pm4 {
++constexpr uint32_t kDrawIndx = 0x22, kDrawIndx2 = 0x36, kImLoad = 0x27, kImLoadImmediate = 0x2B,
++                   kSetConstant = 0x2D, kSetConstant2 = 0x55, kSetShaderConstants = 0x56,
++                   kLoadAluConstant = 0x2F, kIndirectBuffer = 0x3F, kIndirectBufferPfd = 0x37,
++                   kWaitRegMem = 0x3C, kXeSwap = 0x64, kSetBinMaskLo = 0x60,
++                   kSetBinMaskHi = 0x61, kSetBinSelectLo = 0x62, kSetBinSelectHi = 0x63,
++                   kSetBinMask = 0x50, kSetBinSelect = 0x51;
++}  // namespace pm4
++
++inline uint32_t Swap32(uint32_t v) {
++  return (v >> 24) | ((v >> 8) & 0xFF00u) | ((v << 8) & 0xFF0000u) | (v << 24);
++}
++
++// Walks PM4 packets as the command processor executes them, without executing anything. Hooks:
++//   void Register(uint32_t index, uint32_t value)  a context register write (index in
++//                                                  [kFirstRegister, +kRegisterCount))
++//   const uint32_t* Translate(uint32_t physical, uint32_t bytes)  guest memory (big-endian
++//                                                  words) or nullptr when out of range
++//   void LoadShader(uint32_t type, const uint32_t* words, uint32_t dwords)  IM_LOAD(_IMMEDIATE):
++//                                                  guest-endian words, contiguous
++//   End Draw(uint32_t initiator, bool dma, uint32_t dma_base, uint32_t dma_size)
++//                                                  a draw (kQueueEnd to go on, else why to stop)
++//   End Swap()                                     the end of a frame
++//   bool Out()                                     the time limit was reached (asked every
++//                                                  kOutInterval words, padding included)
++constexpr uint32_t kOutInterval = 64;
++
++template <typename Hooks>
++class Walker {
++ public:
++  Walker(Hooks& hooks, uint32_t max_packets, uint64_t bin_mask, uint64_t bin_select)
++      : hooks_(hooks), max_packets_(max_packets), bin_mask_(bin_mask), bin_select_(bin_select) {}
++
++  // Walks `count` dwords of `base` from dword `start`, wrapping at `wrap` dwords (0: no wrap).
++  // At depth 0, stopped() is then the dword (from `start`) where the walk stopped: the packet
++  // that stopped it, or `count`. Every packet counts towards the packet limit, padding words
++  // included, and the time limit is checked every kOutInterval of them whatever their type.
++  End Walk(const uint32_t* base, uint32_t start, uint32_t count, uint32_t wrap,
++           uint32_t depth = 0) {
++    Buffer b{base, start, count, wrap};
++    uint32_t i = 0;
++    End end = End::kQueueEnd;
++    while (i < count) {
++      if (++packets_ > max_packets_) {
++        end = End::kPackets;
++        break;
++      }
++      if (!(packets_ % kOutInterval) && hooks_.Out()) {
++        end = End::kTime;
++        break;
++      }
++      uint32_t header = b.Word(i);
++      if (header == 0 || (header >> 30) == 2) {
++        ++i;  // padding (zero words and type-2 packets)
++        continue;
++      }
++      uint32_t type = header >> 30;
++      if (type == 1) {
++        // Two registers with 11-bit indices: none is a context register.
++        if (count - i < 3) {
++          end = End::kBadPacket;
++          break;
++        }
++        i += 3;
++        continue;
++      }
++      uint32_t n = ((header >> 16) & 0x3FFF) + 1;
++      if (n > count - i - 1) {
++        end = End::kBadPacket;
++        break;
++      }
++      if (type == 0) {
++        uint32_t index = header & 0x7FFF;
++        bool one = (header >> 15) & 1;
++        for (uint32_t k = 0; k < n; ++k) Set(one ? index : index + k, b.Word(i + 1 + k));
++        i += 1 + n;
++        continue;
++      }
++      end = Packet3(b, header, i + 1, n, depth);
++      if (end != End::kQueueEnd) break;
++      i += 1 + n;
++    }
++    if (!depth) stopped_ = end == End::kQueueEnd ? count : i;
++    return end;
++  }
++
++  // Whether a wait on guest memory not satisfied yet ends the walk (else it is only counted).
++  void set_stop_at_unmet_waits(bool stop) { stop_at_unmet_waits_ = stop; }
++  uint32_t unmet_waits() const { return unmet_waits_; }
++  uint32_t stopped() const { return stopped_; }
++  uint64_t bin_mask() const { return bin_mask_; }
++  uint64_t bin_select() const { return bin_select_; }
++  uint32_t packets() const { return packets_; }
++
++ private:
++  struct Buffer {
++    const uint32_t* base;
++    uint32_t start, count, wrap;
++    uint32_t Word(uint32_t i) const {
++      uint32_t at = start + i;
++      if (wrap) at %= wrap;
++      return Swap32(base[at]);
++    }
++  };
++
++  void Set(uint32_t index, uint32_t value) {
++    if (index >= kFirstRegister && index < kFirstRegister + kRegisterCount) {
++      hooks_.Register(index, value);
++    }
++  }
++
++  End Packet3(const Buffer& b, uint32_t header, uint32_t d, uint32_t n, uint32_t depth) {
++    uint32_t opcode = (header >> 8) & 0x7F;
++    // Predicated packets run only for the selected bins; predicated swaps never.
++    if ((header & 1) && (!(bin_select_ & bin_mask_) || opcode == pm4::kXeSwap)) {
++      return End::kQueueEnd;
++    }
++    auto arg = [&](uint32_t k) { return b.Word(d + k); };
++    switch (opcode) {
++      case pm4::kIndirectBuffer:
++      case pm4::kIndirectBufferPfd: {
++        if (n < 2 || depth >= kMaxDepth) break;
++        uint32_t address = arg(0) & 0x1FFFFFFF;
++        uint32_t dwords = arg(1) & 0xFFFFF;
++        const uint32_t* words = dwords ? hooks_.Translate(address, dwords * 4) : nullptr;
++        if (!words) break;
++        End end = Walk(words, 0, dwords, 0, depth + 1);
++        // A packet cut by its indirect buffer's end ends only that buffer, as on the GPU.
++        if (end != End::kQueueEnd && end != End::kBadPacket) return end;
++      } break;
++      case pm4::kSetConstant: {
++        if (n < 1) break;
++        uint32_t offset_type = arg(0);
++        // Type 4 is registers; 0-3 are ALU, fetch, bool and loop constants.
++        if (((offset_type >> 16) & 0xFF) == 4) {
++          uint32_t index = kFirstRegister + (offset_type & 0x7FF);
++          for (uint32_t k = 1; k < n; ++k) Set(index + k - 1, arg(k));
++        }
++      } break;
++      case pm4::kSetConstant2:
++      case pm4::kSetShaderConstants: {
++        if (n < 1) break;
++        uint32_t index = arg(0) & 0xFFFF;
++        for (uint32_t k = 1; k < n; ++k) Set(index + k - 1, arg(k));
++      } break;
++      case pm4::kLoadAluConstant: {
++        if (n < 3) break;
++        uint32_t address = arg(0) & 0x3FFFFFFF;
++        uint32_t offset_type = arg(1);
++        uint32_t size = arg(2) & 0xFFF;
++        if (((offset_type >> 16) & 0xFF) != 4 || !size) break;
++        const uint32_t* words = hooks_.Translate(address & 0x1FFFFFFF, size * 4);
++        if (!words) break;
++        uint32_t index = kFirstRegister + (offset_type & 0x7FF);
++        for (uint32_t k = 0; k < size; ++k) Set(index + k, Swap32(words[k]));
++      } break;
++      case pm4::kImLoad: {
++        if (n < 2) break;
++        uint32_t address_type = arg(0);
++        uint32_t dwords = arg(1) & 0xFFFF;
++        const uint32_t* words =
++            dwords ? hooks_.Translate((address_type & ~3u) & 0x1FFFFFFF, dwords * 4) : nullptr;
++        if (words) hooks_.LoadShader(address_type & 3, words, dwords);
++      } break;
++      case pm4::kImLoadImmediate: {
++        if (n < 2) break;
++        uint32_t dwords = arg(1) & 0xFFFF;
++        if (!dwords || dwords > n - 2) break;
++        // In the ring the microcode may wrap: copy it out (as it is in memory, guest endian).
++        immediate_.resize(dwords);
++        for (uint32_t k = 0; k < dwords; ++k) immediate_[k] = Swap32(arg(2 + k));
++        hooks_.LoadShader(arg(0) & 3, immediate_.data(), dwords);
++      } break;
++      case pm4::kDrawIndx:
++      case pm4::kDrawIndx2: {
++        // DRAW_INDX has the viz query token first.
++        uint32_t k = opcode == pm4::kDrawIndx ? 1 : 0;
++        if (n < k + 1) break;
++        uint32_t initiator = arg(k);
++        // Source select (bits 6-7): 0 is DMA (an index buffer: base and size follow).
++        bool dma = ((initiator >> 6) & 3) == 0;
++        uint32_t dma_base = 0, dma_size = 0;
++        if (dma) {
++          if (n < k + 3) break;
++          dma_base = arg(k + 1);
++          dma_size = arg(k + 2);
++        }
++        End end = hooks_.Draw(initiator, dma, dma_base, dma_size);
++        if (end != End::kQueueEnd) return end;
++      } break;
++      case pm4::kWaitRegMem: {
++        if (n < 5) break;
++        uint32_t info = arg(0);
++        // A wait on guest memory that is not satisfied yet: the game may still be writing what
++        // follows (the indirect buffers, the shaders). Register waits are the GPU's own.
++        if (!(info & 0x10)) break;
++        uint32_t address = arg(1);
++        const uint32_t* word = hooks_.Translate((address & ~3u) & 0x1FFFFFFF, 4);
++        if (!word) break;
++        // As the command processor reads it: the word as loaded, then the GPU endian swap.
++        uint32_t value = *word;
++        switch (address & 3) {
++          case 1: value = ((value & 0x00FF00FFu) << 8) | ((value >> 8) & 0x00FF00FFu); break;
++          case 2: value = Swap32(value); break;
++          case 3: value = (value << 16) | (value >> 16); break;
++          default: break;
++        }
++        if (!WaitMatched(info & 7, value & arg(3), arg(2))) {
++          ++unmet_waits_;
++          if (stop_at_unmet_waits_) return End::kWait;
++        }
++      } break;
++      case pm4::kXeSwap: {
++        End end = hooks_.Swap();
++        if (end != End::kQueueEnd) return end;
++      } break;
++      case pm4::kSetBinMaskLo:
++        if (n >= 1) bin_mask_ = (bin_mask_ & 0xFFFFFFFF00000000ull) | arg(0);
++        break;
++      case pm4::kSetBinMaskHi:
++        if (n >= 1) bin_mask_ = (bin_mask_ & 0xFFFFFFFFull) | (uint64_t(arg(0)) << 32);
++        break;
++      case pm4::kSetBinSelectLo:
++        if (n >= 1) bin_select_ = (bin_select_ & 0xFFFFFFFF00000000ull) | arg(0);
++        break;
++      case pm4::kSetBinSelectHi:
++        if (n >= 1) bin_select_ = (bin_select_ & 0xFFFFFFFFull) | (uint64_t(arg(0)) << 32);
++        break;
++      case pm4::kSetBinMask:
++        if (n >= 2) bin_mask_ = (uint64_t(arg(0)) << 32) | arg(1);
++        break;
++      case pm4::kSetBinSelect:
++        if (n >= 2) bin_select_ = (uint64_t(arg(0)) << 32) | arg(1);
++        break;
++      default:
++        break;
++    }
++    return End::kQueueEnd;
++  }
++
++  static bool WaitMatched(uint32_t function, uint32_t value, uint32_t ref) {
++    switch (function) {
++      case 1: return value < ref;
++      case 2: return value <= ref;
++      case 3: return value == ref;
++      case 4: return value != ref;
++      case 5: return value >= ref;
++      case 6: return value > ref;
++      case 7: return true;
++      default: return false;
++    }
++  }
++
++  Hooks& hooks_;
++  uint32_t max_packets_;
++  uint32_t packets_ = 0;
++  uint32_t stopped_ = 0;
++  uint32_t unmet_waits_ = 0;
++  bool stop_at_unmet_waits_ = true;
++  uint64_t bin_mask_, bin_select_;
++  std::vector<uint32_t> immediate_;
++};
++
++}  // namespace rex::graphics::vulkan::fh1_pipeline_lookahead
+diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
+index 18edbae..c5a9f0c 100644
+--- a/src/graphics/vulkan/pipeline_cache.cpp
++++ b/src/graphics/vulkan/pipeline_cache.cpp
+@@ -20,6 +20,7 @@
+ #include <chrono>
+ #include <unordered_set>
+ #include <rex/graphics/shader_warmup.h>
++#include "fh1_pipeline_lookahead.h"
+ #include "fh1_shader_load_memo.h"
+ #include <string>
+ #include <string_view>
+@@ -70,6 +71,9 @@ REXCVAR_DEFINE_BOOL(vulkan_store_pipeline_cache, true, "GPU/Vulkan",
+                     "Keep device-local driver pipelines for startup shader warm-up")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++// FH1 (#378): fh1_pipeline_lookahead.cpp.
++REXCVAR_DECLARE(bool, vulkan_pipeline_lookahead);
++
+ namespace rex::graphics::vulkan {
+ 
+ namespace {
+@@ -1369,6 +1373,8 @@ void VulkanPipelineCache::Shutdown() {
+   shaders_.clear();
+   fh1_frame_cost::GetSizes().shaders.store(int64_t(shaders_.size()), std::memory_order_relaxed);
+   loaded_shader_generation.fetch_add(1, std::memory_order_relaxed);
++  // FH1 (#378): the lookahead's saved state may point at the deleted shaders.
++  fh1_pipeline_lookahead::shader_epoch.fetch_add(1, std::memory_order_relaxed);
+   shader_storage_index_ = 0;
+   texture_binding_layout_map_.clear();
+   texture_binding_layouts_.clear();
+@@ -1652,8 +1658,63 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   }
+ 
+   auto it = pipelines_.find(description);
++  // FH1 (#378): this draw's pipeline does not exist yet. Before making it, look at the draws the
++  // game has queued behind this one and start building every other pipeline they need, all at
++  // once on the creation threads (fh1_pipeline_lookahead.cpp), so they are ready, or nearly,
++  // when the command processor reaches them. Creating synchronously, wait for the whole set here
++  // once instead of once per draw.
++  bool ahead_walked = false;
++  if (it == pipelines_.end() && REXCVAR_GET(vulkan_pipeline_lookahead) &&
++      CanQueuePipelinesAhead()) {
++    fh1_ahead_set_.clear();
++    command_processor_.Fh1PipelineLookahead();
++    ahead_walked = true;
++    // The walk may have started this one too (a later draw with the same state).
++    it = pipelines_.find(description);
++  }
++  auto create_synchronously = []() {
++    return !REXCVAR_GET(async_shader_compilation) || REXCVAR_GET(sync_pipeline_creation);
++  };
++  // Not on the path of a pipeline that exists (nothing walked, nothing to wait for).
++  auto finish_ahead = [&](Pipeline* first) -> bool {
++    bool ready = true;
++    if ((first || (ahead_walked && !fh1_ahead_set_.empty())) && create_synchronously()) {
++      ready = Fh1WaitForAhead(first);
++    }
++    if (ahead_walked) {
++      fh1_ahead_set_.clear();
++    }
++    return ready;
++  };
+   if (it != pipelines_.end()) {
++    // Checked first: once a creation thread has finished one, its pipeline is seen below.
++    const bool being_built_ahead = Fh1IsBeingBuiltAhead(it->second);
+     VkPipeline found_pipeline = it->second.pipeline.load(std::memory_order_acquire);
++    if (being_built_ahead) {
++      if (!create_synchronously()) {
++        // Skipped like a draw with a placeholder until it is built.
++        finish_ahead(nullptr);
++        pipeline_out = VK_NULL_HANDLE;
++        pipeline_layout_out = nullptr;
++        if (pipeline_handle_out) {
++          *pipeline_handle_out = &it->second;
++        }
++        return true;
++      }
++      bool ready;
++      {
++        fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().pipeline_ms);
++        ready = finish_ahead(&it->second);
++      }
++      if (!ready) {
++        REXGPU_ERROR("VulkanPipelineCache: a pipeline built ahead was not ready after 10 s");
++        return false;
++      }
++      found_pipeline = it->second.pipeline.load(std::memory_order_acquire);
++    } else if (ahead_walked) {
++      fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().pipeline_ms);
++      finish_ahead(nullptr);
++    }
+     if (found_pipeline == VK_NULL_HANDLE) {
+       fh1_frame_cost::Timer cost_timer(fh1_frame_cost::Current().pipeline_ms);
+       ++fh1_frame_cost::Current().pipelines;
+@@ -1664,6 +1725,9 @@ bool VulkanPipelineCache::ConfigurePipeline(
+       }
+       found_pipeline = it->second.pipeline.load(std::memory_order_acquire);
+     }
++    if (it->second.fh1_ahead) {
++      Fh1StoreDrawnAhead(*it);
++    }
+     const PipelineLayoutProvider* found_pipeline_layout =
+         it->second.pipeline_layout.load(std::memory_order_acquire);
+     last_pipeline_ = &*it;
+@@ -1713,11 +1777,15 @@ bool VulkanPipelineCache::ConfigurePipeline(
+   if (!queued_async_creation && !EnsurePipelineCreated(creation_arguments_real)) {
+     pipelines_.erase(description);
+     fh1_frame_cost::GetSizes().pipelines.store(int64_t(pipelines_.size()), std::memory_order_relaxed);
++    finish_ahead(nullptr);
+     return false;
+   }
+   if (!queued_async_creation) {
+     pipeline.second.is_placeholder.store(false, std::memory_order_release);
+   }
++  // FH1 (#378): creating synchronously, this draw's pipeline was made while the creation threads
++  // built the ones the lookahead found; wait for those too.
++  finish_ahead(nullptr);
+ 
+   if (pipeline_storage_file_) {
+     assert_not_null(storage_write_thread_);
+@@ -1748,6 +1816,108 @@ bool VulkanPipelineCache::IsCreatingPipelines() const {
+   return startup_loading_ || !creation_queue_.empty() || creation_threads_busy_ != 0;
+ }
+ 
++VulkanPipelineCache::AheadResult VulkanPipelineCache::QueuePipelineAhead(
++    VulkanShader::VulkanTranslation* vertex_shader, VulkanShader::VulkanTranslation* pixel_shader,
++    const PrimitiveProcessor::ProcessingResult& primitive_processing_result,
++    reg::RB_DEPTHCONTROL normalized_depth_control, uint32_t normalized_color_mask,
++    VulkanRenderTargetCache::RenderPassKey render_pass_key) {
++  if (creation_threads_.empty()) {
++    return AheadResult::kFailed;
++  }
++  // The shaders are translated here, on the command processor thread, as the draw would; only
++  // the pipeline is made on the creation threads.
++  if (!EnsureShadersTranslated(vertex_shader, pixel_shader)) {
++    return AheadResult::kFailed;
++  }
++  PipelineDescription description;
++  if (!GetCurrentStateDescription(vertex_shader, pixel_shader, primitive_processing_result,
++                                  normalized_depth_control, normalized_color_mask, render_pass_key,
++                                  description)) {
++    return AheadResult::kFailed;
++  }
++  if (pipelines_.find(description) != pipelines_.end()) {
++    return AheadResult::kKnown;
++  }
++  auto& pipeline = *pipelines_.emplace(description, Pipeline()).first;
++  fh1_frame_cost::GetSizes().pipelines.store(int64_t(pipelines_.size()), std::memory_order_relaxed);
++  PipelineCreationArguments creation_arguments;
++  if (!TryGetPipelineCreationArgumentsForDescription(description, &pipeline,
++                                                     creation_arguments)) {
++    pipelines_.erase(description);
++    fh1_frame_cost::GetSizes().pipelines.store(int64_t(pipelines_.size()),
++                                               std::memory_order_relaxed);
++    return AheadResult::kFailed;
++  }
++  uint32_t shader_writes_color_targets =
++      pixel_shader ? pixel_shader->shader().writes_color_targets() : 0;
++  bool shader_writes_depth = pixel_shader ? pixel_shader->shader().writes_depth()
++                                          : normalized_depth_control.z_write_enable != 0;
++  creation_arguments.priority = pipeline_util::CalculatePipelinePriority(
++      pipeline_util::GetBoundRTMaskFromNormalizedColorMask(normalized_color_mask),
++      shader_writes_color_targets, shader_writes_depth);
++  // Being built: no pipeline yet, marked as a placeholder (a draw meeting it is skipped or
++  // waits); the creation thread clears the mark when it is done.
++  pipeline.second.is_placeholder.store(true, std::memory_order_release);
++  pipeline.second.fh1_ahead = true;
++  {
++    std::lock_guard<std::mutex> lock(creation_request_lock_);
++    creation_queue_.push(creation_arguments);
++  }
++  creation_request_cond_.notify_one();
++  fh1_ahead_set_.push_back(&pipeline.second);
++  return AheadResult::kQueued;
++}
++
++bool VulkanPipelineCache::Fh1WaitForAhead(Pipeline* first) {
++  // Polled as sync_pipeline_creation's wait for a placeholder (command_processor.cpp): pipelines
++  // take milliseconds, and this wait is rare (an empty cache with synchronous creation).
++  const auto start = std::chrono::steady_clock::now();
++  const auto deadline = start + std::chrono::seconds(10);
++  bool ready = true;
++  auto wait_for = [&](const Pipeline& pipeline) {
++    while (Fh1IsBeingBuiltAhead(pipeline)) {
++      if (std::chrono::steady_clock::now() >= deadline) {
++        return false;
++      }
++      std::this_thread::sleep_for(std::chrono::microseconds(200));
++    }
++    return true;
++  };
++  if (first) {
++    ready = wait_for(*first);
++  }
++  for (const Pipeline* pipeline : fh1_ahead_set_) {
++    if (!wait_for(*pipeline)) {
++      break;
++    }
++  }
++  ++fh1_pipeline_lookahead::stats.waits;
++  fh1_pipeline_lookahead::stats.wait_ms +=
++      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++  return ready;
++}
++
++void VulkanPipelineCache::Fh1StoreDrawnAhead(
++    std::pair<const PipelineDescription, Pipeline>& pipeline) {
++  // Built ahead and now drawn with: stored like one made for its draw. Never stored if no draw
++  // uses it (a lookahead that guessed wrong).
++  pipeline.second.fh1_ahead = false;
++  ++fh1_pipeline_lookahead::stats.drawn_ahead;
++  if (!pipeline_storage_file_) {
++    return;
++  }
++  assert_not_null(storage_write_thread_);
++  pipeline_storage_file_flush_needed_ = true;
++  {
++    std::lock_guard<std::mutex> lock(storage_write_request_lock_);
++    storage_write_pipeline_queue_.emplace_back();
++    PipelineStoredDescription& stored_description = storage_write_pipeline_queue_.back();
++    stored_description.description_hash = pipeline.first.GetHash();
++    std::memcpy(&stored_description.description, &pipeline.first, sizeof(pipeline.first));
++  }
++  storage_write_request_cond_.notify_all();
++}
++
+ void VulkanPipelineCache::GetPipelineAndLayoutByHandle(
+     void* handle, VkPipeline& pipeline_out, const PipelineLayoutProvider*& pipeline_layout_out,
+     bool* is_placeholder_out) const {
+@@ -4044,6 +4214,15 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+       creation_arguments.pipeline->second.pipeline.exchange(pipeline, std::memory_order_acq_rel);
+   creation_arguments.pipeline->second.pipeline_layout.store(creation_arguments.pipeline_layout,
+                                                             std::memory_order_release);
++  // FH1 (#378): the log's pipeline summary (fh1_pipeline_lookahead.h).
++  if (creating_placeholder) {
++    fh1_pipeline_lookahead::stats.placeholders.fetch_add(1, std::memory_order_relaxed);
++  } else {
++    fh1_pipeline_lookahead::stats.created.fetch_add(1, std::memory_order_relaxed);
++    if (was_placeholder && old_pipeline == VK_NULL_HANDLE) {
++      fh1_pipeline_lookahead::stats.created_ahead.fetch_add(1, std::memory_order_relaxed);
++    }
++  }
+   if (creating_placeholder) {
+     creation_arguments.pipeline->second.is_placeholder.store(true, std::memory_order_release);
+   } else {
+@@ -4091,6 +4270,12 @@ void VulkanPipelineCache::CreationThread(size_t thread_index) {
+       } else {
+         creation_arguments.pipeline->second.pipeline.store(VK_NULL_HANDLE,
+                                                            std::memory_order_release);
++        // FH1 (#378): one started ahead (no placeholder) is not being built any more.
++        if (has_placeholder) {
++          fh1_pipeline_lookahead::stats.failed_ahead.fetch_add(1, std::memory_order_relaxed);
++          creation_arguments.pipeline->second.is_placeholder.store(false,
++                                                                   std::memory_order_release);
++        }
+       }
+     }
+ 
+@@ -4124,6 +4309,11 @@ void VulkanPipelineCache::CreateQueuedPipelinesOnProcessorThread() {
+       } else {
+         creation_arguments.pipeline->second.pipeline.store(VK_NULL_HANDLE,
+                                                            std::memory_order_release);
++        if (has_placeholder) {  // FH1 (#378): as in CreationThread
++          fh1_pipeline_lookahead::stats.failed_ahead.fetch_add(1, std::memory_order_relaxed);
++          creation_arguments.pipeline->second.is_placeholder.store(false,
++                                                                   std::memory_order_release);
++        }
+       }
+     }
+   }
+diff --git a/src/graphics/vulkan/render_target_cache.cpp b/src/graphics/vulkan/render_target_cache.cpp
+index c2dedd0..4451bff 100644
+--- a/src/graphics/vulkan/render_target_cache.cpp
++++ b/src/graphics/vulkan/render_target_cache.cpp
+@@ -1546,6 +1546,48 @@ bool VulkanRenderTargetCache::Update(bool is_rasterization_done,
+   return true;
+ }
+ 
++bool VulkanRenderTargetCache::PredictRenderPassKey(BindingPrediction& prediction,
++                                                   bool is_rasterization_done,
++                                                   reg::RB_DEPTHCONTROL normalized_depth_control,
++                                                   uint32_t normalized_color_mask,
++                                                   RenderPassKey& key_out) const {
++  if (!PredictUpdate(prediction, is_rasterization_done, normalized_depth_control,
++                     normalized_color_mask)) {
++    return false;
++  }
++  RenderPassKey render_pass_key;
++  render_pass_key.msaa_samples = register_file().Get<reg::RB_SURFACE_INFO>().msaa_samples;
++  if (GetPath() == Path::kHostRenderTargets) {
++    for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
++      if (!prediction.accumulated_keys[i]) {
++        continue;
++      }
++      RenderTargetKey rt_key;
++      rt_key.key = prediction.accumulated_keys[i];
++      render_pass_key.depth_and_color_used |= uint32_t(1) << i;
++      switch (i) {
++        case 0:
++          render_pass_key.depth_format = rt_key.GetDepthFormat();
++          break;
++        case 1:
++          render_pass_key.color_0_view_format = rt_key.GetColorFormat();
++          break;
++        case 2:
++          render_pass_key.color_1_view_format = rt_key.GetColorFormat();
++          break;
++        case 3:
++          render_pass_key.color_2_view_format = rt_key.GetColorFormat();
++          break;
++        default:
++          render_pass_key.color_3_view_format = rt_key.GetColorFormat();
++          break;
++      }
++    }
++  }
++  key_out = render_pass_key;
++  return true;
++}
++
+ void VulkanRenderTargetCache::GetLastUpdateRenderingAttachments(
+     VkRenderingAttachmentInfo* color_attachments, uint32_t* color_attachment_count_out,
+     VkRenderingAttachmentInfo* depth_attachment,
