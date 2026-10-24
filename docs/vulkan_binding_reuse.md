@@ -60,6 +60,18 @@ records the observed mask, and resume rejects older unaudited constrained runs.
 Run `python tools/binding_reuse/test_affinity.py` (requires `psutil`) for the
 startup-reset, scored-escape and read-only scored-audit regression fixtures.
 
+`RECOMP_PERF_EPOCH` optionally writes the wall-clock epoch corresponding to the
+frame CSV's first steady-clock event. Scored CPU/frame correlation requires this
+marker; missing markers and wall-clock jumps reject timing. `--diagnostic-only`
+runs excluded AI warm-ups and returns correctness/audit metadata without FPS or
+CPU/frame metrics, including on hosts whose relative CSV has no marker. The
+`test_frame_clock.py` and `test_diagnostic.py` fixtures cover current CSV/report
+formats, timing-window boundaries, invalid clocks and unqualified diagnostics.
+The optional production epoch writer passed a CPU-only isolated-function harness
+with the marker disabled and enabled, including nine-decimal output and steady
+clock alignment. The changed authored debug object compiles and the private
+shared host relinks successfully. That host has not been run on the GPU.
+
 ## Overlap
 
 Checked #179 at `600eb0e` and #157 at `911d55c`. Each applies with 0094 in either
@@ -217,3 +229,22 @@ CPU-only regression fixtures, a native Windows child-process reset/escape check,
 and alternating-mode/resume CLI checks pass. These changes validate the
 measurement protocol, not a new performance result. The historical measurements
 above retain their original source and hardware provenance.
+
+The current-stack excluded reference/API diagnostic completed a valid AI-driven
+eight-car race at 720p on the RTX 5060 Ti (driver 617.14), using four separate
+P cores (logical CPUs 0, 2, 4, 6). It verified 8,706,849 sampler-stage hits and
+5,278,876 texture-request hits, with zero mismatches and no Vulkan validation
+errors. The layer emitted ten shader-output-not-consumed warning messages,
+including its duplicate-suppression notice. All 384 process-audit samples retained the requested CPU
+mask and recorded no competing build/game process. One post-run capture showed
+no obvious new rendering corruption; this is a spot check, not pixel equivalence.
+
+**This is correctness evidence only.** Foreground was false throughout after
+Computer Use app approval timed out. The original runner also rejected timing
+because this host lacked the optional epoch marker. No FPS or CPU/frame result
+is published from this run. The host uses 82 current-main authored objects with
+disclosed private controller/silent-audio/import fixtures and previously compiled
+private generated objects. The copied source profile was unchanged. The
+[portable correctness report](benchmarks/vulkan-binding-reuse-2026-10-24.json)
+records exact source trees, binaries, audit results and limitations. Default
+remains off; representative foreground and native-resolution scoring is pending.
