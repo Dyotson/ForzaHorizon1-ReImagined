@@ -141,6 +141,9 @@ class CampaignDbTest(unittest.TestCase):
         self.assertEqual(root.find("StartingGridOptions").get("GridOrderingType"),
                          "PIWithPlayerLast")
         self.assertEqual(root.find("EndConditionOptions").attrib["NumLaps"], "2")
+        # a loaner from every car that meets the restrictions, not only the class's rental
+        self.assertEqual(root.find("Overrides").get("ForceOnlyRentalCars"), "0")
+        self.assertEqual(cp.find("FR05").restriction_text(), "B class, AWD")
         street = ET.fromstring(cp.campaign_xml(cp.find("STREET_PLNS_005"), laps=1))
         self.assertEqual((street.get("GameTypePreset"), street.get("GameTypeFilterType"),
                           street.get("UseTraffic"), street.find("EndConditionOptions").get("Type")),
@@ -320,6 +323,26 @@ class CoopFestivalTest(CoopWorldCase):
         self.assertEqual(self.search(self.c, lsp.COOP_HOPPER), [])
         store.befriend(self.c.xuid, self.b.xuid)
         self.assertEqual(self.search(self.c, lsp.COOP_HOPPER), [sid])
+
+    def test_event_warns_when_no_stock_car_meets_it(self):
+        """The lobby lends each player a stock car that meets the event (ForceOnlyRentalCars 0):
+        when the game's database has none, /event says only an upgraded car of one's own can."""
+        columns = sorted(set(cp.CAR_IDS.values()) | {c for c, _ in cp.CAR_RANGES.values()})
+        db = sqlite3.connect(self.db)
+        db.execute("CREATE TABLE Data_Car (%s, IsUnicorn INT)" % ", ".join('"%s"' % c for c in columns))
+        car = dict.fromkeys(columns, 0)
+        car.update(ClassID=4, DriveTypeID=3, Year=2002, BaseCost=30000, PerformanceIndex=0.46)
+        db.execute("INSERT INTO Data_Car VALUES (%s, 0)" % ", ".join("?" * len(columns)),
+                   [car[c] for c in columns])  # a B-class AWD car (the GT-R): FR05 has one
+        db.commit()
+        db.close()
+        cp._events = None
+        self.assertEqual((cp.find("FR05").loaners, cp.find("FR50").loaners), (1, 0))
+        self.coop_world()
+        self.say(self.a, "/event FR50")
+        self.assertEqual(self.notices(self.b), [
+            "Driver1 starts FR50: A class, 1960-1969, 7 CPU drivers, 1 lap, Dawn. No stock car fits "
+            "it (A class, 1960-1969): only players whose own upgraded car fits can race it"])
 
     def test_event_from_the_host_starts_a_campaign_round(self):
         sid = self.coop_world()

@@ -660,6 +660,13 @@ class ForzaLive(asyncio.DatagramProtocol):
         for sid, event in world.WORLDS.tick(set(worlds), scheduled):
             host = worlds[sid][0]
             self.send(host.addr, WORLD_EVENT, struct.pack(">BI", 1, event[0]) + sid)
+        for sid, event, code in world.WORLDS.empty:  # a campaign round nobody raced
+            cars = (": its cars must be %s" % event.restriction_text()) if event is not None else ""
+            for p in self.world_members(sid):
+                if p.features & chat.FEATURE:
+                    self.chat.notice(p, "%s ended at once and nobody raced it%s (a game that has no "
+                                        "such car shows NO CARS AVAILABLE)" % (code, cars))
+        world.WORLDS.empty = []
         for sid, st in world.WORLDS.dropped:  # a campaign the host's game never took
             for p in self.world_members(sid):
                 if p.features & chat.FEATURE:
@@ -771,6 +778,9 @@ class ForzaLive(asyncio.DatagramProtocol):
                 return True
             world.WORLDS.request(sid, campaign=event, by=peer.name, by_xuid=peer.xuid)
             text = "%s starts %s" % (peer.name, event.describe())
+            if event.loaners == 0:  # the lobby lends a stock car that meets it: there is none
+                text += (". No stock car fits it (%s): only players whose own upgraded car "
+                         "fits can race it" % event.restriction_text())
             for p in self.world_members(sid):
                 if p.features & chat.FEATURE:
                     self.chat.notice(p, text)
