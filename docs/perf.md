@@ -1442,3 +1442,102 @@ after the map still lasts seconds with `cause: waits for the GPU` or `the game` 
 CPU, the time is outside the emulation's work (memory moves or clocks); a run with the BIOS UMA frame buffer
 at 4 GB instead of 1 GB, and Steam's overlay at level 4 showing the GPU clock right after leaving the map,
 would tell which.
+
+## Long sessions (#45, 2026-10-23)
+
+**The reports.** Steam Deck players: "the first 10 minutes are fine, but then it just keeps getting worse"; earlier
+"better at first, then back to 15 fps after a few minutes". A BC-250 player's MangoHud (0.1.31, Linux): GPU 56% at
+1850 MHz, CPU 25% with six threads at 31-38% and their siblings at 11-16%, 40 fps on average, 1% low 17 fps: no
+GPU or CPU thread is full, so the frame waits on a chain of threads (as above). The question here: does anything
+grow with play time and make each frame cost more?
+
+**The soak.** As in [Steam Deck frame collapses](#steam-deck-frame-collapses-45-2026-10-23): TU4,
+`-DFORZA_CPU_TARGET=x86-64-v3`, a copy of the Xenia save, offline, audio muted, a 1280x800 window, 30 fps, render
+scale 1, AMD FSR 1, a warm scratch shader cache, the game's threads on CPUs 0-3 and everything else on 4-7, the SDK
+of main (with 0140, 0180, 0181) plus 0200 below, BENCH lock held, no other game. The car drives itself
+(`tools/autodrive.py` with `AD_PATH_LOAD`) round a 28.5 km loop that `tools/nav_route.py` lays on the game's own
+road graph from the save's spawn: county roads, Gladstone's streets, Interstate 76, Route 29, Interstate 70 and
+the town on Route 29, with the traffic, about 38 minutes a lap. Recorded: every frame the command processor's
+counters (`fh1_frame_cost_csv`), every second each thread's CPU and run-queue time and the GPU time
+(`tools/thread_stats.py`), every 30 s the process's memory (resident, mappings, the guest memory file's resident
+pages, the DRM client's VRAM and GTT), and once a minute the new summary line (0200). Two runs at 30 fps (60 and 45
+minutes) and one without the frame cap (45 minutes).
+
+**Per minute** (60-minute run; the minute that ends there, counted from free roam; command processor = its CPU
+time a frame, in brackets fitted to 3,000 draws over the minute's frames, since the draws follow the view; the
+45-minute run gives the same, within the minute-to-minute spread):
+
+| Minute | fps | p99 ms | 1% low | Command processor ms (at 3,000 draws) | Draws | GPU ms | Main loop, render thread, mixer % | Textures (MB) | Evicted/s | Watch nodes a frame | Readback keys | RSS MB | VRAM MB | VMAs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | 30.0 | 34.0 | 29.2 | 5.80 (4.99) | 3566 | 7.6 | 7.4, 11.3, 9.4 | 3025 (189) | 0.0 | 3902 | 133 | 1169 | 1097 | 2642 |
+| 5 | 30.0 | 33.9 | 29.3 | 4.45 (4.94) | 2639 | 7.4 | 7.0, 9.5, 8.6 | 4473 (238) | 0.0 | 3817 | 144 | 1204 | 1361 | 2416 |
+| 10 | 30.0 | 33.9 | 29.4 | 4.48 (5.16) | 2527 | 6.8 | 6.7, 8.7, 9.3 | 5599 (286) | 0.0 | 3843 | 154 | 1213 | 1375 | 2317 |
+| 20 | 30.0 | 34.1 | 29.2 | 4.75 (4.95) | 2868 | 6.5 | 7.2, 10.0, 9.3 | 8137 (384) | 0.4 | 3815 | 167 | 1240 | 1375 | 2853 |
+| 30 | 30.0 | 34.0 | 29.2 | 5.15 (4.86) | 3178 | 7.0 | 7.7, 9.8, 9.5 | 8000 (384) | 5.4 | 3809 | 163 | 1250 | 1382 | 2671 |
+| 40 | 30.0 | 33.9 | 29.4 | 5.60 (5.32) | 3176 | 7.9 | 7.2, 10.2, 11.6 | 8028 (384) | 2.0 | 4000 | 168 | 1256 | 1386 | 2821 |
+| 50 | 30.0 | 34.1 | 29.2 | 4.55 (5.05) | 2651 | 7.5 | 7.8, 8.1, 8.9 | 7821 (384) | 6.4 | 3856 | 179 | 1259 | 1387 | 2965 |
+| 60 | 30.0 | 34.2 | 29.2 | 5.51 (4.94) | 3346 | 7.1 | 9.1, 9.0, 11.5 | 8093 (384) | 3.7 | 3867 | 183 | 1261 | 1387 | 2783 |
+
+- **Nothing that costs per frame grows.** The frame holds 30 fps, p99 34 ms and 1% low 29 from minute 2 to 60; the
+  command processor needs 4.9-5.3 ms for 3,000 draws in every 10-minute block of both runs (1.6 us a draw); the GPU
+  6.5-7.9 ms a frame; the main loop, render thread and audio mixer the same share of a core. The writes to guest
+  memory walk the same 3,800-4,000 watch nodes a frame (about 100 writes of 38 nodes each) whether the texture
+  cache holds 3,000 textures or 8,000.
+- **What grows, and stops:** the texture cache, from 3,000 textures (190 MB) at minute 2 to its 384 MB limit
+  (`texture_cache_memory_limit_soft`) at minute 19-20 with 8,000 textures; after that it evicts 2-14 textures a
+  second that were unused for 30 s and makes about as many: 0.17 new textures a frame before and after, 0.05 ms of
+  the command processor's frame for texture creation and loads in both halves. With it the GPU memory (1,097 to
+  1,387 MB device-local) and the process's resident memory (1,168 to 1,260 MB, half of it the guest's own pages),
+  both flat after minute 20-30. The readback keys of 0181 go from 133 to 183 (kept at most 2,048, forgotten after
+  30 minutes). Render targets (39, 553 MB), shaders (907-913), pipelines (812-825), framebuffers (61-63), watched
+  ranges (1,200-2,000), readback buffers (85-105, 55-85 MB), the guest's heaps (206 MB virtual, 360 MB physical)
+  and the threads (76) stay as they are from the start; the memory mappings move between 2,200 and 3,200 without a
+  trend; the open file descriptors climb from 125 to 291, slower and slower.
+- One run changed its rhythm at minute 41: the render thread woke 2,400 times a second instead of 9,800 and the
+  main loop 830 instead of 100 (as if the two had swapped which one waits for the other), with the same frame times
+  and CPU time to the end. The other run never did it; it is a phase of the two threads, not something that grew.
+
+**Without the frame cap** (`--frame_rate=240`, the same four cores and route, 45 minutes, BENCH lock held): the
+command processor is busy 77-80% of the time and the game's waits are 0.7 ms a frame, so the frame rate is its
+speed: 145-163 fps minute by minute, following the draws. Fitted to 3,000 draws, a frame takes 6.52, 6.48, 6.37,
+6.46 and 6.62 ms in the five 10-minute blocks (153, 154, 157, 155 and 151 fps; the last, 5 minutes long, is the
+place on the route where all three runs drew their dearest frames), and the command processor 5.04, 4.99, 4.93,
+5.00 and 5.23 ms. Five times the frames of the capped runs, and the same sizes at the same minutes: the texture
+cache full at minute 15-20, the resident memory 1,198 to 1,256 MB, the readback keys and file descriptors as
+above. What grows does so with time and place (the world streamed in), not with the frames drawn.
+
+So on this PC the emulation's work per frame does not depend on how long the game has run. What a Deck adds and
+this PC cannot show: the texture cache's growth to 384 MB in the first 20 minutes is GPU memory that a Deck with
+the default 1 GB UMA frame buffer does not have in its carve-out (render targets and the guest memory's GPU copy
+fill most of it from the start; with 0138 new textures then go to system memory), and a 15 W chip that gets hotter
+and slower as it runs. A frame of the same work then costs more without anything growing.
+
+**Change: SDK patch 0200, a minute's summary in the log.** One info line a minute from the command processor
+(`docs/sdk_patches.md`; minute 30 of the 45-minute run, counted from the first frame):
+
+```
+GPU minute 30: 30.0 fps (1% low 29.3, worst 35 ms); a frame: command processor 4.4 ms CPU (1.68 us a draw), 0.0
+ms GPU waits, 28.5 ms game waits, 2598 draws, 0.60 MB uploads, 0.0 resolve readbacks, 3784 memory watch nodes
+checked (100.6 writes); a second: 3.0 textures new, 2658.1 loaded, 3.6 evicted, 0.0 pipelines new; now: textures
+7939 (384 MB), render targets 39 (553 MB), shaders 916, pipelines 830, framebuffers 63, memory watches 1267
+(1285 nodes), readback buffers 97 (62 MB, 182 keys), guest memory 206 MB virtual + 360 MB physical, GPU memory
+1382 of 15577 MB device-local, 127 MB system, process 1241 MB resident; clocks: CPU up to 4.97 GHz, GPU 1.01 GHz
+39 C 30.0 W
+```
+
+How to read a long session's log: the fps and 1% low minute by minute show when it got worse. Then:
+
+- `draws` up: the view has more to draw (traffic, a town, a race), not play time.
+- `us a draw` up with the same draws, and `CPU up to` lower: the CPU got slower (heat or the power limit); the
+  GPU's clock, temperature and power (on Linux, the amdgpu hwmon: on a Deck the whole chip's power) say which.
+- `game waits` down and the command processor's CPU the same: the game's own threads are later.
+- A size that keeps climbing (textures past 384 MB, render targets, pipelines, readback buffers, guest memory, the
+  process's memory) and frame costs with it: something on our side grows; that line pair is the report.
+- `GPU memory ... device-local` at its budget and `system` growing: the GPU's memory is full.
+
+**For a Deck player to send:** a `forza.log` of one session of 30 minutes or more on a build with 0200, from start
+to quit, and when it got slow (the minute lines are timestamped). If the minutes that got slow show `us a draw`
+up and the clocks down, the same session with the Deck kept cooler (a cooler room, the fan not blocked) would
+confirm heat; if the GPU memory is full, the same session with the BIOS UMA frame buffer at 4 GB, or with
+`texture_cache_memory_limit_soft = 192` in `forza.toml` (a smaller texture cache: unused textures go after 30 s
+once it holds 192 MB), would tell whether memory placement is the cause.
