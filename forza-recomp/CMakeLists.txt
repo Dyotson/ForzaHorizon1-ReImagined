@@ -154,6 +154,7 @@ set(FORZA_SOURCES
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
     src/hooks/scene_tiling.cpp
+    src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
