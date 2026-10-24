@@ -47,6 +47,13 @@ jobs:
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
       - name: Livery codec tests
         run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
+      - name: Resource hook audit tests (synthetic images)
+        run: python -m unittest discover -s tools -p 'test_resource_data_hooks.py' -v
+      - if: runner.os == 'Linux'
+        name: Resource ownership regression
+        run: |
+          g++ -std=c++20 -O2 -pthread forza-recomp/tests/resource_data_take_test.cpp -o "$RUNNER_TEMP/resource-data-test"
+          "$RUNNER_TEMP/resource-data-test"
       - name: Standalone car tuning model, library and donor checks
         shell: bash
         run: |
