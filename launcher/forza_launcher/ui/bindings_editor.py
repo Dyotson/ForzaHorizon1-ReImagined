@@ -27,39 +27,68 @@ LAMP_NAMES = {"back": "Back", "guide": "Guide", "start": "Start", "up": "Up", "d
 
 
 class InputView(QWidget):
-    """The selected device's axes as bars and its buttons as lamps that light while pressed."""
+    """The selected device's axes as bars and its buttons as lamps that light while pressed.
+
+    A wheel that reads pedals, a shifter or a handbrake on another device graphs those too
+    (`inputs`, from bindings.live_inputs): Throttle, Brake, Clutch, Handbrake and the shifter."""
     ROW, LAMP, GAP = 20, 26, 6
 
     def __init__(self):
         super().__init__()
         self.snap = None
         self.names = None  # a controller: its mapped inputs, by name ({button: label})
+        self.inputs = None  # a wheel plus its pedal, shifter and handbrake devices (LiveInputs)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAccessibleName("Live view of the selected device's axes and buttons")
         self.setMinimumHeight(40)
 
-    def set_snapshot(self, snap, names=None):
-        old, old_names = self.snap, self.names
-        self.snap, self.names = snap, names
-        if old is None or snap is None or (old_names is None) != (names is None) or \
-                (len(old.axes), len(old.buttons), len(old.hats)) != \
-                (len(snap.axes), len(snap.buttons), len(snap.hats)):
+    def set_snapshot(self, snap, names=None, inputs=None):
+        old = self._shape()
+        self.snap, self.names, self.inputs = snap, names, inputs
+        if self._shape() != old:
             self.setFixedHeight(self.height_for(self.width()))
         self.update()
 
+    def _shape(self):
+        if self.inputs is not None:
+            return ("live", len(self.inputs.axes), len(self.inputs.buttons), len(self.inputs.hats),
+                    self.lamp_width(), self.axis_gutter())
+        if not self.snap:
+            return None
+        if self.names is not None:
+            return ("pad", len(self.names))
+        return ("raw", len(self.snap.axes), len(self.snap.buttons), len(self.snap.hats))
+
     def lamp_width(self):
-        return 48 if self.names is not None else self.LAMP
+        if self.names is not None and self.inputs is None:
+            return 48
+        if self.inputs is not None and self.inputs.buttons:
+            text = max(self.fontMetrics().horizontalAdvance(label_)
+                       for label_, _down in self.inputs.buttons)
+            if text + 16 > self.LAMP:
+                return text + 16
+        return self.LAMP
+
+    def axis_gutter(self):
+        if self.inputs is None:
+            return 104 if self.names is not None else 64
+        if not self.inputs.axes:
+            return 64
+        text = max(self.fontMetrics().horizontalAdvance(label_) for label_, _raw in self.inputs.axes)
+        return max(64, text + 12)
 
     def lamps_per_row(self, width):
         return max(1, (width + self.GAP) // (self.lamp_width() + self.GAP))
 
     def counts(self):
+        if self.inputs is not None:
+            return len(self.inputs.axes), len(self.inputs.buttons), len(self.inputs.hats)
         if self.names is not None:
             return len(PAD_AXES), len(self.names), 0
         return len(self.snap.axes), len(self.snap.buttons), len(self.snap.hats)
 
     def height_for(self, width):
-        if not self.snap:
+        if not self.snap and self.inputs is None:
             return 40
         axes, n, hats = self.counts()
         rows = (n + self.lamps_per_row(width) - 1) // self.lamps_per_row(width) if n else 0
@@ -76,23 +105,29 @@ class InputView(QWidget):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        if not self.snap:
+        if not self.snap and self.inputs is None:
             p.setPen(QColor(theme.MUTED))
             p.drawText(self.rect(), Qt.AlignLeft | Qt.AlignVCenter, "No device selected.")
             return
         y = 0
         w = self.width()
-        named = self.names is not None
-        if named:
+        if self.inputs is not None:
+            axes = [(name, (bindings.norm(raw) + 1) / 2, str(raw))
+                    for name, raw in self.inputs.axes]
+            lamps = list(self.inputs.buttons)
+            hats = self.inputs.hats
+        elif self.names is not None:
             pad = self.snap.pad_axes or (0.0,) * 6
             axes = [(name, (v + 1) / 2 if i < 4 else v, f"{v:+.2f}" if i < 4 else f"{v:.2f}")
                     for i, (name, v) in enumerate(zip(PAD_AXES, pad))]
             lamps = [(label_, name in self.snap.pad_buttons) for name, label_ in self.names.items()]
+            hats = ()
         else:
             axes = [(f"Axis {n}", (bindings.norm(raw) + 1) / 2, str(raw))
                     for n, raw in enumerate(self.snap.axes)]
             lamps = [(str(n), down) for n, down in enumerate(self.snap.buttons)]
-        left = 104 if named else 64
+            hats = self.snap.hats
+        left = self.axis_gutter()
         for name, frac, text in axes:
             p.setPen(QColor(theme.MUTED))
             p.drawText(QRectF(0, y, left - 4, self.ROW), Qt.AlignLeft | Qt.AlignVCenter, name)
@@ -121,10 +156,10 @@ class InputView(QWidget):
                 p.setPen(QColor(theme.BG if down else theme.MUTED))
                 p.drawText(rect, Qt.AlignCenter, text)
             y += ((len(lamps) + per - 1) // per) * (self.LAMP + self.GAP)
-        if self.snap.hats and not named:
+        if hats:
             y += 6
-            text = "   ".join(f"Hat {n}: {HATS.get(v, 'centred')}" for n, v in enumerate(self.snap.hats))
-            p.setPen(QColor(theme.ORANGE if any(self.snap.hats) else theme.MUTED))
+            text = "   ".join(f"Hat {n}: {HATS.get(v, 'centred')}" for n, v in enumerate(hats))
+            p.setPen(QColor(theme.ORANGE if any(hats) else theme.MUTED))
             p.drawText(QRectF(0, y, w, self.ROW), Qt.AlignLeft | Qt.AlignVCenter, text)
 
 
@@ -538,6 +573,46 @@ class BindingsEditor(QWidget):
             out["handbrake"] = info(self.devices[handbrake])
         return out
 
+    def live_for(self, snap):
+        """The live view of the selected wheel, including a pedal, shifter or handbrake device the
+        game reads with it (#306). None keeps the device's own axes and buttons."""
+        if self.kind() != "wheel" or self.device is None or self.backend is None:
+            return None
+        devices = {}
+        pick = bindings.pick_aux(self.devices, self.settings())
+        for role in ("pedals", "shifter"):
+            i = getattr(pick, role)
+            if i is not None:
+                devices[role] = self.devices[i]
+        i = bindings.pick_handbrake(self.devices, self.settings())
+        if i is not None:
+            devices["handbrake"] = self.devices[i]
+        if not devices:
+            return None
+        cache = {}
+
+        def read(d):
+            if d.instance == self.device.instance:
+                return snap
+            if d.instance not in cache:
+                got = self.backend.read_extra(d.instance) if hasattr(self.backend, "read_extra") else None
+                cache[d.instance] = got if got is not None else bindings.Snapshot()
+            return cache[d.instance]
+
+        aux, snaps = {}, {}
+        for role, d in devices.items():
+            got = read(d)
+            if d.instance == self.device.instance:
+                counts = (len(snap.axes), len(snap.buttons))
+            elif hasattr(self.backend, "extra_counts"):
+                counts = self.backend.extra_counts(d.instance)[:2]
+            else:
+                counts = (0, 0)
+            aux[role] = bindings.AuxInfo(d.name, d.vid, d.pid,
+                                         max(counts[0], len(got.axes)), max(counts[1], len(got.buttons)))
+            snaps[role] = got
+        return bindings.live_inputs(self.settings(), snap, aux, snaps)
+
     def parts(self):
         """The wheel and its extras as merged snapshots lay them out (bindings.merge)."""
         axes, buttons, _ = self.backend.counts
@@ -930,7 +1005,8 @@ class BindingsEditor(QWidget):
             self.scan(force=True)
             return
         self.snap = snap
-        self.view.set_snapshot(snap, self.lamp_names() if self.kind() == "controller" else None)
+        self.view.set_snapshot(snap, self.lamp_names() if self.kind() == "controller" else None,
+                               self.live_for(snap))
         if self.capture:
             self.calibration.feed(self.read_parts(self.cal_parts, snap)[0] if self.cal_parts else snap)
         if self.binding is not None:

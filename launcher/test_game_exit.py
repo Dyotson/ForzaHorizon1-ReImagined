@@ -24,6 +24,49 @@ CLOSE = ["[2026-10-15 18:06:44.058] [info] [core] [t2] Window closing, shutting 
          "[2026-10-15 18:06:44.260] [info] [core] [t2] Title terminated; hard-exiting process."]
 
 
+HEAP_FAILURE = [
+    "[error] [sys] [t15148] Unhandled guest access violation: write of guest 0x00000005 "
+    "(host 0x0000000800000005) on thread 0xF8001204",
+    "[critical] [core] [t15148] Unhandled write fault at host 0x800000005",
+    "[error] [core] [t15148] Guest thread F8001204 registers (lr=8242306C ctr=8242CC40):",
+    "    r3=00000000 r6=00000000 r27=00000020 r29=00004000 r30=83396AF0 r31=00000000",
+    "[error] [core] [t15148] Guest call chain (return addresses): 82423108 82422E50",
+]
+
+
+class HeapFailureTests(unittest.TestCase):
+    def test_issue299_reports_request_and_final_heap_without_claiming_system_oom(self):
+        text = game.heap_failure_summary(HEAP_FAILURE)
+        self.assertIn("heap 0x21", text)
+        self.assertIn("16,384 bytes", text)
+        self.assertIn("alignment 32 bytes", text)
+        self.assertIn("fragmentation or allocation constraints", text)
+        self.assertIn("does not establish", text)
+
+    def test_base_game_and_capacity_failure(self):
+        lines = [ln.replace("8242306C", "823F30B4").replace("83396AF0", "832AB0C8")
+                 .replace("guest 0x00000005", "guest 0x00000004") for ln in HEAP_FAILURE]
+        text = game.heap_failure_summary(lines)
+        self.assertIn("heap 0x21", text)
+        self.assertIn("insufficient remaining capacity", text)
+
+    def test_other_faults_and_incomplete_or_inconsistent_registers_are_not_classified(self):
+        for old, new in [("guest 0x00000005", "guest 0x00000006"),
+                         ("write of guest", "read of guest"), ("lr=8242306C", "lr=82423050"),
+                         ("r3=00000000", "r3=12345678"), ("r6=00000000", "r6=12345678"),
+                         ("r31=00000000", "r31=12345678"), ("r29=00004000", "r29=00000000"),
+                         ("r30=83396AF0", "r30=83396AF4"), ("r30=83396AF0", "r30=00000000"),
+                         ("r6=00000000", ""), ("r27=00000020", ""),
+                         ("on thread 0xF8001204", "on thread 0xF8009999")]:
+            with self.subTest(old=old, new=new):
+                self.assertIsNone(game.heap_failure_summary([ln.replace(old, new) for ln in HEAP_FAILURE]))
+        self.assertIsNone(game.heap_failure_summary(HEAP_FAILURE[:3]))
+
+    def test_a_later_different_fault_does_not_reuse_old_heap_failure(self):
+        later = HEAP_FAILURE[0].replace("0x00000005", "0x12345678")
+        self.assertIsNone(game.heap_failure_summary(HEAP_FAILURE + [later]))
+
+
 class ExitTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -48,6 +91,13 @@ class ExitTests(unittest.TestCase):
         self.assertIn("Unhandled read fault", text)
         self.assertNotIn("ffmpeg", text)
         self.assertNotIn("XLIVEBASE", text)
+
+    def test_internal_heap_stop_has_specific_explanation(self):
+        self.write(*HEAP_FAILURE)
+        text = game.crash_reason(self.plan, 134)
+        self.assertIn("heap 0x21", text)
+        self.assertIn("16,384 bytes", text)
+        self.assertNotIn("close other programs", text)
 
     def test_exit_zero_and_none_are_not_crashes(self):
         self.assertFalse(game.exit_is_crash(self.plan, 0))

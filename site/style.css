@@ -165,7 +165,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
   --map-peak-a: #6a4bb0; --map-peak-b: #3d2875; --map-snow: #fff4e6;
   --map-mesa-a: #b44a5e; --map-mesa-b: #7d3150; --map-tree: #2f7a68;
   --map-field: #3a2a66; --map-furrow: #47347a; --map-glow: #ff9d3c;
-  --map-road: #ffc98a; --map-road-main: #ffe9c0; --map-road-casing: #140d2e;
+  --map-road: #e8c39d; --map-road-main: #ffe9c0; --map-road-freeway: #ff9d3c; --map-road-dirt: #d9a06b; --map-road-casing: #140d2e;
   --map-label: #ffe9c0; --map-name: #ffe9c0; --map-name-halo: #2e2058; --chip-ring: #ffe9c0;
   --map-icon-bg: #241747; --map-icon-line: #ffe9c0; --map-icon-a: #ff5470; --map-icon-b: #ff9d3c; --map-icon-ink: #241747;
   --pin-trap: #ff5470; --pin-zone: #ff9d3c; --pin-event: #ffd36b; --pin-glyph: #1a0f33; --pin-ring: #ffe9c0; --pin-shadow: rgba(8, 4, 24, .55);
@@ -184,7 +184,7 @@ footer p { max-width: 760px; margin: 0 0 10px; }
     --map-peak-a: #c9b5ea; --map-peak-b: #9e85cc; --map-snow: #fff;
     --map-mesa-a: #e38b70; --map-mesa-b: #b9614f; --map-tree: #6aa98b;
     --map-field: #efdcb4; --map-furrow: #e2c992; --map-glow: #ff8a3d;
-    --map-road: #c0708f; --map-road-main: #8a2f6c; --map-road-casing: #fffaf3;
+    --map-road: #b77a97; --map-road-main: #8a2f6c; --map-road-freeway: #e0602a; --map-road-dirt: #b0764a; --map-road-casing: #fffaf3;
     --map-label: #5b3c80; --map-name: #2a1a4a; --map-name-halo: #fbf2e4; --chip-ring: #6b5a8a;
     --map-icon-bg: #fffaf3; --map-icon-line: #3a2770; --map-icon-a: #e0335a; --map-icon-b: #f08a2c; --map-icon-ink: #3a2770;
     --pin-trap: #d92b52; --pin-zone: #e2700c; --pin-event: #b88512; --pin-glyph: #fff; --pin-ring: #fffaf3; --pin-shadow: rgba(58, 39, 112, .35);
@@ -213,7 +213,8 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 .lb-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--orange); }
 .lb-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .lb-canvas .cm-roads path, .lb-canvas .cm-water, .lb-canvas .cm-shore { vector-effect: non-scaling-stroke; }
-.lb-canvas .cmap { --map-rw-casing: calc(6px * var(--cm-zr, 1)); --map-rw-minor: calc(2.2px * var(--cm-zr, 1)); --map-rw-main: calc(3.2px * var(--cm-zr, 1)); }
+.lb-canvas .cmap { --map-rw-casing: calc(4.4px * var(--cm-zr, 1)); --map-rw-dirt: calc(1.4px * var(--cm-zr, 1)); --map-rw-minor: calc(1.3px * var(--cm-zr, 1));
+  --map-rw-main: calc(2.2px * var(--cm-zr, 1)); --map-rw-freeway: calc(3px * var(--cm-zr, 1)); --map-dirt-dash: 3 3; }
 .lb-canvas .cm-water { stroke-width: 1.5px; }
 .lb-canvas .cm-shore { stroke-width: 1.5px; }
 .lb-canvas .cm-mk { transform: translate(calc(var(--x) * 1px), calc(var(--y) * 1px)) scale(var(--cm-s, 1)); }

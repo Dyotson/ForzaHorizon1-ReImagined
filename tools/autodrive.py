@@ -31,7 +31,8 @@ GAIN = float(os.environ.get("AD_GAIN", "0.25"))  # seconds of full lock per radi
 LEAD_KINDS = {int(k) for k in os.environ.get("AD_KINDS", "1,3").split(",") if k}
 PATH_SAVE = os.environ.get("AD_PATH_SAVE")  # write the lap (x z speed per line) when closed
 PATH_LOAD = os.environ.get("AD_PATH_LOAD")  # start with a saved lap (races without CPU cars)
-# (a circuit's own AI route makes one: tools/track_path.py; Cat & Mouse driven that way, #13)
+# (a circuit's own AI route makes one: tools/track_path.py; Cat & Mouse driven that way, #13;
+# a loop on free roam's roads: tools/nav_route.py, the hour-long soak of #45)
 # AD_OPEN=1: the loaded path is point to point (a rally stage, tools/owt_path.py), not a lap;
 # exit once the car, after it got going, has not moved for 8 s although it was told to back
 # out (the game holds it after the finish; routes can run on past the finish line).
@@ -239,7 +240,7 @@ while time.time() < t_end:
     send(*cmds)
     n += 1
     if n % int(HZ * 3) == 0:
-        print("%s v %.1f/%.1f err %+.2f path %d idx %d dist %.1f cpu %d" % (
-            time.strftime("%T"), v, target_v, err, len(path), idx, best_d, len(cpu)),
+        print("%s v %.1f/%.1f err %+.2f path %d idx %d dist %.1f cpu %d pos %.0f %.0f" % (
+            time.strftime("%T"), v, target_v, err, len(path), idx, best_d, len(cpu), ox, oz),
             file=LOG, flush=True)
     time.sleep(max(0, tick - (time.time() - t0)))

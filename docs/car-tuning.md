@@ -15,6 +15,34 @@ qualified for normal saves. Named setup files and parameter-only file sharing ar
 browser or public publishing service is not implemented; its native tab is
 unavailable and marked Coming soon.
 
+## Standalone integration
+
+This change is independent of the tabbed pause-menu work in #235. With
+`--forza_car_tuning=true`, the stock FH1 pause list offers **Car Tuning** above
+Graphics and Quit only for the paused, primary-user, offline Colorado free-roam
+context with an owned current car. The existing native availability checks run
+again on entry and Apply. Missing donor aliases keep the stock pause screen
+available. Discard/Back and teardown restore its native list and focus through
+the existing FH1 refresh callback.
+
+The isolation starts on current main and carries tuning from the combined
+`d877a127cc301c9bcc23e06f64d5427c9e0519de` checkpoint, including its native footer,
+class/PI comparison, manufacturer logo, painted panels, simulation status and
+tab-transition fixes. Shared components are limited to the tuning workspace,
+car identity/logo layout and FH1 widget primitives. No tabbed pause controller,
+Social page or Bucket List is required. Named setup paths and the `.fh1tune`
+schema are unchanged.
+
+CPU validation of this standalone source covers the tuning model, saved setup
+and file library, shared components and authored donor-directory fixtures.
+The adapter, tuning workspace, stock-menu hooks and offline activity observer
+also compile for disc and TU4 with the installed SDK. Earlier runtime evidence
+below belongs to the predecessor tuning/combined builds: it does not qualify
+this isolated entry point. Before release, validate its stock entry and focus
+return, Apply and save/restart, named library and export/import in a separate
+copied-profile session. Keep the runtime option off by default until those gates
+are complete.
+
 ## Source comparison
 
 Read-only inspection of the locally supplied FH2 Xbox 360 package (title

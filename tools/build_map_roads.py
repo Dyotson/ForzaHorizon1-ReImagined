@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""Build the website's illustrated map of Colorado (#316) from players' driven lines.
+"""Build the website's illustrated map of Colorado (#316, #324): our own drawing of the roads.
 
-The roads are the lines players drove: the Rivals ghosts the Forza Live server keeps
-(DATA_DIR/ghosts/<id>.bin) and, optionally, drives of our own logged with tools/carlog.py.
-Nothing of the game's map, terrain or road data is used. The paths are merged (a stretch
-already drawn within MERGE_M is not drawn again), simplified (Douglas-Peucker) and written
-as a few SVG paths. The terrain is our own artwork (tools/map_terrain.json: approximate
-regions, the reservoir and label spots in world metres); the landmass, the regions' soft
-shapes and the peaks and mesas on them are generated from it and from the roads. The
-landmark icons are drawn here. Rerun it as more ghosts arrive:
+The roads are the game's road network as the player's own copy has it: the sat-nav graph in
+media/tracks/colorado/colorado.nav (every road the GPS routes on: the interstates, main and
+secondary roads, dirt roads, the festival and the towns). Its lanes (a freeway's carriageways,
+a one-way pair) are joined into one centreline per road, simplified (Douglas-Peucker) and
+written as a few SVG paths by class. Nothing else of the game's map is used: no map image,
+texture or terrain. Players' driven lines can be added too (the Rivals ghosts the Forza Live
+server keeps, drives logged with tools/carlog.py): they only add what the network lacks.
+The terrain is our own artwork (tools/map_terrain.json: approximate regions, the reservoir and
+label spots in world metres); the landmass, the regions' soft shapes and the peaks and mesas
+on them are generated from it and from the roads. The landmark icons are drawn here.
 
-  tools/build_map_roads.py --ghosts DATA_DIR/ghosts [--carlog DRIVE.log ...] \\
+  tools/build_map_roads.py --game extracted/game [--ghosts DATA_DIR/ghosts] [--carlog DRIVE.log] \\
       --points site/data/map_points.json --out site/images/colorado-map.svg
+
+The sat-nav file (big-endian): a 40-byte header (a magic word, then the counts of nodes,
+segments, properties, node-list entries, memberships, property names and property values, and
+two more), nodes of 32 bytes (id, x, y, z as floats, the count and first of its memberships,
+two more words), segments of 16 bytes (the count and first of its nodes in the node list, the
+count and first of its properties), the node list (u32 node indexes, in order along each
+segment), memberships (segment, index: 8 bytes each), properties (name, value: string indexes),
+the string offsets (names, then values, each from the start of its own strings) and the
+NUL-terminated strings. A road segment has a road_type property (freeway, a, b, dirt; also
+shortcut and none); other segments are map labels and area outlines and are not drawn.
 
 A ghost (what the game uploads with a Rivals lap, kept as it is by the server): a 16-byte
 header of big-endian words (the first block's size + 8, the size of the rest, the first
@@ -39,7 +51,14 @@ MERGE_M = 16.0      # a stretch within this of a drawn road is the same road
 GAP_M = 80.0        # a jump longer than this splits a path (a reset, a rewind)
 MIN_RUN = 6         # samples: shorter new stretches are dropped (unless they join roads)
 SIMPLIFY_M = 4.0    # Douglas-Peucker tolerance
-MAIN_USES = 3       # a stretch driven by this many paths is a main road
+NAV_FILE = os.path.join("media", "tracks", "colorado", "colorado.nav")
+# The sat-nav road types drawn, as our classes, in drawing order (lowest first); shortcuts
+# (off-road cuts of races) and "none" (paths) are not drawn. A player's driven line not on the
+# network is "driven".
+ROAD_CLASSES = {"dirt": "dirt", "b": "minor", "a": "main", "freeway": "freeway"}
+CLASS_ORDER = ("freeway", "main", "minor", "dirt", "driven")
+# Lanes of one road within this many metres (and running alongside) are one centreline.
+LANE_M = {"freeway": 46.0, "main": 22.0, "minor": 18.0, "dirt": 14.0, "driven": MERGE_M}
 
 
 # ---- ghosts -------------------------------------------------------------------------------
@@ -117,6 +136,47 @@ def carlog_paths(text):
             except ValueError:
                 pass
     return pts
+
+
+def nav_roads(data):
+    """[(class, [(x, z)])] of the roads of a sat-nav file (see the module's docstring)."""
+    if len(data) < 40:
+        raise ValueError("too short")
+    h = struct.unpack(">10I", data[:40])
+    n_nodes, n_segs, n_props, n_list, n_memb, n_keys, n_vals = h[1:8]
+    need = 40 + 32 * n_nodes + 16 * n_segs + 4 * n_list + 8 * n_memb + 8 * n_props + 4 * (n_keys + n_vals)
+    if need > len(data) or n_keys < 1:
+        raise ValueError("not a sat-nav file")
+    p = 40
+    nodes = [struct.unpack_from(">4xf4xf", data, p + 32 * i) for i in range(n_nodes)]
+    p += 32 * n_nodes
+    segs = [struct.unpack_from(">4I", data, p + 16 * i) for i in range(n_segs)]
+    p += 16 * n_segs
+    order = struct.unpack_from(">%dI" % n_list, data, p)
+    p += 4 * n_list + 8 * n_memb
+    props = [struct.unpack_from(">2I", data, p + 8 * i) for i in range(n_props)]
+    p += 8 * n_props
+    offs = struct.unpack_from(">%dI" % (n_keys + n_vals), data, p)
+    p += 4 * (n_keys + n_vals)
+
+    def text(base, off):
+        end = data.index(b"\0", base + off)
+        return data[base + off:end].decode("latin-1")
+    keys = [text(p, o) for o in offs[:n_keys]]
+    vbase = p + offs[n_keys - 1] + len(keys[-1]) + 1
+    vals = [text(vbase, o) for o in offs[n_keys:]]
+    out = []
+    for count, first, pcount, pfirst in segs:
+        kind = None
+        for k, v in props[pfirst:pfirst + pcount]:
+            if k < len(keys) and keys[k] == "road_type" and v < len(vals):
+                kind = ROAD_CLASSES.get(vals[v])
+        if kind is None or count < 2:
+            continue
+        pts = [(nodes[i][0], nodes[i][1]) for i in order[first:first + count] if i < n_nodes]
+        if len(pts) > 1:
+            out.append((kind, pts))
+    return out
 
 
 # ---- geometry -------------------------------------------------------------------------------
@@ -204,22 +264,76 @@ class Grid:
         return best
 
 
-def build_roads(paths):
-    """Merge paths into road stretches: [(points, uses)], uses = how many paths drove it.
-    Longer paths first; a sample within MERGE_M of a drawn road is that road; the new runs of
-    a path (with one sample of the road they leave and join) become stretches."""
+def chain(lines):
+    """Join lines of one class that meet end to end at a point where only they meet (the
+    sat-nav graph splits a road at every junction): [(class, points)], longest roads whole."""
+    out = []
+    for cls in {c for c, _ in lines}:
+        segs = [list(p) for c, p in lines if c == cls]
+        key = lambda pt: (round(pt[0]), round(pt[1]))  # noqa: E731
+        ends = {}
+        for i, sg in enumerate(segs):
+            for e in (key(sg[0]), key(sg[-1])):
+                ends.setdefault(e, []).append(i)
+        used = [False] * len(segs)
+        for i in range(len(segs)):
+            if used[i]:
+                continue
+            used[i] = True
+            line = segs[i]
+            for forward in (True, False):
+                while True:
+                    tip = key(line[-1] if forward else line[0])
+                    nxt = [j for j in ends.get(tip, ()) if not used[j]]
+                    if len(ends.get(tip, ())) != 2 or len(nxt) != 1:
+                        break
+                    j = nxt[0]
+                    used[j] = True
+                    if forward:
+                        sg = segs[j] if key(segs[j][0]) == tip else segs[j][::-1]
+                        line = line + sg[1:]
+                    else:
+                        sg = segs[j] if key(segs[j][-1]) == tip else segs[j][::-1]
+                        line = sg[:-1] + line
+            out.append((cls, line))
+    return out
+
+
+def heading(pts, i):
+    a, b = pts[max(0, i - 2)], pts[min(len(pts) - 1, i + 2)]
+    return math.atan2(b[1] - a[1], b[0] - a[0])
+
+
+def build_roads(roads):
+    """One centreline per road: [(class, points)] from [(class, points)] (several lanes,
+    sat-nav segments and driven lines). Higher classes and longer lines first; a sample within
+    the class's LANE_M of a road already drawn, running alongside it, is a lane of that road
+    and moves the road's point to the middle of its lanes; a crossing is not. The new runs of
+    a line (with one sample of the road they leave and join) become roads of its class."""
     pieces = []
-    for p in paths:
-        for piece in split_path(p):
+    for cls, pts in chain([r for r in roads if r[0] != "driven"]) + [r for r in roads if r[0] == "driven"]:
+        for piece in split_path(pts, GAP_M if cls == "driven" else 400.0):
             r = resample(piece)
             if len(r) >= 2:
-                pieces.append(r)
-    pieces.sort(key=len, reverse=True)
-    grid = Grid(MERGE_M)
-    roads = []          # [samples]
-    uses = []           # per road, per sample: set of piece indexes
-    for pi, pts in enumerate(pieces):
-        hit = [grid.near(x, z, MERGE_M) for x, z in pts]
+                pieces.append((CLASS_ORDER.index(cls), -len(r), cls, r))
+    pieces.sort(key=lambda p: p[:2])
+    grid = Grid(20.0)
+    out = []        # [cls, samples, lanes per sample: {piece: (x, z)}]
+    for pi, (_, _, cls, pts) in enumerate(pieces):
+        radius = LANE_M[cls]
+        hit, lane = [], []
+        for i, (x, z) in enumerate(pts):
+            h = grid.near(x, z, radius)
+            alongside = False
+            if h is not None:
+                road = out[h[0]]
+                # Alongside: a lane; across (a junction, a bridge): only its middle is shared.
+                d = abs((heading(pts, i) - heading(road[1], h[1]) + math.pi / 2) % math.pi - math.pi / 2)
+                alongside = d < 0.45
+                if not alongside and grid.near(x, z, min(radius, MERGE_M)) is None:
+                    h = None
+            hit.append(h)
+            lane.append(alongside)
         runs, start = [], None
         for i, h in enumerate(hit + [0]):
             if h is None and start is None:
@@ -227,27 +341,39 @@ def build_roads(paths):
             elif h is not None and start is not None:
                 runs.append((start, i))
                 start = None
-        new = []
+        for i, h in enumerate(hit):
+            if h is not None and lane[i]:
+                lanes = out[h[0]][2][h[1]]
+                if pi not in lanes:
+                    lanes[pi] = pts[i]
         for a, b in runs:
             joined = (a > 0) + (b < len(pts))
             if b - a < MIN_RUN and joined < 2:
                 continue
             seg = pts[max(0, a - 1):min(len(pts), b + 1)]
-            new.append(seg)
-        for h in hit:
-            if h is not None:
-                uses[h[0]][h[1]].add(pi)
-        for seg in new:
-            ri = len(roads)
-            roads.append(seg)
-            uses.append([{pi} for _ in seg])
+            ri = len(out)
+            out.append([cls, seg, [{} for _ in seg]])
             for si, (x, z) in enumerate(seg):
-                grid.add(x, z, (ri, si))
-    out = []
-    for seg, u in zip(roads, uses):
-        counts = sorted(len(s) for s in u)
-        out.append((seg, counts[len(counts) // 2]))
-    return out
+                if a <= max(0, a - 1) + si < b:
+                    grid.add(x, z, (ri, si))
+    roads_out = []
+    for cls, seg, lanes in out:
+        # The middle of the lanes at each sample, the shift smoothed along the road.
+        shift = []
+        for (x, z), ln in zip(seg, lanes):
+            if ln:
+                xs = [x] + [q[0] for q in ln.values()]
+                zs = [z] + [q[1] for q in ln.values()]
+                shift.append((sum(xs) / len(xs) - x, sum(zs) / len(zs) - z))
+            else:
+                shift.append((0.0, 0.0))
+        k = 4
+        centre = []
+        for i, (x, z) in enumerate(seg):
+            win = shift[max(0, i - k):i + k + 1]
+            centre.append((x + sum(d[0] for d in win) / len(win), z + sum(d[1] for d in win) / len(win)))
+        roads_out.append((cls, centre))
+    return roads_out
 
 
 # ---- the terrain ------------------------------------------------------------------------
@@ -458,9 +584,11 @@ STYLE = """
 .cm-furrow{fill:none;stroke:var(--map-furrow,#4a3678);stroke-width:5;stroke-linecap:round}
 .cm-wave{fill:none;stroke:var(--map-water-edge,#5fa8e8);stroke-opacity:.6;stroke-width:5;stroke-linecap:round}
 .cm-roads path{fill:none;stroke-linecap:round;stroke-linejoin:round}
-.cm-casing{stroke:var(--map-road-casing,#140d2e);stroke-opacity:.7;stroke-width:var(--map-rw-casing,15)}
-.cm-minor{stroke:var(--map-road,#ffc98a);stroke-width:var(--map-rw-minor,6)}
-.cm-main{stroke:var(--map-road-main,#ffe9c0);stroke-width:var(--map-rw-main,8)}
+.cm-casing{stroke:var(--map-road-casing,#140d2e);stroke-opacity:.7;stroke-width:var(--map-rw-casing,13)}
+.cm-dirt{stroke:var(--map-road-dirt,#d9a06b);stroke-width:var(--map-rw-dirt,4);stroke-dasharray:var(--map-dirt-dash,9 7);stroke-opacity:.9}
+.cm-minor{stroke:var(--map-road,#ffc98a);stroke-width:var(--map-rw-minor,4);stroke-opacity:.8}
+.cm-main{stroke:var(--map-road-main,#ffe9c0);stroke-width:var(--map-rw-main,6)}
+.cm-freeway{stroke:var(--map-road-freeway,#ff9d3c);stroke-width:var(--map-rw-freeway,9)}
 .cm-label{font:italic 800 14px system-ui,sans-serif;letter-spacing:.2em;text-transform:uppercase;fill:var(--map-label,#ffe9c0);fill-opacity:.32;paint-order:stroke;stroke:var(--map-name-halo,#2a1c52);stroke-opacity:.2;stroke-width:3px}
 .cm-name{font:700 12px system-ui,sans-serif;fill:var(--map-name,#ffe9c0);paint-order:stroke;stroke:var(--map-name-halo,#2a1c52);stroke-width:3.5px;stroke-linejoin:round}
 .cm-mk{pointer-events:none}
@@ -535,8 +663,8 @@ def build_svg(roads, points, terrain):
     # The land reaches around the water too.
     extra_land = [tuple(p) for w in terrain.get("water", []) for p in w["outline"]]
     # Bounds: everything with a margin, in whole kilometres.
-    xs = [p["x"] for p in points] + [x for seg, _ in roads for x, _ in seg] + [x for x, _ in extra_land]
-    zs = [p["z"] for p in points] + [z for seg, _ in roads for _, z in seg] + [z for _, z in extra_land]
+    xs = [p["x"] for p in points] + [x for _, seg in roads for x, _ in seg] + [x for x, _ in extra_land]
+    zs = [p["z"] for p in points] + [z for _, seg in roads for _, z in seg] + [z for _, z in extra_land]
     margin = terrain.get("margin", 900)
     bounds = (math.floor((min(xs) - margin) / 500) * 500, math.floor((min(zs) - margin) / 500) * 500,
               math.ceil((max(xs) + margin) / 500) * 500, math.ceil((max(zs) + margin) / 500) * 500)
@@ -546,7 +674,7 @@ def build_svg(roads, points, terrain):
     # The landmass: within reach of a road or a point, closed (dilated then eroded).
     cell = terrain.get("cell", 125)
     r = Raster(bounds, cell)
-    samples = [pt for seg, _ in roads for pt in seg[::4]] + [(p["x"], p["z"]) for p in points
+    samples = [pt for _, seg in roads for pt in seg[::4]] + [(p["x"], p["z"]) for p in points
                                                              if p["kind"] not in ("region",)]
     samples += list(extra_land)
     reach = terrain.get("reach", 1400)
@@ -581,7 +709,7 @@ def build_svg(roads, points, terrain):
     # Decorations: peaks on the mountains, mesas on the red rock, trees on the foothills, away
     # from roads, points and water.
     road_grid = Grid(200)
-    for seg, _ in roads:
+    for _, seg in roads:
         for x, z in seg[::3]:
             road_grid.add(x, z, 1)
     for p in points:
@@ -617,16 +745,16 @@ def build_svg(roads, points, terrain):
             z += sp * 0.8
             row += 1
 
-    # Roads: minor first, main on top; one casing path under all.
-    main, minor = [], []
-    for seg, uses in roads:
-        s = simplify(seg)
-        (main if uses >= MAIN_USES else minor).append(svg.path(s))
+    # Roads by class: dirt (dashed) lowest, then minor, main and freeway roads on top; one
+    # casing under the paved ones.
+    by = {"dirt": [], "minor": [], "main": [], "freeway": []}
+    for cls, seg in roads:
+        by["minor" if cls == "driven" else cls].append(svg.path(simplify(seg)))
 
     out = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" class="cmap" '
            'data-x0="%d" data-z1="%d" data-unit="%g" role="img" aria-labelledby="cm-title">'
            % (svg.w, svg.h, bounds[0], bounds[3], UNIT),
-           '<title id="cm-title">Illustrated map of Colorado: roads drawn from players\' driven lines</title>',
+           '<title id="cm-title">Illustrated map of Colorado</title>',
            "<defs><style>%s</style>" % " ".join(STYLE.split()).replace("; ", ";")]
     for name, body in ICONS.items():
         out.append('<symbol id="cm-i-%s" viewBox="-12 -12 24 24">%s%s</symbol>' % (name, ICON_BADGE, body))
@@ -661,9 +789,10 @@ def build_svg(roads, points, terrain):
         out.append('<path class="cm-wave" d="%s"/>' % "".join(waves(svg, w) for w in water))
     out.append("</g>")
     out.append('<g class="cm-roads">')
-    out.append('<path class="cm-casing" d="%s"/>' % "".join(minor + main))
-    out.append('<path class="cm-minor" d="%s"/>' % "".join(minor))
-    out.append('<path class="cm-main" d="%s"/>' % "".join(main))
+    for cls in ("dirt", "paved", "minor", "main", "freeway"):
+        d = "".join(by["minor"] + by["main"] + by["freeway"]) if cls == "paved" else "".join(by[cls])
+        if d:
+            out.append('<path class="cm-%s" d="%s"/>' % ("casing" if cls == "paved" else cls, d))
     out.append("</g>")
 
     # Labels and landmarks: constant on screen; the page scales them with --cm-s (the SVG units
@@ -703,6 +832,7 @@ def esc(text):
 
 
 def read_paths(ghost_dirs, carlogs):
+    """Players' driven lines: [[(x, y, z)]] and the number of unreadable ghosts."""
     paths, bad = [], 0
     for folder in ghost_dirs:
         for name in sorted(os.listdir(folder)):
@@ -726,26 +856,35 @@ def read_paths(ghost_dirs, carlogs):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ghosts", action="append", default=[], help="a folder of ghost .bin files")
+    ap.add_argument("--game", help="the extracted game (the folder with media/): its sat-nav road network")
+    ap.add_argument("--ghosts", action="append", default=[], help="a folder of ghost .bin files (extra driven lines)")
     ap.add_argument("--carlog", action="append", default=[], help="a tools/carlog.py log of our own drive")
     ap.add_argument("--points", required=True, help="site/data/map_points.json")
     ap.add_argument("--terrain", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "map_terrain.json"))
     ap.add_argument("--out", required=True, help="the map SVG (site/images/colorado-map.svg)")
     a = ap.parse_args(argv)
+    lines = []
+    if a.game:
+        with open(os.path.join(a.game, NAV_FILE), "rb") as f:
+            lines += nav_roads(f.read())
     paths, bad = read_paths(a.ghosts, a.carlog)
-    if not paths:
-        raise SystemExit("no paths")
+    lines += [("driven", [(x, z) for x, _, z in p]) for p in paths]
+    if not lines:
+        raise SystemExit("no roads: give --game (or --ghosts / --carlog)")
     with open(a.points) as f:
         points = json.load(f)["points"]
     with open(a.terrain) as f:
         terrain = json.load(f)
-    roads = build_roads(paths)
+    roads = build_roads(lines)
     doc = build_svg(roads, points, terrain)
     with open(a.out, "w") as f:
         f.write(doc)
-    km = sum(math.hypot(b[0] - a_[0], b[1] - a_[1]) for seg, _ in roads for a_, b in zip(seg, seg[1:])) / 1000
-    print("%s: %d paths (%d unreadable), %d road stretches, %.0f km of road, %d bytes"
-          % (a.out, len(paths), bad, len(roads), km, len(doc.encode())))
+    km = {}
+    for cls, seg in roads:
+        km[cls] = km.get(cls, 0) + sum(math.hypot(b[0] - a_[0], b[1] - a_[1]) for a_, b in zip(seg, seg[1:])) / 1000
+    print("%s: %d lines (%d driven, %d unreadable ghosts), %d roads, %s km, %d bytes"
+          % (a.out, len(lines), len(paths), bad, len(roads),
+             " ".join("%s %.0f" % (c, km[c]) for c in CLASS_ORDER if c in km), len(doc.encode())))
 
 
 if __name__ == "__main__":

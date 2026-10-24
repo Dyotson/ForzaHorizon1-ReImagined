@@ -112,6 +112,25 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
 
 ## Status log
 
+- 2026-10-23: **Internal heap stop in the NVIDIA-labelled crash #299.** Read-only
+  disassembly identifies TU4 `sub_82423000` (base `sub_823F3048`) as the memory
+  manager's allocation loop. When no allocator succeeds, it compares heap `+0x154`
+  minus bytes in use (`+0x44`) with the request. With the heap's stop flag (`+0x174`)
+  enabled, it deliberately stores to guest address 4 if capacity is insufficient,
+  or address 5 if capacity is sufficient but no suitable block was returned. The
+  stores are TU4 `0x824230C0/C8`, base `0x823F3108/10`.
+  The #299 registers identify a 16,384-byte request (`r29=0x4000`), alignment 32
+  (`r27=0x20`), and final heap `r30=0x83396AF0`: category `0x21`, arena 1's high
+  heap, from table `0x8339664C` plus `0x314 + 0x190`. This is distinct from the
+  movie allocator's guest-address-6 stop (#262). The local crash explanation and
+  report now recognize the matching fault, thread, saved link register and register
+  state, preserving the raw fault and call chain. Synthetic base/TU4 logs and the
+  original report's log tail validate recognition; unrelated/incomplete faults
+  remain generic. This classifies an internal heap allocation failure, not an
+  NVIDIA device loss or proof of exhausted system RAM/VRAM. The cause of the
+  unsuitable free blocks and a safe runtime fix remain unproven; no game/GPU
+  reproduction was performed for this change.
+
 - 2026-10-10: project started. Game extracted from the GOD container (base version, see
   above). Codegen of `default.xex` + both facade DLLs succeeds: 76,788 functions in
   `default.xex`, 248 MB of C++. Hints needed so far:
@@ -896,6 +915,22 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   most 15): deleted the default, typed `Max! 7` with the pad (case and symbol pages, LB/RB),
   Start: **SAVE SUCCESSFUL** and `photo/Max! 7/` in the save; a second prompt cancelled with B
   on the empty name returned to the slot picker. Unit test: `forza-recomp/tests/osk_test.cpp`.
+
+- 2026-10-23: **Hitches after loads on Title Update 4: the car view query (#167).** In a player's
+  log, 14 of 17 long frames (0.27-0.32 s, two or three after every load) had the main loop in the
+  game's SQLite 3.6.19 by their `FORZA_STALL` chains (TU4 `sqlite3_step` `sub_83146F20`), running
+  `SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId` through the
+  database's query method (`sub_82CD8FD8`, base `sub_82C19130`). That view is TU4's (the Rally
+  Expansion): LEFT JOINs to three derived tables, which 3.6.19 materializes and scans once per
+  car (no automatic indexes). 131 ms per query here with all DLC (251 cars), twice after every
+  load into free roam; an event's sign-up runs three more (103-105 ms) on another thread while
+  the main loop waits for the lock. `src/hooks/database_query.cpp` creates the view with the same
+  columns and rows from joins on the tables plus four indexes: 16-18 ms and 6-7 ms; the frames
+  that held the query went from 155-193 to 32-74 ms (2 runs each, docs/perf.md).
+  `tools/check_car_view.py` compares both views on the local game files (PASS with the 17 DLC
+  database patches and edge cases); in the game every value read back was the same.
+  `FORZA_GAME_CAR_VIEW=1` keeps the game's view. Every query of 50 ms or more now logs a
+  `FORZA_SQL` line (`FORZA_SQL_LOG=1`: all of them).
 
 ## Debugging recipes
 
