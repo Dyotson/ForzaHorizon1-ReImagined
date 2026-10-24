@@ -668,14 +668,15 @@ saves' sessions waiting) and `server/test_forza_coop_ledger.py` (forged and late
 other games' writes, the round's grid, unverified calls, refusals, limits, the batched file).
 
 **Acceptance, checked with two games** (local server, FR69 "Advan Asphalt Attack", level 6, R3,
-not raced in the host's save):
+unlocked and not raced in the host's save; first with the code above, then again from fresh
+saves and a fresh server with the review fixes and the caller check of `docs/title_services.md`):
 
-| Milestone 1 acceptance | Result |
+| Milestone 1 acceptance | Result (the run with the fixes) |
 | --- | --- |
 | The lobby shows the event's class, restrictions and CPU drivers in restricted cars | FR05 (phase A); FR69: R3, Red Rock Descent 6.61 km, six CPU drivers in R3 cars (`screenshots/2026-10-23_coop_fr69_lobby_A_left_B_right.jpg`) |
-| Both race it | twice: host 4th, guest 8th (`screenshots/2026-10-23_coop_fr69_A_4th_B_8th.jpg`); then host 8th, guest 4th. Ledger: `round 5a662e6f69c403d8 (FR69): DriverA place 4/8`, the host's write `relative score 4`; the guest's results kept but not offered (`GET /coop/results` for DriverB: none) |
-| After closing the game, the host's save shows the event done at the right place, with XP and credits added once | the launcher's grant: "FR69 at place 4 (was not raced): +120 XP, +11,000 CR", the 8th "unchanged", one backup; the save decoded after: XP 11,230 -> 11,350, credits 652,056 -> 663,056, `Career_EventResults` 233 = 4. In the game the credits show 663,056, and the map's card says FR69 "130 PTS" (250 for 1st less the 120 earned at 4th) where an unraced level-6 event says "250 PTS" (`screenshots/2026-10-23_coop_granted_fr69_4th_130pts_vs_unraced_250pts.jpg`); with a granted 1st, STATS counts the event won (question 1) |
-| A second run at a worse place changes nothing | the second round's 8th was offered and left unchanged; applying both again changed nothing and made no backup |
+| Both race it | twice: host 7th, guest 8th (`screenshots/2026-10-23_coop_fr69_A_7th_B_8th.jpg`), then host 8th, guest 4th. Every call carried the players' keys (no unverified call logged, the race stats `verified: true`); `/event FR05` typed during the race got "An event is running in this world"; each round closed when the world's free roam came back. Ledger: `round b76a36042714a1c3 (FR69): DriverA place 7/8`, the host game's write `relative score 1`; the guest's results kept but not offered (`GET /coop/results` for DriverB: none) |
+| After closing the game, the host's save shows the event done at the right place, with XP and credits added once | the launcher's grant (session recorded, then after_session): "FR69 at place 7 (was not raced): +80 XP, +4,300 CR", "applied 1, unchanged 1, locked 0, waiting 0", one backup; the save decoded after: XP 11,230 -> 11,310, credits 635,931 -> 640,231, `Career_EventResults` 233 = 7. In the game the credits show 640,231 and the map's card says FR69 "170 PTS" (250 for 1st less the 80 earned at 7th), where an unraced level-6 event says "250 PTS" (`screenshots/2026-10-23_coop_granted_fr69_7th_170pts.jpg`; the first run's 4th showed "130 PTS", `screenshots/2026-10-23_coop_granted_fr69_4th_130pts_vs_unraced_250pts.jpg`); with a granted 1st, STATS counts the event won (question 1) |
+| A second run at a worse place changes nothing | the second round's 8th was offered and left unchanged; both were confirmed, and the next grant found nothing (`GET /coop/results`: none) |
 
 Not done in milestone 1: guests' careers (M2: the ledger keeps their results; each launcher
 would apply them when the event is unlocked in its save), the prize car (`Rewards_EventPrizes`),
