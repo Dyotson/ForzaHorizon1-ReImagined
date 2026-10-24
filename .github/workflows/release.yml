@@ -213,6 +213,11 @@ jobs:
           clang++ -std=c++23 -pthread -I"$overlay/include" tools/test_wait_wakeups.cpp \
             -L"$overlay/lib" -lrexruntime -Wl,-rpath,"$overlay/lib" -o "$RUNNER_TEMP/wait-wakeups-test"
           "$RUNNER_TEMP/wait-wakeups-test"
+          # #221: the presenter connects again after a minimize and restore (patch 0290).
+          clang++ -std=c++23 -pthread -Wall -Wextra -Werror -DREX_HAS_FIDELITYFX_SDK=1 \
+            -I"$overlay/include" tools/test_presenter_reconnect.cpp \
+            -L"$overlay/lib" -lrexruntime -Wl,-rpath,"$overlay/lib" -o "$RUNNER_TEMP/presenter-reconnect-test"
+          "$RUNNER_TEMP/presenter-reconnect-test"
           tools/package_sdk_overlay.sh "$PWD/rexglue-overlay-linux-amd64.tar.gz"
       - name: Compile performance overlay against stock nightly headers
         run: |
