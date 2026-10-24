@@ -18,7 +18,6 @@ enum class PauseAction {
   Garage, Autoshow, TuneCar, Difficulty, Graphics, Audio, Controls, Hud, Video,
   Friends, Chat, SocialStats, FreeRoam, CreateGame, FriendRequests, ConnectionGuide, SocialRoot,
   SessionPage, InviteFriends, LeaveSession, SessionNext,
-  BucketSpeed, BucketCruise, BucketDistance, BucketCancel,
 };
 
 struct PauseActionBinding {
@@ -54,10 +53,6 @@ inline constexpr std::array kPauseActions{
     PauseActionBinding{"session_invite", PauseAction::InviteFriends},
     PauseActionBinding{"session_leave", PauseAction::LeaveSession},
     PauseActionBinding{"session_next", PauseAction::SessionNext},
-    PauseActionBinding{"bucket_speed", PauseAction::BucketSpeed},
-    PauseActionBinding{"bucket_cruise", PauseAction::BucketCruise},
-    PauseActionBinding{"bucket_distance", PauseAction::BucketDistance},
-    PauseActionBinding{"bucket_cancel", PauseAction::BucketCancel},
 };
 
 inline std::optional<PauseAction> FindPauseAction(std::string_view id) {
@@ -80,8 +75,6 @@ struct PauseCapabilities {
   bool create_game = false;
   bool invite_friends = false;
   bool leave_session = false;
-  bool bucket_list = false;
-  bool bucket_active = false;
   bool session_more = false;
   bool end_free_roam = false;
 };
@@ -120,13 +113,7 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool
           {"hud", "HUD", {454, 376, 372, 194}, "hud"},
           {"video", "VIDEO", {842, 376, 374, 194}, "video"},
       }},
-      {"bucket_list", "BUCKET LIST", {
-          {"bucket_speed","COLORADO SPRINT",{64,166,374,282},"bucket_speed",true,caps.bucket_list&&!caps.bucket_active},
-          {"bucket_cruise","STEADY SIXTY",{454,166,372,282},"bucket_cruise",true,caps.bucket_list&&!caps.bucket_active},
-          {"bucket_distance","MILE MARKER",{842,166,374,282},"bucket_distance",true,caps.bucket_list&&!caps.bucket_active},
-          {"bucket_cancel","CANCEL CHALLENGE",{64,464,374,106},"bucket_cancel",true,caps.bucket_active},
-          {"bucket_status","BUCKET LIST PROGRESS",{454,464,762,106},""},
-      }},
+
   };
   if(social_help)pages[2].tiles={
       {"social_account","CONNECTION",{64,166,560,282},""},

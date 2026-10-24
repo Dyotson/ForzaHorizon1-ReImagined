@@ -270,7 +270,7 @@ void ChildOwnershipAndInputPolicy() {
 }
 
 void DefaultPausePages() {
-  const PauseCapabilities all{true,true,true,true,true,true,true,true,true,true,true,true,false,true};
+  const PauseCapabilities all{true,true,true,true,true,true,true,true,true,true,true,true,false};
   const auto pages = MakePausePages(all);
   Controller menu;
   menu.SetPages(pages);

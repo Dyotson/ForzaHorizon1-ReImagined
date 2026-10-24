@@ -10,7 +10,6 @@
 #include "../platform/native_pause_layout.h"
 #include "../platform/native_pause_pages.h"
 #include "../platform/native_pause_assets.h"
-#include "../platform/bucket_list.h"
 #include "../platform/fh1_pause_actions.h"
 #include "../platform/fh1_current_car.h"
 #include "../platform/fh1_map_preview.h"
@@ -39,7 +38,6 @@ extern "C" REX_FUNC(__imp__sub_827DE0D0);
 extern "C" REX_FUNC(__imp__sub_827E5CA8);
 extern "C" REX_FUNC(__imp__XamInputGetState);
 extern "C" REX_FUNC(__imp__XamUserGetName);
-extern "C" REX_FUNC(__imp__XamUserGetXUID);
 
 namespace forza::native_pause_scene {
 namespace {
@@ -94,7 +92,6 @@ struct State {
   bool social_session=false,help_from_session=false;
   size_t session_offset=0;
   bool online_entry_available=false;
-  bool bucket_available=false;
   bool end_free_roam=false;
   uint32_t exit_dialog=0;
   std::string social_return="social_connection";
@@ -170,12 +167,8 @@ menu::PauseCapabilities Capabilities(Native& ui) {
       Read(ui.base,state.screen+0x1e4)&&LiveLocalActivity(presence,region)&&
       presence==1&&region==0;
   state.online_entry_available=online_entry;
-  const auto bucket=bucket_list::Snapshot();
-  const bool bucket_active=bucket.phase==bucket_list::Phase::Countdown||bucket.phase==bucket_list::Phase::Running;
   const auto session=LiveCurrentSession();
   state.end_free_roam=session.has_value()&&ActionAvailable(ui.base,15);
-  state.bucket_available=ActionAvailable(ui.base,2)&&!session&&
-      fh1_festival_travel::Available(ui.ctx,ui.base,D::Garage);
   return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
@@ -184,7 +177,7 @@ menu::PauseCapabilities Capabilities(Native& ui) {
           LiveConnected(), online_entry, online_entry,
           LiveConnected() && session.has_value() && !(session->flags & 0x400),
           LiveConnected() && session.has_value() && LeaveAction(ui.base).has_value(),
-          state.bucket_available,bucket_active,session&&session->members.size()>5,state.end_free_roam};
+          session&&session->members.size()>5,state.end_free_roam};
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -296,13 +289,6 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   return Require("card", "BigPane01.Material866", card.material);
 }
 std::string Description(std::string_view id) {
-  for(size_t i=0;i<bucket_list::kChallenges.size();++i)
-    if(id==bucket_list::kChallenges[i].id){
-      if(!state.bucket_available)return std::string(bucket_list::kChallenges[i].goal)+"\n\nStart in Colorado single-player free roam";
-      return bucket_list::Description(i);
-    }
-  if(id=="bucket_cancel")return "End the current attempt";
-  if(id=="bucket_status")return bucket_list::Status();
   if (id == "world_map") return "Explore Colorado";
   if (id == "friends") return state.friends_summary;
   if (id == "chat") return state.chat_summary;
@@ -355,9 +341,6 @@ void ActionArtwork(Native& ui,Card& card,const menu::Tile& tile) {
     {"social_help","UI4\\Native_Menu\\social_connection.tga",256,256,0,0,256,256},
     {"session_join","UI4\\Native_Menu\\social_friends.tga",256,256,0,0,256,256},
     {"session_invite","UI4\\Native_Menu\\social_requests.tga",256,256,0,0,256,256},
-    {"bucket_speed","UI4\\Native_Menu\\change_car.tga",256,256,0,0,256,256},
-    {"bucket_cruise","UI4\\Native_Menu\\change_car.tga",256,256,0,0,256,256},
-    {"bucket_distance","UI4\\Native_Menu\\social_world.tga",256,256,0,0,256,256},
   };
   const Art* image=nullptr;for(const auto& a:art)if(tile.id==a.id){image=&a;break;}
   if(!card.icon)return;
@@ -472,9 +455,6 @@ void RefreshData(Native& ui) {
       state.gamertag += char(GuestPtr(ui.base, ui.scratch + 1800)[i]);
   }
   state.connection = LiveConnected() ? "ONLINE" : "";
-  ui.ctx.r3.u64=0;ui.ctx.r4.u64=1;ui.ctx.r5.u64=ui.scratch+1840;
-  __imp__XamUserGetXUID(ui.ctx,ui.base);
-  if(!ui.ctx.r3.u32)bucket_list::Profile(uint64_t(Read(ui.base,ui.scratch+1840))<<32|Read(ui.base,ui.scratch+1844));
   {
     // PlayerBar follows the loaded online car; the garage photo donor can
     // still describe the single-player owned car after a multiplayer transition.
@@ -862,11 +842,6 @@ void SocialHelp(Native& ui,bool show) {
 void Activate(Native& ui, const std::string& id) {
   const auto action = menu::FindPauseAction(id);
   if (!action) return;
-  if(*action==menu::PauseAction::BucketCancel){bucket_list::Cancel();state.refreshed={};return;}
-  for(size_t i=0;i<bucket_list::kChallenges.size();++i)if(id==bucket_list::kChallenges[i].id){
-    if(Capabilities(ui).bucket_list&&bucket_list::Start(i))Resume(ui);
-    return;
-  }
   if (*action == menu::PauseAction::SettingsPage) {
     state.controller.SelectPage("settings");
     return;
@@ -1249,8 +1224,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
       ActionArtwork(ui,card,tile);
       const bool social=page->id=="social";
-      const bool bucket=page->id=="bucket_list";
-      if(social||bucket){
+      if(social){
         if(!tile.enabled)ui.Opacity(card.donor.presentation,card.paper,85);
         Label(ui,card.donor,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},
             tile.bounds.width<300?21:23,tile.label,tile.enabled?kTextColor:kDisabledTextColor);
@@ -1260,31 +1234,15 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         ui.Show(card.donor.presentation, card.caption, tile.id != "current_car");
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
-               tile.bounds.width - (tile.id=="social_connection"?104:48), (social||bucket)?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
-              bucket?16:social?(state.social_help||tile.id=="session_players"?14:16):compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
+               tile.bounds.width - (tile.id=="social_connection"?104:48), social?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
+              social?(state.social_help||tile.id=="session_players"?14:16):compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";
-        const bool bucket_progress=tile.id=="bucket_status";
         ui.Show(card.donor.presentation, card.progress_track, progress);
         ui.Show(card.donor.presentation, card.progress_fill, progress);
         if (progress) Progress(ui, card, tile.bounds);
-        if(bucket_progress){
-          const auto view=bucket_list::Snapshot();
-          unsigned count=0;for(unsigned bit=0;bit<3;++bit)if(view.completed&(1u<<bit))++count;
-          const bool active=view.phase==bucket_list::Phase::Countdown||view.phase==bucket_list::Phase::Running;
-          const float fraction=float(active?view.fraction:count/3.);
-          const menu::Rect track{tile.bounds.x+24,tile.bounds.y+tile.bounds.height-16,tile.bounds.width-48,5};
-          for(const auto node:{card.progress_track,card.progress_fill}){
-            Normalize(ui,card.donor,node);Depth(ui,card.donor,node,-1);
-            ui.Show(card.donor.presentation,node,node==card.progress_track||fraction>0);
-            const auto width=node==card.progress_track?track.width:track.width*fraction;
-            Point(ui,card.donor,node,track.x+width/2,track.y+track.height/2);
-            ui.Scale(card.donor.presentation,node,width/100,.05f);
-          }
-          ui.Color(card.donor.presentation,Named(ui,card.progress_track,"Material100"),0x777177);
-          ui.Color(card.donor.presentation,Named(ui,card.progress_fill,"Material90"),0xff007a);
-        }
+
       }
       const bool car = tile.id == "current_car";
       if (tile.id == "world_map" && fh1_map_preview::Ready()) {

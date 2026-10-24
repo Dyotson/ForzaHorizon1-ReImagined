@@ -9,7 +9,7 @@ runtime adapters and build configuration have been retired.
 
 ## Structure
 
-The pause strip has Home, Cars, Social, Settings and Bucket List. The four native
+The pause strip has Home, Cars, Social and Settings. The four native
 tab presentations scroll to keep the selected logical tab visible. Social uses a larger
 Friends activity panel, Horizon World/Create Game actions, direct Requests and
 Chat entries, and Session & Connection. Friends shows server-supplied counts and
@@ -76,33 +76,9 @@ with the bound `quit` callback at pause+0x1F8. Action 14 is Retire and must neve
 be labelled Leave Session: it leaves a guest waiting in the running round.
 Action 5 opens the Message Center and is never used to exit.
 
-## Bucket List prototype
+## Session validation
 
-Three single-player challenges use the current car in Colorado free roam:
-Colorado Sprint (100 mph in 60 seconds), Steady Sixty (at least 60 mph continuously
-for 10 seconds within 60 seconds), and Mile Marker (one mile in 120 seconds).
-These are repository-authored prototypes, with no FH2 code/assets or parked loaner
-cars. Selecting a challenge resumes native gameplay after releasing the pause's
-composed resources. A three-second countdown and progress/result notifications use
-the native challenge HUD. The tab also shows goal progress and completion count.
-
-Samples come from the same native player-vehicle position list as telemetry.
-Physics time and progress freeze while paused; changing car, loading, rewind,
-joining a session or an implausible position jump cancels the attempt. Only one
-attempt can run at a time, with explicit cancellation and retry. Completion bits
-live in `user_data_root/bucket-list/<offline-XUID>.txt`, with a recoverable backup;
-the prototype does not award credits/XP or alter ForzaProfile.
-
-Focused model tests cover timing, success, failure, hold resets, cancellation,
-teleports, profile storage/reload/recovery and presence compatibility. A copied-save
-1280x720 run exercised countdown, real driving, native timeout/retry, distance
-progress, a paused progress snapshot remaining unchanged and cancellation.
-Live challenge completion/relaunch is still unverified; model coverage alone is
-not a claim that a challenge was won in gameplay. A further copied-profile 720p
-attempt confirmed native Reset Car Position executes HandOfGod and cancels the
-active challenge when the car is repositioned, rather than counting the jump as
-progress. Normal driving attempts were interrupted by traffic/barrier collisions;
-they do not close the gameplay-win/relaunch gate. Two private local clients
+Two private local clients
 exercised Friends join confirmation/cancel/accept, a populated custom lobby,
 race start and joining a running Horizon World. The session page showed both
 players' actual loaded cars with class/PI and distinct host/local labels.
