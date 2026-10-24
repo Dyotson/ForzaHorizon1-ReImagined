@@ -98,8 +98,11 @@ Mods: the game reads media/stringtables/en/main.str (Example: title text)
 
 A mod that cannot be loaded is skipped with the reason, and the game starts without it:
 `Mods: skipped BrokenMod: cannot read media/gamemodes/unreadable.xml`, `folder not found`,
-`no media folder`, `no files under media/`, a file over 2 GB. Files the game would not find are
-left out with a warning (outside `media/`, non-ASCII names, whole `.zip` archives). When two mods
+`no media folder`, `no files under media/`, two files whose names differ only in case, a file
+over 64 MB that replaces no loose file (see [Limits](#limits-milestone-1)). Files the game would
+not find are left out with a warning (outside `media/`, non-ASCII names, paths over 255
+characters, whole `.zip` archives). Links (symlinks) are followed; a file is named by where it is
+in the mod, not where the link leads. When two mods
 have the same file, the log says which one is used. A file that is in no archive yet is added
 (`added (over any copy in the game's other archives)`); the game only reads it if something asks
 for that path.
@@ -163,7 +166,13 @@ archive file needs neither.
 - The base game (no title update) gets an empty `update:\media.zip` (in the cache folder,
   `mods_update`) for the mods; a file taken from the title update (its `gamedb.slt`, say) may
   not suit the base game's executable.
-- A mod file is at most 2 GB, the archive at most 4 GB and 65,534 members (the game's zip reader
-  has no Zip64).
+- A file in the archive is at most 64 MB (67,108,863 bytes): the game's zip index keeps a
+  member's size in 26 bits (TU4 `sub_82D22528`; the largest member of the game's own archives is
+  47 MB). A bigger file (up to 2 GB) only works in place of a loose file of the game with the same
+  path, such as `media/audio/radio/Radio_Music.fsb`; otherwise the mod is skipped.
+- A file's path under `media/` is at most 255 characters (the game copies archive names into a
+  fixed buffer); longer ones are left out.
+- The archive holds at most 4 GB and 65,534 members (the game's zip reader has no Zip64).
+- At most 64 mod files are open at once; the others are opened again when the game reads them.
 - Online play does not check mods: in a session, players with different mods may see different
   things.

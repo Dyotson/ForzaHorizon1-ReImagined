@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -57,36 +58,42 @@ namespace fs = std::filesystem;
 using rex::filesystem::Entry;
 using rex::X_STATUS;
 
-// The host files an overlaid entry reads, opened once and shared by every open of the entry.
+// The host files an overlaid entry reads, shared by every open of the entry. The update's
+// archive stays open; at most kOpenModFiles mod files are open at once (HandleCache), and one
+// that cannot be opened reads as zeros until a later read opens it.
+constexpr size_t kOpenModFiles = 64;
+
 struct Sources {
   struct Source {
     fs::path path;
     std::string label;  // for the log: "media/db/gamedb.slt (Mod name)", or the archive
     bool from_mod = false;
-    std::unique_ptr<rex::filesystem::FileHandle> handle;
-    bool open_failed = false;
-    std::atomic<bool> read_logged{false}, short_logged{false};
+    std::atomic<bool> read_logged{false}, short_logged{false}, open_logged{false};
   };
   std::vector<std::unique_ptr<Source>> list;
-  std::mutex open_mutex;
+  std::unique_ptr<mods::HandleCache<rex::filesystem::FileHandle>> handles;
+
+  // After the last source is added.
+  void Finish() {
+    std::vector<bool> pinned;
+    for (const auto& s : list) pinned.push_back(!s->from_mod);
+    handles = std::make_unique<mods::HandleCache<rex::filesystem::FileHandle>>(
+        std::move(pinned), kOpenModFiles, [this](size_t index) {
+          return rex::filesystem::FileHandle::OpenExisting(
+              list[index]->path, rex::filesystem::FileAccess::kGenericRead);
+        });
+  }
 
   size_t Read(int32_t index, uint64_t offset, uint8_t* buffer, size_t size) {
     Source& s = *list[size_t(index)];
-    rex::filesystem::FileHandle* handle = nullptr;
-    {
-      std::lock_guard lock(open_mutex);
-      if (!s.handle && !s.open_failed) {
-        s.handle = rex::filesystem::FileHandle::OpenExisting(
-            s.path, rex::filesystem::FileAccess::kGenericRead);
-        if (!s.handle) {
-          s.open_failed = true;
-          REXLOG_ERROR("Mods: cannot open {} any more ({}); the game reads zeros in its place",
-                       s.label, mods::Utf8(s.path));
-        }
+    std::shared_ptr<rex::filesystem::FileHandle> handle = handles->Get(size_t(index));
+    if (!handle) {
+      if (!s.open_logged.exchange(true)) {
+        REXLOG_ERROR("Mods: cannot open {} ({}); the game reads zeros in its place until it "
+                     "opens again", s.label, mods::Utf8(s.path));
       }
-      handle = s.handle.get();
+      return 0;
     }
-    if (!handle) return 0;
     size_t done = 0;
     while (done < size) {  // a short read is not the end of the file yet
       size_t got = 0;
@@ -263,9 +270,11 @@ std::vector<std::string> ModsToLoad(const fs::path& dir) {
   if (setting != "*") return mods::SplitModList(setting);
   std::vector<std::string> all;
   std::error_code ec;
-  for (const auto& entry : fs::directory_iterator(dir, ec)) {
-    const std::string name = mods::Utf8(entry.path().filename());
-    if (entry.is_directory(ec) && !name.empty() && name[0] != '.') all.push_back(name);
+  fs::directory_iterator it(dir, ec);
+  for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+    const std::string name = mods::Utf8(it->path().filename());
+    std::error_code dir_ec;
+    if (it->is_directory(dir_ec) && !name.empty() && name[0] != '.') all.push_back(name);
   }
   std::sort(all.begin(), all.end());
   return all;
@@ -275,8 +284,10 @@ std::vector<std::string> ModsToLoad(const fs::path& dir) {
 
 namespace forza {
 
-void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_data_root,
-                 const fs::path& cache_root) {
+namespace {
+
+void InstallModsUnguarded(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_data_root,
+                          const fs::path& cache_root) {
   const std::string dir_setting = REXCVAR_GET(forza_mods_dir);
   const fs::path dir = dir_setting.empty() ? user_data_root / "mods" : mods::PathOf(dir_setting);
   std::error_code ec;
@@ -293,6 +304,17 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_d
   for (const auto& name : wanted) {
     mods::ScannedMod mod = mods::ScanMod(dir, name);
     for (const auto& note : mod.ignored) REXLOG_WARN("Mods: {}: left out {}", name, note);
+    // A file over 64 MB cannot be a member of the archive: it may only take the place of a
+    // loose file of the game.
+    for (const auto& f : mod.files) {
+      if (!mod.error.empty() || !f.loose_only) continue;
+      auto* loose = dynamic_cast<rex::filesystem::HostPathEntry*>(
+          vfs->ResolvePath("game:\\media\\" + Backslashes(f.name)));
+      if (!loose || (loose->attributes() & rex::filesystem::kFileAttributeDirectory)) {
+        mod.error = "media/" + f.name + " is over 64 MB, more than the game's archives hold, and "
+                    "the game has no loose file of that name for it to replace";
+      }
+    }
     if (!mod.error.empty()) {
       REXLOG_ERROR("Mods: skipped {}: {}", name, mod.error);
     } else {
@@ -358,8 +380,9 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_d
     const std::string label =
         "media/" + f.file.name + " (" + (mod.manifest.name.empty() ? mod.folder : mod.manifest.name) + ")";
     file_source.push_back(add_source(f.file.path, label, true));
-    added.push_back({f.file.name, f.file.size, f.file.crc, file_source.back()});
+    if (!f.file.loose_only) added.push_back({f.file.name, f.file.size, f.file.crc, file_source.back()});
   }
+  sources->Finish();
   mods::Layout layout;
   std::vector<bool> replaced;
   if (!mods::BuildArchive(&directory, base, added, &layout, &replaced, &error)) {
@@ -369,6 +392,9 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_d
   const size_t entries_before = directory.entries.size();
   size_t replacing = 0;
   for (bool r : replaced) replacing += r;
+  std::vector<int> in_archive(files.size(), -1);  // index in `added`, or -1 (loose only)
+  for (size_t i = 0, a = 0; i < files.size(); ++i)
+    if (!files[i].file.loose_only) in_archive[i] = int(a++);
   auto overlay = MakeOverlay(std::move(layout), sources);
   const uint64_t archive_size = overlay->layout.size;
   if (!ReplaceEntry(archive, std::make_unique<OverlayEntry>(archive, overlay))) {
@@ -391,13 +417,28 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_d
         ++loose;
       }
     }
-    REXLOG_INFO("Mods: media/{} from {}: {}{}", f.file.name, scanned[f.mod].folder,
-                replaced[i] ? "in place of the title update's copy" : "added (over any copy in the game's other archives)", also);
+    const char* what = in_archive[i] < 0                ? "over 64 MB, not in the archive"
+                       : replaced[size_t(in_archive[i])] ? "in place of the title update's copy"
+                                                         : "added (over any copy in the game's other archives)";
+    REXLOG_INFO("Mods: media/{} from {}: {}{}", f.file.name, scanned[f.mod].folder, what, also);
   }
   REXLOG_INFO("Mods: update:\\media.zip holds {} files ({} replaced, {} added by mods; {} loose "
               "file(s) replaced), {:.1f} MB",
-              entries_before - replacing + files.size(), replacing, files.size() - replacing,
+              entries_before - replacing + added.size(), replacing, added.size() - replacing,
               loose, archive_size / 1048576.0);
+}
+
+}  // namespace
+
+// Mods are optional: whatever goes wrong here (a filesystem error the checks above did not
+// catch, a name the platform cannot convert) skips them and the game starts as it is.
+void InstallMods(rex::filesystem::VirtualFileSystem* vfs, const fs::path& user_data_root,
+                 const fs::path& cache_root) {
+  try {
+    InstallModsUnguarded(vfs, user_data_root, cache_root);
+  } catch (const std::exception& e) {
+    REXLOG_ERROR("Mods: not loaded: {}", e.what());
+  }
 }
 
 }  // namespace forza

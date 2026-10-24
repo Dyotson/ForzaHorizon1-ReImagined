@@ -162,6 +162,16 @@ void TestArchive() {
   uint8_t byte;
   CHECK(m::ReadLayout(layout, zip.size(), &byte, 1, over.Reader()) == 0);
 
+  // The game's index limits: 64 MB a member, 255-byte names.
+  std::vector<m::AddedFile> big = {{"big.bin", uint32_t(m::kMaxMember + 1), 0, 4}};
+  CHECK(!m::BuildArchive(&base_dir, 0, big, &layout, &replaced, &error));
+  big[0].size = uint32_t(m::kMaxMember);
+  CHECK(m::BuildArchive(&base_dir, 0, big, &layout, &replaced, &error));
+  std::vector<m::AddedFile> long_name = {{std::string(256, 'a'), 3, 0, 5}};
+  CHECK(!m::BuildArchive(&base_dir, 0, long_name, &layout, &replaced, &error));
+  long_name[0].name.resize(255);
+  CHECK(m::BuildArchive(&base_dir, 0, long_name, &layout, &replaced, &error));
+
   // Two files with one name are refused.
   std::vector<m::AddedFile> twice = {mod_files[0], mod_files[0]};
   twice[1].name = "GAMEMODES/autoshows.XML";
@@ -200,8 +210,10 @@ void TestManifest() {
 }
 
 void TestList() {
-  CHECK((m::SplitModList("A | B|A||C ") == std::vector<std::string>{"A", "B", "C"}));
+  // Names as they are: a folder may start or end with a space.
+  CHECK((m::SplitModList("A| B|A||C ") == std::vector<std::string>{"A", " B", "C "}));
   CHECK(m::SplitModList("").empty());
+  CHECK(m::SplitModList("|").empty());
 }
 
 void Write(const fs::path& p, const std::string& text) {
@@ -245,6 +257,82 @@ void TestFolders() {
   fs::remove_all(root);
 }
 
+void TestLimitsAndLinks() {
+  const fs::path root = fs::temp_directory_path() / ("mod_archive_limits_" + std::to_string(std::rand()));
+  fs::remove_all(root);
+  // Over 64 MB: kept only to replace a loose file (sparse, so cheap to make).
+  Write(root / "Big/media/audio/radio/radio_music.fsb", "");
+  fs::resize_file(root / "Big/media/audio/radio/radio_music.fsb", m::kMaxMember + 1);
+  Write(root / "Big/media/small.xml", "s");
+  m::ScannedMod big = m::ScanMod(root, "Big");
+  CHECK(big.error.empty() && big.files.size() == 2);
+  for (const auto& f : big.files) CHECK(f.loose_only == (f.name == "audio/radio/radio_music.fsb"));
+  // A path over 255 characters is left out.
+  std::string deep = "media";
+  while (deep.size() < 262) deep += "/abcdefghij";
+  Write(root / "Deep" / deep / "x.xml", "x");
+  Write(root / "Deep/media/ok.xml", "ok");
+  m::ScannedMod long_path = m::ScanMod(root, "Deep");
+  CHECK(long_path.error.empty() && long_path.files.size() == 1 && long_path.ignored.size() == 1);
+#ifndef _WIN32
+  // Links are followed and named by where they are, not where they lead.
+  Write(root / "work/stringtables/en/main.str", "linked");
+  fs::create_directories(root / "FileLink/media/stringtables/en");
+  fs::create_symlink(root / "work/stringtables/en/main.str", root / "FileLink/media/stringtables/en/main.str");
+  fs::create_directories(root / "DirLink/media");
+  fs::create_directory_symlink(root / "work/stringtables", root / "DirLink/media/stringtables");
+  for (const char* name : {"FileLink", "DirLink"}) {
+    m::ScannedMod linked = m::ScanMod(root, name);
+    CHECK(linked.error.empty() && linked.files.size() == 1 &&
+          linked.files[0].name == "stringtables/en/main.str" && linked.files[0].size == 6);
+  }
+#endif
+  // A folder whose name starts with a space is found as named.
+  Write(root / " Spaced/media/a.xml", "a");
+  CHECK(m::ScanMod(root, " Spaced").error.empty());
+  fs::remove_all(root);
+}
+
+struct FakeHandle {
+  explicit FakeHandle(int* open) : open_(open) { ++*open_; }
+  ~FakeHandle() { --*open_; }
+  int* open_;
+};
+
+void TestHandleCache() {
+  int open = 0, opens = 0;
+  bool fail_3 = true;
+  m::HandleCache<FakeHandle> cache({true, false, false, false}, 2, [&](size_t index) {
+    if (index == 3 && fail_3) return std::unique_ptr<FakeHandle>();
+    ++opens;
+    return std::make_unique<FakeHandle>(&open);
+  });
+  auto pinned = cache.Get(0);
+  bool opened = false;
+  CHECK(cache.Get(1, &opened) && opened);
+  CHECK(cache.Get(1, &opened) && !opened);  // kept open
+  {
+    auto in_use = cache.Get(2);
+    CHECK(cache.Get(1));  // 1 is now the most recent, 2 the oldest
+    fail_3 = false;
+    CHECK(cache.Get(3));  // closes 2 in the cache, but the reader still holds it
+    CHECK(open == 4 && cache.open_count() == 3);
+  }
+  CHECK(open == 3);  // 2 closed once its reader let go; the pinned one never is
+  CHECK(cache.Get(2, &opened) && opened && open == 3);  // reopened, 1 closed
+  fail_3 = true;
+  CHECK(cache.Get(3));  // still open: no new open needed
+  // A failed open is tried again the next time.
+  m::HandleCache<FakeHandle> flaky({false}, 1, [&](size_t) {
+    return fail_3 ? std::unique_ptr<FakeHandle>() : std::make_unique<FakeHandle>(&open);
+  });
+  CHECK(!flaky.Get(0));
+  fail_3 = false;
+  CHECK(flaky.Get(0));
+  (void)pinned;
+  (void)opens;
+}
+
 }  // namespace
 
 int main() {
@@ -255,6 +343,8 @@ int main() {
   TestManifest();
   TestList();
   TestFolders();
+  TestLimitsAndLinks();
+  TestHandleCache();
   if (failures) {
     std::fprintf(stderr, "%d check(s) failed\n", failures);
     return 1;

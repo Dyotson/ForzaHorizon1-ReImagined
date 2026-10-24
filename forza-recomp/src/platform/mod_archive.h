@@ -30,7 +30,10 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <list>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -75,6 +78,13 @@ constexpr uint32_t kCentralSignature = 0x02014B50;
 constexpr uint32_t kEndSignature = 0x06054B50;
 constexpr uint16_t kDataOffsetField = 0x1123;  // the game's extra field: absolute data offset
 constexpr uint64_t kMaxArchive = 0xFFFFFFFFull;  // no Zip64 in the game's reader
+// The game's zip index (TU4 sub_82D22528, the base game's the same) keeps a member's compressed
+// size as csize << 6 and its size as usize << 5 (the method in the low bits) in 32 bits: a
+// stored member has at most 2^26 - 1 bytes. Its directory parser copies each name into a
+// 416-byte stack frame without a length check: names stay at 255 bytes, as on the game's discs.
+constexpr uint64_t kMaxMember = (uint64_t(1) << 26) - 1;
+constexpr size_t kMaxName = 255;
+// A bigger file can only take the place of a loose file of the game (read straight from disk).
 constexpr uint64_t kMaxModFile = 0x7FFFFFFFull;
 
 struct ZipEntry {
@@ -272,8 +282,12 @@ inline bool BuildArchive(const ZipDirectory* base, int32_t base_source,
   replaced->assign(files.size(), false);
   std::map<std::string, size_t> by_name;  // GamePath -> file index
   for (size_t i = 0; i < files.size(); ++i) {
-    if (files[i].name.empty() || files[i].name.size() > 0xFFFF) {
+    if (files[i].name.empty() || files[i].name.size() > kMaxName) {
       *error = "bad member name: " + files[i].name;
+      return false;
+    }
+    if (files[i].size > kMaxMember) {
+      *error = files[i].name + " is over 64 MB, more than the game's archive holds";
       return false;
     }
     if (!by_name.emplace(GamePath(files[i].name), i).second) {
@@ -379,6 +393,65 @@ inline bool BuildArchive(const ZipDirectory* base, int32_t base_source,
   return true;
 }
 
+// --- host files -----------------------------------------------------------------------------
+
+// Open handles of the files an archive reads: at most `capacity` of the unpinned ones at once,
+// the least recently used closed first (a reader still using one keeps it until it is done:
+// handles are shared), so a mod of thousands of files does not run the process out of file
+// descriptors (1024 on many Linux desktops). A failed open is tried again on the next read.
+template <typename Handle>
+class HandleCache {
+ public:
+  using Opener = std::function<std::unique_ptr<Handle>(size_t index)>;
+
+  HandleCache(std::vector<bool> pinned, size_t capacity, Opener open)
+      : pinned_(std::move(pinned)), capacity_(capacity ? capacity : 1), open_(std::move(open)),
+        handles_(pinned_.size()), where_(pinned_.size(), lru_.end()) {}
+
+  // The handle of file `index`, or null when it cannot be opened (`*opened_now` says whether
+  // this call opened it).
+  std::shared_ptr<Handle> Get(size_t index, bool* opened_now = nullptr) {
+    std::lock_guard lock(mutex_);
+    if (opened_now) *opened_now = false;
+    if (index >= handles_.size()) return nullptr;
+    if (handles_[index]) {
+      if (!pinned_[index]) lru_.splice(lru_.begin(), lru_, where_[index]);
+      return handles_[index];
+    }
+    std::unique_ptr<Handle> handle = open_(index);
+    if (!handle) return nullptr;
+    handles_[index] = std::shared_ptr<Handle>(std::move(handle));
+    if (opened_now) *opened_now = true;
+    if (!pinned_[index]) {
+      lru_.push_front(index);
+      where_[index] = lru_.begin();
+      while (lru_.size() > capacity_) {
+        const size_t oldest = lru_.back();
+        lru_.pop_back();
+        where_[oldest] = lru_.end();
+        handles_[oldest].reset();
+      }
+    }
+    return handles_[index];
+  }
+
+  size_t open_count() {
+    std::lock_guard lock(mutex_);
+    size_t n = 0;
+    for (const auto& h : handles_) n += h != nullptr;
+    return n;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::vector<bool> pinned_;
+  size_t capacity_;
+  Opener open_;
+  std::vector<std::shared_ptr<Handle>> handles_;
+  std::list<size_t> lru_;  // unpinned open handles, most recently used first
+  std::vector<std::list<size_t>::iterator> where_;
+};
+
 // --- mod folders ---------------------------------------------------------------------------
 
 // mod.toml: name, version, author, description (all optional). A small subset of TOML:
@@ -433,16 +506,15 @@ inline Manifest ParseManifest(std::string_view text) {
 }
 
 // The forza_mods setting: folder names in load order, separated by '|' (a character no
-// Windows file name has). "*" is every folder in the mods folder, by name.
+// Windows file name has). "*" alone is every folder in the mods folder, by name.
 inline std::vector<std::string> SplitModList(std::string_view text) {
   std::vector<std::string> out;
   size_t at = 0;
   while (at <= text.size()) {
     size_t end = text.find('|', at);
     if (end == std::string_view::npos) end = text.size();
+    // Names are taken as they are (a folder may start or end with a space).
     std::string_view item = text.substr(at, end - at);
-    while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
-    while (!item.empty() && item.back() == ' ') item.remove_suffix(1);
     if (!item.empty() && std::find(out.begin(), out.end(), item) == out.end()) out.emplace_back(item);
     at = end + 1;
   }
@@ -453,6 +525,7 @@ struct ModFile {
   std::string name;  // GamePath relative to game:\media\, e.g. "stringtables/en/main.str"
   std::filesystem::path path;
   uint32_t size = 0, crc = 0;
+  bool loose_only = false;  // over kMaxMember: only replaces a loose file (no CRC computed)
 };
 
 struct ScannedMod {
@@ -494,9 +567,11 @@ inline std::string Lower(std::string s) {
 }
 
 // Reads a mod folder: mod.toml, then every file under media/ (its CRC-32 too). A file that
-// cannot be read, or one too big for the archive, skips the whole mod (error); files the
-// game would not find (outside media/, non-ASCII names) and whole archives are left out
-// (ignored) and the rest loads.
+// cannot be read, or one over 2 GB, skips the whole mod (error); files the game would not find
+// (outside media/, non-ASCII names, paths over 255 bytes) and whole archives are left out
+// (ignored) and the rest loads. A file over 64 MB is marked loose_only: the caller keeps it
+// only if it replaces a loose file of the game. Links are followed; names are the paths under
+// media/ as listed, not where the links lead.
 inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::string& folder) {
   namespace fs = std::filesystem;
   ScannedMod mod;
@@ -522,11 +597,14 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
     mod.error = "no media folder: put the files under " + folder + "/media/, as the game's paths are";
     return mod;
   }
-  for (const auto& top : fs::directory_iterator(root, ec)) {
-    const std::string n = Lower(Utf8(top.path().filename()));
+  fs::directory_iterator top(root, ec);
+  for (; !ec && top != fs::directory_iterator(); top.increment(ec)) {
+    const std::string n = Lower(Utf8(top->path().filename()));
     if (n == "media" || n == "mod.toml") continue;
-    if (top.is_directory(ec)) mod.ignored.push_back(Utf8(top.path().filename()) + "/: outside media/, the game does not see it");
+    std::error_code dir_ec;
+    if (top->is_directory(dir_ec)) mod.ignored.push_back(Utf8(top->path().filename()) + "/: outside media/, the game does not see it");
   }
+  ec.clear();
   fs::recursive_directory_iterator it(media, fs::directory_options::follow_directory_symlink, ec);
   if (ec) {
     mod.error = "cannot list media/: " + ec.message();
@@ -540,9 +618,19 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
     }
     const fs::directory_entry& entry = *it;
     if (entry.is_directory(ec)) continue;
-    const std::string relative = Utf8Generic(fs::relative(entry.path(), media, ec));
+    // lexically_relative: fs::relative would resolve links and name a linked file by its
+    // target ("../../work/x").
+    const fs::path rel_path = entry.path().lexically_relative(media);
+    const std::string relative = Utf8Generic(rel_path);
     const std::string shown = "media/" + relative;
+    bool outside = relative.empty();
+    for (const auto& part : rel_path) outside = outside || part == ".." || part == ".";
+    if (outside) {
+      mod.ignored.push_back(Utf8(entry.path()) + ": not under media/");
+      continue;
+    }
     if (!entry.is_regular_file(ec)) {
+      ec.clear();
       mod.ignored.push_back(shown + ": not a regular file");
       continue;
     }
@@ -556,6 +644,10 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
       continue;
     }
     const std::string name = GamePath(relative);
+    if (name.size() > kMaxName) {
+      mod.ignored.push_back(shown + ": its path is over 255 characters, longer than the game's");
+      continue;
+    }
     if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".zip") == 0) {
       mod.ignored.push_back(shown + ": whole archives are not replaced; put the files from inside "
                             "it under media/" + name.substr(0, name.size() - 4) + "/ instead");
@@ -567,9 +659,10 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
       return mod;
     }
     if (size > kMaxModFile) {
-      mod.error = shown + " is over 2 GB, too big for the game's archive";
+      mod.error = shown + " is over 2 GB, too big for the game";
       return mod;
     }
+    const bool loose_only = size > kMaxMember;
     std::FILE* f = nullptr;
 #ifdef _WIN32
     f = _wfopen(entry.path().c_str(), L"rb");
@@ -581,8 +674,8 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
       return mod;
     }
     uint32_t crc = 0;
-    uintmax_t total = 0;
-    for (;;) {
+    uintmax_t total = loose_only ? size : 0;
+    for (; !loose_only;) {
       const size_t n = std::fread(buffer.data(), 1, buffer.size(), f);
       crc = Crc32(buffer.data(), n, crc);
       total += n;
@@ -594,7 +687,7 @@ inline ScannedMod ScanMod(const std::filesystem::path& mods_dir, const std::stri
       mod.error = "cannot read " + shown + (failed ? "" : " (its size changed while it was read)");
       return mod;
     }
-    mod.files.push_back({name, entry.path(), uint32_t(size), crc});
+    mod.files.push_back({name, entry.path(), uint32_t(size), crc, loose_only});
   }
   std::sort(mod.files.begin(), mod.files.end(),
             [](const ModFile& a, const ModFile& b) { return a.name < b.name; });
