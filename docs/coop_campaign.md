@@ -1007,6 +1007,58 @@ Base and TU4 games never share a world, so a world is one build.
 The risk is writing career state from a flow that never did. A wrong call is saved by
 `CSaveProfile`, so every step is checked on scratch saves, as the launcher's grant was.
 
+### Option B: findings so far (parked)
+
+An attempt to build the design above, for TU4 only, stopped before any code was written: writing
+XP and credits from a hook needs more reverse engineering than expected. The launcher grant
+stays the way a co-op result reaches a career. What was found:
+
+1. **The profile's values are a tree keyed by hashes.** In a running game, the in-memory
+   profile is a tree of nodes keyed by a 32-bit hash. It has the same fields and types as the
+   `ForzaProfile` file the launcher edits. `Main/Credits` is the node keyed `0xB2050D51`; its value
+   object has the vtable `0x821551C0`, the u32 value at `+8` and the type 3 at `+16`. It was
+   found by scanning guest memory for the save's credits. The strings `Main/Credits`
+   (`0x8200DFD4`) and `Main/XP` (`0x82005948`) are referenced by no code. The hash is none of
+   CRC32, CRC32C, FNV-1/1a, djb2, sdbm, one-at-a-time, lookup2 or murmur2 over the name, its path
+   or UTF-16 forms. So a hook can't find these values safely, and writing them directly is out.
+2. **The career's own components can do the work.** The career race's component set (TU4
+   `sub_826AC9D0`) builds:
+   - a 360-byte payout component, `sub_826C67D0(this, *0x833ED72C, *0x833ED728 (the event id),
+     byte 0x833ED720, 0)`. Its event id at `+16` is what `sub_826C0C00` reads to pay the
+     event's `CashPrize`;
+   - a CCareerComponent (vtable `0x8203852C`, the event id at `+12`). Its post-race step
+     (`sub_826B06A8`) calls the career writer `sub_826ADDD0`;
+   - `sub_82592AA0`, and more when the byte at `0x833ED721` is 10.
+
+   The online race's set (`sub_826AF3C0`) builds the same payout component with an event id of
+   0, which is why an online race's prize base is 0.
+3. **The plan.** For a campaign round only, behind a cvar (`coop_ingame_grant`):
+   - pass the event id to that payout component, so the game pays the career prize itself;
+   - add a CCareerComponent to the online set, so the race's own `CPostRaceUpdateProfile` writes
+     the result with the game's code;
+   - run the event's unlock rewards (`sub_8253B988`);
+   - let the multiplayer flow's `CSaveProfile` save, then send the server an "applied" message
+     (a new WORLD_EVENT op), so that the launcher finds the result settled. This also works for a
+     game started outside the launcher.
+4. **Unknowns to settle first:**
+   - where an online race's own winnings come from. If they don't come from that payout
+     component, the career prize would be paid on top of them again;
+   - where a career race adds its wristband XP: the career component, or a step only the
+     festival flow runs (`ShowPostRaceCareerPointsScreen`);
+   - what the career writer reads from the online game object (`*(0x833F4A80)`) in an online
+     race.
+5. **Default:** the cvar off until a two-game run shows the result, the XP and the credits each
+   landing exactly once. After that, on, with the launcher grant kept as the fallback for
+   whatever the game doesn't settle.
+6. **Estimate:** about a day. That is about two hours of reverse engineering, then two or three
+   build and two-game test rounds of about half an hour each; a client build is incremental.
+   The risk is medium to high, because it changes what an online race's components do.
+
+A smaller first step would write only the result and the event's unlocks in game, through the
+game's own SQL on the `Profile0_*` tables (the query function `src/hooks/database_query.cpp`
+wraps). XP and credits would stay with the launcher. That needs a ledger flag: otherwise the
+launcher finds the place already stored and pays no XP or credits.
+
 ## Open questions (measure first)
 
 Questions 1-5 are answered under "Milestone 1 progress", most of 6 under its phase B.
