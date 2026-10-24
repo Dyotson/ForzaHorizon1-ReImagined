@@ -479,6 +479,18 @@ file. A separate copy loaded in the native TU4 game, which then saved normally w
 1,000,000 credits and 12,345 XP intact and exited cleanly. The original fixture and real
 user save were not modified.
 
+### Mods (#149)
+
+**Mods** lists the folders in `<data folder>/mods` (name, version, author from each mod's
+`mod.toml`, and its file count), each with a tick to turn it on or off, **Move up** / **Move
+down** for the load order (a lower mod wins over a higher one for the same file), **Refresh** and
+**Open mods folder**. A mod the game would skip (no `media/` folder, no files, a file it cannot
+read or over 2 GB) shows "(will not load)" and why. launcher.json keeps the order and the mods
+turned off (`"mods": {"order": [...], "disabled": [...]}`); every start passes
+`--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone: none), unless the extra
+arguments in **Settings > Advanced** name either. The game side and the folder layout are in
+[modding.md](modding.md). Tests: `launcher/test_mods.py`.
+
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and

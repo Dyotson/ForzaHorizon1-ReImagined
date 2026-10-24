@@ -489,6 +489,11 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         notes.append(saver.note())
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
+    # The mods turned on in the Mods page, in their load order (#149); extra arguments may
+    # name others.
+    if not any(a.startswith(("--forza_mods=", "--forza_mods_dir=")) for a in extra):
+        from . import mods
+        args += mods.launch_args(cfg)
     args += extra
     env.update(parse_env(cfg.advanced.get("extra_env", "")))
 
