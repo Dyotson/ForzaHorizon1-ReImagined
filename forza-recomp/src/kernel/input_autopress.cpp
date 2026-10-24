@@ -22,9 +22,11 @@
 // (FORZA_FRAMEDUMP_TRIGGER). In either mode the game sees a connected, centred
 // controller between presses instead of a disconnected one. "SCENE:<name>" lines label
 // the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp); "PROF:START" and
-// "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp).
+// "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp); "SAY:<text>" says <text> in
+// World chat (live_friends.cpp; the Co-op Festival's /event in scripted tests).
 
 #include "input_caps.h"
+#include "live.h"
 
 #include "../platform/guest_memory.h"
 #include "../platform/benchmark.h"
@@ -183,6 +185,12 @@ void ReadFifo(std::string path, std::vector<Press>* schedule,
     }
     if (line.rfind("SCENE:", 0) == 0) {  // frame statistics label (debug/frame_stats.cpp)
       forza::perf::SetScene(line.substr(6));
+      line.clear();
+      continue;
+    }
+    if (line.rfind("SAY:", 0) == 0) {  // a World chat line, as typed (live_friends.cpp)
+      forza::LiveChatSay(2, line.substr(4));
+      REXLOG_INFO("FORZA_AUTOPRESS_FIFO: t={:.2f}s {}", now, line);
       line.clear();
       continue;
     }

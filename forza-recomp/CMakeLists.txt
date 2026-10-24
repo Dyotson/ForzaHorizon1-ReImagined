@@ -169,6 +169,7 @@ set(FORZA_SOURCES
     src/kernel/live_friends.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/mod_overlay.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp

@@ -16,7 +16,9 @@ nor get messages.
 
 Channels: SESSION, the players in a session with the sender (the game reports the ids of
 the sessions it hosts or joined, Horizon World sessions excepted); WORLD, the players in the
-sender's Horizon World (what matchmaking knows); DIRECT, one friend.
+sender's Horizon World or Co-op Festival world (what matchmaking knows); DIRECT, one friend.
+A line starting with "/" may be a server command instead (Chat.commands: /event and /events
+in a Co-op Festival world, forza_campaign.py); commands are answered with NOTICEs.
 
 Message CHAT (UDP kind 23), body op u8 then (big endian; text u16 length + UTF-8):
   client -> server
@@ -83,6 +85,9 @@ class Chat:
         self.mutes = {}  # xuid -> until (wall time): the admin's
         self.bans = {}   # xuid -> until
         self.buckets = {}
+        # commands(peer, channel, text) -> True when a "/" line was a server command
+        # (forza_live_server.chat_command: the Co-op Festival's /event), not relayed
+        self.commands = None
 
     # --- moderation state ---
 
@@ -287,6 +292,8 @@ class Chat:
         if self.limited(peer.xuid):
             self.notice(peer, "Slow down: at most %d messages in %d s" %
                         (RATE[1], int(RATE[1] / RATE[0])))
+            return
+        if text.startswith("/") and self.commands and self.commands(peer, channel, text):
             return
         to = self.recipients(peer, channel, target)
         if isinstance(to, str):
