@@ -10,10 +10,10 @@
 #include <mutex>
 #include <thread>
 
-REXCVAR_DEFINE_BOOL(discord_presence, false, "Social",
+REXCVAR_DEFINE_BOOL(discord_presence, true, "Social",
                     "Share the current activity with the local Discord desktop client")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_STRING(discord_application_id, "", "Social",
+REXCVAR_DEFINE_STRING(discord_application_id, "1563015276583460934", "Social",
                       "Public Discord application ID (not a bot token or client secret)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 

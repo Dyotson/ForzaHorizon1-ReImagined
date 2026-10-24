@@ -6,6 +6,12 @@ both launchers, Windows installer; `publish` only runs on tags and has not run).
 
 ## The idea
 
+The **Designs & vinyls** page browses local `LivCatalog` / `LivGroups` save packages
+and extracted folders. It shows saved previews and creator details, exports archival
+copies, and imports selected FH1 package designs into an existing local profile after
+backing up its catalog. Apply the imported design to a matching car in-game. See
+[UGC preservation](ugc-preservation.md) for the workflow and recovery findings.
+
 Discord status sharing is available under **Settings > Online > Discord** (off by
 default). See [Discord Rich Presence](discord.md) for the one-time public application
 ID setup, supported activities, privacy and local IPC tests.
@@ -73,7 +79,8 @@ machine from their own copy:
    "Recommended" again after a graphics driver change (the driver cache files of the last prebuild are
    gone), a launcher, list or GPU plugin update, or a graphics setting that selects other pipeline
    stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
-   start also warms the listed pipelines. [Shader prebuild](shader_prebuild.md).
+   start also warms the listed pipelines. The step refuses to start the game while the Build step says "Rebuild needed" or "Not built" (a game built by an older launcher does not know `--shader_prebuild_only`): it shows "Rebuild first" and asks for Setup > Build. Before it builds, the step also fetches the server's list (below) and merges it with the shipped one; offline or on any failure it uses the shipped list alone. [Shader prebuild](shader_prebuild.md).
+   **Share shader list (#276, Settings > Online, on by default):** after a game session the launcher uploads the pipeline descriptions of your own pipeline cache that it has not sent before to the server you play on: shader hashes and render settings, plus how to rebuild each shader from game files (no shader code, no game data, nothing personal). The server publishes entries that at least 3 different players reported. Only the public server and your own server are used, never offline or "This PC"; the upload runs in the background with short timeouts, failures only go to the launcher log, and the launcher keeps a record of what was sent (`shader_share.json` in the data folder). The setting is launcher-only and is not written to `forza.toml`.
 5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -224,8 +231,9 @@ File pickers use Qt dialogs so controller focus works there too. Text entry stil
 keyboard or the system's on-screen keyboard. Steam Input users should select a gamepad
 layout; a mouse/keyboard layout continues to work through normal Qt input.
 
-Input is ignored while the launcher is inactive or the game is running. Reconnects and
-returning to the launcher require neutral input before another action. Directions repeat
+Input is ignored while the launcher is inactive or the game is running, and from a device
+that the Controls page is binding or calibrating. Reconnects, returning to the launcher and
+the end of a Bind require neutral input before another action. Directions repeat
 after 400 ms, then every 120 ms; action buttons never repeat. The left stick has a roughly
 49% dead zone. One controller is used at a time; unplugging it allows another to take over.
 Unsupported/unmapped devices do not prevent mouse/keyboard use. Initialization or read
@@ -249,7 +257,8 @@ driving action and the matching Xbox prompt. The **All driving controls** sectio
 provides the same reference as text. The guide describes the default layout;
 the in-game control layout and transmission settings can change some actions.
 
-The controller selector changes the guide, not the game's bindings or prompts.
+The controller selector changes the guide, not the game's bindings or prompts
+(**Bindings**, below, changes the bindings).
 **Control settings** opens Settings > Controls for the existing keyboard, mouse,
 player, and racing-wheel options.
 
@@ -276,6 +285,42 @@ reports whether the current controller/driver exposes impulse triggers, or
 whether the launcher and game need an update/rebuild. Xbox 360 controllers keep
 their normal body rumble. The default game control layout is required for the
 LT/RT effect mapping.
+
+## Bindings and wheel calibration (#279)
+
+The **Bindings** card on the Controls page binds a device's inputs by pressing them, as sim racing games do.
+Pick a connected controller or wheel (a wheel is what the game's wheel driver takes for one: SDL's wheel type
+or a wheel-like name, or any unmapped joystick with Racing wheel set to On). The live view shows a wheel's raw
+axes (bars) and buttons (numbered lamps) and a controller's mapped sticks, triggers and buttons by name. Each
+game action has a row with its current input, **Bind**, **Clear** and **Reset to default**; inputs bound twice
+are listed. Bind takes the first input that changes from where it was when Bind was pressed (an input already
+held counts only after it is released), gives up after 10 seconds, and Esc cancels it.
+
+- **Wheels** read and write the wheel driver's own settings in their formats: `wheel_axes`, `wheel_buttons`,
+  `wheel_shifter_buttons`, and the invert switches (from the direction the steering was turned and where a pedal
+  rests). The rows show the driver's defaults, ported in `launcher/forza_launcher/bindings.py` (known Logitech
+  wheels by USB id, the generic button map, the Driving Force Shifter). **Calibrate wheel** measures the
+  steering axis and its direction (lock to lock), the rotation (a quarter turn), each pedal's axis, travel and
+  invert switch, and sets the steering deadzone with a live preview computed like the driver
+  (`steering_value`); details in [playing.md](playing.md#racing-wheels-issue-4). Pedals and a shifter on
+  their own USB devices (#272) bind on the wheel's pedal and gear rows: while such a row waits, the editor
+  watches every other connected device that is no game controller too (`bindings.merge`, `split`), and a press
+  there writes `wheel_pedal_device` / `wheel_pedal_axes` or `wheel_shifter_device` /
+  `wheel_shifter_device_buttons` (`set_aux_binding`). The picker shows them as *pedals* or *shifter, read with
+  the wheel* (`pick_aux`, the driver's choice ported with its table of known devices). On Linux, devices SDL 2
+  leaves out (no X and Y axis) are read from evdev (`evdev_joysticks.py`).
+- **Controllers** write `controller_remap` (SDK patch 0116), a profile per controller model by SDL GUID;
+  format and supported pairs in [playing.md](playing.md#remapping-a-controller-279).
+  Resetting all bindings, or the last custom binding, keeps an empty profile for the selected GUID when
+  needed to block another saved profile for the same model or `*`. It restores the default inputs without
+  deleting the other saved profiles. The SDK already treats an exact empty profile as the default mapping.
+
+The editor reads SDL joysticks itself (`gamepad.Joysticks`, the same SDL as the navigation). While a Bind or a
+calibration runs, gamepad navigation ignores that device and afterwards waits for it to be neutral, so the
+presses that bind never move the launcher's focus. Changes go through the Settings page, which shows them,
+saves and rewrites `forza.toml`. `launcher/test_bindings.py` covers the strings, defaults, conflicts,
+detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad);
+`launcher/test_wheel_devices.py` the pedal and shifter devices (a wheel, pedals and a shifter).
 
 ## Launcher updates
 
@@ -518,7 +563,7 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 `launcher/forza_launcher/schema.py` lists every key (about 70) with its group, type, default,
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
-racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, clutch and shifter; [playing.md](playing.md#racing-wheels-issue-4)),
+racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, rumble style, clutch and shifter, pedal and shifter devices; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
 deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
@@ -554,6 +599,11 @@ Expansion Pack (`Media/1600.puboffer`): Horizon Rally then gives the same Market
 (`--game_data_root`, `--log_file`, `FORZA_SERVER`, library path).
 Defaults differ from the game's in two places: the first run sets `frame_rate = 60` and `present_effect = "fsr"` (AMD FSR 1; a launcher that already holds a choice keeps it; the old `fsr2` entry becomes `fsr`; `fsr3` is now the temporal upscaler).
 
+**20 and 40 fps (#263).** The Frame rate list starts with 20, 30 and 40 fps; a typed rate under 60 becomes the
+highest of those not above it (45 becomes 40), as the game runs only those under 60
+(`schema.LOW_FRAME_RATES`, `docs/framerate.md`). The help text says what 20 is for: a PC that cannot hold 30
+gets frames that each stay on a 60 Hz screen equally long. Tests: `launcher/test_frame_rate_control.py`.
+
 **Match display (#215).** The first entry of the Frame rate list, "Match display (N Hz)", follows the refresh rate
 of the monitor the game runs on (Settings > Display > Monitor; 0 and 1 are the primary display, 2 the second,
 and so on). It is stored as `frame_rate = 0` in `launcher.json` and resolved by the launcher
@@ -564,6 +614,18 @@ sees a number. Qt lists the primary screen first and the rest in the system's or
 monitors differently, in which case the label shows the rate of the monitor Qt calls that number. The in-game
 Graphics menu saves the frame rate it was started with every time; if that is the resolved rate, Match display
 stays, and any other rate chosen in the menu replaces it. Tests: `launcher/test_match_display.py`.
+
+**Battery saver (#140, Linux).** Display > Frame rate > Battery saver: Off (the default), On, or "Auto on battery
+(Steam Deck)". When it applies, Play starts the game at 30 fps and render scale 1 with AMD FSR 1 (FSR 3 becomes
+FSR 1, SMAA and FSR Native AA the game's own anti-aliasing) and passes `--gpu_wait_blocking=true` (already the
+default on Linux). Only this start's `forza.toml` and command line change: `launcher.json` keeps the player's own
+values, which the next start on mains power uses again, and the player's own extra flags still come last. Auto
+applies on a Steam Deck (DMI board name, as the GPU detection) whose battery runs it: no charger in
+`/sys/class/power_supply` online (type Mains, USB, ...) and the system battery discharging; a controller's or a
+mouse's battery (scope Device) does not count. The power source is read once, at Play; Auto on another PC shows
+that it never applies there. The in-game Graphics menu saves every value it shows, so the values battery saver
+forced at the last start (kept in `launcher.json` under `power`) are not taken from it as the player's choice.
+The shader prebuild plans with the player's own settings. Tests: `launcher/test_power.py` (fake sysfs).
 
 ### GPU choice (#52)
 
@@ -618,7 +680,7 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 | NVIDIA | Vulkan, render scale 1, AMD FSR 1, 60 fps, shader cache and background shader compilation on (scale 2 is the most you should need) | Direct3D 12 (Windows): flicker, green reflections on glass and paint (#46). Render scale 3 and above: flicker and coloured artifacts across the map (#47). Background compilation or the shader cache off: Vulkan stutter (#49, open: warm-cache stutter unmeasured). Traffic car glow in the distance (#48): no setting avoids it |
 | AMD (Linux and Windows) | Vulkan, render scale 1, AMD FSR 1, 60 fps | none; render scale 3 and 4 are clean on Radeon (Vulkan/RADV, and Direct3D 12 under vkd3d-proton at 3) |
 | Intel | Vulkan, render scale 1, AMD FSR 1, 30 fps | nothing reported yet; Direct3D 12 (a different render target path on Intel) and render scale 2 and up are marked as untested / slow |
-| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). A 40 fps cap is not offered: `frame_rate` is 30 or 60 and above |
+| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). 20 and 40 fps are in the Frame rate list (#263: they divide 60 and 120 Hz screens; 40 suits a Deck screen set to 40 Hz) but not in the preset |
 
 Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
 valid for the schema, warnings, the first-run / existing-settings / player-choice flows, the `--gpu_vendor` argument).
@@ -634,7 +696,14 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
   redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
-  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three. The version comes from the tag. Nothing here needs the game or generated code.
+  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three.
+  Before upload, `launcher/packaging/release_checksums.py` hashes the final asset bytes
+  and writes `SHA256SUMS`, uploaded alongside them (#354). The manifest uses sorted,
+  download-relative filenames and excludes itself; reruns replace it. SDK overlays are
+  removed before hashing, as before upload. Checksums verify bytes against the release's
+  manifest; they are not code signatures or a malware assessment. Code-signing and vendor
+  submissions remain separate work. The version comes from the tag. Nothing here needs
+  the game or generated code.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.

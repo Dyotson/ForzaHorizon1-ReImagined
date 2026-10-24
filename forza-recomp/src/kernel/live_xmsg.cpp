@@ -44,6 +44,7 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
 #include "../platform/discord_presence.h"
@@ -193,7 +194,7 @@ uint32_t XFriendsCreateEnumerator(uint8_t* base, uint32_t args) {
     uint8_t* item = e->AppendItem();
     std::memset(item, 0, kFriendSize);
     Store64(item, f.xuid);
-    std::memcpy(item + 8, f.gamertag.data(), std::min<size_t>(f.gamertag.size(), 15));
+    forza::StoreGamertag(item + 8, 16, f.gamertag);
     Store32(item + 0x18, f.state);
     std::memcpy(item + 0x1C, f.session, 8);  // session id
     if (f.state & kFriendPlaying) Store32(item + 0x24, kTitleId);
@@ -647,6 +648,7 @@ struct UserValue {
 };
 std::unordered_map<uint32_t, UserValue> user_properties;  // ours, by property id
 std::unordered_map<uint32_t, uint32_t> user_contexts;     // by context id
+std::unordered_map<uint32_t, uint32_t> local_activity;    // primary user, including offline
 bool match_published = false;
 bool standby_published = false;
 bool standby_game_host = false;  // the game made us its host (forza::OnlineGameIsHost)
@@ -1109,7 +1111,7 @@ uint32_t XUserReadStats(uint8_t* base, uint32_t buffer) {
       if (tag.empty()) {
         if (auto t = tags.find(xuid); t != tags.end()) tag = t->second;
       }
-      std::memcpy(row + 24, tag.data(), std::min<size_t>(tag.size(), 15));
+      forza::StoreGamertag(row + 24, 16, tag);
       if (got) {
         ++from_server;
         Store32(row + 8, got->rank);
@@ -1170,7 +1172,13 @@ uint32_t Handle(uint8_t* base, uint32_t app, uint32_t message, uint32_t arg1, ui
   // Observe the game's primary-user presence before the Live sign-in gate: Discord
   // status also works in offline play. Leave the original SDK request unchanged.
   if (app == 0xFB && message == 0x000B0006 && arg1 && Load32(GuestPtr(base, arg1)) == 0) {
-    forza::discord::Context(Load32(GuestPtr(base, arg1 + 16)), Load32(GuestPtr(base, arg1 + 20)));
+    const auto id = Load32(GuestPtr(base, arg1 + 16));
+    const auto value = Load32(GuestPtr(base, arg1 + 20));
+    if (id == 0x8001 || id == 0x15) {
+      std::lock_guard<std::mutex> lock(sessions_mutex);
+      local_activity[id] = value;
+    }
+    forza::discord::Context(id, value);
   }
   // XamApp (0xFE) message 0x2B003: Xenia's XamApp answers success for this title ("Games
   // used in: 4D5309C9", a buffer of three u64s, unknown); the SDK fails it.
@@ -1348,6 +1356,15 @@ extern "C" REX_FUNC(__imp__XamShowGameInviteUI) {
 }
 
 namespace forza {
+bool LiveLocalActivity(uint32_t& presence, uint32_t& region) {
+  std::lock_guard<std::mutex> lock(sessions_mutex);
+  const auto p = local_activity.find(0x8001);
+  const auto r = local_activity.find(0x15);
+  if (p == local_activity.end() || r == local_activity.end()) return false;
+  presence = p->second;
+  region = r->second;
+  return true;
+}
 // The playlist of our last matchmaking search (Find Game: the hopper id), 0 before one.
 uint32_t LiveMatchPlaylist() { return match_playlist_now.load(std::memory_order_relaxed); }
 
@@ -1423,7 +1440,7 @@ void LiveStatsRows(const uint8_t* p, size_t n) {
       const size_t tag = std::min<size_t>(p[pos + 20], 15);
       pos += 21;
       if (pos + tag + 1 > n) return;
-      row.gamertag.assign(reinterpret_cast<const char*>(p + pos), tag);
+      row.gamertag = forza::SanitizeGamertag(std::string_view(reinterpret_cast<const char*>(p + pos), tag));
       const uint32_t columns = p[pos + tag];
       pos += tag + 1;
       for (uint32_t c = 0; c < columns; ++c) {

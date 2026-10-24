@@ -18,24 +18,25 @@ MAX_LIVERY = 16 * 1024**2
 MAX_XEX = 128 * 1024**2
 # Disc and TU4 addresses, not key bytes. An authenticated MAC selects the candidate.
 TABLES = ((0x8200D643, 0x820173E4), (0x82013A13, 0x8201DFE4))
+INDEX_TABLES = ((0x8200D664, 0x8200D644), (0x82013A34, 0x82013A14))
 
 
-def derive(image, load_address, owner):
+def derive(image, load_address, owner, *, index=False):
     if len(owner) != 8:
         raise ValueError('The save profile identity must contain eight bytes.')
     result = []
-    for aes_address, mac_address in TABLES:
+    for aes_address, mac_address in INDEX_TABLES if index else TABLES:
         a, m = aes_address-load_address, mac_address-load_address
         if min(a, m) < 0 or a+16 > len(image) or m+32 > len(image):
             continue
-        result.append((bytes(((image[a+i] ^ owner[(i-7) % 8])+2*i) % 256
+        result.append((bytes(((image[a+i] ^ owner[(i-(5 if index else 7)) % 8])+2*i) % 256
                              for i in range(16)),
-                       bytes(((image[m+i] ^ owner[(i-3) % 8])+2*i) % 256
+                       bytes(((image[m+i] ^ owner[(i-(1 if index else 3)) % 8])+2*i) % 256
                              for i in range(32))))
     return tuple(result)
 
 
-def executable_keys(path, owner):
+def executable_keys(path, owner, *, index=False):
     path = Path(path)
     if path.stat().st_size > MAX_XEX:
         raise ValueError('Executable exceeds the size limit.')
@@ -45,7 +46,7 @@ def executable_keys(path, owner):
         raise ValueError('Choose a Forza Horizon executable.')
     if xex.image_size > MAX_XEX or xex.pages_size() > MAX_XEX:
         raise ValueError('Executable image exceeds the size limit.')
-    return derive(xex.image(), xex.load_address, owner)
+    return derive(xex.image(), xex.load_address, owner, index=index)
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,12 @@ class Livery:
     mac_key: bytes = field(repr=False)
 
 
-def decode(raw, candidates):
+def decode_stream(raw, candidates):
     if not 68 <= len(raw) <= MAX_LIVERY or (len(raw)-52) % 16:
         raise ValueError('Invalid livery stream size.')
     words = struct.unpack_from('>5I', raw, 32)
     length = words[0] ^ words[1] ^ words[2] ^ words[3] ^ words[4]
-    if length < 12 or 52 + ((length+15)//16)*16 != len(raw):
+    if length < 1 or 52 + ((length+15)//16)*16 != len(raw):
         raise ValueError('Invalid encrypted livery length.')
     for aes_key, mac_key in candidates:
         if len(aes_key) != 16 or len(mac_key) != 32:
@@ -72,10 +73,30 @@ def decode(raw, candidates):
         cipher = raw[52:]
         ecb = aes.aes_decrypt(aes_key, cipher, cbc=False)
         plain = bytes(a ^ b for a, b in zip(ecb, raw[36:52]+cipher[:-16]))
-        if plain[:4] != b'crlv':
-            raise ValueError('Authenticated stream is not a supported crlv livery.')
         return Livery(bytes(raw), plain[:length], plain[length:], aes_key, mac_key)
     raise ValueError('Livery authentication failed for this executable and profile identity.')
+
+
+def decode(raw, candidates):
+    document = decode_stream(raw, candidates)
+    if len(document.body) < 12 or document.body[:4] != b'crlv':
+        raise ValueError('Authenticated stream is not a supported crlv livery.')
+    return document
+
+
+def encode_stream(body, keys):
+    """Authenticated wrapper with a fresh IV; plaintext and game keys stay in memory."""
+    import os
+    if not 0 < len(body) <= MAX_LIVERY-68:
+        raise ValueError('Invalid plaintext size.')
+    aes_key, mac_key = keys
+    if len(aes_key) != 16 or len(mac_key) != 32:
+        raise ValueError('Invalid key sizes.')
+    iv = os.urandom(16)
+    words = struct.unpack('>4I', iv)
+    seed = struct.pack('>I', len(body) ^ words[0] ^ words[1] ^ words[2] ^ words[3])+iv
+    payload = seed+_encrypt(aes_key, body+bytes((-len(body)) % 16), iv)
+    return hmac.digest(mac_key, payload, 'sha256')+payload
 
 
 def _encrypt(key, data, iv):

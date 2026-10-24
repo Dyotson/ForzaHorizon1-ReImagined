@@ -10,6 +10,8 @@ from pathlib import Path
 from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, paths, schema, specs
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
+# Settings of the launcher itself: not game cvars, never written to forza.toml.
+LAUNCHER_ONLY = ("share_shader_list", "battery_saver")
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
 FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
@@ -38,6 +40,10 @@ def _default():
         "gpu": {"vendor": "", "detected": "", "name": "", "checked": False},
         # The PC's CPU, RAM and card (#206): the detected specs plus what the player already answered.
         "specs": {"checked": False, "fingerprint": "", "dismissed": "", "values": None},
+        # Battery saver (#140): the settings it forced at the last start (power.py); None: none.
+        "power": {"applied": None},
+        # One-time fixes of values an older launcher saved: done once, so a later choice sticks.
+        "migrated": {"discord_application_id": False},
     }
 
 
@@ -70,6 +76,7 @@ class Config:
         self.path = path or paths.config_dir() / "launcher.json"
         self.d = _default()
         self.loaded = False
+        self.gamertag_cleaned = None
         self.load()
 
     # --- persistence ---
@@ -77,6 +84,8 @@ class Config:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            # A new launcher.json starts with today's defaults: nothing to migrate later.
+            self.d["migrated"]["discord_application_id"] = True
             return
         if isinstance(data, dict):
             _merge(self.d, data)
@@ -88,6 +97,13 @@ class Config:
               self.d["settings"].get("fsr3_mode") == "native"):
             self.d["settings"].update(present_effect="bilinear", fsr3_mode="quality",
                                       forza_antialiasing="fsr3_native")
+        # 0.1.28-0.1.29 saved the then-default empty Discord application ID, which turned the
+        # connection off; since 0.1.30 the project's own ID is the default (#312).
+        migrated = self.d["migrated"]
+        if not migrated.get("discord_application_id"):
+            if not str(self.d["settings"].get("discord_application_id") or "").strip():
+                self.d["settings"]["discord_application_id"] = schema.BY_KEY["discord_application_id"].default
+            migrated["discord_application_id"] = True
         self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
         prefs = self.d.get('save_manager')
         if not isinstance(prefs, dict):
@@ -97,8 +113,12 @@ class Config:
         except (TypeError, ValueError, OverflowError):
             keep = 10
         self.d['save_manager'] = dict(automatic=prefs.get('automatic', True) is True, keep_automatic=keep)
+        saved_tag = self.d["settings"].get("gamertag")
         for key, setting in schema.BY_KEY.items():
             self.d["settings"][key] = schema.coerce(setting, self.d["settings"].get(key))
+        self.gamertag_cleaned = None  # (saved, cleaned) when the saved Gamertag was not plain ASCII
+        if isinstance(saved_tag, str) and saved_tag.strip() != self.d["settings"]["gamertag"]:
+            self.gamertag_cleaned = (saved_tag, self.d["settings"]["gamertag"])
         online = self.d["online"]
         if online.get("mode") == "custom" and online.get("custom_server", "").strip() in OLD_PUBLIC_SERVERS:
             online["mode"], online["custom_server"] = "public", ""
@@ -261,7 +281,8 @@ def render_toml(cfg: Config) -> str:
              "# keys added under 'Other settings' (Advanced) are kept."]
     settings = cfg.effective_settings()
     for s in schema.S:
-        if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution", "forza_antialiasing"):
+        if not s.applies() or s.key in ("fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution", "forza_antialiasing") \
+                or s.key in LAUNCHER_ONLY:
             continue
         v = schema.coerce(s, settings.get(s.key, s.default))
         if v != s.default:

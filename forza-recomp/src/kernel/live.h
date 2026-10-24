@@ -79,6 +79,10 @@ void LiveMatchResults(const uint8_t* body, size_t size);
 // first search). Hooks use it to tell the Horizon World from other playlists.
 uint32_t LiveMatchPlaylist();
 
+// Read the current title-published local activity and region together. False
+// until both XUser contexts have been received; no network request is made.
+bool LiveLocalActivity(uint32_t& presence, uint32_t& region);
+
 // Called about every second by the network thread: reports host changes of the
 // matchmaking session we joined (live_xmsg.cpp).
 void LiveMatchTick();
@@ -100,6 +104,11 @@ void LiveStatsRows(const uint8_t* body, size_t size);
 // The online game's "this console hosts the session" flag: 1, 0, or -1 without an online
 // game (hooks/world_drop_in.cpp).
 int OnlineGameIsHost();
+
+// The machine slept for `seconds` (src/platform/resume.cpp, #140): sign in to the Forza Live
+// server again now, as it forgets a player it has not heard from for 30 s. (A game that was
+// stopped is noticed by the network thread itself: it did not run either.)
+void LiveResumed(double seconds);
 
 // Called by the network thread when the roster changed (live_xmsg.cpp): tells the
 // game its friends' presence changed, or that friends came or went.

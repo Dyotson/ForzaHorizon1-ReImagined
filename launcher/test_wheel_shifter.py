@@ -54,7 +54,7 @@ class WheelShifterSettings(unittest.TestCase):
 
     def test_shifter_section_follows_the_racing_wheel(self):
         keys = [s.key for s in schema.for_group("Controls")]
-        start = keys.index("wheel_rumble_road_strength") + 1
+        start = keys.index("wheel_rumble_style") + 1
         self.assertEqual(tuple(keys[start:start + len(KEYS)]), KEYS)
         self.assertEqual({schema.BY_KEY[k].section for k in KEYS}, {"Shifter and clutch"})
         self.assertTrue(schema.BY_KEY["wheel_shifter"].restart)
@@ -96,8 +96,10 @@ class WheelShifterSettings(unittest.TestCase):
         page.set_value("wheel_shifter", "sequential")
         self.assertTrue(enabled("wheel_shifter_buttons"))
         self.assertFalse(enabled("wheel_shifter_clutch"))
+        self.assertFalse(enabled("wheel_shifter_follow_slot"))
         page.set_value("wheel_shifter", "h")
         self.assertTrue(enabled("wheel_shifter_clutch"))
+        self.assertTrue(enabled("wheel_shifter_follow_slot"))
         self.assertFalse(enabled("wheel_clutch_threshold"))
         page.set_value("wheel_shifter_clutch", True)
         self.assertTrue(enabled("wheel_clutch_threshold"))
@@ -105,6 +107,34 @@ class WheelShifterSettings(unittest.TestCase):
         self.assertFalse(enabled("wheel_invert_clutch"))
         page.flush()
         app.processEvents()
+
+
+class ShifterFollowSlot(unittest.TestCase):
+    """#303 (patch 0132): the H-pattern follows the lever's slot by default, as on the Xbox; gears on
+    lever moves only are the setting turned off (Shifter and clutch)."""
+    def test_setting_matches_the_sdk_cvar(self):
+        patch = PATCH.parent / "0132-wheel-shifter-gear-on-lever-moves.patch"
+        text = "\n".join(line[1:] for line in patch.read_text().splitlines() if line.startswith("+"))
+        m = re.search(r"REXCVAR_DEFINE_BOOL\(wheel_shifter_follow_slot, (\w+),", text)
+        setting = schema.BY_KEY["wheel_shifter_follow_slot"]
+        self.assertIsNotNone(m)
+        self.assertEqual(setting.default, m.group(1) == "true")
+        self.assertIs(setting.default, True)
+        self.assertEqual((setting.kind, setting.section), ("bool", "Shifter and clutch"))
+        keys = [s.key for s in schema.for_group("Controls")]
+        self.assertEqual(keys[keys.index("wheel_clutch_threshold") + 1], "wheel_shifter_follow_slot")
+
+    def test_roundtrip(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        cfg = Config(Path(folder.name) / "launcher.json")
+        self.assertNotIn("wheel_shifter_follow_slot", render_toml(cfg))
+        cfg.settings["wheel_shifter_follow_slot"] = False
+        text = render_toml(cfg)
+        self.assertIn("wheel_shifter_follow_slot = false", text)
+        imported = Config(Path(folder.name) / "other.json")
+        import_toml(imported, text)
+        self.assertIs(imported.settings["wheel_shifter_follow_slot"], False)
 
 
 if __name__ == "__main__":

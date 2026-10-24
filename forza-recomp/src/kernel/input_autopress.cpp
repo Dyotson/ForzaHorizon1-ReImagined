@@ -27,6 +27,8 @@
 #include "input_caps.h"
 
 #include "../platform/guest_memory.h"
+#include "../platform/benchmark.h"
+
 #include "../platform/telemetry.h"
 #include "../platform/wheel_bridge.h"
 #include "../platform/sdk_import.h"
@@ -59,6 +61,7 @@ namespace forza {
 uint16_t WorldChallengePad(uint16_t buttons);  // hooks/world_challenge.cpp
 uint16_t LiveInvitePad(uint16_t buttons, int left_y, bool& block_all);  // kernel/live_invites.cpp
 uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);  // live_friends.cpp
+uint16_t KeyboardUiPad(uint16_t buttons, int left_x, int left_y, bool& block_all);  // xam_keyboard.cpp
 }
 
 namespace {
@@ -357,23 +360,35 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       }
     }
   }
+  if (user == 0 && forza::benchmark::WantsPad()) connected = true;
   if (!connected) {
     if (user == 0) forza::telemetry::Input(false, 0, 0, 0, 0);
     ctx.r3.u64 = kErrorDeviceNotConnected;
     return;
   }
-  // The invite picker and prompt (kernel/live_invites.cpp), the friends screen
-  // (kernel/live_friends.cpp) and head-to-head challenges
-  // (hooks/world_challenge.cpp) watch player 1's pad and hide what they use from the game.
+  // The game's text prompts (kernel/xam_keyboard.cpp), the invite picker and prompt
+  // (kernel/live_invites.cpp), the friends screen (kernel/live_friends.cpp) and head-to-head
+  // challenges (hooks/world_challenge.cpp) watch player 1's pad and hide what they use from
+  // the game.
   if (user == 0) {
     bool block_all = false;
-    state.buttons &= uint16_t(~forza::LiveInvitePad(state.buttons, state.sticks[1], block_all));
+    state.buttons &= uint16_t(
+        ~forza::KeyboardUiPad(state.buttons, state.sticks[0], state.sticks[1], block_all));
+    if (!block_all) {
+      state.buttons &= uint16_t(~forza::LiveInvitePad(state.buttons, state.sticks[1], block_all));
+    }
     if (!block_all) {  // the friends screen (kernel/live_friends.cpp)
       state.buttons &= uint16_t(
           ~forza::LiveFriendsPad(state.buttons, state.sticks[0], state.sticks[1], block_all));
     }
     if (block_all) state = PadState{};
     state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
+    if (forza::benchmark::WantsPad()) {
+      bool capture = false;
+      const auto buttons = forza::benchmark::Pad(state.buttons, capture);
+      if (capture) state = PadState{};
+      state.buttons = buttons;
+    }
   }
   if (user == 0) forza::telemetry::Input(true, state.triggers[0], state.triggers[1], state.buttons, state.sticks[0]);
   if (buffer) {
@@ -408,7 +423,7 @@ void Capabilities(GuestFunc sdk, PPCContext& ctx, uint8_t* base, forza::input_ca
     return;
   }
   if (sdk && forza::input_caps::FirstSlot(sdk, ctx, base, args, kSlots)) return;
-  if (scripted) {
+  if (scripted || forza::benchmark::WantsPad()) {
     // A scripted run without hardware: the SDK's answer for slot 0 (its capabilities
     // struct is filled even when nothing is connected), reported as connected.
     if (sdk) sdk(ctx, base);

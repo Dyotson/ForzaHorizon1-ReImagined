@@ -36,6 +36,8 @@ field in declaration order:
 
 import struct
 
+import forza_limits as limits
+
 
 class T:
     """A field type: kind, size or bound (n), element or field list (sub)."""
@@ -96,6 +98,33 @@ def default(t):
     return {name: default(ft) for name, ft in t.sub}
 
 
+def _tag(v):
+    return limits.clean_gamertag(v)
+
+
+def _club_tag(v):
+    return limits.clean_ascii_text(v, limits.CLUB_TAG_MAX, "CLUB")
+
+
+def _club_name(v):
+    return limits.clean_ascii_text(v, limits.CLUB_NAME_MAX, "Club")
+
+
+def _club_desc(v):
+    return limits.clean_ascii_text(v, limits.CLUB_DESC_MAX)
+
+
+# Fields holding a player-chosen display string: plain ASCII on the way out (forza_limits).
+_PLAYER_TEXT = {"clanTag": _club_tag, "clanName": _club_name, "clanDescription": _club_desc, "senderClanTag": _club_tag,
+                "originalOwner": _tag, "creatorName": _tag,
+                "SenderGamerTag": _tag, "sellerTag": _tag}
+_PLAYER_TEXT.update({n: _tag for n in (
+    "wzGamerTag", "senderGamertag", "requestorGamertag", "sponsorGamertag", "playerGamertag",
+    "recommendingRemovalGamertag", "recommendedForRemovalGamertag", "newMemberGamertag",
+    "kickedGamertag", "exMemberGamertag", "newPromotedGamertag", "gamerTag", "GamerTag",
+    "gamertag")})
+
+
 def encode(t, v, out=None):
     """Appends value v of type t to bytearray out (a dict for S; missing fields default)."""
     out = bytearray() if out is None else out
@@ -127,7 +156,10 @@ def encode(t, v, out=None):
     else:
         v = v or {}
         for name, ft in t.sub:
-            encode(ft, v[name] if name in v else default(ft), out)
+            val = v[name] if name in v else default(ft)
+            if ft.kind == "WSTR" and val and name in _PLAYER_TEXT:  # stored data can't reach the game unclean
+                val = _PLAYER_TEXT[name](val)
+            encode(ft, val, out)
     return out
 
 

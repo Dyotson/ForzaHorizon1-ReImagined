@@ -197,44 +197,75 @@ run) loaded on both (A the mouse in a red Fiat 500 "race to the finish line! PRO
 0/2 LAPS", B a cat) but it only ends when the mouse finishes 2 laps, so nobody driving
 never ended it.
 
-**Cat & Mouse, driven (2026-10-12, not finished).** `--playground-games 5` makes every round
+**Cat & Mouse, driven to its end (#13, 2026-10-23).** `--playground-games 5` makes every round
 Cat & Mouse (the round index is the game's own `roundNum`, kept in the save, so with a list the
-first round varies from run to run: 6 first one time). Both consoles in the lobby (CLEAR SPRINGS
-SPRINT, 1.40 mi, 2 laps), A the mouse ("race to the finish line! PROGRESS: 0/2 LAPS"), B a
-cat. `tools/autodrive.py` with `AD_PATH_LOAD=millennia_path.txt` (no CPU cars here) follows
-that lap at 1-2 m for about 350 of its 1120 points but the circuit differs from it near the
-path's start (the path goes through the festival, where the mouse hits the grandstand wall at
-x 137, z -3910), so the mouse never got a lap counted (0/2 after 3 laps of the path); slower
-speeds (`AD_SPEED=0.45`) didn't help. Needed: the real circuit's lap (the game's GPS line
-on the minimap shows it; reading it from guest memory was not found: `sub_825F6FB0`'s
-component table is not simple). After a King round in the same run (3 min, ended normally) the
-next lobby (Cat & Mouse) sat at "WAITING FOR PLAYERS TO JOIN..." for 10 minutes with both
-consoles in it and `UserRegister` every 60 s: seen once, not reproduced or explained (the
-first Cat & Mouse lobby of the other runs started within 40 s).
+first round varies from run to run). Clear Springs Sprint (track 322, 2.25 km, 2 laps) has two
+teams, each with exactly one Mouse (`MinPlayers`/`MaxPlayers` 1): two players are two teams of
+one, both mice (the red and the blue mouse, rental Fiat 500s, "race to the finish line!"), a
+third player is a cat (B class, Nissan GT-R) in one of the teams. The earlier recorded
+Millennia path is another circuit; the driver now follows the track's own AI route:
+`tools/track_path.py 322 path.txt` reads `Tracks.RouteId` (2) and `MediaName` from
+`gamedb.slt`, extracts `colorado/Ribbon_00/route_002.owt` from `media/aiopenworld.zip`, one
+closed lap of 554 points (2228 m), and `tools/autodrive.py` with `AD_PATH_LOAD` drives it lap
+after lap (TU4, 30 fps: 20-26 m/s, 1-5 m off the route, `AD_XDG`/`AD_FIFO` name the game's
+scratch folders). Two rounds, A driving and B parked at the start (two TU4 games, local
+server): PROGRESS 0/2, 1/2, 2/2 LAPS, then the finish (best laps 94.1 and 93.6 s), RACE RESULTS by team (1 RED TEAM 04:28.510, 2
+BLUE TEAM DNF), XP REWARDS (finished 1st 1,000 XP, mileage bonus 200 XP, 2 player game x1,
+skills x1.2: 1,440 XP; 1,560 in the first round), "WAITING FOR OTHER PLAYERS...", saving, and
+the next lobby 35 s after the finish. B's round ended with A's finish. Server: `WriteRaceStatsEx`
+for both (hopper 2, places 1/2 and 2/2), `SubmitScore` type 3 (A's best lap, board -1) and type 4
+(online XP: A 1,560 then 1,440, B 660 each round), `UpdateAll` with online XP A 1,560 -> 3,000,
+B 660 -> 1,320 (wristband 2). Fixed on the way: the cat's upload after a round carried only its
+race history, and the player record's credits read 0 (the record now keeps the fields an upload
+leaves out). The next lobby then sat at "WAITING FOR PLAYERS TO JOIN..." both times (#14,
+below); with that fixed it starts after its intermission.
 
-**The lobby stuck after King (#14), reproduced with `FORZA_LOBBY_LOG=1` (2026-10-15).** The
-log tool (`src/debug/lobby_log.cpp`; `LOBBY:` lines in the game log) writes each peer's lobby
-state, for the host the launch check `sub_82876D90` and its inputs each second (humans vs
-minPlayersToLaunch, players still in the last round, the bucket check's result `+2148` (TU4
-`+2172`) and its due flag, CPU drivers vs the session's, every player's state bytes), the
-lobby's events, every player status change and each bucket check (`sub_82895018`: result, the
-caller, the table of per-team bucket counts, the players' records). Two instances on a local
-server with `--playground-games 6,5` (Cat & Mouse made a 90 s timed round so rounds pass
-without driving), each game started with `FORZA_LOBBY_LOG=1`, a script following the host's
-log; every lobby launched 30 s after it opened, except two King -> Cat & Mouse lobbies of
-about 11 (host B after 5 clean ones, host A after 2): the host sat at "WAITING FOR PLAYERS TO
-JOIN..." with both players in it, as in the report. In those the launch check was false only
-because of the bucket result: humans 2 >= 2, nobody in the last round, `+2148` = 0 with the
-due flag already clear, so nothing ever runs the check again (it runs only after a player
-status event). In the clean lobbies the result is 2 when the lobby opens. In the stuck one
-the bucket check, run as the lobby opens, found the players' buckets outside the preset's
-(Mouse MinPlayers 1 MaxPlayers 1 per team: table rows `1 0 1 0 0`, no mouse; a fresh
-assignment gave `1 1 0 0 0` and `1 0 1 0 0`) and returned 0. So the machine load was not
-needed. Not fixed: next step is the bucket assignment after a King round (`sub_8289B0D0`,
-which seeds the players' buckets from the previous round) and a re-check when the result is 0
-(for example set `+2152`, the due flag, once a second while the host is in the lobby with the
-launch otherwise ready). Use: `FORZA_LOBBY_LOG=1`, `grep LOBBY forza.log`; the `check:` line
-shows `bucket result 0` in a stuck lobby.
+**The lobby that never started (#14, fixed 2026-10-23).** After a round the next Playground
+Games lobby sometimes sat at "WAITING FOR PLAYERS TO JOIN..." with every player in it (first
+seen after King: 10 minutes; reproduced 2026-10-15 in about 2 of 11 King -> Cat & Mouse
+lobbies with two players). The log tool (`src/debug/lobby_log.cpp`, `FORZA_LOBBY_LOG=1`,
+`LOBBY:` lines in the game log) writes each peer's lobby state, for the host the launch check
+`sub_82876D90` and its inputs each second (humans vs minPlayersToLaunch, players still in the
+last round, the bucket check's result `+2148` (TU4 `+2172`) and its due flag, CPU drivers vs the
+session's, every player's state bytes), the lobby's events, every player status change and each
+bucket check (`sub_82895018`: result, the caller, the table of per-team bucket counts, the
+players' records). In a stuck lobby the launch check is false only because of the bucket
+result: humans 2 >= 2, nobody in the last round, `+2148` = 0 with the due flag already clear.
+
+The cause: the host puts the players in teams and buckets (the roles) with `sub_8289B618`
+(TU4 `sub_8294CF88`) on the table at the online game + 2052 (TU4 + 2076; per team 5 words: its
+players, then each bucket's count). It clears the table, assigns teams, then each team's
+buckets in random order (`sub_82897330`: the buckets a team needs, shuffled by `sub_82888380`,
+`std::random_shuffle` over the CRT's `rand()`), and returns the bucket check: 0 when a team has a
+bucket outside its MinPlayers/MaxPlayers. It runs as the lobby opens after a round
+(`sub_82876130`, which stores the result and clears the due flag) and in the host's check
+(`sub_82875FB8`) after a player's status event (a join, a car change); nothing else runs it
+again. With two players in Cat & Mouse each team of one drew Mouse or Cat; the fix-up after a
+failed check (`sub_8289B0D0`'s loop) moved one player only, so when the other drew Cat the
+table stayed `1 1 0 0 0 | 1 0 1 0 0` (team 2 without its mouse), the result 0, and the lobby
+waited until a player changed something (both lobbies after a driven Cat & Mouse round). The
+first lobby of a session passed: there the players are added one at a time as they join
+(`sub_8289B450`). Setting
+the due flag from outside (guest memory) ran the host's check again: the second redraw gave
+`1 1 0 0 0 | 1 1 0 0 0` and the intermission started at once. The fix
+(`src/hooks/lobby_buckets.cpp`): in a Find Game lobby (mode 7), on the host, a result of 0 is
+drawn again at once, up to 32 times, and logged once without `FORZA_LOBBY_LOG` ("LOBBY:
+team/role draw outside the buckets' limits (teams ...), drawn N times: result R (teams ...)"),
+so a recurrence shows its table. A custom game (mode 10) is left alone: its launch does not
+wait for this check.
+
+Tested with the fix (TU4, local server, `FORZA_LOBBY_LOG=1`): three games with
+`--playground-games 6,5` and both rounds made 60 s timed ones (a scratch copy of
+`playground_rounds.xml`), then two after the third left: 8 lobbies after a round (4 King ->
+Cat & Mouse, 4 Cat & Mouse -> King, half of them with three players) all started 33 s after
+they opened (the 30 s intermission); one, King -> Cat & Mouse with two players, drew
+`1 1 0 0 0 | 1 0 1 0 0` and was drawn again once. Then two players on the full Cat & Mouse
+(`--playground-games 5`), A driven along the route: finish ("FINISHED WINNING TEAM"), results
+(RED TEAM 03:10.974), XP (1,440), the next lobby drew `1 1 0 0 0 | 1 0 1 0 0`, drew again
+once, counted its intermission down and the next round started ("YOU ARE THE MOUSE");
+the second driven round the same (finish, results, the lobby drawn again once, round three
+started). Use: `FORZA_LOBBY_LOG=1`, `grep LOBBY forza.log`; the `check:` line shows `bucket
+result 0` in a stuck lobby, the `bucket check` lines its table.
 
 `GetSearchSettings` returns the session filter (`numStartingMatchmakingQueryResults`,
 QoS limits, ranking factors) and `maxConnectAttemptsBeforeCreating`,
@@ -314,7 +345,7 @@ properties), 0xB0010-15, 0xB0018 (sessions), 0xB001C, 0xB001E, 0xB001F, 0xB0021
 
 | Leaderboard (where) | Written by | Read by | Server |
 | --- | --- | --- | --- |
-| Speed traps (speed cameras: 21 in `gamemodes.zip` `Colorado/speed_camera.xml`, `scoreboard_id` 201-230) | passing one: `SubmitScore(type 1, board, speed in m/s)` (`CAmbientChallengeLeaderboard`, its queue `sub_82992520`, sent at `0x829911CC`); the HUD shows the speed and the save's PB | at the trap `GetRows(type 1, view 5, board, 1, 200)` (`sub_82979C60`: type 2 for a zone, else 1); the map (filter Speed Cameras, X LEADERBOARD on one): `GetRows(1, view 2, board, 1, 50)`, X changes the filter | `forza_scores.py`, best speed per player |
+| Speed traps (speed cameras: 21 in `gamemodes.zip` `Colorado/speed_camera.xml`, `scoreboard_id` 201-230) | passing one: `SubmitScore(type 1, board, speed in m/s)` (`CAmbientChallengeLeaderboard`, its queue `sub_82992520`, sent at `0x829911CC`); the HUD shows the speed and the save's PB | at the trap `GetRows(type 1, view 5, board, 1, 200)` (`sub_82979C60`: type 2 for a zone, else 1); the map (filter Speed Cameras, X LEADERBOARD on one): `GetRows(1, view 2, board, 1, 50)`, X changes the filter | `forza_scores.py`, best speed per player; at the trap the game places a new score by walking up from `userRow.position` through the rows (`row[position - 2]`, `sub_82979E80`), so view 5 puts a player ranked below the 200 rows sent at place 201 (rank unchanged), and `src/hooks/ambient_leaderboard.cpp` keeps the game within the rows for any server (#288) |
 | Speed zones (average speed: 9 in `Colorado/average_speed.xml`, boards 101-112) | `SubmitScore(type 2, board, average speed)` | as speed traps, type 2 | the same |
 | A friend's speed beaten | `NotifyRival(board, type 1/2, rival)` (`0x82990744`) | the rival's Message Center (RIVAL CHALLENGE) | `notify_rival` ("Speed Trap 30"; the game's names are in `List_SpeedCameras.str`) |
 | Events (festival events, street races, showcases; board = the event's `Events.Id`) | at the finish `SubmitScoreEx(type 3, board, best lap or race time)` (`0x829495CC`, `0x829496F8`) and the ghost (`UploadFile`) | Race Central LEADERBOARDS: an event `GetRows(3, view, board, 1, 50)`; VIEW OVERALL `GetRollupRows(0, view, pivot, eventTypeId 1-3)` | best time per player; rollups over the type-3 boards |
@@ -340,8 +371,37 @@ id, the same for every round of the lobby) and both consoles read their row
 restarts. The game shows no skill anywhere seen (the lobby's yellow number is the online
 wristband; `hideTrueSkill` false changed nothing visible).
 
-Not done: a speed zone (type 2) and an event board (type 3) were not driven again with
-the new board keys (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
+**Fast travel onto a speed trap (#349).** A trap takes its speed when the car enters it
+(`sub_828BB140`, at least `minimumSpeed` 30 mph) from the car's velocity getter (vfunc 83,
+`sub_82D1CE18`), which reads the copy of the velocity the car's physics step makes
+(car+0xB10). The vehicle teleport `sub_824B87A8` (fast travel, the car reset, an event's
+start) zeroes the velocity in the physics state only (vfunc 84, car-0xA10), so until the
+car's next physics step (a fast travel holds it behind the loading screen, about 0.7 s
+here) the car still reports the speed it had when the map paused the game. Fast travelling
+onto a trap recorded that speed while the car stood on the trap: TU4, the car paused at
+151.1 km/h, the fast travel's destination pointed at the Rt. 6 trap (Fast Travel Anywhere
+costs 5 Tokens, which the local profile has none of), the car arrived at 0 km/h and the
+game sent `SubmitScore(type 1, board 228, 41.976 m/s)`. `src/hooks/teleport_velocity.cpp`
+refreshes the reported velocity from the state after each teleport: the same test sent
+nothing (`TELEPORT: car ... its reported speed 146.5 km/h is now 0.0 km/h` in the log),
+and traps and zones driven through still record (Rt. 29 on both builds; on TU4 the Rt. 20
+speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). The public server sets no speed
+limit: players drive modified and modded cars, and with the game fixed a trap only records
+speeds really driven. Speeds above a trap's record (`SPEED_TRAP_LIMIT_KMH`, all 22 traps:
+the best known Xbox 360 result on that trap, from the Forza Horizon speed trap charts on
+cyberscore.me.uk, charts 230405-230426, compared at 0.1 km/h) or above 470 km/h on any trap
+or zone are only logged with the player's public leaderboard id ("speed trap N: ... km/h is
+above the trap's record (... km/h)"; "... is more than any stock car reaches (470 km/h)").
+With `--trap-limits` such scores are not kept, and kept ones are removed when the server
+loads `scoreboards.json`, each logged once ("scoreboards: removed <public id>'s ... km/h
+from board N type T, above ... km/h"). The public server ran with the limits once, on
+2026-10-23, which removed 66 exploited results above their trap's record. A road-layout model of
+each trap's reachable speed (corners, straights, grades, generous grip) was tried first and
+dropped: it was not validated in the game and ordinary players beat it on corner-limited
+traps (175-200 km/h on Sth Rt. 38, board 210, where it said 132).
+
+Not done: an event board (type 3) was not driven again with the new board keys
+(unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
 
 ### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
 
@@ -780,8 +840,8 @@ notification flows), all scratch files not kept in the repo.
   poll, which the server asks for 15 s later (`StartNewSession`'s `nextRetrieveSeconds`).
 - Car clubs: creating one in the game (keyboard), club rankings, borrowing a shared car
   (`DownloadSharedCar`) were not tried.
-- Playground Games: a round of Cat & Mouse played to its end, and three or more
-  consoles, were not tested.
+- Playground Games: Cat & Mouse was driven to its end with the other player parked (#13);
+  a cat chasing the mouse, and four or more players, were not tried.
 - `DLCMetadata.GetStringTableInfo` / `Content.DownloadContent` (DLC string tables and
   thumbnails served by Turn 10): none. `GetStringTableInfo` answers `Id` -1, the game's
   "no table" (#79). The empty answer (`Id` 0, no `Path`, `Size` 0) made the game download

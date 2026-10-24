@@ -26,6 +26,12 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   always lit) keeps them lit by day too, for your own car only.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
+- **Mouse cursor:** the game hides it after three seconds without movement and shows it
+  when the mouse moves. Mouse-look capture keeps it hidden; interactive host overlays
+  and text entry keep it visible. The same policy applies in windowed, borderless and
+  fullscreen modes. It only controls the game window, not the launcher. The standalone
+  `tools/test_cursor_idle.cpp` checks timing, focus, overlays and capture transitions;
+  Windows/X11/Wayland desktop and in-game checks are still needed before release (#291).
 - **Xbox LIVE:** the game signs in to an emulated Xbox LIVE, as a Gold member, through a
   Forza Live server (`server/forza_live_server.py`, Python 3 standard library only).
   `play.sh` starts one on this machine for the session (UDP 21200, HTTP 21201, data in
@@ -103,7 +109,10 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   players at different frame rates race together. Free roam runs 60 fps at 60, about 115
   at 120 and 112 at 144; a race with 7 AI cars 60, 76 and 70, bound by the GPU emulation
   ([`docs/framerate.md`](docs/framerate.md)). 144 needs the SDK overlay with patch 0037
-  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam.
+  (`tools/build_rexglue_sdk.sh`); without it 144 drops to about 72 in free roam. A PC that
+  cannot hold 30 can run 20 (`frame_rate = 20`): each frame then stays on a 60 Hz screen for
+  exactly 3 refreshes, where 22 fps alternates 2 and 3 and judders; 40 does the same on a
+  120 Hz screen (#263).
 - **Title Update 4 (default):** `play.sh` runs `forza-recomp/out/build/linux-tu4` when it
   exists (how to build it: README, Building; `FORZA_BUILD=linux-tu4`) and mounts the
   update's files (`extracted/tu4/`, or `FORZA_UPDATE`) as `update:` with
@@ -143,13 +152,24 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   or a new paint job in the garage renders it again. Deleting the files only makes them
   black. `readback_resolve = "none"` in `forza.toml` turns readback off (no measurable gain over
   `some`, broken pictures again).
+- **Typing a name** (a photo, a tune, a livery; #294): the game's text prompt is an
+  on-screen keyboard over the game, as on the 360. Controller: D-pad or left stick moves,
+  A types the key, B deletes (on an empty name it cancels), X types a space, Y switches
+  abc, ABC and symbols, LB/RB move the cursor in the name, Start or **Done** confirms,
+  **Cancel** cancels. The keyboard works too (Enter confirms, Escape cancels). Names take
+  letters, digits, space and `! @ # $ % & ' ( ) + = - _ . , ; ~ [ ] ^` (what the server
+  and a Windows folder name keep), up to the game's length; the game gets no controller
+  input while the keyboard shows.
 - **Photos:** photo mode saves the picture in the profile (`photo/<name>/`); SAVE asks for
-  a name in a small window over the game (Enter or OK). Builds before SDK patch 0048 saved
+  a name (above). Builds before SDK patch 0048 saved
   a garbled picture (#54); photos saved by them stay garbled, take them again.
   The launcher's **Photo gallery** browses local saved pictures and exports PNG/JPEG
   copies. Press Refresh after saving a new picture ([gallery details](launcher.md#photo-gallery)).
 - **Hitches:** a frame that takes over 200 ms logs `FORZA_STALL` lines in `forza.log` with
-  what the game was doing; attach them to an issue ([details](perf.md#long-frames-forza_stall)).
+  what the game was doing, and a game database query of 50 ms or more a `FORZA_SQL` line; attach
+  them to an issue ([details](perf.md#long-frames-forza_stall)). Title Update 4 builds up to
+  0.1.31 had two or three such frames (0.1-0.3 s) in the first seconds after every load, from
+  the update's car list query (#167, [details](perf.md#hitches-after-loads-title-update-4s-car-view-167-2026-10-23)).
 - **No sound:** when the sound output cannot be opened (another program holds it in exclusive
   mode, Windows refuses its format, no audio server on Linux), the game runs on without sound and
   `forza.log` says `No audio output could be opened (<reason>)`. It asks for the output again every
@@ -168,13 +188,35 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 ## Steam Deck
 
 The launcher detects the Deck and applies its preset: Vulkan, render scale 1, AMD FSR 1, `frame_rate = 30`,
-background shader compilation and the shader cache on. Keep these: render scale 2 and `frame_rate = 60` only
-make it slower. Play a session or two on a warm shader cache before judging the speed. Reported speed on a
-Steam Deck OLED (#45): 17 to 25 fps. We have no Deck; with a PC restricted to 4 cores that each give the game a
-fifth of a core, a race runs 22 to 24 fps (`docs/perf.md`, "Steam Deck approximation"), so the limit is the
-game's main thread and the graphics command thread, and none of the settings (MSAA, readback, submission thread,
-thread priorities) changes it. Cutscene audio that does not match the picture comes with the low frame rate;
-it has not been reproduced here.
+background shader compilation and the shader cache on (the PC check asks for the same: 30 fps for its CPU,
+render scale 1 for its graphics). Keep these: render scale 2 and `frame_rate = 60` only make it slower. Play a
+session or two on a warm shader cache before judging the speed. Reported speed on a Steam Deck OLED (#45,
+0.1.27): 17 to 25 fps, 8 in an 8-car race. Since then the game needs less CPU on few cores (#286): waits wake only
+their own threads, and the render thread sleeps while it waits for the GPU (`gpu_wait_blocking`, on by default
+on Linux; nothing to set). We have no Deck. This PC limited to four cores holds 30 fps in free roam and in a race,
+and the Deck's graphics, about a quarter of this card's compute units at half its clock, may well be what limits
+it (`docs/perf.md`, "Low-end CPUs"); a log from a Deck with Steam's performance overlay at level 4 in a race would
+tell. Cutscene audio that does not match the picture comes with the low frame rate; it has not been reproduced
+here.
+
+**Battery saver** (Settings > Display > Frame rate, Linux): On, or *Auto on battery (Steam Deck)*, starts the
+game on the lightest settings: 30 fps, render scale 1 with AMD FSR 1 (AMD FSR 3 and SMAA off) and the render
+thread sleeping while it waits for the GPU. Your own settings are not changed: the next start on mains power uses
+them again, so a docked setup at 60 fps and render scale 2 comes back by itself. Auto looks at the power source
+when the game starts, not while it runs. It is off by default; on the Deck's own preset it only undoes a frame
+rate, render scale or filter you raised.
+
+**Suspend and resume** (#140). The game should carry on where it was when the Deck wakes up: a suspend stops
+the clock the game runs on, so the game itself sees no gap. A game that was paused while that clock ran on (as
+`kill -STOP` does) does not count the time away either: the race clock did not count a 3 s or a 10 s stop.
+Signed in to Forza Live, the game says hello to the server as soon as it runs again. The server forgets a player
+after 30 s without one; from this version it gives a game that comes back its old player id, so the session it
+hosts and its address stay the same (an older server gives it a new id). Other players in your session see you
+leave after their own timeout, as on a console that lost its connection. `forza.log` has a `FORZA_RESUME:` line
+for each stop or sleep. Tested on Linux by stopping the game for 3 s, 10 s, 45 s, 2 and 10 minutes, offline in a
+race and signed in to a local server (free roam and a hosted Horizon World); not on a Deck yet: that the sound
+comes back (the game plays on the system's default output, which SDL follows when it changes), that the GPU
+survives the sleep without a "device lost", and that the Deck's controls come back.
 
 ## Keyboard and mouse
 
@@ -242,6 +284,40 @@ SDK patch 0040 (`docs/sdk_patches.md`) adds the stick ramp, the mouse speed mode
 modifier keys as bindings; without it `mnk_stick_ramp` does not exist and the mouse is
 about five times weaker.
 
+## Remapping a controller (#279)
+
+Any control of a controller can be put on another input: open **Controls** in the launcher, pick the
+controller under **Bindings**, press **Bind** on a row (Accelerate, Brake / reverse, Steer, Handbrake, the
+bumpers, the sticks, the d-pad, ...) and press the button, pull the trigger or move the stick you want for it.
+The live view above the rows shows what the controller sends. **Clear** unbinds a row, **Reset to default**
+gives it its own input back, and **Reset all to default** drops the controller's bindings. A line in orange
+lists inputs that two rows share: binding Accelerate to A leaves A on the handbrake too until that row is
+cleared or bound elsewhere. While a Bind waits for an input (10 seconds, Esc cancels), the launcher's own
+controller navigation ignores that controller.
+
+- A **button on a trigger** presses it fully (throttle on A); a **trigger or a stick direction on a trigger**
+  stays analog (throttle on the right stick pushed up); a **trigger or a stick direction on a button** presses
+  it past half way; a **stick on a stick** moves with it, inverted when you moved it the other way than asked
+  (Steer on the right stick, or the sticks swapped).
+- Bindings belong to the controller model (SDL's GUID: USB vendor and product), so a DualSense and an Xbox
+  pad each keep their own, over USB or Bluetooth. PlayStation pads show their own button names.
+- They apply the next time the game starts, through SDK patch 0116 (SDL input backend, the default; not
+  with the XInput backend). The game's log names the profile it used: `SDL Controller remap (profile ...)`.
+- Wheels have their own rows (below). Keyboard keys are set in Settings, Controls.
+
+The launcher stores them as `controller_remap` (Settings, Controls, Controller bindings), which can also be
+written by hand: profiles separated by `;`, each the controller's GUID (or `*` for every controller without
+its own) and `target=source` pairs, for example `*:rt=a,a=none` (throttle on A, nothing on the handbrake) or
+`*:lx=rx,ly=ry,rx=lx,ry=ly` (sticks swapped). Targets: `a b x y lb rb back start guide ls rs up down left
+right lt rt lx ly rx ry`. Sources: a button (those names plus `misc1`, `paddle1` to `paddle4`, `touchpad`) or
+`none`; `lt`, `rt`; a stick axis (`-lx` inverted) or one direction of it (`lx+` right, `lx-` left, `ly+` up,
+`ly-` down), with `@0.3` for how far it must move to press a button. Without a rule a control keeps its own
+input, and the Elite paddles press Y, B, X and A as before.
+
+Tested with a virtual Xbox 360 pad (Linux uinput) bound in the launcher: A on the throttle and the handbrake
+cleared; in the game the car accelerated while A was held, and the pad's own RT no longer did. Not tested
+with a real DualSense or Xbox pad yet: please report what works.
+
 ## Racing wheels (issue #4)
 
 Any wheel SDL sees as a joystick (Logitech, Thrustmaster, Fanatec, Moza, ...) is presented to the game as the
@@ -270,27 +346,141 @@ or `wheel_invert_brake`; `wheel_axes` and `wheel_buttons` still override the pro
 as described below. A pedal is also ignored until it has been seen at rest once, so a pedal that reads 0 for a
 moment when the game opens it (or is held down at start) no longer presses itself.
 
-Setup (launcher: Controls, Racing wheel; the keys are the `forza.toml` names):
+**Thrustmaster wheels (#308)** have their axes and buttons built in too, by product id (SDK patch 0135): TMX
+(044f:b67f), TX (b669), TS-XW (b692), TS-PC Racer (b689), T300 RS (b66e), T150 (b677) and T-GT (b684), from
+Project Motor Racing's device maps. Steering on X, brake on Y, throttle on Rz and clutch on the slider (SDL axes
+0, 1, 2 and 3; on the T-GT 0, 1, 5 and 6), the paddles on the bumpers (they shift), the face buttons where
+each wheel has them (the TMX: A 4, B 8, X 2, Y 9). Where the pedals rest is read from the wheel. A TMX on
+Windows has no name (the log calls it `"44F B67F"`) and read 0 on every axis until its first report, so the
+detection found no pedal and the steering needed a quarter turn before anything happened (#308): now any wheel
+whose axes all read exactly 0 when the game opens it has their rest read from its first report (the log says
+`axis N rests at ... (first report)`). The T248 is not built in: no source gives its axes, so bind it (or
+calibrate it) under Bindings.
+
+**Setting a wheel up (#279).** Open **Controls** in the launcher and pick the wheel under **Bindings**. The live
+view shows its axes as bars and its buttons lighting up while pressed, by the numbers the game uses. Each game
+action has a row with its current input (and whether that is the default): **Bind** asks you to turn the wheel,
+press the pedal or press the button for it and takes the first input that moves (for an axis also its direction
+and where it rested: binding the steering to the right sets *Invert steering* if the axis went the other way,
+and a pedal's invert switch follows from where it rests), **Clear** unbinds it, **Reset to default** gives back
+the profile's or the detected input. Inputs that two rows share are listed in orange (a paddle on a shifter
+gear, for example: the shifter wins). Rows: steering, throttle, brake and clutch pedal; shift up and down (RB
+and LB, the paddles), clutch button (A), handbrake (B, or an axis: below), Activate (X), Rewind (Y), camera (Back), pause
+(Start), the stick presses and the d-pad (the hat by default; a button bound to a direction replaces the hat's,
+and Clear turns the direction off, SDK patch 0127); gears 1 to 7, reverse and the sequential up and down of a
+shifter. With combined pedals (*Pedals: Combined*) one axis is both: the throttle row binds and clears it for
+both pedals, and the brake row has nothing of its own to change.
+
+**Pedals and a shifter on their own USB device (#272).** Many setups plug the pedals and the shifter into the
+PC, not into the wheel base: Simagic P1000 or P2000 pedals and a DS-8X next to an Alpha or EVO base, Fanatec
+USB pedals or the ClubSport Shifter SQ, a Thrustmaster T-LCM or TH8A. The game's wheel driver reads them together
+with the first wheel as one wheel: steering, buttons and force feedback stay on the base, the throttle, brake
+and clutch come from the pedal device and the gears from the shifter device (SDK patch 0128). They are found by
+themselves: known models by USB id (the table in `sdk_patches.md`, 0128) and any device named like pedals or a
+shifter (a TH8A, Moza's SR-P and HGP); the picker lists them as *pedals, read with the wheel* and *shifter, read
+with the wheel*, and they never become a second controller. In Bindings, with the wheel picked, a pedal or gear
+row binds on whatever device you press: press the pedal on the pedal set and that device becomes the pedal device
+(`wheel_pedal_device`, its axes in `wheel_pedal_axes`); put the shifter in a gear and it becomes the shifter
+device (`wheel_shifter_device`, `wheel_shifter_device_buttons`). The rows then say where they read, e.g. *Axis 2
+on SIMAGIC P1000*. Steering and the button rows stay on the wheel. **Calibrate wheel** finds the pedals on their
+own device too. Known pedal sets have their axes built in when they report the three pedal axes PMR's maps list
+(Simagic: throttle Rz, brake Ry, clutch Rx); others are detected like a wheel's pedals, from where each axis
+rests at start (keep them released). Known shifters have their gears built in (the DS-8X: gears 1 to 7 on
+buttons 0 to 6, reverse 8); set **Shifter** to H-pattern (or Sequential) as for a wheel's own shifter. A pedal
+bound on the wheel itself (`wheel_axes`) stays there, so a wheel's own clutch can go with separate pedals.
+Unplugged while the game runs, the pedals or shifter stop and the wheel's own pedals and buttons count again;
+plugged back in, they are read again (the log says `Wheel: pedal device "..." removed` and `... is read with
+"..."`). `wheel_pedal_device = none` (or `wheel_shifter_device = none`) keeps the wheel's own. The H-pattern's
+gear count goes to the game when it first sees the wheel, so plug the shifter in before starting the game. On
+Linux the launcher (SDL 2) does not list a device without an X and a Y axis (most pedal sets, shifters); it reads
+those straight from evdev with the numbers the game's SDL 3 gives them (`launcher/forza_launcher/evdev_joysticks.py`).
+A pedal set or shifter without buttons that Linux does not mark as a joystick at all needs a udev rule, such as
+those of [simracing-hwdb](https://github.com/JacKeTUs/simracing-hwdb).
+Tested with Linux uinput devices: a "SIMAGIC EVO PRO" base, Simagic P1000 pedals (0483:0525, Rx/Ry/Rz) and a
+DS-8X shifter (0483:0531, 11 buttons). In the launcher the throttle, brake, clutch and gears 1, 2 and reverse were
+bound by pressing them on their devices; in the game the P1000's throttle drove the car (45 km/h in
+*Automatic*), and with *Manual with clutch* the DS-8X's first gear engaged (N to 1 with the P1000's clutch
+pressed, then 63 km/h in 1st) and the car went back to N when the lever left the gear. Not tested with real
+devices yet: please report the models and the log's `Wheel:` lines.
+
+**Calibrate wheel** goes through the rest: centre the wheel with the pedals released, turn it to full left and
+full right lock (the steering axis, its direction and how much of the axis it covers), turn it a quarter turn
+(the top of the rim pointing right: the axis spans the whole rotation, so 90 degrees reading 20 percent is a
+900 degree wheel; this sets *Wheel rotation* and lowers *Steering lock* to it if it was higher), then press each
+pedal fully (its axis, whether it is inverted, and a warning when it reaches only part of its axis, which no
+setting here can make up for: set the pedal's range in the wheel's own software). Throttle and brake on the two
+sides of one axis are taken as combined pedals. Any step but the first can be skipped. The last step has the
+**steering deadzone** as a slider, with a bar showing the steering the game would get as you turn the wheel.
+Apply writes the settings below; they take effect the next time the game starts.
+
+Tested with a virtual wheel of an unknown model (Linux uinput: 4 axes, 24 buttons, a hat): throttle, a paddle and
+a shifter gear bound by pressing them, then calibrated (steering axis 0, 900 degrees from the quarter turn,
+throttle, brake and clutch on axes 1 to 3). In the game (*Manual* shifting) the bound throttle pedal drove the
+car and the bound paddle shifted up from 1st to 3rd. Not tested with a real wheel yet: please report the model
+and whether the launcher's axis and button numbers match the game's (the log's `Wheel:` lines). The launcher
+reads devices with SDL 2 and the game with SDL 3; on Linux both gave the same numbers and GUIDs.
+
+**Which device is the wheel (#306).** Each wheel the driver takes is a controller of its own, and the first one
+is the first player's and the one pedals, a shifter or a handbrake on their own USB device are read with. With
+*Racing wheel: On* a virtual joystick (vJoy, which SimHub feeds with pedals, a handbrake and a shifter) or a button
+box that came before the wheel base in the system's order became the wheel. Now the wheel base comes first by
+itself: a device with force feedback, then one SDL lists as a wheel, then the system's order (SDK patch 0134); a
+pedal, shifter or handbrake device is never a wheel. To choose, pick the device under **Bindings** and press **Use
+as the wheel** (it sets `wheel_device`; on that device **Choose the wheel automatically** clears it): the picker
+calls it *wheel* and any other *wheel, a second controller*. The game's log names its choice: `Wheel: "..." is the
+wheel (the first player's; ...)`. Tested with a virtual vJoy (1234:bead, listed first) and a wheel base with force
+feedback: the base is the wheel; `wheel_device` set to the vJoy makes it the wheel, and as the pedal device it is
+no wheel at all.
+
+**Analog handbrake (#303).** The game's wheel layouts bind the handbrake to the left stick up and down as well as
+to B (gamedb.slt `WheelLayouts`, as the clutch is on the right stick Y): the Xbox 360 wheel's analog handbrake.
+The game takes the stronger of the two, and a stick direction is analog (0 to 1), so the driver sends a handbrake
+axis there (SDK patch 0133) and B still works. The **Handbrake** row in Bindings takes both: **Bind**, then pull
+the handbrake (an axis) or press a button on the wheel; binding one keeps the other, **Clear** unbinds both and
+**Reset to default** gives back B and a handbrake device found by itself. The axis is read from the wheel (a
+handbrake plugged into the wheel base: `wheel_axes` `handbrake=N`) or from a handbrake on its own USB device
+(`wheel_handbrake_device`, its axis `wheel_handbrake_axis`): a Simagic TB-1 or TB-RS, a Fanatec ClubSport
+Handbrake or a Thrustmaster TSS is found by its USB id, others by a name with "handbrake" in it, and Bindings
+sets the device when you pull it there (the picker lists it as *handbrake, read with the wheel*). A pedal set or
+shifter that carries the handbrake (Logitech's RS Shifter and Handbrake) is named in `wheel_handbrake_device`
+and keeps its pedals or gears. Buttons on a handbrake device are not read: in button mode, bind its axis or a
+wheel button. Where the handbrake rests is read when the game opens it, like a pedal (keep it released then);
+one that works backwards is fixed with *Invert handbrake*. Tested with a virtual TB-RS: from about 48 km/h in 1st
+with the throttle off, a handbrake a third of the way slowed the car by about 2 m/s², two thirds by 6, fully by 8.
+
+The settings these write (Settings, Controls, Racing wheel; the keys are the `forza.toml` names) can still be
+edited by hand:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `wheel_mode` | `auto` | `auto`: SDL says it is a wheel, or its name looks like one (G29, T300, Fanatec, Moza, ...). `on`: every controller without a gamepad mapping is a wheel. `off`: wheel support off |
+| `wheel_device` | found | The wheel (#306): the first player's, which pedal, shifter and handbrake devices are read with. Empty: one with force feedback first, then one SDL lists as a wheel, then the first; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one and makes it a wheel (launcher: Use as the wheel) |
 | `wheel_rotation`, `wheel_lock` | 900, 900 | The wheel's rotation as set in its driver, and the travel (lock to lock) that gives the game's full steering. 900/540 makes the steering about 1.7 times quicker |
 | `wheel_deadzone`, `wheel_invert_steering` | 0, off | Steering deadzone (0 to 0.5); swap left and right |
 | `wheel_steer_offset` | 0.05 | Only with `wheel_900_steering` off: compensates an inner steering deadzone (below) |
 | `wheel_pedals` | `auto` | Separate pedals; `combined` is one axis with throttle one way and brake the other |
 | `wheel_invert_throttle`, `wheel_invert_brake` | off | Pedals found backwards |
+| `wheel_pedal_device` | found | Pedals on their own USB device: empty finds a known pedal set or one named like pedals; a device name (as Bindings lists it), SDL GUID or `vid:pid` picks one; `none` reads the wheel's own pedals |
+| `wheel_pedal_axes` | by model or detected | Axis numbers on the pedal device, e.g. `throttle=2,brake=1,clutch=0`; a pedal set here reads the pedal device, one set in `wheel_axes` the wheel |
 | `wheel_throttle_curve`, `wheel_brake_curve` | 1.0 | Gamma: 1 linear, above 1 softer at the start |
-| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1` |
-| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). A button the shifter uses presses none of these |
+| `wheel_axes` | detected | e.g. `steer=0,throttle=2,brake=5,clutch=1`; a number past the wheel's axes (Clear writes 99) unbinds, a negative one means the default. `handbrake=N`: an analog handbrake on the wheel (#303; 99: none, also no handbrake device) |
+| `wheel_handbrake_device` | found | An analog handbrake on its own USB device (#303): empty finds a known one or one named like a handbrake; a name, SDL GUID or `vid:pid` picks one (also the pedal or shifter device); `none` reads none |
+| `wheel_handbrake_axis`, `wheel_invert_handbrake` | 0, off | The handbrake's axis on the handbrake device; a handbrake found backwards |
+| `wheel_buttons` | see below | e.g. `a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,left=14,right=15` (SDL button numbers; -1 unmaps). The hat is the d-pad for the directions this leaves out: `up=-1` turns hat up off, `up=12` puts it on button 12 instead (0127). A button the shifter uses presses none of these |
 | `wheel_ffb`, `wheel_ffb_strength` | on, 60 | Force feedback switch and strength (0 to 100 percent) |
+| `wheel_ffb_min_strength` | 0 | Minimum steering force (#303): the game's steering forces weaker than this percentage of the full force are scaled up, stronger ones stay (launcher: Minimum force; 0 is off) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
-| `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 100, 100 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble) |
+| `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
+| `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
+| `wheel_ffb_keep_playing` | 0 | For a wheel that ends force feedback effects by itself (#304): start every effect that plays again every this many seconds. 0: never (an effect the wheel says has stopped is still started again); -1: not even that |
 | `wheel_clutch`, `wheel_invert_clutch` | on, off | The clutch pedal as the game's analog clutch; a clutch found backwards |
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
+| `wheel_shifter_follow_slot` | on | H-pattern: on, the game takes the lever's gear whenever it sets the gear itself (race and event starts and finishes), as on the Xbox; off, a gear engages only when the lever moves, for switching to the paddles (#303; launcher: Gear follows the lever's slot) |
+| `wheel_shifter_device` | found | A shifter on its own USB device: empty finds a known one or one named like a shifter; a name, SDL GUID or `vid:pid` picks one; `none` reads the wheel's own buttons |
+| `wheel_shifter_device_buttons` | by model | Its gears, e.g. `1=0,2=1,3=2,4=3,5=4,6=5,r=6`, or `up=..,down=..`; while a shifter device is connected every gear comes from it |
 
 **Steering around the centre.** A G29 owner reported that the first degrees of every turn did nothing: the game
 took the wheel for a gamepad then (#219) and applied a gamepad's inner deadzone, and a 900 degree wheel turned 50
@@ -322,15 +512,27 @@ button.
   The Logitech Driving Force Shifter on a G29, G920 or G923 is built in, by the wheel's USB product id: gears 1
   to 6 are buttons 12 to 17 on all of them, reverse (pushed down) is 18 on a G29 or a G923 for PlayStation
   (046d:c24f, c266) and 11 on a G920 or a G923 for Xbox (c262, c26e): those wheels number reverse before the gears
-  (Logitech's and PCGamingWiki's button tables, and a G923 for Xbox owner, #256). Other shifters need
+  (Logitech's and PCGamingWiki's button tables, and a G923 for Xbox owner, #256). Other shifters: bind the
+  gears on the Controls page (Bindings, the Shifter rows: put the lever in each gear when asked), which writes
   `wheel_shifter_buttons`, e.g.
   `1=8,2=9,3=10,4=11,5=12,6=13,r=14`; up to 7 gears and reverse (the log prints the map: `Wheel: H-pattern
-  shifter, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB shifters) is
-  not read yet: only buttons of the wheel itself.
+  shifter on the wheel, buttons r=...`). A shifter that is its own USB device (Thrustmaster TH8A, Fanatec USB
+  shifters, a Simagic DS-8X) is read with the wheel: [above](#racing-wheels-issue-4), *Pedals and a shifter on
+  their own USB device*.
 - **The shifter's buttons press nothing else.** Every button the shifter uses (its gears and reverse with `h`, up
   and down with `sequential`) is taken out of the wheel's pad buttons, whatever the defaults or `wheel_buttons`
   say: on a G923 for Xbox reverse is button 11, which the generic map had as the left stick press, so engaging
   reverse also opened the friends screen (#256).
+- **The lever's slot, or gears on lever moves (#303).** The game turns the lever's gear into a gear request
+  every frame, shifts when the request changes, and takes it again whenever it sets the gear itself: at race and
+  event starts and finishes the car goes into the gear the lever sits in, or into neutral with the lever out.
+  That is what the Xbox does with a 360 wheel's shifter, so it stays the default (*Gear follows the lever's
+  slot*, `wheel_shifter_follow_slot`). If you switch to the paddles or a sequential shifter mid-session, turn it
+  off (SDK patch 0132): the driver then asks for a gear only for a moment after the lever moves into a slot or
+  out to neutral, and for nothing otherwise, so the paddles keep their gear and a start keeps the game's until
+  you move the lever (where the lever sits when the game starts is not a move). Tested with it off, a virtual
+  wheel and DS-8X, the lever left in 3rd: the paddles shifted freely, a race started in 1st, and moving the
+  lever to 4th engaged 4th.
 - **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
   least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
   neutral until you press it. Off by default (the lever's gear engages at once).
@@ -353,7 +555,7 @@ gamepad whose right stick drifts can disturb the gear: unplug it while driving w
 Axis detection (wheels without a profile) reads where each axis rests when the wheel is plugged in: the one near
 the middle is the steering, those resting at an end are the pedals (throttle, brake, clutch in axis order).
 **Keep the pedals released while plugging in or starting the game**; a pedal that works backwards is
-fixed with the invert switch, a wrong axis with `wheel_axes`. The log line `Wheel: "..." axes(..) buttons(..)`
+fixed with the invert switch or **Calibrate wheel**, a wrong axis with **Bind** (or `wheel_axes`). The log line `Wheel: "..." axes(..) buttons(..)`
 and the `axis N rests at` lines show what was found. Default buttons: 0-3 A B X Y, 4 right bumper, 5 left bumper,
 8 Back, 9 Start, 10 and 11 stick presses; the G29 and G923 for PlayStation map is
 `a=0,b=2,x=1,y=3,rb=4,lb=5,back=8,start=9,ls=11,rs=10` (cross, circle, square, triangle, right paddle, left
@@ -373,32 +575,116 @@ them running: a **constant force** that it updates every frame with the car's st
 the wheel back towards the centre; scraping a wall or crashing makes it kick), a **centring spring** that is off
 at a standstill, grows with speed and fades while the rear wheels slide, a light **damper**, and an inertia and a
 friction effect set to zero. Its tuning is `media/ControllerFFB.ini`; the game's Advanced wheel options scale it
-(Force feedback scale) and the rumble (Vibration scale). The rumble (engine, road surface, impacts) comes as a 25 Hz
-vibration. `wheel_ffb_strength` scales everything (default 60 percent), `wheel_ffb = false` switches it off.
-Three more strengths (#256), in percent of it and 100 by default (as before), each set one part:
-`wheel_ffb_spring_strength` the centring spring and the damper (the spring grows with speed, so at speed small
-turns can feel heavy; lowering it softens the centring without weakening the steering force and the road feel),
-`wheel_rumble_engine_strength` the game's right motor, which carries the engine and climbs towards the limiter, and
-`wheel_rumble_road_strength` its left motor (road surface, kerbs, impacts). Both motors play as one vibration, the
-stronger of the two after their strengths, so in a car that revs quickly a lower engine strength lets the road
-through. The
+(Force feedback scale) and the rumble (Vibration scale). `wheel_ffb_strength` scales everything (default 60
+percent), `wheel_ffb = false` switches it off. Three more strengths (#256), in percent of it, each set one part:
+`wheel_ffb_spring_strength` the centring spring and the damper (100 by default; the spring grows with speed, so at
+speed small turns can feel heavy; lowering it softens the centring without weakening the steering force and the
+road feel), `wheel_rumble_engine_strength` the game's right motor, which carries the engine and climbs towards the
+limiter (50 by default), and `wheel_rumble_road_strength` its left motor (road surface, kerbs, impacts, tyre
+slip; 80 by default).
+
+**Rumble style (#273).** The game's two rumble motors were made for the Xbox 360 wheel's small motors in the
+rim, which have to shake hard to be felt; played through a force feedback base's main motor at those levels they
+rattle the whole wheel (a Fanatec CSR Elite owner in #4: engine and tyre-slip rumble together). `wheel_rumble_style`
+(launcher: Rumble style) picks how they play, SDK patch 0129:
+- **Fine** (the default): each motor its own light, quick vibration on the steering axis, the road motor a 40 Hz
+  sine and the engine motor a ~71 Hz one (period 14 ms), each at most a quarter of the force feedback strength
+  (FH6 plays these effects as micro-vibrations on the main motor too). Both play at once, so the road comes
+  through while the engine hums.
+- **Classic**: as before, one 25 Hz sine at the stronger motor's level, up to 60 percent of the force feedback
+  strength, for a wheel that should shake like the 360 wheel's rim motors.
+Fine needs the wheel's periodic (sine) effect and room for two effects; a wheel that rejects them plays classic
+(the log says `Wheel: fine vibration rejected ...: classic vibration instead`); one without a sine effect plays no
+rumble in either style (the log says so). The defaults are softer since #273: measured in free roam with a
+virtual wheel, the engine motor runs at half or more whenever the car accelerates (about 0.45 on average flat out
+off-road, peaks at full) and the road motor sits at 0.1 to 0.2 on tarmac and climbs to full off-road and in
+slides, so the engine starts at 50 percent and the road at 80. With the defaults (strength 60) fine gives the
+road at most 0.12 and the engine 0.075 of the motor's force, where classic at the old 100 percent gave 0.36. The
+style is read when the game opens the wheel: restart after changing it. Please tell us which values feel right
+on your wheel (#4).
+
+**Minimum force (#303).** The game's steering force follows the car: light cars give a light wheel, and a heavy
+one (a WRX STI on a Simagic EVO Pro in #4) several times more. `wheel_ffb_min_strength` (launcher: Minimum force,
+0 by default) lifts the weak end, SDK patch 0131: a steering force weaker than this percentage of the full force
+is scaled up, at most 4 times near the centre and less the closer it is to the minimum, and from the minimum up
+it plays as the game sends it. The curve is smooth and starts at 0, so there is no step when the force changes
+sides in the middle and no floor that flattens the road feel; it applies to the game's force before
+`wheel_ffb_strength`, and the centring spring, the damper and the rumble are not changed. With a minimum of 30, a
+force of 10 percent plays at about 23, one of 20 at 27 and one of 30 or more as it is. Try 10 to 30.
+
+The
 wheel's own autocentre is off while the game runs; on a wheel without a spring effect (the Linux kernel driver of
 the G25, G27 and G29 has only constant force and autocentre) the game's spring sets the autocentre strength
 instead. On Linux the wheel needs read and write access to its `/dev/input/event*` node (a udev rule for most
 wheels).
 
 **Not driving: the forces fade out (#256).** The game keeps its wheel effects going when the car is not under the
-player's control: in the pause menu it sets the centring spring to full and leaves it and the damper on, a
-rewind plays the steering force and rumble of the car going backwards, and replays keep the last spring. So the
-wheel pulled and buzzed there (a G923 owner, #4). The driver now fades all the game's forces and its rumble to
-nothing in 0.25 s while the player is not driving and back in over 0.5 s when they are. The game tells it
-(`ForzaWheelPlayerDriving`, an export of the runtime) from the car's physics: its substeps stop in the pause menu,
-rewinds, replays, menus and loading screens, and driving counts again once they have run for half a second (which
-leaves out most of the short bursts when a replay starts; the one when the rewind menu's *View replay* starts is
-1.3 s long). The game's rumble cannot tell with a wheel: it sends a wheel's rumble only through the force feedback
-calls. With a virtual G923: in the pause menu and while rewinding the spring, damper, constant force and rumble the
-wheel receives go to 0 within half a second, and come back half a second after *Resume* or *Resume from here*.
+player's control: in the pause menu it sets the centring spring to full and leaves it and the damper on, a rewind
+plays the steering force and rumble of the car going backwards, and replays keep the last spring. So the wheel
+pulled and buzzed there (a G923 owner, #4). The driver now fades all the game's forces and its rumble to nothing
+in 0.25 s while the player is not driving and back in over 0.5 s when they are. The game tells it
+(`ForzaWheelPlayerDriving`, an export of the runtime) from its own simulation state, once a frame: the pause flag
+of its world (the pause and rewind menus, replays), the time scale (negative while a rewind plays the car
+backwards), whether the world has started (loading) and whether the car's physics stepped, and the pad polls for
+menus where no world runs. Driving counts again after half a second of physics (which leaves out most of the
+burst when a replay starts; the one from the rewind menu's *View replay* is about 1.3 s long). The game's rumble
+cannot tell with a wheel: it sends a wheel's rumble only through the force feedback calls. With a virtual G923:
+in the pause menu and while rewinding the spring, damper, constant force and rumble the wheel receives go to 0
+within half a second, and come back half a second after *Resume* or *Resume from here*.
+
+**Hitches no longer fade the forces (#304).** The first version (#256) counted a quarter of a second without a
+physics step as not driving, so every frame that long or longer (a shader compiled after a crash, the window
+losing focus or streaming, for example) took the forces away for about a second: out at once, back half a second
+later, then the fade. A Simagic Alpha EVO Pro owner at 900 degrees felt the force feedback go weak after hitting
+walls, alt-tabbing and a few minutes of play, and their log showed it switching like that. The state is now
+counted in frames, so a hitch, a wall hit, a focus change or a long drive never fades anything (tested with a
+virtual Simagic at 60 and 144 fps: 0.7 s and 2 s freezes, a crash into the roadside, the window minimised, a 5
+minute drive). The log names the reason each time: `Wheel: not driving (pause)`, `(rewind)`, `(loading)`, `(menu
+or loading)`, then `Wheel: driving`, and the driver adds `the game's forces are faded out` and `the game's forces
+are back at full strength`. Back at full strength the driver also starts every effect that should be playing
+again, in case the wheel dropped one meanwhile (DirectInput stops a device's effects when it has to acquire it
+again), and a failed update or start of the game's effects is logged as a warning.
 `FORZA_WHEEL_DRIVING_GATE=0` switches the fade off.
+
+Windows source-validation follow-up (2026-10-22): integrated main `7f9a716`,
+retaining both the #304 fade/restart fix and patches 0131-0134. All 608 launcher
+tests passed (37 skips), as did six standalone C++ wheel tests covering minimum
+force, gear requests, analog handbrake, primary selection, shifter mapping and
+force feedback. The actual combined wheel adapter compiles against Windows
+SDK/SDL3 headers. No physical force-feedback device or game/GPU session was used;
+DirectInput acquisition, force feel and real Fanatec/vJoy ordering remain hardware
+validation gates.
+**The steering force no longer stops about 30 s after a pause (#304).** The same Simagic Alpha EVO Pro owner
+(Windows) then felt the wheel go light about 30 s after every pause or fast travel, often around an autosave:
+the reactive force gone, only a centring spring left, until the next pause. The driver gives every effect SDL's
+endless length, but SDL's DirectInput (Windows) and macOS backends turn it into 4294966296 microseconds (the
+length times 1000 in 32 bits), about 71 minutes and not DirectInput's endless value, and a HID PID wheel's
+duration field (16 bits of milliseconds) cannot hold that. The game starts its steering force and damper once
+(the driver starts them again only when the forces come back to full strength after a pause), but stops and
+starts its centring spring whenever the spring's gain passes 0 with the speed, every few seconds: a wheel that
+ends effects after about half a minute keeps only the spring, which is what the report describes (not yet
+confirmed on the wheel itself). SDL patch 0147 now sends endless effects as endless on Windows and macOS. For a
+wheel that still ends effects by itself, every 10 seconds the driver asks the wheel whether the game's effects
+still play (where SDL can ask: DirectInput, macOS, SDL's own Logitech driver): one that stopped is logged (`Wheel: "..." says the game's effect block 5
+(constant) has stopped ...; started again`) and started again, and `wheel_ffb_keep_playing` (0 by default)
+starts every effect again every so many seconds (5 is a good start; some wheels may feel each restart as a
+slight bump). Reproduced in free roam with a virtual Simagic (uinput) that ends each effect 32.767 s after its
+start: without restarts the steering force and damper ended 32.8 s after the forces came back to full strength,
+while the spring went on; with restarts every 5 seconds nothing ended over a drive of several minutes with a
+pause. The autosave itself (the profile is written every minute or so while driving) changes nothing
+the game sends. To see it in a log, the driver now also logs what the game sends and what the wheel gets
+(SDK patch 0145): a block's line when it changes (`Wheel: the game's effect block 4 is now ...`), the game's
+effect operations and device controls, and every 10 seconds a summary: `Wheel: the last 10 s: block 5
+constant: game 300 updates, gain 255, force -62..48, playing; wheel 208 updates, 2 restarts, level
+-7431..9598, running | ...`.
+
+**An effect the wheel refuses (#308).** A TMX on Windows refused the game's steering force ("Haptic error
+Unable to create effect"), and the driver tried again every frame: 86,000 warnings in one log. Now an effect is
+created on SDL's steering axis, else as a Cartesian or polar direction (SDK patch 0136); a type the wheel refuses
+in every direction is logged once (`Wheel: "..." refuses the game's ...`) and not tried again until the game
+resets its force feedback or the wheel is plugged in again. A refused centring spring becomes the wheel's own
+autocentre where it has one. Tested with a virtual TMX (uinput) that refuses constant forces: three tries (one
+per direction), one warning, the spring still playing; after a reset, three more.
 
 Tested with a virtual wheel (uinput) that logs what it receives, and by a G29 and a G923 owner. Wheel drivers disagree about
 which way a positive force turns the wheel: if yours pulls further into a corner instead of back to the centre,

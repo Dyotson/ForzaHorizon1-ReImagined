@@ -32,6 +32,7 @@ to DATA_DIR/players/<XUID>.json. Files an operator puts under DATA_DIR/storage/<
 served as they are for GET /storage/<path>.
 """
 
+import argparse
 import hmac
 import json
 import logging
@@ -41,10 +42,12 @@ import urllib.parse
 
 import forza_clubs as clubs
 import forza_limits as limits
+import forza_leaderboards as leaderboards
 import forza_market as market
 import forza_notifications as notifications
 import forza_photos as photos
 import forza_scores as scores
+import forza_shader_lists as shader_lists
 import forza_stats as stats
 import forza_world as world
 import forza_xtsw as x
@@ -140,6 +143,12 @@ def add_arguments(parser):
                         help="offer the server's Monthly Rivals time trials "
                              "(forza_scores.TIME_TRIALS; a trial needs a score on its board "
                              "to have a rival)")
+    parser.add_argument("--trap-limits", action="store_true",
+                        help="reject speed trap scores above the trap's Xbox record "
+                             "(forza_scores.SPEED_TRAP_LIMIT_KMH) and trap/zone speeds above "
+                             "470 km/h, and remove kept ones at start; by default they are "
+                             "only logged (modified and modded cars go faster)")
+    parser.add_argument("--no-trap-limits", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -153,6 +162,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
+    scores.ENFORCE_TRAP_LIMITS = args.trap_limits and not args.no_trap_limits
     TEST_NOTIFICATIONS["on"] = args.test_notifications
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
@@ -167,6 +177,8 @@ def configure(args):
     clubs.configure(DATA_DIR, load_player)
     notifications.configure(DATA_DIR)
     photos.configure(DATA_DIR)
+    shader_lists.configure(DATA_DIR)
+    leaderboards.configure(DATA_DIR)
 
 
 def dump(method, path, headers, body):
@@ -235,6 +247,7 @@ def user_logon2(xuid, body):
     params, _ = x.decode(x.UserLogon2_Params, body)
     login = params["loginData"]
     xuid = login["qwXuid"] or xuid
+    login["wzGamerTag"] = limits.clean_gamertag(login["wzGamerTag"], xuid)
     record = load_player(xuid)
     record.update(gamertag=login["wzGamerTag"], lastLogon=int(time.time()),
                   careerLevel=login["currentCareerLevel"], logons=record.get("logons", 0) + 1)
@@ -303,7 +316,10 @@ def online_profile_update_all(xuid, body):
     for key in ("onlineXP", "onlineWristbandLevel"):
         if key in profile:
             profile[key] = max(profile[key], stored.get(key, 0))
+    # An upload carries only the tables that changed: after a Playground Games round without
+    # credits won there is no playerHistory, and the stored credits read 0 (#13).
     if profile:
+        profile = dict(stored, **profile)
         if profile != record.get("profile"):
             log.info("title: profile %016X: level %d, online XP %d (wristband %d), %d online "
                      "races, %d credits", xuid, profile.get("level", 0),
@@ -475,7 +491,7 @@ def dlc_string_table_info(xuid, body):
 
 
 def gamertag_of(xuid):
-    return load_player(xuid).get("gamertag") or "%016X" % xuid
+    return limits.clean_gamertag(load_player(xuid).get("gamertag"), xuid)
 
 
 SERVICES = {
@@ -622,6 +638,14 @@ def handle(server, method, path, headers, body, peer):
                  headers.get("x-method", "?"), len(body))
         return 200, "bin/xtsw", service_call(headers, body, server)
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
+    if url.path.startswith("/shader-lists"):  # players' shader lists (forza_shader_lists.py)
+        answer = shader_lists.handle(server, method, path, headers, body)
+        if answer is not None:
+            return answer
+    if url.path.startswith("/leaderboards"):  # public leaderboards as JSON (forza_leaderboards.py)
+        answer = leaderboards.handle(method, path)
+        if answer is not None:
+            return answer
     if url.path in ("/notify", "/gift"):
         query = urllib.parse.parse_qs(url.query)
         if not is_admin(peer, headers, query):
