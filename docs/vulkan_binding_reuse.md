@@ -197,3 +197,23 @@ validation and benchmarks were not repeated; the preceding measurements retain
 their original provenance. Current-branch runtime qualification, broader workload
 coverage and repeated native-resolution frame-time checks remain outstanding.
 Binding reuse stays off by default and the PR remains draft.
+
+### Current-main integration, 2026-10-24
+
+Signed merge `79b6faf` integrates main `da9bf35`; patch 0094's behavior and
+default are unchanged. All 119 SDK patches apply in order with strict added-source
+whitespace checks to pinned SDK `bd833a2`. All 1,370 public SDK source blobs match
+the resulting tree `7d397a176ce27bedb24fbed9e6ff714a01d0bff1`. The isolated Windows
+x64 Release Vulkan/D3D12 GPU-plugin and runtime build passes, as does the production
+binding-reuse guard executable.
+
+Patch 0092 from #179 also applies independently to this main. The combined 120-patch
+series produces tree `3b2f41813315cc38897ce655e55c809475476efb` with either PR's
+patch applied first, or with all patches in numerical order. This is source
+compatibility evidence; combined enabled behavior has not been qualified.
+
+Signed commit `1cc7541` adds the observed-affinity audit described above. Four
+CPU-only regression fixtures, a native Windows child-process reset/escape check,
+and alternating-mode/resume CLI checks pass. These changes validate the
+measurement protocol, not a new performance result. The historical measurements
+above retain their original source and hardware provenance.
