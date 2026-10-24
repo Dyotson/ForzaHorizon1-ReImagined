@@ -1,5 +1,5 @@
 diff --git a/src/graphics/fh1_frame_cost.h b/src/graphics/fh1_frame_cost.h
-index 9b6f887..2d64f8d 100644
+index 9b6f887..3142dcb 100644
 --- a/src/graphics/fh1_frame_cost.h
 +++ b/src/graphics/fh1_frame_cost.h
 @@ -23,6 +23,9 @@ namespace rex::graphics::fh1_frame_cost {
@@ -20,18 +20,19 @@ index 9b6f887..2d64f8d 100644
      gpu_wait_ms += o.gpu_wait_ms;
      guest_wait_ms += o.guest_wait_ms;
      draws += o.draws;
-@@ -94,6 +98,105 @@ inline uint64_t& TextureBytes() {
+@@ -94,6 +98,118 @@ inline uint64_t& TextureBytes() {
    return bytes;
  }
  
 +// FH1 (#400): the command processor thread's CPU time per frame, from the clocks the platform
 +// has (CpuClock::EndFrame takes their readings at each frame end, in ms since the thread started,
 +// negative where a clock is missing):
-+// - a precise one: CLOCK_THREAD_CPUTIME_ID on Linux and macOS; on Windows the thread's cycles
-+//   (QueryThreadCycleTime) at the time stamp counter's rate (CyclesPerMs), only where the CPU
-+//   reports an invariant time stamp counter (InvariantTsc). Microsoft does not promise that
-+//   these cycles run at that rate, so on Windows the conversion is used only once CpuTimeCheck
-+//   found it agreeing with GetThreadTimes, and not again after a check that disagrees;
++// - a precise one: CLOCK_THREAD_CPUTIME_ID on Linux and macOS (Precise::kDirect); on Windows
++//   the thread's cycles (QueryThreadCycleTime) at the time stamp counter's rate (CyclesPerMs),
++//   only where the CPU reports an invariant time stamp counter (InvariantTsc). Microsoft does
++//   not promise that these cycles run at that rate, so on Windows (Precise::kChecked) the
++//   conversion times a frame only once CpuTimeCheck found it agreeing with GetThreadTimes, not
++//   again after a check that disagrees, and not in a frame whose GetThreadTimes reading failed;
 +// - a coarse one (Windows: GetThreadTimes, 100 ns units but advancing in scheduler ticks of
 +//   about 15.6 ms, sampled): its steps are kept as the frame's cpu_ms with cpu_per_frame false,
 +//   right only summed over many frames (the minute line, the slow-frame window's average);
@@ -95,38 +96,50 @@ index 9b6f887..2d64f8d 100644
 +
 +class CpuClock {
 + public:
-+  // A frame's end: sets its cpu_ms and cpu_per_frame. The first call only takes the readings.
++  // How far the precise clock is trusted: kDirect, a thread CPU-time clock of the system
++  // (Linux, macOS); kChecked, a conversion (Windows' cycles) that times single frames only while
++  // CpuTimeCheck agrees and the coarse reference was read in the same frame end.
++  enum class Precise { kDirect, kChecked };
++  explicit CpuClock(Precise precise) : precise_(precise) {}
++
++  // A frame's end: sets its cpu_ms and cpu_per_frame. A step is taken only between two readings
++  // of the same clock at consecutive frame ends; a missing reading (negative) leaves the frame
++  // and the next one without that clock's step, and unknown frames get 0, not per frame.
 +  void EndFrame(double precise_ms, double coarse_ms, Frame& frame) {
 +    const bool has_precise = precise_ms >= 0, has_coarse = coarse_ms >= 0;
-+    // With both, the precise clock counts once the check agrees.
-+    const bool use_precise =
-+        has_precise && (!has_coarse || check_.Update(precise_ms, coarse_ms) ==
-+                                           CpuTimeCheck::State::kAgrees);
-+    // Each clock's step since the previous frame end (both are read every frame, so a switch
-+    // between them loses nothing).
++    bool use_precise = has_precise && had_precise_;
++    if (precise_ == Precise::kChecked) {
++      // Fail closed: no check, and no per-frame time, without both readings; a rejection
++      // stays (CpuTimeCheck::Update).
++      const CpuTimeCheck::State state =
++          has_precise && has_coarse ? check_.Update(precise_ms, coarse_ms) : check_.state();
++      use_precise = use_precise && has_coarse && state == CpuTimeCheck::State::kAgrees;
++    }
 +    frame.cpu_per_frame = use_precise;
 +    frame.cpu_ms = 0;
-+    if (started_ && use_precise && precise_ms > last_precise_ms_) {
-+      frame.cpu_ms = precise_ms - last_precise_ms_;
-+    } else if (started_ && !use_precise && has_coarse && coarse_ms > last_coarse_ms_) {
-+      frame.cpu_ms = coarse_ms - last_coarse_ms_;
++    if (use_precise) {
++      frame.cpu_ms = std::max(0.0, precise_ms - last_precise_ms_);
++    } else if (has_coarse && had_coarse_) {
++      frame.cpu_ms = std::max(0.0, coarse_ms - last_coarse_ms_);
 +    }
-+    started_ = true;
++    had_precise_ = has_precise;
++    had_coarse_ = has_coarse;
 +    if (has_precise) last_precise_ms_ = precise_ms;
 +    if (has_coarse) last_coarse_ms_ = coarse_ms;
 +  }
 +  const CpuTimeCheck& check() const { return check_; }
 +
 + private:
++  Precise precise_;
 +  CpuTimeCheck check_;
-+  bool started_ = false;
++  bool had_precise_ = false, had_coarse_ = false;  // the previous frame end's readings
 +  double last_precise_ms_ = 0, last_coarse_ms_ = 0;
 +};
 +
  // Adds the time of its scope to a counter (milliseconds).
  class Timer {
   public:
-@@ -174,24 +277,33 @@ class Report {
+@@ -174,24 +290,33 @@ class Report {
      // the typical one within half a minute.
      if (!typical_frames_) {
        typical_ms_ = f.ms;
@@ -162,7 +175,7 @@ index 9b6f887..2d64f8d 100644
          slow_ = Frame();
          slow_count_ = 0;
          worst_ms_ = 0;
-@@ -220,10 +332,11 @@ class Report {
+@@ -220,10 +345,11 @@ class Report {
      const double ms = slow_.ms / n;
      const double cpu = slow_.cpu_ms / n;
      const double gpu_wait = slow_.gpu_wait_ms / n;
@@ -177,7 +190,7 @@ index 9b6f887..2d64f8d 100644
        const double draws = double(slow_.draws) / n;
        extra_draws_ms = std::max(0.0, draws - typical_draws_) * (typical_cpu_ms_ / typical_draws_);
      }
-@@ -253,17 +366,25 @@ class Report {
+@@ -253,17 +379,25 @@ class Report {
    // The log line for the window: how many frames were slow and what each did on average.
    std::string Line(double now_seconds) const {
      const double n = slow_count_ ? double(slow_count_) : 1.0;
@@ -206,7 +219,7 @@ index 9b6f887..2d64f8d 100644
          double(slow_.draws) / n, typical_draws_, slow_.textures_created / n,
          Mb(slow_.texture_created_bytes) / n, slow_.texture_create_ms / n, slow_.texture_loads / n,
          Mb(slow_.texture_load_bytes) / n, slow_.texture_load_ms / n, slow_.textures_evicted / n,
-@@ -288,7 +409,9 @@ class Report {
+@@ -288,7 +422,9 @@ class Report {
    double start_seconds_ = 0;
    uint64_t typical_frames_ = 0;
    double typical_ms_ = 0, typical_cpu_ms_ = 0, typical_draws_ = 0;
@@ -217,7 +230,7 @@ index 9b6f887..2d64f8d 100644
    uint32_t window_frames_ = 0;
    uint32_t slow_count_ = 0;
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 7a376f8..0380b31 100644
+index 7a376f8..805d347 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
 @@ -829,18 +829,61 @@ VulkanCommandProcessor::~VulkanCommandProcessor() = default;
@@ -287,16 +300,21 @@ index 7a376f8..0380b31 100644
  // FH1 (#45): the process's resident memory, in bytes (0 where not known: Windows).
  uint64_t ProcessResidentBytes() {
  #if REX_PLATFORM_LINUX
-@@ -935,7 +978,7 @@ void ReadSensors(uint32_t vendor_id, uint32_t device_id, fh1_frame_cost::Snapsho
+@@ -935,7 +978,12 @@ void ReadSensors(uint32_t vendor_id, uint32_t device_id, fh1_frame_cost::Snapsho
  struct FrameCostState {
    bool started = false;
    std::chrono::steady_clock::time_point start, last;
 -  double last_cpu_ms = 0;
-+  fh1_frame_cost::CpuClock cpu;
++#if REX_PLATFORM_WIN32
++  // Windows' cycle conversion times frames only once checked against GetThreadTimes (#400).
++  fh1_frame_cost::CpuClock cpu{fh1_frame_cost::CpuClock::Precise::kChecked};
++#else
++  fh1_frame_cost::CpuClock cpu{fh1_frame_cost::CpuClock::Precise::kDirect};
++#endif
    fh1_frame_cost::Report report;
    fh1_frame_cost::Summary summary;
    std::FILE* csv = nullptr;
-@@ -963,11 +1006,12 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -963,11 +1011,12 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
    FrameCostState& state = GetFrameCostState();
    fh1_frame_cost::Frame& frame = fh1_frame_cost::Current();
    const auto now = std::chrono::steady_clock::now();
@@ -311,7 +329,7 @@ index 7a376f8..0380b31 100644
      const fh1_frame_cost::Sizes& sizes = fh1_frame_cost::GetSizes();
      state.summary.SetStart(sizes.watch_nodes_visited.load(std::memory_order_relaxed),
                             sizes.watch_fires.load(std::memory_order_relaxed));
-@@ -975,9 +1019,22 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -975,9 +1024,22 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
      return;
    }
    frame.ms = std::chrono::duration<double, std::milli>(now - state.last).count();
@@ -336,7 +354,7 @@ index 7a376f8..0380b31 100644
    const double t = std::chrono::duration<double>(now - state.start).count();
    if (!state.csv_tried) {
      state.csv_tried = true;
-@@ -991,7 +1048,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -991,7 +1053,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
              "texture_evicted_bytes,upload_bytes,upload_ms,shaders,shader_ms,pipelines,pipeline_ms,"
              "render_targets,render_target_bytes,render_target_ms,render_target_trims,"
              "texture_total_mb,render_target_total_mb,render_target_count,readbacks,readback_bytes,"
@@ -345,7 +363,7 @@ index 7a376f8..0380b31 100644
              state.csv);
        }
      }
-@@ -999,7 +1056,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -999,7 +1061,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
    if (state.csv) {
      std::fprintf(state.csv,
                   "%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%u,%u,%llu,%.3f,%u,%llu,%.3f,%u,%llu,%llu,%.3f,%u,"
@@ -354,7 +372,7 @@ index 7a376f8..0380b31 100644
                   std::chrono::duration<double>(
                       std::chrono::system_clock::now().time_since_epoch())
                       .count(),
-@@ -1014,7 +1071,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
+@@ -1014,7 +1076,7 @@ void Fh1EndFrameCost(uint64_t frame_index, uint64_t render_target_bytes,
                   frame.render_target_trims, double(fh1_frame_cost::TextureBytes()) / 1048576.0,
                   double(render_target_bytes) / 1048576.0, render_target_count, frame.readbacks,
                   (unsigned long long)frame.readback_bytes, frame.readback_ms,

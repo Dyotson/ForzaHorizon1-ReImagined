@@ -381,7 +381,7 @@ int main() {
   }
   // A precise clock alone (Linux, macOS): each frame's own CPU time.
   {
-    cost::CpuClock clock;
+    cost::CpuClock clock(cost::CpuClock::Precise::kDirect);
     cost::Frame f;
     clock.EndFrame(1000.0, -1, f);
     clock.EndFrame(1006.5, -1, f);
@@ -391,7 +391,7 @@ int main() {
   }
   // Neither clock: unknown (0, not per frame).
   {
-    cost::CpuClock clock;
+    cost::CpuClock clock(cost::CpuClock::Precise::kDirect);
     cost::Frame f;
     clock.EndFrame(-1, -1, f);
     clock.EndFrame(-1, -1, f);
@@ -400,7 +400,7 @@ int main() {
   // The coarse clock alone (Windows without an invariant counter): its 15.6 ms steps, not per
   // frame, but right summed over many frames.
   {
-    cost::CpuClock clock;
+    cost::CpuClock clock(cost::CpuClock::Precise::kChecked);
     cost::Frame f, sum;
     double coarse = 1000;
     clock.EndFrame(-1, coarse, f);
@@ -418,7 +418,7 @@ int main() {
   // Both (Windows with an invariant counter): the coarse clock until the cycles have agreed
   // with it over 5 s of its time, then the cycles per frame.
   {
-    cost::CpuClock clock;
+    cost::CpuClock clock(cost::CpuClock::Precise::kChecked);
     cost::Frame f;
     double precise = 100, coarse = 100;
     clock.EndFrame(precise, coarse, f);
@@ -440,7 +440,7 @@ int main() {
   // Cycles that do not run at the counter's rate (here 1.8 times as fast): never per frame,
   // also when a later stretch would agree.
   {
-    cost::CpuClock clock;
+    cost::CpuClock clock(cost::CpuClock::Precise::kChecked);
     cost::Frame f;
     double real = 100;
     clock.EndFrame(real * 1.8, real, f);
@@ -458,6 +458,112 @@ int main() {
       CHECK(!f.cpu_per_frame);
     }
     CHECK(clock.check().state() == cost::CpuTimeCheck::State::kDisagrees);
+  }
+  // Missing readings (#407 review): a step only between two readings of the same clock at
+  // consecutive frame ends; on Windows (kChecked) no per-frame time without the reference.
+  {
+    using State = cost::CpuTimeCheck::State;
+    const auto checked = cost::CpuClock::Precise::kChecked;
+    const auto direct = cost::CpuClock::Precise::kDirect;
+    // Sean's first probe: a rejected 1.8x clock stays rejected when GetThreadTimes fails.
+    {
+      cost::CpuClock clock(checked);
+      cost::Frame f;
+      clock.EndFrame(0, 0, f);
+      clock.EndFrame(9000, 5000, f);
+      CHECK(clock.check().state() == State::kDisagrees);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 5000);  // the coarse clock's step
+      clock.EndFrame(9018, -1, f);
+      CHECK(clock.check().state() == State::kDisagrees);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+    }
+    // Sean's second probe: the first cycle reading after a missing one is not a step from 0.
+    for (const auto kind : {checked, direct}) {
+      cost::CpuClock clock(kind);
+      cost::Frame f;
+      clock.EndFrame(-1, 1000, f);
+      clock.EndFrame(8000, -1, f);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+      // The next pair of readings gives a step again; on Windows not per frame (unchecked).
+      clock.EndFrame(8006, 1015.625, f);
+      if (kind == direct) {
+        CHECK(f.cpu_per_frame && f.cpu_ms == 6);
+      } else {
+        CHECK(!f.cpu_per_frame && f.cpu_ms == 0);  // no coarse step from a missing reading
+        clock.EndFrame(8012, 1031.25, f);
+        CHECK(!f.cpu_per_frame && f.cpu_ms == 15.625);
+      }
+    }
+    // An unchecked conversion never times a frame without its reference (here the coarse
+    // reading fails for good before the check could finish).
+    {
+      cost::CpuClock clock(checked);
+      cost::Frame f;
+      clock.EndFrame(100, 100, f);
+      for (int i = 1; i <= 2000; ++i) {
+        clock.EndFrame(100 + 6.0 * i, -1, f);
+        CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+      }
+      CHECK(clock.check().state() == State::kUnchecked);
+    }
+    // Agreed, then one GetThreadTimes failure: that frame is unknown, the next is timed again.
+    {
+      cost::CpuClock clock(checked);
+      cost::Frame f;
+      double precise = 100;
+      clock.EndFrame(precise, precise, f);
+      while (clock.check().state() == State::kUnchecked) {
+        precise += 6.0;
+        clock.EndFrame(precise, 100 + 15.625 * double(int((precise - 100) / 15.625)), f);
+      }
+      CHECK(clock.check().state() == State::kAgrees);
+      precise += 6.0;
+      clock.EndFrame(precise, -1, f);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+      CHECK(clock.check().state() == State::kAgrees);
+      precise += 7.0;
+      clock.EndFrame(precise, 100 + 15.625 * double(int((precise - 100) / 15.625)), f);
+      CHECK(f.cpu_per_frame && f.cpu_ms > 6.99 && f.cpu_ms < 7.01);
+      // A cycle reading failure: unknown, and the next frame has no step to take either.
+      clock.EndFrame(-1, 100 + 15.625 * double(int((precise + 6 - 100) / 15.625)), f);
+      CHECK(!f.cpu_per_frame);
+      precise += 12.0;
+      clock.EndFrame(precise, 100 + 15.625 * double(int((precise - 100) / 15.625)), f);
+      CHECK(!f.cpu_per_frame);
+      precise += 5.0;
+      clock.EndFrame(precise, 100 + 15.625 * double(int((precise - 100) / 15.625)), f);
+      CHECK(f.cpu_per_frame && f.cpu_ms > 4.99 && f.cpu_ms < 5.01);
+    }
+    // The direct clock (Linux, macOS): a failed reading is unknown, then timed again.
+    {
+      cost::CpuClock clock(direct);
+      cost::Frame f;
+      clock.EndFrame(50, -1, f);
+      clock.EndFrame(-1, -1, f);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+      clock.EndFrame(70, -1, f);
+      CHECK(!f.cpu_per_frame && f.cpu_ms == 0);
+      clock.EndFrame(74, -1, f);
+      CHECK(f.cpu_per_frame && f.cpu_ms == 4);
+    }
+    // Unknown frames among slow ones keep the cause off the CPU time: the idle test would
+    // otherwise call these frames (9 ms CPU in 150) late from the game.
+    {
+      Run run;
+      run.Feed(Typical(), 60);
+      cost::Frame late = Typical(150);
+      late.cpu_ms = 9;
+      late.guest_wait_ms = 100;
+      run.One(late);
+      cost::Frame unknown = late;
+      unknown.cpu_ms = 0;
+      unknown.cpu_per_frame = false;
+      run.One(unknown);
+      run.Feed(Typical(), 75);
+      CHECK(run.lines == 1);
+      CHECK(run.last_cause == cost::Cause::kUnclear);
+      CHECK(Has(run.last, "CPU not timed per frame"));
+    }
   }
   // The report with coarse CPU time: no cause from it (here the idle test would say "the game"
   // and the per-draw cost "more draws"), and the window's average per frame in the line.
