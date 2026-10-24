@@ -156,7 +156,8 @@ class CampaignDbTest(unittest.TestCase):
         self.assertEqual(sorted(e.id for e in cp.available()), [4, 231])
         cp.configure(parser.parse_args(["--coop-street"]), self.db)
         self.assertEqual(cp.find("STREET_PLNS_005").describe(),
-                         "STREET_PLNS_005: A class, 7 CPU drivers, street race, Sunset")
+                         "STREET_PLNS_005: A class, 7 CPU drivers, street race (no traffic online, "
+                         "so no career result), Sunset")
 
     def test_listing(self):
         self.assertEqual(cp.listing(), ["Level 0: FR05", "Level 5: FR50", "Street: STREET_PLNS_005"])
@@ -263,10 +264,13 @@ class CoopWorldCase(unittest.TestCase):
         results, _ = x.decode(x.HopperGetGameOptions_Results, reply[12:])
         return ET.fromstring(results["gameOptionsXml"])
 
-    def race_report(self, peer, place, sid, finished=True, places=8, hopper=None, key=True):
-        """User.WriteRaceStatsEx at a race's end."""
+    def race_report(self, peer, place, sid, finished=True, places=8, hopper=None, key=True,
+                    winnings=0):
+        """User.WriteRaceStatsEx at a race's end (winnings: its onlineWinnings, before the race
+        pays)."""
         stats = {"finished": finished, "userFinishPosition": place, "maxPlaces": places,
-                 "hopperId": lsp.COOP_HOPPER if hopper is None else hopper, "sessionId": sid}
+                 "hopperId": lsp.COOP_HOPPER if hopper is None else hopper, "sessionId": sid,
+                 "onlineWinnings": winnings}
         return self.title_call(peer, "User", "WriteRaceStatsEx", x.UserWriteRaceStats_Head,
                                {"id": 1, "raceStats": stats}, key)
 
@@ -347,6 +351,15 @@ class CoopFestivalTest(CoopWorldCase):
         found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid, trusted=True, coop=True)
         self.assertEqual((found[0], found[1].code), (sid, "FR05"))
         self.assertIsNone(world.WORLDS.result(self.c.xuid, 1, 8, 1))
+        # an earlier world's round that still lists the player is not the one reported
+        older = dict(world.WORLDS.rounds)
+        world.WORLDS.rounds = {b"world-old": (type("E", (), {"id": 231, "code": "FR50"}),
+                                              time.monotonic(), {self.b.xuid: "Driver2"}, "Driver1")}
+        world.WORLDS.rounds.update(older)
+        found = world.WORLDS.result(self.b.xuid, 5, 8, 1, session=sid)
+        self.assertEqual((found[0], found[1].code), (sid, "FR05"))
+        # a race in a world without a campaign round names none (not another world's)
+        self.assertIsNone(world.WORLDS.result(self.b.xuid, 3, 8, 1, session=b"world-03"))
 
     def test_event_is_refused(self):
         sid = self.coop_world()

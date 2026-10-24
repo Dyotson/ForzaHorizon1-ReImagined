@@ -160,7 +160,7 @@ class Event:
             parts.append("stock")
         parts.append("%d CPU driver%s" % (self.drivers, "" if self.drivers == 1 else "s"))
         if self.street:
-            parts.append("street race")
+            parts.append("street race (no traffic online, so no career result)")
         else:
             parts.append("%d lap%s" % (self.laps, "" if self.laps == 1 else "s"))
         parts.append(time_of_day(self.time_of_day))
@@ -270,7 +270,8 @@ def ai_message(event, sid):
 def add_arguments(parser):
     parser.add_argument("--coop-street", action="store_true",
                         help="offer the street races in the Co-op Festival's /event list too "
-                             "(they run online with their checkpoints, without traffic)")
+                             "(they run online with their checkpoints, without traffic, so "
+                             "their results do not go to the careers)")
     parser.add_argument("--coop-ai-field", action="store_true",
                         help="test knob: campaign rounds name the event as their AIFieldId")
 
