@@ -429,6 +429,63 @@ is not kept (a folder Windows blocks or OneDrive holds, a driver cache that is c
 stutter every session. `--vulkan_async_skip_incomplete_frames=false` shows those frames
 instead (objects whose pipeline is not ready are missing for a frame or two).
 
+## Pipelines built ahead of their draws (#378, 2026-10-24)
+
+With an empty cache the command processor met new pipelines one draw at a time. With asynchronous
+creation (the default) each new one cost it a placeholder pipeline, built on its own thread before the
+next draw (the placeholder is never drawn with: the draw is skipped and the frame held), and the real
+one was queued; with synchronous creation (*Compile shaders in the background* off, or
+`sync_pipeline_creation` around a car's picture) it built each one itself, one after another. SDK
+patch 0270 (the idea is ReGPU's `GpuLookahead`, MIT) walks, at such a draw, the commands the game has
+already queued behind it, works out their pipelines and starts all the missing ones together on the
+creation threads, without placeholders; with synchronous creation the draw then waits
+once for the whole set. The log sums it up every 10 s while pipelines are built (`Pipelines: ...`).
+
+Ryzen 7 7800X3D, RX 9060 XT (RADV), Linux, TU4 build, 30 fps, the race scenario of
+`tools/perf_scenario.sh` (boot, title, main menu, loading into free roam, the festival race at the spawn,
+26 s of it) with a fresh copy of the Xenia save, `BENCH_LOCK` held, no other game running (one run
+started at load 2.8). Cold: empty `--cache_root` and `MESA_SHADER_CACHE_DIR`; warm: copies of the
+cache and Mesa cache of a cold run with the lookahead. Frames from the title on (the boot's warm-up
+not counted); "shown" are the presented frames (`RECOMP_PERF`), "CP thread" the command processor's
+own pipeline time (placeholders, synchronous creation and waits, `fh1_frame_cost_csv`), slow frames
+the 0180 warnings:
+
+| Creation, cache | Lookahead | Pipelines (built ahead / drawn) | Placeholders | CP thread | Draws skipped | Frames held | Slow frames | Shown frames >= 50 / >= 100 ms | Time in them | Worst |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| async, cold | off | 399 | 339 | 831 ms | 2051 | 80 | 17 | 54 / 9 | 4.92 s | 402 ms |
+| async, cold | off | 408 | 348 | 851 ms | 2040 | 84 | 22 | 62 / 9 | 5.42 s | 501 ms |
+| async, cold | on | 397 (324 / 323) | 70 | 315 ms | 2272 | 78 | 15 | 50 / 9 | 4.50 s | 434 ms |
+| async, cold | on | 400 (326 / 325) | 71 | 323 ms | 2428 | 77 | 17 | 53 / 10 | 4.58 s | 402 ms |
+| async, cold | on, past waits | 402 (332 / 330) | 67 | 328 ms | 1834 | 76 | 16 | 56 / 9 | 4.60 s | 301 ms |
+| async, cold | on, past waits | 413 (337 / 335) | 72 | 393 ms | 2013 | 83 | 16 | 62 / 10 | 5.14 s | 316 ms |
+| sync, cold | off | 403 | 0 | 3057 ms | 0 | 0 | 29 | 34 / 11 | 3.65 s | 518 ms |
+| sync, cold | on | 402 (343 / 343) | 0 | 1351 ms | 0 | 0 | 19 | 21 / 2 | 1.41 s | 133 ms |
+| sync, cold | on, past waits | 401 (345 / 345) | 0 | 1293 ms | 0 | 0 | 16 | 18 / 3 | 1.22 s | 134 ms |
+| async, warm | off | 409 (396 stored) | 13 | 102 ms | 121 | 10 | 11 | 21 / 0 | 1.33 s | 78 ms |
+| async, warm | on | 409 (396 stored; 11 / 10) | 2 | 100 ms | 69 | 5 | 12 | 16 / 0 | 0.99 s | 83 ms |
+
+- **The guesses are right.** 99.4-100 % of the pipelines built ahead were drawn with (the rest are
+  stored only if a draw uses them, so a wrong guess never reaches the cache); about 80 % of a cold run's
+  pipelines were built ahead. No GPU errors in any run, and the race screenshots of both settings show the
+  same scene.
+- **Synchronous creation** gains the most: the command processor's pipeline time falls from 3.1 s to
+  1.3-1.4 s (its own pipelines plus about 85 waits for a whole set, 0.77 s), slow frames from 29 to 16-19,
+  shown frames of 100 ms or more from 11 to 2-3 and the worst from 518 to 134 ms (loading into free roam).
+  The game's own frames (guest) of 100 ms or more: 10 to 3.
+- **Asynchronous creation**: the placeholders the command processor builds fall from about 340 to 70 and
+  its pipeline time from 0.84 s to 0.32 s, so it no longer stalls on them (the slow frames where it spent
+  10 ms or more on shaders and pipelines: 11 to 3). The frames held while pipelines are built barely
+  change (77-84): a pipeline started a few milliseconds before its draw is still not ready for that frame.
+  With the lookahead, synchronous creation now holds the screen less than asynchronous creation does
+  (1.2-1.4 s in frames of 50 ms or more against 4.5-4.6 s), as each held frame of the asynchronous mode
+  waits for its pipelines anyway.
+- **Warm cache**: no change beyond noise (a few pipelines the stored set lacks were built ahead).
+- **Cost**: about 115 walks a cold run, 8,000-12,000 packets each, 1.2-1.4 ms on average (140-175 ms in all,
+  most of it translating the shaders the draws would translate anyway). Most walks stop at a wait for a
+  value the game has not written yet (`WAIT_REG_MEM`), usually the end of the queued frame;
+  `vulkan_pipeline_lookahead_past_waits` (hidden) goes on past it to the write pointer: as accurate in
+  these runs, a little more built ahead, and no clear gain, so it stays off.
+
 ## Steam Deck approximation (#45)
 
 No Deck was available. The test machine (Ryzen 7 7800X3D, 5 GHz, RX 9060 XT) was restricted to 4 cores
