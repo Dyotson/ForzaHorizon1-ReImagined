@@ -22,6 +22,7 @@ import logging
 import os
 import random
 import signal
+import sqlite3
 import struct
 import time
 import urllib.parse
@@ -30,6 +31,7 @@ import forza_challenge as challenge
 import forza_chat as chat
 import forza_discord_status as discord_status
 import forza_friends as friends
+import forza_events as events
 import forza_limits as limits
 import forza_live_lsp as lsp
 import forza_stats as stats
@@ -141,6 +143,7 @@ class Peer:
         self.invite_times = []  # when its last invites went out (INVITE_LIMIT per INVITE_WINDOW)
         self.features = 0  # HELLO's features byte (FEATURE_*)
         self.friends_ok = False  # FEATURE_FRIENDS and its friends key owns the XUID's friends
+        self.events_identity = None  # fresh HELLO proof; never restored from live_state.json
         self.chat_sessions = set()  # the session ids the game reports for chat (forza_chat.py)
         # Matchmaking: the session it hosts and the one it is in (see ForzaLive.on_match)
         self.match = None  # (playlist key, record, since)
@@ -185,6 +188,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         self.gone = {}  # token -> (id, xuid, monotonic time): players dropped for silence
         self.friends = friends.Friends(self)
         self.chat = chat.Chat(self, self.friends.store)
+        self.events = events.Events(self)
         self.challenges = challenge.Challenges(self.challenge_send, self.world_of_peer,
                                                lambda pid: getattr(self.peers.get(pid), "name", None))
 
@@ -249,6 +253,8 @@ class ForzaLive(asyncio.DatagramProtocol):
                 self.friends.on_message(peer, body)
             elif kind == CHAT and body:
                 self.chat.on_message(peer, body)
+            elif kind == events.KIND:
+                self.events.on_message(peer, body)
         except Exception as e:  # a malformed datagram must never end the server
             log.debug("bad packet from %s: %r", addr, e)
 
@@ -267,6 +273,9 @@ class ForzaLive(asyncio.DatagramProtocol):
             friend_key = body[pos + 2:pos + 2 + body[pos + 1]]
         if version != VERSION:
             self.error(addr, 2, f"server speaks protocol {VERSION}, client {version}")
+            return
+        if self.events.required and not features & events.FEATURE:
+            self.error(addr, 5, "this server requires event-unlock support (TU4)")
             return
         if self.chat.banned(xuid):  # /admin/kick
             if take(self.error_buckets, self.limit_key(addr), ERRORS_PER_IP):
@@ -317,6 +326,7 @@ class ForzaLive(asyncio.DatagramProtocol):
         peer.features = features
         was_ok = peer.friends_ok
         self.friends.hello(peer, friend_key)
+        peer.events_identity = (peer.xuid, self.events.credential(peer)) if peer.friends_ok else None
         if peer.friends_ok != was_ok:
             self.state_dirty = True
         if new:
@@ -326,7 +336,11 @@ class ForzaLive(asyncio.DatagramProtocol):
         public = (0, 0) if peer.proxied else (ip_to_u32(addr[0]), addr[1])
         body = struct.pack(">IHIHH", peer.id, self.epoch, *public, len(self.motd))
         http_port = self.proxy_http_port if peer.proxied and self.proxy_http_port else self.http_port
-        self.send(addr, WELCOME, body + self.motd + struct.pack(">H", http_port))
+        welcome = body + self.motd + struct.pack(">H", http_port)
+        if peer.features & events.FEATURE:
+            welcome += bytes([self.events.required])
+        self.send(addr, WELCOME, welcome)
+        self.events.hello(peer)
 
     def forward_header(self, src):
         """Who a forwarded datagram is from, with the addresses other players punch to. A
@@ -957,6 +971,24 @@ async def http_handler(server, reader, writer):
                 query = urllib.parse.parse_qs(url.query)
                 if not lsp.is_admin(peer, headers, query):
                     reply = response(403, b"forbidden", "text/plain", conn)
+                elif url.path == "/admin/events" or url.path.startswith("/admin/events/"):
+                    try:
+                        if "origin" in headers:
+                            raise ValueError("use the organizer tool rather than a cross-origin browser request")
+                        if method == "POST" and headers.get("content-type", "").split(";")[0] != "application/json":
+                            raise ValueError("event changes require application/json")
+                        if len(body) > 4096:
+                            raise ValueError("event request is too large")
+                        data = json.loads(body) if body else {}
+                        if not isinstance(data, dict):
+                            raise ValueError("expected a JSON object")
+                        result = server.events.handle(method, url.path, data)
+                        reply = response(200, json.dumps(result).encode(), "application/json", conn)
+                    except (ValueError, TypeError, sqlite3.IntegrityError) as error:
+                        reply = response(400, json.dumps({"error": str(error)}).encode(), "application/json", conn)
+                    except (OSError, sqlite3.Error):
+                        log.exception("community event storage unavailable")
+                        reply = response(500, b"event storage unavailable", "text/plain", conn)
                 elif url.path == "/admin/chat":
                     reply = response(200, json.dumps(server.chat.moderation(), indent=2).encode(),
                                      "application/json", conn)
@@ -1025,6 +1057,8 @@ async def main():
                              "page (default: off)")
     parser.add_argument("--motd", default="Welcome to Forza Live", help="message sent to clients")
     parser.add_argument("--max-peers", type=int, default=1024)
+    parser.add_argument("--event-unlocks", action="store_true",
+                        help="require TU4 event-unlock clients; enrolled event rewards permit unicorns online")
     parser.add_argument("--rate-limit", type=int, default=RATE_LIMIT,
                         help="bytes per second the server relays for one player (bursts of 4 s)")
     parser.add_argument("--trusted-proxy", action="append", default=[], metavar="IP[/BITS]",
@@ -1064,6 +1098,8 @@ async def main():
     server.load_state()
     server.friends.store.path = os.path.join(args.data_dir, friends.FILE)
     server.friends.store.load()
+    server.events.db.close()
+    server.events = events.Events(server, os.path.join(args.data_dir, "events.sqlite3"), args.event_unlocks)
     server.chat.path = os.path.join(args.data_dir, chat.FILE)
     server.chat.load()
     log.info("Forza Live listening on UDP %s:%d (epoch %04X)", args.host, args.port, server.epoch)
@@ -1087,6 +1123,10 @@ async def main():
                 server.expire()
             server.maybe_save_state()
             server.friends.store.maybe_save()
+            try:
+                server.events.flush()
+            except (OSError, sqlite3.Error):
+                log.warning("community event delivery storage unavailable; retrying later")
             if ticks % 30 == 0 and discord_status.enabled():
                 # urllib blocks: off the event loop, and never fatal (it catches everything)
                 await asyncio.to_thread(discord_status.update, server.status(), args.data_dir)
@@ -1097,6 +1137,7 @@ async def main():
         if discord_status.enabled():
             discord_status.offline(args.data_dir)
         transport.close()
+        server.events.db.close()
 
 
 if __name__ == "__main__":

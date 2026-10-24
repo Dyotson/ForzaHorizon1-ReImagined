@@ -78,7 +78,11 @@ std::string CleanGamertag(const std::string& raw) {
 
 Identity LoadOrCreateLiveIdentity() {
   Identity id;
-  const std::filesystem::path path = DataDir() / "live_identity.txt";
+  // Separate local clients/test profiles must not share online credentials just
+  // because their saves use different user_data_root directories.
+  const char* identity_file = std::getenv("FORZA_LIVE_IDENTITY_FILE");
+  const std::filesystem::path path = identity_file && *identity_file
+      ? std::filesystem::path(identity_file) : DataDir() / "live_identity.txt";
   if (std::ifstream in(path); in) {
     std::string line;
     while (std::getline(in, line)) {

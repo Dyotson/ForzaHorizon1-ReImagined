@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "../platform/event_rewards.h"
 
 namespace forza {
 
@@ -157,6 +158,14 @@ bool LiveInviteBusy();
 // --- Text chat (live_friends.cpp's Chat tab, server/forza_chat.py, #92) ---
 // A CHAT message to the server, and the server's (network thread).
 bool LiveSendChat(const std::vector<uint8_t>& body);
+
+// Community event rewards: only the network thread sends/polls; the native
+// eligibility hook reads a short-lived cache. Identity is organizer-enrolled.
+bool LiveSendEvents(const std::vector<uint8_t>& body);
+void LiveEventsSession(uint16_t epoch, uint32_t peer, uint64_t token);
+void LiveEventsMessage(const uint8_t* body, size_t size);
+void LiveEventsTick();
+EventPermission LiveEventPermission(uint32_t model);
 void LiveChatMessage(const uint8_t* body, size_t size);
 // The ids of the sessions we host or joined (live_xmsg.cpp): the "session" chat channel
 // reaches the players in one of them.

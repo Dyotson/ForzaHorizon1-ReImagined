@@ -155,6 +155,8 @@ set(FORZA_SOURCES
     src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
+    src/hooks/unicorn_eligibility.cpp
+    src/hooks/borrowed_car_memory.cpp
     src/hooks/telemetry.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp
@@ -164,6 +166,7 @@ set(FORZA_SOURCES
     src/kernel/live_lsp.cpp
     src/kernel/live_tcp.cpp
     src/kernel/live_friends.cpp
+    src/kernel/live_events.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
     src/kernel/module_resident.cpp
