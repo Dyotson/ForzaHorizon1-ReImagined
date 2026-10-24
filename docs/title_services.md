@@ -338,6 +338,49 @@ What could hide a public lobby, fixed:
 A player whose game never hears from the server sees "No Sessions Found" too (#69: its log
 has `no answer from <server> yet` and no `signed in to`): see "Without a server answer" below.
 
+#### A lobby whose host left (#391, 2026-10-24)
+
+A public King lobby was listed under Infected, with the track, time limit and host of
+rounds long gone, and joining it said PLAYER UNREACHABLE. A lobby's players publish
+standby records of it (the game picks a new host by itself when its host leaves, see
+`docs/online_vision.md`), and the server lists those once nobody hosts the session. A
+standby record kept the search key and the QoS data the player found the lobby with. In
+a custom game the game type is that key and the QoS data is everything the details pane
+shows, the host's name included. So when the host changed the setup and then left, the
+lobby went on under the old game type and the old details.
+
+What the game does (FORZA_NETTRACE on two TU4 instances, local server): when the host
+saves a new setup, every console in the lobby sets `0x10000030` to the new game type
+(Find Game's rounds never touch it on a guest; the Playground Games host keeps its
+playlist id 2 there). The player the game makes the host after the host left calls
+`XNetQosListen` for the session with its own 608 bytes. When a host leaves, its game
+releases the QoS data (a last record without any) before it withdraws.
+
+Fixed:
+
+- Client (`live_xmsg.cpp`): a joined session's standby record follows `0x10000030` set while
+  in it (a value of -1 is the party lobby's and ignored), and takes the game's own QoS data
+  as soon as the game makes us the host, kept after a release. HELLO feature 0x10 says so.
+- Server (`standby_view`, `lobby_tails`): the newest description of each lobby (key and
+  record after the slots) from its host's record and from a feature-0x10 game host's
+  standby is kept (records without QoS data don't count; dropped once no record names the
+  session, at most 4,096). Any other member's record, also that of an older game the game
+  made its host, goes out with that description.
+
+Tested with two and three TU4 games on a local server: A hosts public Infected, B finds it
+and joins, A saves King and leaves. Before, a search for Infected listed the King lobby as
+"INFECTED 05:00, Addison West Steelworks, A, host DriverA" and King found nothing. With
+both fixes King lists it as "KING 03:00, class B, host DriverB" and Infected finds nothing;
+B's setup changed to Cat and Mouse moved both records to key 6. With an older game as B
+(v0.1.33 behaviour) and only the server fixed, a third game C found it under King with
+A's last King details and joined it. `server/test_forza_lobby_details.py`.
+
+Not reproduced: a player who was in a King round for the others but never appeared in one
+player's game (the second part of #391). That player's log has every join of the lobby in
+its XSession and a player who came in during a round (`player #16927 is 0.77.0.15`,
+`joined 1 player(s), 6/8`), but nothing that names who was missing; finding out why that
+game left them out needs the logs of both.
+
 ### XP and credits
 
 The game computes the rewards itself at the end of an online race ("XP REWARDS": finished
@@ -821,6 +864,27 @@ follows within a second normally; that run had crashed earlier on a guest read o
 registers like a broken `longjmp` landing (lr = r31 = mid-function `0x824469B8`), the class
 of the libjpeg crash fixed after v0.1.6 (CRT setjmp/longjmp as host calls, PROJECT.md
 2026-10-15). Not confirmed: whether that load decodes a JPEG (the save's car pictures).
+
+Country ID 88 (#392, not solved): with Country ID 88 (Russia) every online action said
+"the Forza Horizon server is currently unavailable", and the player's log had no
+`signed in to` in any of 12 sessions: not one datagram of the public server reached the
+game. Later the player wrote that the default country works. The log does not say which
+country each session had, and the working start came after the log. What we checked: the
+launcher's plan (`game.build_plan`) for 88 differs from the default only by
+`user_country = 88` in forza.toml (no other flag, variable, language, profile or server);
+nothing in the client or the server reads the country (the SDK hands it to the game's
+XConfig and XamGetLocale only; HELLO carries none, and `Logon2`'s region, locale and LCID,
+sent after the sign-in, are not looked at); HELLO and WELCOME are under 100 bytes. With
+the launcher's forza.toml for 88 (and also with `--user_language=12`) a game on a local
+server signs in, logs on to the title servers and opens Multiplayer, Find Game and its
+playlists. The client now names the address it sends to and the profile's country and
+language (`FORZA_LIVE: server <name>:<port> is <address> (country 88, language 1)`), looks
+the name up again every 30 s
+while the server stays silent, and after 30 s without a datagram from it says so once:
+`<server> (<address>:<port>) has not answered in 30 s; online stays unavailable until it
+does`, with the usual causes (a firewall or antivirus, a VPN or proxy, a network or
+provider blocking the address). A slow name lookup at the start (3 s in that log) no
+longer counts as time away (`back after 3 s; signing in ... again` was logged for it).
 
 ## State and next steps (Message Center work, 2026-10-12)
 
