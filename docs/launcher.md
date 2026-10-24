@@ -81,6 +81,7 @@ machine from their own copy:
    stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
    start also warms the listed pipelines. The step refuses to start the game while the Build step says "Rebuild needed" or "Not built" (a game built by an older launcher does not know `--shader_prebuild_only`): it shows "Rebuild first" and asks for Setup > Build. Before it builds, the step also fetches the server's list (below) and merges it with the shipped one; offline or on any failure it uses the shipped list alone. [Shader prebuild](shader_prebuild.md).
    **Share shader list (#276, Settings > Online, on by default):** after a game session the launcher uploads the pipeline descriptions of your own pipeline cache that it has not sent before to the server you play on: shader hashes and render settings, plus how to rebuild each shader from game files (no shader code, no game data, nothing personal). The server publishes entries that at least 3 different players reported. Only the public server and your own server are used, never offline or "This PC"; the upload runs in the background with short timeouts, failures only go to the launcher log, and the launcher keeps a record of what was sent (`shader_share.json` in the data folder). The setting is launcher-only and is not written to `forza.toml`.
+   **Co-op campaign results (#309):** after a game session the launcher asks the server you play on (the public one or your own, never offline or "This PC") for your results of the Co-op Festival events you raced, as the world's host or as a guest (a guest's place counts when the host's game saw the same place), and applies each to the save of the session it was earned in (the launcher keeps which save each session used; another save's results wait for that save's next session, and a game started outside the launcher gets none), when that save has the event unlocked and the result beats its place for the event: the event's and race's result, the wristband XP of the improvement, the event's prize at that place less the online winnings that race already paid (you get the larger of the two once; no prize when that amount is not known, for example after races in another save), and the event's own unlock rewards, with a backup ("Before co-op results") and the save editor's checks. The wristband level and the unlocks by XP are left to the game (Race Central and your next race). The Play page lists what was added and each result that waits for an event your career has not unlocked yet (a guest behind the host's wristband): it is added at the first session after you unlock the event. Results it settled are confirmed to the server; results of a game it did not start can never go to a save and are dropped with a note; the others, and failures, wait on the server (30 days, at most 20 a player; results earned as a guest go first, then the oldest) for a later session, and failures only go to the launcher log (`coop_grant.py`, `docs/coop_campaign.md`).
 5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -478,6 +479,37 @@ file. A separate copy loaded in the native TU4 game, which then saved normally w
 1,000,000 credits and 12,345 XP intact and exited cleanly. The original fixture and real
 user save were not modified.
 
+### Mods (#149)
+
+**Mods** lists the folders in `<data folder>/mods` (name, version, author from each mod's
+`mod.toml`, and its files), each with a tick to turn it on or off (Return, Enter or a controller's
+A on the selected row too), **Move up** / **Move down** for the load order (a lower mod wins over
+a higher one for the same file), **Add mod…**, **Remove**, **Refresh** and **Open mods folder**.
+The details under the list name the files a mod shares with other mods and whose copy is used.
+
+- **Add mod…** asks for a **Zip file…** or a **Folder…** (dropping either on the page does the
+  same). `mods.install` finds the mod in it (a folder with `media/` or `mod.toml`, at the top or
+  one folder down), unpacks or copies it into a hidden `.adding-*` folder in the mods folder,
+  checks it with the game's rules (`read_mod`) and only then moves it into place; a mod of that
+  name is replaced only after the player says yes (never while the game runs). A zip with an
+  absolute path, `..`, a link, more than 200,000 files or more than 8 GB unpacked is refused.
+  Errors are said under the list ("Not added: ...").
+- **Remove** asks first and deletes the mod's folder (a linked folder: only the link); it is off
+  while the game runs.
+- With no mods the page says how to add one and links the guide; while the game runs, a notice
+  says changes apply at its next start.
+- A mod the game would skip shows "(will not load)" and why, by the game's rules
+  (`mod_archive.h` ScanMod): no `media/` folder or no usable file (non-ASCII names, paths over 255
+  characters and `.zip` files are left out), a file it cannot read, two names that differ only in
+  case, a file over 64 MB that replaces no loose file in the game's `media` folder, a folder named
+  `*` or with a `|`.
+
+launcher.json keeps the order and the mods turned off (`"mods": {"order": [...], "disabled":
+[...]}`); every start passes `--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone:
+none), except an option that **Extra command-line flags** (**Settings > Advanced**) name, as
+`--name=value` or `--name value` (the game refuses an option given twice). The player's guide is
+[modding.md](modding.md). Tests: `launcher/test_mods.py`.
+
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and
@@ -696,7 +728,14 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
   redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
-  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three. The version comes from the tag. Nothing here needs the game or generated code.
+  "Flatpak" below) and `publish` (tags only) creating the release and uploading all three.
+  Before upload, `launcher/packaging/release_checksums.py` hashes the final asset bytes
+  and writes `SHA256SUMS`, uploaded alongside them (#354). The manifest uses sorted,
+  download-relative filenames and excludes itself; reruns replace it. SDK overlays are
+  removed before hashing, as before upload. Checksums verify bytes against the release's
+  manifest; they are not code signatures or a malware assessment. Code-signing and vendor
+  submissions remain separate work. The version comes from the tag. Nothing here needs
+  the game or generated code.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.

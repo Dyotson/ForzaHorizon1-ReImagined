@@ -128,7 +128,7 @@ interval rather than replacing invite/chat HUD overlays.
 
 ## Protocol and practical limits
 
-Forza Live feature `0x08`, datagram kind 24:
+Forza Live feature `0x10` (`0x08` remains Co-op Festival support), datagram kind 24:
 
 For capable clients, WELCOME appends the required-policy byte after its existing
 HTTP-port extension. The client installs it before completing sign-in, so loss

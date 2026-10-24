@@ -41,6 +41,21 @@ X-TransactionId: <GUID as hex>                          (transactional calls onl
 <parameters>
 ```
 
+**Who is calling.** `X-UserId` is the only thing in the game's request that names the player,
+and anyone can send it. Our game adds `X-Friends-Key: <32 hex digits>` to every request on its
+title server connections (`src/kernel/live_tcp.cpp`, `lsp_request_header.h`: the head of each
+request is held until it is complete and the line goes in before its blank line), the friends
+key of its Live identity (`live_identity.txt`), which the server bound to the XUID at the
+game's first HELLO (`forza_friends.py`; the launcher's shader list upload proves itself the
+same way). The server (`forza_live_lsp.verify_caller`) refuses a call that changes anything
+(every method but `Get*`/`Search*`/`Download*`, and `Hopper.GetGameOptions`, which moves a
+world's event along) when the key is not the XUID's, and takes a call without a key, from a
+game before the key or for an XUID that never signed in with one, as unverified: accepted
+and logged (once per XUID every 10 minutes), its race stats marked `verified: false`, and
+never the player's word where it matters (`caller_trusted()`). Addresses can't do this job:
+behind a tunnel (`docs/hosting.md`) every HTTP connection and UDP datagram arrive from the
+tunnel agent's address, and a connection's TCP port says nothing about the player's UDP one.
+
 The call itself is `sub_82AABAC0(client, class, method, params, results member list,
 &results, ...)`; each service method has a small stub that passes its class and method
 names (`Logon2` calls it at `0x82ABC0A8` with class string `0x820E242C`, method
@@ -113,7 +128,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | | `DLCMetadata.GetStringTableInfo("EN")` | no table (`Id` -1, #79); with the empty answer the game also asked `Xls Content.DownloadContent(0, 0, 0x40000)` x2 and saved a nameless file to `marketplace:\` |
 | Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)`; Title Update 4: `GetListEx` (each hopper also has `requiredOfferId`, u64) | the playlists (below) |
 | Find Game, picking a playlist | `Hopper.GetSearchSettings(hopperId)`, `GetGameOptions(hopperId, roundNum, 0x8000)`, then (after the session search) `UserRegister(hopperId, sessionId)` every `nextRegisterSeconds` | search settings, the round's GameOptions XML, 60 s |
-| Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
+| Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 (a campaign round's players: `--coop-race-multiplier`, a test knob; 2 doubles the online XP, 0 counts as 1; `docs/coop_campaign.md`, "The race multiplier") |
 | Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | the score kept (scoreboards below) / success (profile kept) |
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
 | After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
@@ -149,8 +164,11 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 `sub_82730500`) lists the first category's hoppers that every party member may join
 (`sub_82888988` -> `sub_828864D0`): with `-1` meaning no limit, races < `maxAllowedRaces`,
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
-3 "Horizon World", 1 "Races" and 2 "Playground Games", all in the one category Online
-(a second category's hoppers would not be listed). Horizon World is
+3 "Horizon World", 1 "Races", 2 "Playground Games" and 20 "Co-op Festival", all in the one
+category Online (a second category's hoppers would not be listed). Co-op Festival is the
+Horizon World among friends (placement only into a world a friend leads), whose host starts
+festival events with `/event` in World chat (`docs/coop_campaign.md`, "Milestone 1 progress");
+it is listed only to games whose HELLO has feature 0x08. Horizon World is
 the shared free-roam world (`docs/online_vision.md`): preset 7 rounds from the festival
 (track 1101), `GameTypeFilterType="FreeRoam"`, endless (`EndConditionOptions Type="None"`;
 the client runs them as an online free roam that players JUMP IN to, which has no timed
@@ -371,8 +389,37 @@ id, the same for every round of the lobby) and both consoles read their row
 restarts. The game shows no skill anywhere seen (the lobby's yellow number is the online
 wristband; `hideTrueSkill` false changed nothing visible).
 
-Not done: a speed zone (type 2) and an event board (type 3) were not driven again with
-the new board keys (unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
+**Fast travel onto a speed trap (#349).** A trap takes its speed when the car enters it
+(`sub_828BB140`, at least `minimumSpeed` 30 mph) from the car's velocity getter (vfunc 83,
+`sub_82D1CE18`), which reads the copy of the velocity the car's physics step makes
+(car+0xB10). The vehicle teleport `sub_824B87A8` (fast travel, the car reset, an event's
+start) zeroes the velocity in the physics state only (vfunc 84, car-0xA10), so until the
+car's next physics step (a fast travel holds it behind the loading screen, about 0.7 s
+here) the car still reports the speed it had when the map paused the game. Fast travelling
+onto a trap recorded that speed while the car stood on the trap: TU4, the car paused at
+151.1 km/h, the fast travel's destination pointed at the Rt. 6 trap (Fast Travel Anywhere
+costs 5 Tokens, which the local profile has none of), the car arrived at 0 km/h and the
+game sent `SubmitScore(type 1, board 228, 41.976 m/s)`. `src/hooks/teleport_velocity.cpp`
+refreshes the reported velocity from the state after each teleport: the same test sent
+nothing (`TELEPORT: car ... its reported speed 146.5 km/h is now 0.0 km/h` in the log),
+and traps and zones driven through still record (Rt. 29 on both builds; on TU4 the Rt. 20
+speed zone, `SubmitScore(type 2, board 105, 34.137 m/s)`). The public server sets no speed
+limit: players drive modified and modded cars, and with the game fixed a trap only records
+speeds really driven. Speeds above a trap's record (`SPEED_TRAP_LIMIT_KMH`, all 22 traps:
+the best known Xbox 360 result on that trap, from the Forza Horizon speed trap charts on
+cyberscore.me.uk, charts 230405-230426, compared at 0.1 km/h) or above 470 km/h on any trap
+or zone are only logged with the player's public leaderboard id ("speed trap N: ... km/h is
+above the trap's record (... km/h)"; "... is more than any stock car reaches (470 km/h)").
+With `--trap-limits` such scores are not kept, and kept ones are removed when the server
+loads `scoreboards.json`, each logged once ("scoreboards: removed <public id>'s ... km/h
+from board N type T, above ... km/h"). The public server ran with the limits once, on
+2026-10-23, which removed 66 exploited results above their trap's record. A road-layout model of
+each trap's reachable speed (corners, straights, grades, generous grip) was tried first and
+dropped: it was not validated in the game and ordinary players beat it on corner-limited
+traps (175-200 km/h on Sth Rt. 38, board 210, where it said 132).
+
+Not done: an event board (type 3) was not driven again with the new board keys
+(unit-tested); the Storefront's rows (`GetStorefrontRows`) stay empty.
 
 ### Scoreboards, leaderboards and Rivals (`server/forza_scores.py`)
 

@@ -14,7 +14,7 @@ import uuid
 import forza_market as market
 import forza_notifications as notifications
 
-KIND, FEATURE = 24, 0x08
+KIND, FEATURE = 24, 0x10  # 0x08 is reserved for Co-op Festival support
 MODELS = (320, 326, 330, 1082, 1197, 1233, 1488)
 NAMES = dict(zip(MODELS, ("Honda CR-X SiR", "Ferrari Dino 246 GT", "Lotus Elan Sprint",
                          "Ford Fiesta Zetec S", "Saleen S5S Raptor", "Mazda MX-5 Superlight",

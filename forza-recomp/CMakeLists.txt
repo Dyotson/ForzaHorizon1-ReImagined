@@ -126,6 +126,7 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
+    src/hooks/database_query.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
     src/hooks/movie_memory.cpp
@@ -135,11 +136,16 @@ set(FORZA_SOURCES
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
+    src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/native_car_tuning.cpp
+    src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_tiling.cpp
+    src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
@@ -147,6 +153,7 @@ set(FORZA_SOURCES
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
     src/hooks/ambient_leaderboard.cpp
+    src/hooks/teleport_velocity.cpp
     src/hooks/challenge_hud.cpp
     src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
@@ -165,6 +172,7 @@ set(FORZA_SOURCES
     src/kernel/live_events.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/mod_overlay.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp

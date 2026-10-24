@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import forza_events as ev
+import forza_live_lsp as lsp
 import forza_live_server as srv
 import forza_market as market
 import forza_notifications as notices
@@ -42,7 +43,7 @@ class EventsTest(unittest.TestCase):
         self.events = self.server.events
         self.events.create(self.data); self.events.transition(self.data["id"], "active")
 
-    def join(self, key=b"A" * 16, features=15, address=20001):
+    def join(self, key=b"A" * 16, features=31, address=20001):
         body = struct.pack(">HQQIH", 1, address, 0x9000000000001, 0, 0)
         body += b"\x04#TU4\x06Driver" + bytes([features, len(key)]) + key
         self.server.datagram_received(b"RLV1\x01" + body, ("127.0.0.1", address))
@@ -83,6 +84,22 @@ class EventsTest(unittest.TestCase):
         self.assertIsNone(self.join(features=7, address=20003))
         self.events.required = False
         self.assertIsNotNone(self.join(features=7, address=20003))
+
+    def test_coop_capability_is_not_event_unlock_support(self):
+        self.assertFalse(ev.FEATURE & lsp.COOP_FEATURE)
+        # An existing Co-op Festival client must not pass a TU4 event policy gate.
+        self.assertIsNone(self.join(features=0x0F, address=20004))
+        self.events.required = False
+        self.server.transport.sent.clear()
+        peer = self.join(features=0x0F, address=20004)
+        self.assertIsNotNone(peer)
+        welcome = next(d[5:] for _, d in self.server.transport.sent if d[4] == srv.WELCOME)
+        motd_length = struct.unpack_from(">H", welcome, 12)[0]
+        self.assertEqual(len(welcome), 14 + motd_length + 2)
+        self.assertFalse(any(d[4] == ev.KIND for _, d in self.server.transport.sent))
+        self.server.transport.sent.clear()
+        self.poll(peer)
+        self.assertFalse(any(d[4] == ev.KIND for _, d in self.server.transport.sent))
 
     def test_welcome_already_contains_required_policy(self):
         welcome = next(d[5:] for _, d in self.server.transport.sent if d[4] == srv.WELCOME)

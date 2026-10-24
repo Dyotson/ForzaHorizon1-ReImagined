@@ -343,6 +343,32 @@ def recover(profile):
         _recover(profile)
 
 
+def _replace_directory(profile, stage, cancelled=lambda: False):
+    """Publish a complete staged save under the caller's save lock.
+
+    The existing restore journal rolls back an interrupted first rename, or keeps
+    the complete new directory after the second. Never discard an outstanding
+    journal when rollback itself fails.
+    """
+    parent = _inside(profile.folder.parent, profile.root)
+    stage = _inside(stage, parent)
+    if stage.parent != parent or not re.fullmatch(r'\.save-restore-[a-f0-9]{32}', stage.name):
+        raise SaveError('Invalid staged save directory.')
+    old = parent / ('.save-old-' + uuid.uuid4().hex)
+    journal = parent / '.save-manager-restore.json'
+    _check(cancelled)
+    _atomic_write(journal, json.dumps(dict(old=old.name, stage=stage.name,
+                                         had_save=profile.folder.exists())))
+    try:
+        if profile.folder.exists():
+            os.replace(profile.folder, old)
+        os.replace(stage, profile.folder)
+    except OSError:
+        _recover(profile)
+        raise
+    _recover(profile)
+
+
 def _create(profile, label, kind, cancelled, progress, keep):
     _inside(profile.folder, profile.root)
     entries = _files(profile.folder, cancelled)

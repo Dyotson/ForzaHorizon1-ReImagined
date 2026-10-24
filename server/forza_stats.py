@@ -53,6 +53,9 @@ MAX_PENDING = 256      # sessions waiting to be rated
 MAX_ROWS_BYTES = 1400  # an answer fits one datagram
 
 RELATIVE_SCORE, SESSION_TEAM = 0x1000800A, 0x1000800B
+# Called with (writer XUID, session, target XUID, relative score) for every skill-view write
+# taken (forza_coop_ledger.Ledger.host_score: a campaign round's places, cars - score).
+on_skill_write = None
 COL_SKILL, COL_GAMES, COL_MU, COL_SIGMA = 61, 62, 63, 64
 TYPE_INT32, TYPE_INT64, TYPE_DOUBLE, TYPE_NULL = 1, 2, 3, 0xFF
 MU0, SIGMA0 = 3.0, 1.0      # X_STATS_SKILL_MU_DEFAULT, X_STATS_SKILL_SIGMA_DEFAULT
@@ -204,9 +207,11 @@ def int_value(kind, value):
     return 0
 
 
-def write(xuid, gamertag, body, allowed=None, now=None):
+def write(xuid, gamertag, body, allowed=None, now=None, verified=True):
     """A write from a player (body after the op byte). allowed: the XUIDs this player may
-    write for (itself and the players of its room); others are ignored."""
+    write for (itself and the players of its room); others are ignored. verified: the writer
+    proved its XUID (its HELLO's friends key); only such writes reach on_skill_write (the
+    co-op ledger takes a host's write as a guest's second-console check)."""
     session, target, views = parse_write(body)
     now = time.monotonic() if now is None else now
     if allowed is not None and target not in allowed:
@@ -219,6 +224,8 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             values = {pid: int_value(kind, v) for pid, kind, v in props}
             if RELATIVE_SCORE not in values:
                 continue
+            if on_skill_write and verified:  # the co-op ledger: its first write after a start
+                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             key = (session, view)
             if session and now - STORE.rated.get(key, -RATED_MEMORY) < RATED_MEMORY:
                 log.info("stats: %016X wrote view %08X for %016X again: session %016X is rated",

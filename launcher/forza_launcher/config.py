@@ -22,6 +22,8 @@ def _default():
         "version": 1,
         "haptics": dict(HAPTICS_DEFAULTS),
         "save_manager": {"automatic": True, "keep_automatic": 10},
+        # Mods (#149, mods.py): folder names in load order, and those turned off.
+        "mods": {"order": [], "disabled": []},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
@@ -42,6 +44,8 @@ def _default():
         "specs": {"checked": False, "fingerprint": "", "dismissed": "", "values": None},
         # Battery saver (#140): the settings it forced at the last start (power.py); None: none.
         "power": {"applied": None},
+        # One-time fixes of values an older launcher saved: done once, so a later choice sticks.
+        "migrated": {"discord_application_id": False},
     }
 
 
@@ -82,6 +86,8 @@ class Config:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            # A new launcher.json starts with today's defaults: nothing to migrate later.
+            self.d["migrated"]["discord_application_id"] = True
             return
         if isinstance(data, dict):
             _merge(self.d, data)
@@ -93,6 +99,13 @@ class Config:
               self.d["settings"].get("fsr3_mode") == "native"):
             self.d["settings"].update(present_effect="bilinear", fsr3_mode="quality",
                                       forza_antialiasing="fsr3_native")
+        # 0.1.28-0.1.29 saved the then-default empty Discord application ID, which turned the
+        # connection off; since 0.1.30 the project's own ID is the default (#312).
+        migrated = self.d["migrated"]
+        if not migrated.get("discord_application_id"):
+            if not str(self.d["settings"].get("discord_application_id") or "").strip():
+                self.d["settings"]["discord_application_id"] = schema.BY_KEY["discord_application_id"].default
+            migrated["discord_application_id"] = True
         self.d['haptics'] = normalize_haptics(self.d.get('haptics'))
         prefs = self.d.get('save_manager')
         if not isinstance(prefs, dict):

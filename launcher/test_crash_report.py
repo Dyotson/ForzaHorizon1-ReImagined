@@ -68,6 +68,16 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Exit code: 134", report.body)
         self.assertIn("Not recorded", report.body)
 
+    def test_known_internal_heap_stop_is_explained_and_raw_evidence_is_preserved(self):
+        from test_game_exit import HEAP_FAILURE
+        self.log.write_text("\n".join(HEAP_FAILURE))
+        report = self.report()
+        self.assertIn("## Internal heap allocation failure", report.body)
+        self.assertIn("heap 0x21", report.body)
+        self.assertIn("16,384 bytes", report.body)
+        self.assertIn("r29=00004000", report.body)
+        self.assertIn("82423108 82422E50", report.body)
+
     def test_quoted_secrets_and_authorization_values_are_removed_in_full(self):
         self.log.write_text(r'''{"token": "private token with spaces", "password": "private password"}
 "Authorization": "Bearer private bearer"

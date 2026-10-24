@@ -32,6 +32,8 @@ to DATA_DIR/players/<XUID>.json. Files an operator puts under DATA_DIR/storage/<
 served as they are for GET /storage/<path>.
 """
 
+import argparse
+import contextvars
 import hmac
 import json
 import logging
@@ -39,7 +41,10 @@ import os
 import time
 import urllib.parse
 
+import forza_campaign as campaign
 import forza_clubs as clubs
+import forza_coop_ledger as coop_ledger
+import forza_friends as friends
 import forza_limits as limits
 import forza_leaderboards as leaderboards
 import forza_market as market
@@ -70,7 +75,19 @@ WORLD_ROUND_MINUTES = 0.0
 # Find Game lists the first category's hoppers; "Horizon World" is its first row.
 WORLD_HOPPER = 3
 PLAYGROUND_HOPPER_ID = 2
-# Find Game lists the first category's hoppers only, so all three are in it.
+# The Co-op Festival (#309, forza_campaign.py): a Horizon World whose placement only finds
+# worlds led by a friend, where the host starts festival events with /event in WORLD chat.
+# Listed only to games that run it as a world (HELLO feature COOP_FEATURE: drop-in, events,
+# the campaign CPU drivers' skill); older games would run it as a plain free roam.
+# Not 4 (nor 2-9): Find Custom Game searches with the game type tab's value as the key (Street
+# Race is 4, docs/title_services.md), and the server only sees the key.
+COOP_HOPPER = 20
+COOP_FEATURE = 0x08
+WORLD_HOPPERS = (WORLD_HOPPER, COOP_HOPPER)
+# The features byte of the HELLO of the game signed in with a XUID (forza_live_server sets
+# it; None: unknown, as in tests without a server).
+client_features = None
+# Find Game lists the first category's hoppers only, so all of them are in it.
 HOPPER_CATEGORIES = [
     {"name": "Online", "description": "The shared world, races and playground games.",
      "hopperStartIndex": 0},
@@ -90,6 +107,12 @@ HOPPERS = [
      "playerCount": 8},
     {"id": PLAYGROUND_HOPPER_ID, "name": "Playground Games",
      "description": "Infected, Cat & Mouse and King, in turn.", "playerCount": 8},
+    # last, so the other rows keep their places
+    {"id": COOP_HOPPER, "name": "Co-op Festival",
+     "description": "A Horizon World with your friends only. Its host starts festival events "
+                    "for everyone in it: type /event FR05 in World chat (/events lists them).",
+     "playerCount": 8, "allowVoteToSkip": False, "allowVoteToKick": False,
+     "shouldVoteCarClassBeforeLaunch": False, "intermissionTimeMs": 5000},
 ]
 HOPPER_DEFAULTS = {"allowVoteToSkip": True, "allowVoteToKick": True,
                    "allowVoteToRebalance": False, "payoutModifier": 1.0, "hideTrueSkill": True,
@@ -120,7 +143,7 @@ WORLD_SEARCH_SETTINGS = dict(SEARCH_SETTINGS, minPlayersToLaunch=1, intermission
 
 def hopper_get_search_settings(xuid, body):
     params, _ = x.decode(x.HopperGetSearchSettings_Params, body)
-    settings = WORLD_SEARCH_SETTINGS if params["hopperId"] == WORLD_HOPPER else SEARCH_SETTINGS
+    settings = WORLD_SEARCH_SETTINGS if params["hopperId"] in WORLD_HOPPERS else SEARCH_SETTINGS
     return x.reply(x.HopperGetSearchSettings_Results, {"settings": settings})
 
 
@@ -142,6 +165,12 @@ def add_arguments(parser):
                         help="offer the server's Monthly Rivals time trials "
                              "(forza_scores.TIME_TRIALS; a trial needs a score on its board "
                              "to have a rival)")
+    parser.add_argument("--trap-limits", action="store_true",
+                        help="reject speed trap scores above the trap's Xbox record "
+                             "(forza_scores.SPEED_TRAP_LIMIT_KMH) and trap/zone speeds above "
+                             "470 km/h, and remove kept ones at start; by default they are "
+                             "only logged (modified and modded cars go faster)")
+    parser.add_argument("--no-trap-limits", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -155,6 +184,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
+    scores.ENFORCE_TRAP_LIMITS = args.trap_limits and not args.no_trap_limits
     TEST_NOTIFICATIONS["on"] = args.test_notifications
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
@@ -268,6 +298,17 @@ def user_logon2(xuid, body):
         "defaultTimeoutMs": 30000, "defaultContentTimeoutMs": 60000}})
 
 
+def race_multipliers(xuid, body):
+    """Hopper.GetRaceMultipliers at a race's start: 1.0, or the campaign's for the players of
+    an open campaign round (forza_campaign.RACE_MULTIPLIERS, a test knob)."""
+    value = 1.0
+    rid = coop_ledger.LEDGER.open_round_of(xuid)
+    if rid is not None and campaign.RACE_MULTIPLIERS != [1.0]:
+        value = campaign.race_multiplier(rid)
+        log.info("title: race multiplier %.2f for %016X (campaign round %s)", value, xuid, rid)
+    return x.reply(x.HopperGetRaceMultipliers_Results, {"specialMultiplier": value})
+
+
 def user_write_race_stats(xuid, body):
     head, _ = x.decode(x.UserWriteRaceStats_Head, body)
     stats = head["raceStats"]
@@ -275,13 +316,22 @@ def user_write_race_stats(xuid, body):
     record.update(userLevel=stats["userLevel"], userXP=stats["userXP"],
                   currentCredits=stats["currentCredits"], totalWinnings=stats["totalWinnings"],
                   onlineWinnings=stats["onlineWinnings"],
-                  races=record.get("races", 0) + 1, lastRace={
-                      k: (v.hex() if isinstance(v, bytes) else v) for k, v in stats.items()})
+                  races=record.get("races", 0) + 1, lastRace=dict(
+                      {k: (v.hex() if isinstance(v, bytes) else v) for k, v in stats.items()},
+                      verified=caller_trusted()))
     save_player(xuid, record)
     log.info("title: race stats %016X: event %d hopper %d place %d/%d finished %d, level %d "
-             "XP %d credits %d", xuid, stats["eventId"], stats["hopperId"],
+             "XP %d credits %d%s", xuid, stats["eventId"], stats["hopperId"],
              stats["userFinishPosition"], stats["maxPlaces"], stats["finished"],
-             stats["userLevel"], stats["userXP"], stats["currentCredits"])
+             stats["userLevel"], stats["userXP"], stats["currentCredits"],
+             "" if caller_trusted() else " (unverified caller)")
+    if caller_trusted():  # what the player's last co-op round paid online (forza_coop_ledger)
+        coop_ledger.LEDGER.race_written(xuid, stats["onlineWinnings"])
+    if stats["hopperId"] in WORLD_HOPPERS:
+        world.WORLDS.result(xuid, stats["userFinishPosition"], stats["maxPlaces"],
+                            stats["finished"], session=stats["sessionId"],
+                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER,
+                            winnings=stats["onlineWinnings"])
     return x.reply()
 
 
@@ -322,9 +372,17 @@ def online_profile_update_all(xuid, body):
     return x.reply()
 
 
+def hoppers_for(xuid):
+    """The playlists offered to a player: the Co-op Festival only to games that have it, and
+    only when the server has events for it (the game's database, --game-db)."""
+    features = client_features(xuid) if client_features else None
+    coop = features is not None and features & COOP_FEATURE and bool(campaign.available())
+    return [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS if coop or h["id"] != COOP_HOPPER]
+
+
 def hopper_get_list(xuid, body):
     params, _ = x.decode(x.HopperGetList_Params, body)
-    hoppers = [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS]
+    hoppers = hoppers_for(xuid)
     return x.reply(x.HopperGetList_Results, {
         "hopperCategories": HOPPER_CATEGORIES[:params["maxCategoryResults"]],
         "hoppers": hoppers[:params["maxHopperResults"]]})
@@ -333,7 +391,7 @@ def hopper_get_list(xuid, body):
 def hopper_get_list_ex(xuid, body):
     """Title Update 4's GetList: the same playlists, none of them needing a DLC offer."""
     params, _ = x.decode(x.HopperGetList_Params, body)
-    hoppers = [dict(HOPPER_DEFAULTS, **h) for h in HOPPERS]
+    hoppers = hoppers_for(xuid)
     return x.reply(x.HopperGetListEx_Results, {
         "hopperCategories": HOPPER_CATEGORIES[:params["maxCategoryResults"]],
         "hoppers": hoppers[:params["maxHopperResults"]]})
@@ -357,6 +415,7 @@ HOPPER_ROUNDS = {
     # Free roam (GameOptionPresets.xml's IDS_PresetFreeRoam) from the festival (track 1101,
     # the custom game's default starting location), no end condition.
     WORLD_HOPPER: [(7, 1101, 0)],
+    COOP_HOPPER: [(7, 1101, 0)],
 }
 
 # The car class of a round without one of its own: the Horizon World takes any class (-1,
@@ -427,11 +486,11 @@ def default_round_xml(hopper, round_num):
     players = next((h["playerCount"] for h in HOPPERS if h["id"] == hopper), 8)
     # A free roam (laps 0) has no end, or a timed one (Type "Time", seconds) in the world.
     end, time_attr = ("NumLaps", "") if laps else ("None", "")
-    if hopper == WORLD_HOPPER and WORLD_ROUND_MINUTES > 0:
+    if hopper in WORLD_HOPPERS and WORLD_ROUND_MINUTES > 0:
         end, time_attr = "Time", ' Time="%d"' % round(WORLD_ROUND_MINUTES * 60)
     return GAME_OPTIONS_XML.format(
         preset=preset, track=track, laps=max(laps, 1), players=players,
-        car_class=ANY_CAR_CLASS if hopper == WORLD_HOPPER else RACES_CAR_CLASS,
+        car_class=ANY_CAR_CLASS if hopper in WORLD_HOPPERS else RACES_CAR_CLASS,
         # the custom game's Free Roam preset sets it (GameOptionPresets.xml)
         filter=' GameTypeFilterType="FreeRoam"' if preset == 7 else "",
         end=end, time=time_attr).encode()
@@ -446,8 +505,8 @@ def hopper_get_game_options(server, xuid, body):
     params, _ = x.decode(x.HopperGetGameOptions_Params, body)
     hopper, round_num = params["hopperId"], params["roundNum"]
     path = os.path.join(DATA_DIR, "hoppers", "%d.xml" % hopper)
-    found = server.world_of(xuid) if hopper == WORLD_HOPPER and server else None
-    event_xml = world.WORLDS.next_round(*found) if found else None
+    found = server.world_of(xuid) if hopper in WORLD_HOPPERS and server else None
+    event_xml = world.WORLDS.next_round(*found, trusted=caller_trusted()) if found else None
     if event_xml:
         xml = event_xml
         log.info("title: hopper %d round %d for %016X: world %s event", hopper, round_num, xuid,
@@ -507,15 +566,61 @@ SERVICES = {
     ("Hopper", "ReportQosData"): lambda xuid, body: x.reply(),
     ("Hopper", "ReportVoting"): lambda xuid, body: x.reply(),
     ("DLCMetadata", "GetStringTableInfo"): dlc_string_table_info,
-    ("Hopper", "GetRaceMultipliers"):
-        lambda xuid, body: x.reply(x.HopperGetRaceMultipliers_Results,
-                                   {"specialMultiplier": 1.0}),
+    ("Hopper", "GetRaceMultipliers"): race_multipliers,
     **scores.services(gamertag_of),
     **market.services(gamertag_of),
     **clubs.services(),
     **notifications.services(),
     **photos.services(),
 }
+
+
+# --- Who is calling ---------------------------------------------------------------------------
+# The game names the player of a call in X-UserId, which anyone can write. Our game adds its
+# Live identity's friends key (X-Friends-Key, 32 hex digits: forza-recomp
+# src/kernel/lsp_request_header.h), the secret the XUID was bound to at its first HELLO
+# (forza_friends.Store.claim; the launcher's shader list upload proves itself the same way).
+# Addresses can't stand in for it: behind a tunnel (docs/hosting.md, playit.gg) every HTTP
+# connection and every UDP datagram come from the tunnel agent's address, and the TCP source
+# ports have nothing to do with the players' UDP ports.
+#   TRUSTED     the key matches the XUID's
+#   UNVERIFIED  no key (games before the key, or someone else), or an XUID with no key on
+#               record (it never signed in with one): accepted for now, logged, and never
+#               taken as the player's word where it matters (caller_trusted())
+#   FORGED      a key that is not the XUID's: calls that change anything are refused
+TRUSTED, UNVERIFIED, FORGED = "trusted", "unverified", "forged"
+_caller = contextvars.ContextVar("lsp_caller", default=UNVERIFIED)
+READ_PREFIXES = ("Get", "Search", "Download")
+# Reads by name that change state: the session host's next round (a world's event).
+STATE_CHANGING = {("Hopper", "GetGameOptions")}
+UNVERIFIED_LOG_SECONDS = 600
+_unverified_logged = {}  # xuid -> when its last unverified call was logged
+
+
+def caller_trusted():
+    """The title service call being handled carries its player's own friends key."""
+    return _caller.get() == TRUSTED
+
+
+def verify_caller(server, xuid, headers):
+    """TRUSTED, UNVERIFIED or FORGED for a call's X-UserId and X-Friends-Key."""
+    given = headers.get("x-friends-key")
+    if given is None:
+        return UNVERIFIED
+    record = server.friends.store.get(xuid) if server is not None and xuid else None
+    if not record or not record.get("key"):
+        return UNVERIFIED
+    try:
+        key = bytes.fromhex(given.strip())
+    except ValueError:
+        return FORGED
+    if len(key) != friends.KEY_SIZE:
+        return FORGED
+    return TRUSTED if hmac.compare_digest(record["key"], friends.key_hash(key)) else FORGED
+
+
+def changes_state(short, method):
+    return not method.startswith(READ_PREFIXES) or (short, method) in STATE_CHANGING
 
 
 def service_call(headers, body, server=None):
@@ -534,15 +639,31 @@ def service_call(headers, body, server=None):
     fn = SERVICES.get((short, method))
     if (short, method) == ("Hopper", "GetGameOptions"):  # needs the server's world sessions
         fn = lambda xuid, body: hopper_get_game_options(server, xuid, body)  # noqa: E731
+    state = verify_caller(server, xuid, headers)
+    if state == FORGED and changes_state(short, method):
+        log.warning("title: %s.%s for %016X with another player's friends key: refused", cls,
+                    method, xuid)
+        return x.failure(5, "not this player's call")
+    if state == UNVERIFIED and xuid:
+        now = time.monotonic()
+        if now - _unverified_logged.get(xuid, -UNVERIFIED_LOG_SECONDS) >= UNVERIFIED_LOG_SECONDS:
+            _unverified_logged[xuid] = now
+            if len(_unverified_logged) > 20000:
+                _unverified_logged.clear()
+            log.info("title: calls for %016X carry no friends key it is bound to (an older game, "
+                     "or someone else): accepted as unverified", xuid)
     if fn is None:
         log.info("title: %s.%s from %016X (%d bytes): empty answer", cls, method, xuid,
                  len(body))
         return x.reply() + bytes(EMPTY_ANSWER)
+    token = _caller.set(state)
     try:
         return fn(xuid, body)
     except ValueError as e:  # parameters that don't parse
         log.warning("title: %s.%s: bad parameters (%s): %s", cls, method, e, body.hex())
         return x.failure(2, "bad parameters")
+    finally:
+        _caller.reset(token)
 
 
 ADMIN_TOKEN = os.environ.get("FORZA_ADMIN_TOKEN", "")
@@ -632,6 +753,10 @@ def handle(server, method, path, headers, body, peer):
     log.info("LSP request %s %s (%d bytes)", method, path, len(body))
     if url.path.startswith("/shader-lists"):  # players' shader lists (forza_shader_lists.py)
         answer = shader_lists.handle(server, method, path, headers, body)
+        if answer is not None:
+            return answer
+    if url.path.startswith("/coop/"):  # co-op campaign results (forza_coop_ledger.py)
+        answer = coop_ledger.handle(server, method, path, headers, body, shader_lists.authenticate)
         if answer is not None:
             return answer
     if url.path.startswith("/leaderboards"):  # public leaderboards as JSON (forza_leaderboards.py)

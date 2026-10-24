@@ -936,11 +936,13 @@ class VNet {
     // and an invite asks before joining (live_invites.cpp, #90). The server delivers invites
     // only between games that have it. 0x02, the game keeps its friends list on the server
     // (live_friends.cpp, #92), followed by our friends key (u8 length + bytes), which the
-    // server binds our XUID's friends to. 0x04, text chat (#92).
+    // server binds our XUID's friends to. 0x04, text chat (#92). 0x08, the Co-op Festival
+    // playlist runs as a Horizon World (world_drop_in.cpp, world_events.cpp, #309): the
+    // server lists it only to games that say so.
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
-    body.push_back(0x0F);  // 0x08: validated TU4 event-unlock eligibility hook
+    body.push_back(0x1F);  // 0x10: validated TU4 event-unlock eligibility hook
 #else
-    body.push_back(0x07);
+    body.push_back(0x0F);
 #endif
     const std::string& key = forza::IdentityFriendsKey();
     body.push_back(uint8_t(key.size()));

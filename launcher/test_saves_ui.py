@@ -223,6 +223,18 @@ class SaveUITests(unittest.TestCase):
                 self.assertEqual(claim.call_args.args[1], self.profile)
                 self.assertFalse(self.page.busy())
                 self.assertIn('Added 1 unicorn car', dialog.message.text())
+            self.assertTrue(dialog.repair_paint_button.isEnabled())
+            with patch.object(garage, 'repair_factory_paint',
+                              return_value=garage.PaintRepairResult((1,))) as repair:
+                dialog.controls['Main/Credits'].setValue(1500)
+                dialog.repair_paint_button.click()
+                repair.assert_not_called()
+                self.assertIn('Apply your profile changes', dialog.message.text())
+                dialog.controls['Main/Credits'].setValue(500)
+                dialog.repair_paint_button.click()
+                self.wait_done()
+                self.assertEqual(repair.call_args.args[1], self.profile)
+                self.assertIn('Repaired factory paint on 1 unicorn', dialog.message.text())
 
     def test_editor_finishes_an_unfinished_1000_club_tutorial_after_a_backup(self):
         from forza_launcher import save_editor
@@ -268,6 +280,7 @@ class SaveUITests(unittest.TestCase):
         self.assertIsNone(dialog.document)
         self.assertFalse(dialog.apply_button.isEnabled())
         self.assertFalse(dialog.unicorn_button.isEnabled())
+        self.assertFalse(dialog.repair_paint_button.isEnabled())
         self.assertTrue(dialog.reload_button.isEnabled())
         self.assertTrue(dialog.message.text())
         dialog.close()
