@@ -54,6 +54,22 @@ def cpu_snapshot(proc):
             "threads": {str(t.id): t.user_time + t.system_time for t in proc.threads()}}
 
 
+def audit_affinity(proc, expected, locked):
+    if not expected:
+        return None
+    observed = sorted(proc.cpu_affinity())
+    if observed != sorted(expected):
+        if locked:
+            raise RuntimeError("CPU affinity changed after startup: " + str(observed))
+        # SDK initialization restores the system mask on Windows. Reapply the
+        # requested mask during startup, then reject changes before scoring.
+        proc.cpu_affinity(expected)
+        observed = sorted(proc.cpu_affinity())
+        if observed != sorted(expected):
+            raise RuntimeError("Could not apply CPU affinity: " + str(observed))
+    return observed
+
+
 def focused(pid):
     if sys.platform != "win32":
         return None
@@ -78,6 +94,8 @@ def frame_stats(rows):
 def run_one(args, label, runtime, warmup):
     if conflicts():
         raise RuntimeError("Conflicting game/build processes: " + json.dumps(conflicts()))
+    if psutil.virtual_memory().available < 10 * 1024 ** 3:
+        raise RuntimeError("Game runs require at least 10 GiB available memory")
     folder = args.output / label
     folder.mkdir(parents=True, exist_ok=False)
     # Only this disposable copy is passed to the runtime.
@@ -145,6 +163,7 @@ def run_one(args, label, runtime, warmup):
                 "argv": plan.argv, "binary_sha256": hashes,
                 "settle_s": args.settle, "measure_s": args.seconds, "settings": cfg.settings,
                 "cpu_affinity": getattr(args, "cpu_affinity", None),
+                "affinity_audited": bool(getattr(args, "cpu_affinity", None)),
                 "schedule": args.schedule, "present_mode": present_mode,
                 "require_foreground": getattr(args, "require_foreground", False),
                 "ai_race": ai_race, "profiled_warmup": profile,
@@ -176,7 +195,10 @@ def run_one(args, label, runtime, warmup):
                 if other:
                     raise RuntimeError("Run contaminated by another game/build: " + json.dumps(other))
                 elapsed = time.monotonic() - started
-                audit.append({"t": elapsed, "conflicts": other, "focused": focused(child.pid)})
+                affinity = audit_affinity(proc, getattr(args, "cpu_affinity", None),
+                                          elapsed >= args.settle or begin is not None or ai_ready is not None)
+                audit.append({"t": elapsed, "conflicts": other, "focused": focused(child.pid),
+                              "cpu_affinity": affinity})
                 if ai_race and ai_ready is None:
                     text = (folder / "game.log").read_text(errors="replace") if (folder / "game.log").exists() else ""
                     if "BENCHMARK: measuring 60 seconds" in text:
@@ -218,7 +240,9 @@ def run_one(args, label, runtime, warmup):
                     raise RuntimeError("Run contaminated during flush: " + json.dumps(other))
                 if ai_race:
                     elapsed = time.monotonic() - started
-                    audit.append({"t": elapsed, "conflicts": other, "focused": focused(child.pid)})
+                    affinity = audit_affinity(proc, getattr(args, "cpu_affinity", None), True)
+                    audit.append({"t": elapsed, "conflicts": other, "focused": focused(child.pid),
+                                  "cpu_affinity": affinity})
                     report = ai_folder / "result.json"
                     if report.exists():
                         ai_complete = elapsed
@@ -261,6 +285,7 @@ def run_one(args, label, runtime, warmup):
         raise RuntimeError("Wall clock changed during measurement")
     selected = [r for r in samples if begin[0] - epoch <= float(r["t"]) <= end[0] - epoch]
     result = {"label": label, "variant": label.rsplit("-", 1)[0], "warmup": warmup,
+              "audited_cpu_affinity": getattr(args, "cpu_affinity", None),
               "guest": frame_stats([r for r in selected if r["src"] == "guest"]),
               "present": frame_stats([r for r in selected if r["src"] == "present"])}
     result["cpu_cores"] = (end[1]["process"] - begin[1]["process"]) / duration
@@ -383,6 +408,7 @@ def main():
                 manifest["settings"]["resolution_scale"] != args.resolution_scale or
                 manifest["settings"]["fh1_output_resolution"] != args.output_resolution or
                 manifest.get("cpu_affinity") != args.cpu_affinity or
+                (args.cpu_affinity and not manifest.get("affinity_audited", False)) or
                 manifest.get("schedule", "8:A:0.08,18:START:0.08,28:A:0.08") != args.schedule or
                 manifest.get("present_mode", "default") != args.present_mode or
                 manifest.get("require_foreground", False) != args.require_foreground or

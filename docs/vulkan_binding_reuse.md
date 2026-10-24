@@ -1,6 +1,7 @@
 # Unchanged Vulkan texture/sampler bindings
 
-Opt-in experiment based on main `54d5177`. SDK patch 0094.
+Opt-in experiment originally based on main `54d5177`, now integrated with main
+`da9bf35`. SDK patch 0094.
 `FORZA_VK_BINDING_REUSE=1` enables all three reuse paths. Default is off.
 
 ## Reuse and invalidation
@@ -48,6 +49,16 @@ usage changes, invalidation, subset requests and all 32 mask bits. It also check
 each ordered descriptor field and reordered payloads. Configure with `-DSDK_SOURCE=<patched SDK>`, build Release and run
 CTest. The benchmark runner also has checked alternating modes, diagnostics and
 resume compatibility using a fake executor without launching a game.
+
+For CPU-constrained measurements, the runner audits the observed process CPU
+mask. Windows SDK initialization restores the system mask, so an initial
+post-launch affinity assignment alone is insufficient. The runner corrects
+startup resets only before the startup settling deadline (and before AI or CPU
+scoring begins). Later changes reject the run without reasserting affinity.
+The manifest records that affinity was audited, each process audit sample
+records the observed mask, and resume rejects older unaudited constrained runs.
+Run `python tools/binding_reuse/test_affinity.py` (requires `psutil`) for the
+startup-reset, scored-escape and read-only scored-audit regression fixtures.
 
 ## Overlap
 
