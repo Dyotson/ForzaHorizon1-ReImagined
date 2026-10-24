@@ -1,0 +1,63 @@
+diff --git a/src/graphics/fh1_frame_cost.h b/src/graphics/fh1_frame_cost.h
+index 9b6f887..3d1603a 100644
+--- a/src/graphics/fh1_frame_cost.h
++++ b/src/graphics/fh1_frame_cost.h
+@@ -94,6 +94,21 @@ inline uint64_t& TextureBytes() {
+   return bytes;
+ }
+ 
++// FH1 (#400): the command processor's CPU time on Windows. QueryThreadCycleTime counts a
++// thread's time in cycles of the time stamp counter, which runs at a fixed rate (GetThreadTimes
++// only advances in scheduler ticks of about 15.6 ms, too coarse for a frame); the rate comes
++// from two samples of the time stamp counter and QueryPerformanceCounter. Cycles per ms, 0 when
++// the samples cannot tell (no time passed, a counter went back): the CPU time is then unknown.
++inline double CyclesPerMs(uint64_t tsc_first, uint64_t tsc_last, int64_t qpc_first,
++                          int64_t qpc_last, int64_t qpc_frequency) {
++  if (qpc_frequency <= 0 || qpc_last <= qpc_first || tsc_last <= tsc_first) return 0;
++  const double ms = double(qpc_last - qpc_first) * 1000.0 / double(qpc_frequency);
++  return double(tsc_last - tsc_first) / ms;
++}
++inline double CyclesToMs(uint64_t cycles, double cycles_per_ms) {
++  return cycles_per_ms > 0 ? double(cycles) / cycles_per_ms : 0;
++}
++
+ // Adds the time of its scope to a counter (milliseconds).
+ class Timer {
+  public:
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index 7a376f8..0e5f048 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -829,11 +829,30 @@ VulkanCommandProcessor::~VulkanCommandProcessor() = default;
+ 
+ namespace {
+ 
+-// FH1 (#45): the command processor thread's CPU time, in ms (0 where not known: Windows,
+-// whose thread times advance in scheduler ticks).
++// FH1 (#45): the command processor thread's CPU time, in ms (0 where not known). Windows
++// (#400): the thread's cycles (QueryThreadCycleTime, counted at the time stamp counter's fixed
++// rate; GetThreadTimes only advances in scheduler ticks) over that rate, measured once against
++// QueryPerformanceCounter for 2 ms (fh1_frame_cost.h CyclesPerMs).
+ double ThreadCpuMs() {
+ #if REX_PLATFORM_WIN32
++#if REX_ARCH_AMD64
++  static const double cycles_per_ms = [] {
++    LARGE_INTEGER frequency, first, last;
++    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&first)) return 0.0;
++    const uint64_t tsc_first = __rdtsc();
++    do {
++      QueryPerformanceCounter(&last);
++    } while (last.QuadPart - first.QuadPart < frequency.QuadPart / 500);
++    const uint64_t tsc_last = __rdtsc();
++    return fh1_frame_cost::CyclesPerMs(tsc_first, tsc_last, first.QuadPart, last.QuadPart,
++                                       frequency.QuadPart);
++  }();
++  ULONG64 cycles = 0;
++  if (cycles_per_ms <= 0 || !QueryThreadCycleTime(GetCurrentThread(), &cycles)) return 0;
++  return fh1_frame_cost::CyclesToMs(cycles, cycles_per_ms);
++#else
+   return 0;
++#endif
+ #else
+   timespec ts;
+   if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0) return 0;

@@ -1,6 +1,6 @@
 // The slow-frame report of the GPU command processor (#45): src/graphics/fh1_frame_cost.h of
 // the patched SDK source (patch 0180). Which frames are slow, when a line is logged and what it
-// names as the cause; and the once-a-minute summary (patch 0200).
+// names as the cause; the once-a-minute summary (patch 0200); Windows' CPU time (patch 0300).
 // Build with the patched SDK source's src/graphics on the include path:
 //   c++ -std=c++17 -I ~/rexglue-sdk-src-forza/sdk/src/graphics
 //       tools/test_frame_cost.cpp -o test_frame_cost
@@ -358,6 +358,19 @@ int main() {
     feed(Typical(50), 180.3);
     CHECK(lines == 3);
     CHECK(Has(line, "resident; clocks: GPU 1.60 GHz") && !Has(line, " C ") && !Has(line, " W"));
+  }
+  {
+    // Windows' thread CPU time (#400): thread cycles at the time stamp counter's rate, the rate
+    // from 2 ms of it against a 10 MHz performance counter.
+    const double rate = cost::CyclesPerMs(1000, 1000 + 2 * 3187654, 50, 50 + 20000, 10000000);
+    CHECK(rate > 3187653.9 && rate < 3187654.1);  // a 3.19 GHz counter
+    CHECK(cost::CyclesToMs(uint64_t(3187654) * 7, rate) > 6.999 &&
+          cost::CyclesToMs(uint64_t(3187654) * 7, rate) < 7.001);
+    // Samples that cannot tell: no rate, no CPU time (unknown, as before).
+    CHECK(cost::CyclesPerMs(1000, 2000, 50, 50, 10000000) == 0);
+    CHECK(cost::CyclesPerMs(2000, 1000, 50, 70, 10000000) == 0);
+    CHECK(cost::CyclesPerMs(1000, 2000, 50, 70, 0) == 0);
+    CHECK(cost::CyclesToMs(123456, 0) == 0);
   }
   std::printf("frame cost: all checks passed\n");
   return 0;
