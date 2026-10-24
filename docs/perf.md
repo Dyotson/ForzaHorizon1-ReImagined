@@ -1048,8 +1048,7 @@ instead of 150 ms a second, the GPU 4.5 instead of 8.0 ms a frame; 1 gave two ti
 the static world (track, terrain, barriers, hills, signs) was missing: only the cars, the crowd, trees and the sky
 were drawn. So the lead holds (the tiles are most of the command processor's time, and 4x MSAA a large share of
 the GPU's), but switching the game's scenario is not enough: the world's renderer has some setup of its own for
-the tiled 4x MSAA path. Finding it, or emulating one large pass in the render target cache (beyond the 10 MB of
-EDRAM), is the next step; a non-tiled scene would cut both the CPU and the GPU time of a Deck frame.
+the tiled 4x MSAA path: its recorded command lists (found and handled in [One-pass scene](#one-pass-scene-scene_msaa-45-2026-10-23)).
 
 **Change: SDK patch 0140** (`docs/sdk_patches.md`): the packet loop skips runs of type-2 padding in one loop and
 has no stack frame on its hot path; register ranges that do not wrap the ring are written without the runtime's
@@ -1084,7 +1083,8 @@ another job on CPUs 0-3.)
 
 **Left, for a Deck:**
 
-- The EDRAM tiles (above): the largest single cost of the command processor and a large share of the GPU's.
+- The EDRAM tiles (above): the largest single cost of the command processor and a large share of the GPU's;
+  `scene_msaa` ([One-pass scene](#one-pass-scene-scene_msaa-45-2026-10-23)) removes them at the price of MSAA.
 - `UpdateBindings` and the texture bindings, 41% of the draw time: Sean's drafts #179 (dynamic constant
   descriptors) and #192 (reuse of unchanged texture and sampler bindings) measured +7.7% and +6.5% fps on a
   CPU-bound PC; both are opt-in and need game validation.
@@ -1095,6 +1095,67 @@ another job on CPUs 0-3.)
   of two worker threads.
 - On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
   with the performance overlay, would show how much of the gap they close.
+
+## One-pass scene: `scene_msaa` (#45, 2026-10-23)
+
+The three EDRAM tiles above are most of the command processor's time. The game can render
+without them: its render scenario table (`TilingScenario`) has a two-tile 2x MSAA entry, used by
+its 12- and 16-car races, and a one-pass entry without MSAA. Switching to either lost the static
+world (above). Why, found with RenderDoc captures of the benchmark (a tiled and a one-pass frame
+compared draw by draw, `qrenderdoc --python`), packet counters in the command processor and call
+counts with gdb:
+
+- The 3D scene of the one-pass frame had 918 draws against 2,989 over the three tiles, and 316
+  distinct opaque draws of the tiled frame (806 with the tile repeats) were not in it at all:
+  the game never submitted them (the command processor's early-outs counted none).
+- The track (static world) presentation, `Presentation_Unified::CTrackPresentation`, draws each
+  pass from command lists recorded per pass and layer (index pass * 3 + layer, `sub_82466418`).
+  Its scene pass depends on the tile count of the scenario (`sub_82469B18`: 4 for three tiles, 3
+  for two, 5 for one), and the game records lists for pass 4 only: in a one-pass race every pass-5
+  call found no list (68,000 a second, against 87,000 calls with a list in pass 4 tiled).
+- `sub_82466418` has a second path, chosen by its last argument: `sub_82EAF3B0` draws the same items
+  directly, without recorded lists. Taking it for passes 3 and 5 when they have no list brings the
+  world back. Replaying pass 4's lists instead does not work: they hold the tiled layout and
+  drew the sky into the bottom of the screen.
+
+**Change** (`src/hooks/scene_tiling.cpp`, `src/platform/scene_tiling.h`, launcher Display >
+Picture > "Scene anti-aliasing (MSAA)"): `scene_msaa = game` (default) keeps the game's 4x MSAA in
+three tiles; `2x` lowers the 4x scenario to the game's two-tile 2x MSAA one; `off` lowers 4x and 2x
+to its one-pass scenario without MSAA. The scenario is lowered right after the game reads it from
+the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`); the track draws
+passes 3 and 5 directly when they have no recorded list (those passes are never reached with the
+game's own scenarios in free roam and races, so `game` is unchanged). Disc build:
+`sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`. `forza-recomp/tests/scene_tiling_test.cpp` checks the
+scenario choice and the pass rule.
+
+**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark's race start
+and race, free roam at the spawn in the chase camera, the driver (cockpit) camera standing and after
+6 s of driving, in each mode: the track, terrain, barriers, signs, gantries, trees, crowd and cars
+are all there in `2x` and `off`, as in `game`; the edges are more jagged without MSAA. The same race
+moment differs only by the AI cars' positions.
+
+**Measured** (benchmark as in the 4-core section, the same build with patch 0140, two runs per mode
+and configuration, alternating, BENCH lock held, no other game; ms per frame):
+
+| Configuration | scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 cores, uncapped | game | 114.9 [112.8-116.9] | 78.8 [77.6-80.0] | 7.16 [7.00-7.31] | 3.54 | 18.2 | 5.8 |
+| 4 cores, uncapped | 2x | 138.9 [130.4-147.4] | 90.7 [89.0-92.3] | 5.90 [5.46-6.34] | 4.10 | 16.8 | 5.3 |
+| 4 cores, uncapped | off | 142.2 [135.4-149.0] | 92.6 [91.4-93.8] | 5.13 [4.82-5.44] | 3.99 | 15.7 | 4.9 |
+| 4 cores, 30 fps | game | 30.0 | 26.9 [26.5-27.2] | 6.86 [6.80-6.92] | 3.41 | 23.2 | 8.0 |
+| 4 cores, 30 fps | 2x | 30.0 | 26.9 [26.6-27.2] | 5.85 [5.39-6.31] | 4.07 | 22.9 | 7.5 |
+| 4 cores, 30 fps | off | 30.0 | 27.3 [27.3-27.3] | 4.86 [4.75-4.97] | 4.04 | 21.6 | 6.9 |
+
+- `off`: the command processor needs 29% less time a frame (6.86 to 4.86 ms at 30 fps), the Vulkan
+  submission thread 0.3 ms less, the GPU 14% less at 30 fps (16% uncapped); uncapped the benchmark
+  runs 24% faster (115 to 142 fps) with a 1% low 18% higher. The render thread does 0.45-0.65 ms more,
+  drawing the track items directly instead of running recorded lists.
+- `2x`: two tiles instead of three: the command processor 15% less (but between runs more spread),
+  the GPU 6% less at 30 fps, 21% more fps uncapped.
+- On a Deck, where the frame waits on the command processor's chain (above), the command processor's
+  2 ms a frame at 5 GHz is about 4-5 ms of a Deck frame.
+- Not tested yet: with the FSR 3, DLSS and SMAA scene paths (they look for the game's scene and HUD
+  targets), ultrawide, render scale above 1, photo mode, Windows and a Deck. It stays off by default.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
@@ -1381,3 +1442,102 @@ after the map still lasts seconds with `cause: waits for the GPU` or `the game` 
 CPU, the time is outside the emulation's work (memory moves or clocks); a run with the BIOS UMA frame buffer
 at 4 GB instead of 1 GB, and Steam's overlay at level 4 showing the GPU clock right after leaving the map,
 would tell which.
+
+## Long sessions (#45, 2026-10-23)
+
+**The reports.** Steam Deck players: "the first 10 minutes are fine, but then it just keeps getting worse"; earlier
+"better at first, then back to 15 fps after a few minutes". A BC-250 player's MangoHud (0.1.31, Linux): GPU 56% at
+1850 MHz, CPU 25% with six threads at 31-38% and their siblings at 11-16%, 40 fps on average, 1% low 17 fps: no
+GPU or CPU thread is full, so the frame waits on a chain of threads (as above). The question here: does anything
+grow with play time and make each frame cost more?
+
+**The soak.** As in [Steam Deck frame collapses](#steam-deck-frame-collapses-45-2026-10-23): TU4,
+`-DFORZA_CPU_TARGET=x86-64-v3`, a copy of the Xenia save, offline, audio muted, a 1280x800 window, 30 fps, render
+scale 1, AMD FSR 1, a warm scratch shader cache, the game's threads on CPUs 0-3 and everything else on 4-7, the SDK
+of main (with 0140, 0180, 0181) plus 0200 below, BENCH lock held, no other game. The car drives itself
+(`tools/autodrive.py` with `AD_PATH_LOAD`) round a 28.5 km loop that `tools/nav_route.py` lays on the game's own
+road graph from the save's spawn: county roads, Gladstone's streets, Interstate 76, Route 29, Interstate 70 and
+the town on Route 29, with the traffic, about 38 minutes a lap. Recorded: every frame the command processor's
+counters (`fh1_frame_cost_csv`), every second each thread's CPU and run-queue time and the GPU time
+(`tools/thread_stats.py`), every 30 s the process's memory (resident, mappings, the guest memory file's resident
+pages, the DRM client's VRAM and GTT), and once a minute the new summary line (0200). Two runs at 30 fps (60 and 45
+minutes) and one without the frame cap (45 minutes).
+
+**Per minute** (60-minute run; the minute that ends there, counted from free roam; command processor = its CPU
+time a frame, in brackets fitted to 3,000 draws over the minute's frames, since the draws follow the view; the
+45-minute run gives the same, within the minute-to-minute spread):
+
+| Minute | fps | p99 ms | 1% low | Command processor ms (at 3,000 draws) | Draws | GPU ms | Main loop, render thread, mixer % | Textures (MB) | Evicted/s | Watch nodes a frame | Readback keys | RSS MB | VRAM MB | VMAs |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | 30.0 | 34.0 | 29.2 | 5.80 (4.99) | 3566 | 7.6 | 7.4, 11.3, 9.4 | 3025 (189) | 0.0 | 3902 | 133 | 1169 | 1097 | 2642 |
+| 5 | 30.0 | 33.9 | 29.3 | 4.45 (4.94) | 2639 | 7.4 | 7.0, 9.5, 8.6 | 4473 (238) | 0.0 | 3817 | 144 | 1204 | 1361 | 2416 |
+| 10 | 30.0 | 33.9 | 29.4 | 4.48 (5.16) | 2527 | 6.8 | 6.7, 8.7, 9.3 | 5599 (286) | 0.0 | 3843 | 154 | 1213 | 1375 | 2317 |
+| 20 | 30.0 | 34.1 | 29.2 | 4.75 (4.95) | 2868 | 6.5 | 7.2, 10.0, 9.3 | 8137 (384) | 0.4 | 3815 | 167 | 1240 | 1375 | 2853 |
+| 30 | 30.0 | 34.0 | 29.2 | 5.15 (4.86) | 3178 | 7.0 | 7.7, 9.8, 9.5 | 8000 (384) | 5.4 | 3809 | 163 | 1250 | 1382 | 2671 |
+| 40 | 30.0 | 33.9 | 29.4 | 5.60 (5.32) | 3176 | 7.9 | 7.2, 10.2, 11.6 | 8028 (384) | 2.0 | 4000 | 168 | 1256 | 1386 | 2821 |
+| 50 | 30.0 | 34.1 | 29.2 | 4.55 (5.05) | 2651 | 7.5 | 7.8, 8.1, 8.9 | 7821 (384) | 6.4 | 3856 | 179 | 1259 | 1387 | 2965 |
+| 60 | 30.0 | 34.2 | 29.2 | 5.51 (4.94) | 3346 | 7.1 | 9.1, 9.0, 11.5 | 8093 (384) | 3.7 | 3867 | 183 | 1261 | 1387 | 2783 |
+
+- **Nothing that costs per frame grows.** The frame holds 30 fps, p99 34 ms and 1% low 29 from minute 2 to 60; the
+  command processor needs 4.9-5.3 ms for 3,000 draws in every 10-minute block of both runs (1.6 us a draw); the GPU
+  6.5-7.9 ms a frame; the main loop, render thread and audio mixer the same share of a core. The writes to guest
+  memory walk the same 3,800-4,000 watch nodes a frame (about 100 writes of 38 nodes each) whether the texture
+  cache holds 3,000 textures or 8,000.
+- **What grows, and stops:** the texture cache, from 3,000 textures (190 MB) at minute 2 to its 384 MB limit
+  (`texture_cache_memory_limit_soft`) at minute 19-20 with 8,000 textures; after that it evicts 2-14 textures a
+  second that were unused for 30 s and makes about as many: 0.17 new textures a frame before and after, 0.05 ms of
+  the command processor's frame for texture creation and loads in both halves. With it the GPU memory (1,097 to
+  1,387 MB device-local) and the process's resident memory (1,168 to 1,260 MB, half of it the guest's own pages),
+  both flat after minute 20-30. The readback keys of 0181 go from 133 to 183 (kept at most 2,048, forgotten after
+  30 minutes). Render targets (39, 553 MB), shaders (907-913), pipelines (812-825), framebuffers (61-63), watched
+  ranges (1,200-2,000), readback buffers (85-105, 55-85 MB), the guest's heaps (206 MB virtual, 360 MB physical)
+  and the threads (76) stay as they are from the start; the memory mappings move between 2,200 and 3,200 without a
+  trend; the open file descriptors climb from 125 to 291, slower and slower.
+- One run changed its rhythm at minute 41: the render thread woke 2,400 times a second instead of 9,800 and the
+  main loop 830 instead of 100 (as if the two had swapped which one waits for the other), with the same frame times
+  and CPU time to the end. The other run never did it; it is a phase of the two threads, not something that grew.
+
+**Without the frame cap** (`--frame_rate=240`, the same four cores and route, 45 minutes, BENCH lock held): the
+command processor is busy 77-80% of the time and the game's waits are 0.7 ms a frame, so the frame rate is its
+speed: 145-163 fps minute by minute, following the draws. Fitted to 3,000 draws, a frame takes 6.52, 6.48, 6.37,
+6.46 and 6.62 ms in the five 10-minute blocks (153, 154, 157, 155 and 151 fps; the last, 5 minutes long, is the
+place on the route where all three runs drew their dearest frames), and the command processor 5.04, 4.99, 4.93,
+5.00 and 5.23 ms. Five times the frames of the capped runs, and the same sizes at the same minutes: the texture
+cache full at minute 15-20, the resident memory 1,198 to 1,256 MB, the readback keys and file descriptors as
+above. What grows does so with time and place (the world streamed in), not with the frames drawn.
+
+So on this PC the emulation's work per frame does not depend on how long the game has run. What a Deck adds and
+this PC cannot show: the texture cache's growth to 384 MB in the first 20 minutes is GPU memory that a Deck with
+the default 1 GB UMA frame buffer does not have in its carve-out (render targets and the guest memory's GPU copy
+fill most of it from the start; with 0138 new textures then go to system memory), and a 15 W chip that gets hotter
+and slower as it runs. A frame of the same work then costs more without anything growing.
+
+**Change: SDK patch 0200, a minute's summary in the log.** One info line a minute from the command processor
+(`docs/sdk_patches.md`; minute 30 of the 45-minute run, counted from the first frame):
+
+```
+GPU minute 30: 30.0 fps (1% low 29.3, worst 35 ms); a frame: command processor 4.4 ms CPU (1.68 us a draw), 0.0
+ms GPU waits, 28.5 ms game waits, 2598 draws, 0.60 MB uploads, 0.0 resolve readbacks, 3784 memory watch nodes
+checked (100.6 writes); a second: 3.0 textures new, 2658.1 loaded, 3.6 evicted, 0.0 pipelines new; now: textures
+7939 (384 MB), render targets 39 (553 MB), shaders 916, pipelines 830, framebuffers 63, memory watches 1267
+(1285 nodes), readback buffers 97 (62 MB, 182 keys), guest memory 206 MB virtual + 360 MB physical, GPU memory
+1382 of 15577 MB device-local, 127 MB system, process 1241 MB resident; clocks: CPU up to 4.97 GHz, GPU 1.01 GHz
+39 C 30.0 W
+```
+
+How to read a long session's log: the fps and 1% low minute by minute show when it got worse. Then:
+
+- `draws` up: the view has more to draw (traffic, a town, a race), not play time.
+- `us a draw` up with the same draws, and `CPU up to` lower: the CPU got slower (heat or the power limit); the
+  GPU's clock, temperature and power (on Linux, the amdgpu hwmon: on a Deck the whole chip's power) say which.
+- `game waits` down and the command processor's CPU the same: the game's own threads are later.
+- A size that keeps climbing (textures past 384 MB, render targets, pipelines, readback buffers, guest memory, the
+  process's memory) and frame costs with it: something on our side grows; that line pair is the report.
+- `GPU memory ... device-local` at its budget and `system` growing: the GPU's memory is full.
+
+**For a Deck player to send:** a `forza.log` of one session of 30 minutes or more on a build with 0200, from start
+to quit, and when it got slow (the minute lines are timestamped). If the minutes that got slow show `us a draw`
+up and the clocks down, the same session with the Deck kept cooler (a cooler room, the fan not blocked) would
+confirm heat; if the GPU memory is full, the same session with the BIOS UMA frame buffer at 4 GB, or with
+`texture_cache_memory_limit_soft = 192` in `forza.toml` (a smaller texture cache: unused textures go after 30 s
+once it holds 192 MB), would tell whether memory placement is the cause.

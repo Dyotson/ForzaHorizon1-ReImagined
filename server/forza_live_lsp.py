@@ -32,6 +32,8 @@ to DATA_DIR/players/<XUID>.json. Files an operator puts under DATA_DIR/storage/<
 served as they are for GET /storage/<path>.
 """
 
+import argparse
+import contextvars
 import hmac
 import json
 import logging
@@ -40,6 +42,7 @@ import time
 import urllib.parse
 
 import forza_clubs as clubs
+import forza_friends as friends
 import forza_limits as limits
 import forza_leaderboards as leaderboards
 import forza_market as market
@@ -142,6 +145,12 @@ def add_arguments(parser):
                         help="offer the server's Monthly Rivals time trials "
                              "(forza_scores.TIME_TRIALS; a trial needs a score on its board "
                              "to have a rival)")
+    parser.add_argument("--trap-limits", action="store_true",
+                        help="reject speed trap scores above the trap's Xbox record "
+                             "(forza_scores.SPEED_TRAP_LIMIT_KMH) and trap/zone speeds above "
+                             "470 km/h, and remove kept ones at start; by default they are "
+                             "only logged (modified and modded cars go faster)")
+    parser.add_argument("--no-trap-limits", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--world-round-minutes", type=float, default=WORLD_ROUND_MINUTES,
                         help="length of a Horizon World round in minutes (default "
                              "%(default)s: endless). Only for clients with world_drop_in off, "
@@ -155,6 +164,7 @@ def configure(args):
     DUMP = args.dump_requests
     WORLD_ROUND_MINUTES = max(0.0, args.world_round_minutes)
     scores.TIME_TRIALS_ENABLED = args.time_trials
+    scores.ENFORCE_TRAP_LIMITS = args.trap_limits and not args.no_trap_limits
     TEST_NOTIFICATIONS["on"] = args.test_notifications
     if args.playground_games:
         wanted = [p.strip() for p in args.playground_games.split(",") if p.strip()]
@@ -275,13 +285,15 @@ def user_write_race_stats(xuid, body):
     record.update(userLevel=stats["userLevel"], userXP=stats["userXP"],
                   currentCredits=stats["currentCredits"], totalWinnings=stats["totalWinnings"],
                   onlineWinnings=stats["onlineWinnings"],
-                  races=record.get("races", 0) + 1, lastRace={
-                      k: (v.hex() if isinstance(v, bytes) else v) for k, v in stats.items()})
+                  races=record.get("races", 0) + 1, lastRace=dict(
+                      {k: (v.hex() if isinstance(v, bytes) else v) for k, v in stats.items()},
+                      verified=caller_trusted()))
     save_player(xuid, record)
     log.info("title: race stats %016X: event %d hopper %d place %d/%d finished %d, level %d "
-             "XP %d credits %d", xuid, stats["eventId"], stats["hopperId"],
+             "XP %d credits %d%s", xuid, stats["eventId"], stats["hopperId"],
              stats["userFinishPosition"], stats["maxPlaces"], stats["finished"],
-             stats["userLevel"], stats["userXP"], stats["currentCredits"])
+             stats["userLevel"], stats["userXP"], stats["currentCredits"],
+             "" if caller_trusted() else " (unverified caller)")
     return x.reply()
 
 
@@ -518,6 +530,54 @@ SERVICES = {
 }
 
 
+# --- Who is calling ---------------------------------------------------------------------------
+# The game names the player of a call in X-UserId, which anyone can write. Our game adds its
+# Live identity's friends key (X-Friends-Key, 32 hex digits: forza-recomp
+# src/kernel/lsp_request_header.h), the secret the XUID was bound to at its first HELLO
+# (forza_friends.Store.claim; the launcher's shader list upload proves itself the same way).
+# Addresses can't stand in for it: behind a tunnel (docs/hosting.md, playit.gg) every HTTP
+# connection and every UDP datagram come from the tunnel agent's address, and the TCP source
+# ports have nothing to do with the players' UDP ports.
+#   TRUSTED     the key matches the XUID's
+#   UNVERIFIED  no key (games before the key, or someone else), or an XUID with no key on
+#               record (it never signed in with one): accepted for now, logged, and never
+#               taken as the player's word where it matters (caller_trusted())
+#   FORGED      a key that is not the XUID's: calls that change anything are refused
+TRUSTED, UNVERIFIED, FORGED = "trusted", "unverified", "forged"
+_caller = contextvars.ContextVar("lsp_caller", default=UNVERIFIED)
+READ_PREFIXES = ("Get", "Search", "Download")
+# Reads by name that change state: the session host's next round (a world's event).
+STATE_CHANGING = {("Hopper", "GetGameOptions")}
+UNVERIFIED_LOG_SECONDS = 600
+_unverified_logged = {}  # xuid -> when its last unverified call was logged
+
+
+def caller_trusted():
+    """The title service call being handled carries its player's own friends key."""
+    return _caller.get() == TRUSTED
+
+
+def verify_caller(server, xuid, headers):
+    """TRUSTED, UNVERIFIED or FORGED for a call's X-UserId and X-Friends-Key."""
+    given = headers.get("x-friends-key")
+    if given is None:
+        return UNVERIFIED
+    record = server.friends.store.get(xuid) if server is not None and xuid else None
+    if not record or not record.get("key"):
+        return UNVERIFIED
+    try:
+        key = bytes.fromhex(given.strip())
+    except ValueError:
+        return FORGED
+    if len(key) != friends.KEY_SIZE:
+        return FORGED
+    return TRUSTED if hmac.compare_digest(record["key"], friends.key_hash(key)) else FORGED
+
+
+def changes_state(short, method):
+    return not method.startswith(READ_PREFIXES) or (short, method) in STATE_CHANGING
+
+
 def service_call(headers, body, server=None):
     """bin/xtsw call -> reply body."""
     cls = headers.get("x-classname", "").split(",")[0]          # Forza.WebServices.Hopper
@@ -534,15 +594,31 @@ def service_call(headers, body, server=None):
     fn = SERVICES.get((short, method))
     if (short, method) == ("Hopper", "GetGameOptions"):  # needs the server's world sessions
         fn = lambda xuid, body: hopper_get_game_options(server, xuid, body)  # noqa: E731
+    state = verify_caller(server, xuid, headers)
+    if state == FORGED and changes_state(short, method):
+        log.warning("title: %s.%s for %016X with another player's friends key: refused", cls,
+                    method, xuid)
+        return x.failure(5, "not this player's call")
+    if state == UNVERIFIED and xuid:
+        now = time.monotonic()
+        if now - _unverified_logged.get(xuid, -UNVERIFIED_LOG_SECONDS) >= UNVERIFIED_LOG_SECONDS:
+            _unverified_logged[xuid] = now
+            if len(_unverified_logged) > 20000:
+                _unverified_logged.clear()
+            log.info("title: calls for %016X carry no friends key it is bound to (an older game, "
+                     "or someone else): accepted as unverified", xuid)
     if fn is None:
         log.info("title: %s.%s from %016X (%d bytes): empty answer", cls, method, xuid,
                  len(body))
         return x.reply() + bytes(EMPTY_ANSWER)
+    token = _caller.set(state)
     try:
         return fn(xuid, body)
     except ValueError as e:  # parameters that don't parse
         log.warning("title: %s.%s: bad parameters (%s): %s", cls, method, e, body.hex())
         return x.failure(2, "bad parameters")
+    finally:
+        _caller.reset(token)
 
 
 ADMIN_TOKEN = os.environ.get("FORZA_ADMIN_TOKEN", "")

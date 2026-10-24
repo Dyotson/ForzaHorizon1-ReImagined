@@ -139,9 +139,13 @@ set(FORZA_SOURCES
     src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/native_car_tuning.cpp
+    src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_tiling.cpp
+    src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
@@ -149,6 +153,7 @@ set(FORZA_SOURCES
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
     src/hooks/ambient_leaderboard.cpp
+    src/hooks/teleport_velocity.cpp
     src/hooks/challenge_hud.cpp
     src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
