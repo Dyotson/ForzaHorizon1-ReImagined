@@ -1199,6 +1199,122 @@ was dropped when other games started):
 - Not tested yet: with the FSR 3, DLSS and SMAA scene paths (they look for the game's scene and HUD
   targets), ultrawide, render scale above 1, photo mode, Windows and a Deck. It stays off by default.
 
+## Scene resolution below 720p: `scene_resolution` (#347, 2026-10-24)
+
+**Status: experimental, not in the launcher.** `scene_resolution = "540"` draws the 3D scene and
+its effects at 960x540 under the 720p HUD and works in free roam, the pause menu, the map, photo
+mode, car select and the event screens, but loading a race crashes in the game's heap (3 of 3
+tries, below). Default `"720"` changes nothing (the hooks pass through).
+
+The idea: render scale starts at 1 (the game's 1280x720). For integrated graphics that cannot hold
+the frame rate (#263 Iris Xe, #268 Vega), draw the scene smaller and let the game's tonemap scale it
+onto its 720p front buffer; the HUD, text and menus are drawn on that front buffer at 720p as
+before, and the SDK's upscaling filter (FSR 1) takes the 720p picture to the window. Game hooks only
+(`src/hooks/scene_resolution.cpp`, `src/platform/scene_resolution.h`), no SDK change: the SDK's
+render target cache scales by whole numbers only, so a fractional scale there would mean
+fractional EDRAM tiles, resolves and texture coordinates for some passes and not others (the
+ultrawide path, `docs/ultrawide.md`, gave up on fractional heights for that reason).
+
+**How the game sizes its scene** (disc addresses; TU4 ones in the hook file):
+
+- The render scenario (`TilingScenario`, `src/platform/scene_tiling.h`) is an entry of a table at
+  `0x832A4860` (TU4 `0x833901F8`), 0x4D0 bytes each: name, width, height, MSAA, tile count and the
+  EDRAM tiles as rectangles. All five are 1280x720: "1280x720 4xMSAA Horizontal Split" (three
+  tiles), "2xMSAA" (two), "1xMSAA No Split", "Largest 2xMSAA No Split" (one 1120x584 tile, chosen
+  by no XML) and split screen (a 1280x368 tile per player). `sub_82C3F374` makes each scenario's
+  surfaces from it (`sub_82C3F2E8`: full size and tile size; colour, 8888, depth), the scenario
+  switch (`sub_82C3F548`) writes its size into the D3D presentation parameters, and the scene's
+  passes take their sizes from it. `UITilingScenario` (2 in every XML) is the menus' one.
+- The screen textures come from a table of 41 entries at `0x832295B0` (TU4 `0x8330C830`, 0x2C bytes,
+  copied by `sub_8257C220` into texture objects at its r3 + 0x1A0, 0x34 bytes each): a flag, then
+  width and height as divisors of a hard-coded 1280x720 (`WorldRender`, `ScratchBuffer`,
+  `ShadowMask`, `WorldDepth`, `Bloom`, the post chain's `Shared` buffers, the `FrontBuffer_0/1` the
+  HUD is drawn on and VdSwap presents, `MapRender`), or absolute sizes (shadow maps, cube map, a
+  640x360 half-size buffer).
+- The world view (`sub_82444E60`) draws with the view's viewport (+0x1A8), 0,0,1280,720, placed
+  at (surface - viewport): with a smaller surface the scene moved off it.
+- The post-processing quad (`sub_823E5628`) maps a rectangle in screen pixels to its source texture
+  texel for texel; the tonemap (the screen in two halves) names 720p rectangles.
+
+**What it does** (found with RenderDoc captures and call logs, `qrenderdoc --python`):
+
+1. Scenario 3 becomes one pass at 960x540 with the most MSAA that fits the 10 MB of EDRAM: 2x
+   (`scene_msaa = off` gives none), and the full-screen scenarios 0-2 are replaced by it (the
+   scenario hook of `scene_tiling.cpp`; the track draws its one-tile pass directly, as with
+   `scene_msaa = off`). The game's own tiled path at 960x540 (three tiles of 192 lines) left the
+   first tile blank.
+2. The scene's screen textures get 960x540 (the divided ones 960/d and 540/d rounded up to 32, as
+   the game rounds); the front buffers and `MapRender` stay 720p. Changing only the scenario drew
+   the scene but resolved it into 1280x720 textures ("Resolve region 0 <= x < 1280 is outside the
+   surface pitch 960"); changing the menus' scenario too broke the HUD.
+3. The world view's 1280x720 viewport is 960x540 while it is drawn, and back afterwards (the
+   HUD's projected name tags read it). Without this the scene was empty: RenderDoc showed a
+   degenerate host viewport.
+4. A post-processing rectangle ending at x = 1280 or y = 720 over a 960x540 source is scaled to it:
+   the tonemap stretches the scene over the 720p front buffer (bilinear). Without it the scene was
+   drawn texel for texel in the top-left 960x540 with the edges smeared.
+5. Scenario 3's full-size 2:10:10:10 surface stays 1280x720: the render target manager's
+   full-screen filters (fades and blurs on loads and camera cuts, `sub_82C3E310`..`sub_82C3EA60`)
+   draw there and resolve into the 720p front buffers; at 960 their resolves were refused (60 a
+   second for 9 s after loading free roam, 7 at each camera change).
+6. A 1280x720 post-processing pass (`sub_824426B8`) into one of the scene's textures is drawn at
+   960x540 (one at load time resolves into the full-size `Shared` texture).
+7. The D3D device keeps a 1280x720 back buffer (it is made with the first scenario's size).
+
+It stays at 720p with the SDK's scene reconstruction (`fh1_upscaler`: FSR 3, DLSS, SMAA), separate
+scene anti-aliasing or ultrawide gameplay, which find the scene by its 720p targets (logged).
+
+**The race-load crash.** Signing up for the festival race at the spawn and starting it crashes
+while the race loads: a null read in the game's allocator (`sub_82D7AB..`, chain
+`82E3CBA8 82E3CC3C 82CE2A60 82F0B300` in TU4), so most likely guest memory was overwritten
+earlier. The textures made smaller have less memory: a 1280x720 resolve into a 960x540 texture
+(the `Shared` one, twice a session) writes 720 rows past its end; item 6 removed that resolve,
+and the crash stayed. Keeping the textures' memory at the 720p size (the size computation,
+`sub_82A40F28`, given 720p dimensions inside `sub_8257C220`) garbled the picture: the texture
+layout follows those sizes. Patching the texture objects after `sub_8257C220` made instead
+(memory for 720p, sizes for 540p) did not crash, but in some states the scene came out 1:1 in the
+lower right 960x540 of a 720p target. Next: a write watch on the guest heap block that is
+corrupted, or the race renderer's own screen-sized buffers.
+
+**360p** (640x360, 4x MSAA in one pass) came out magnified with blown-out rectangles and magenta,
+and after about 10 s of driving the render thread looped in the allocator's list walk
+(`sub_82D78490`): the same kind of corruption, sooner. The game has textures of its own at 640x360
+that a 640x360 scene collides with. Not offered.
+
+**Measured** (TU4 on this PC's RX 9060 XT, RADV; a copy of the Xenia save, warm scratch shader
+cache, offline, audio muted, 1920x1080 window with FSR 1; BENCH lock held, no other game; GPU-side
+plugin from the 2026-10-23 overlay). Each run: free roam, 20 s standing at the spawn, then 15 s at
+full throttle; guest fps from the `RECOMP_PERF` CSV, GPU time from the game's DRM client
+(`drm-engine-gfx` in fdinfo). A GPU-limited PC is emulated with render scale 3 uncapped (9 host
+pixels per guest pixel, the GPU 99% busy): the per-pixel work grows as on a GPU 9 times weaker,
+the per-draw work does not. Two runs each at scale 3, alternating; mean of standing / driving:
+
+| Render scale, frame rate | Scene | MSAA | fps (stand / drive) | GPU ms a frame | GPU busy |
+| --- | --- | --- | --- | --- | --- |
+| 3, uncapped | 720p | 4x, three tiles (game) | 34.9 / 35.0 | 28.4 / 28.3 | 99% |
+| 3, uncapped | 540p | 2x, one pass | 50.3 / 50.5 | 19.6 / 19.6 | 99% |
+| 3, uncapped | 720p | none (`scene_msaa = off`) | 42.1 / 42.5 | 23.5 / 23.3 | 99% |
+| 3, uncapped | 540p | none (`scene_msaa = off`) | 54.1 / 53.4 | 18.3 / 18.5 | 99% |
+| 1, uncapped | 720p | 4x, three tiles | 144.9 / 158.3 | 5.64 / 5.20 | 82% |
+| 1, uncapped | 540p | 2x, one pass | 203.0 / 210.3 | 4.06 / 3.94 | 83% |
+| 1, 30 fps | 720p | 4x, three tiles | 30.0 / 30.0 | 6.86 / 5.93 | 21% / 18% |
+| 1, 30 fps | 540p | 2x, one pass | 30.0 / 30.1 | 6.16 / 6.76 | 18% / 20% |
+
+- GPU-limited: 540p gives +44% fps (35 to 50) and 31% less GPU time a frame, of which the smaller
+  scene alone (both without MSAA) is +28% fps and 22% less GPU time; the rest is 2x MSAA in one
+  pass instead of 4x in three tiles. The HUD, post-processing at 720p and the FSR 1 pass do not
+  shrink.
+- At render scale 1 uncapped the frame rate rises 33-40% (145-158 to 203-210 fps).
+- At 30 fps the GPU clocks down with the load, so its time a frame says nothing here (an integrated
+  GPU that cannot hold 30 is the case above).
+- Not measured on a real integrated GPU (none here; this PC's CPU graphics are off) or a Steam Deck,
+  which is limited by the command processor's per-draw work (#45): one pass instead of three tiles
+  also takes most of the tiles' CPU work away (as `scene_msaa = off` does), which may help it more
+  than the pixels.
+- Screenshots (scratch, not in Git): 720p and 540p side by side at the spawn, driving, bumper and
+  cockpit cameras, pause menu, map, photo mode, event and car select screens: the scene is slightly
+  softer, the HUD text is the same.
+
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
 Patch 0064 completes a pending stdio flush before the storage writer sleeps,

@@ -40,6 +40,7 @@ namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
 void LogGuestThreads(const char* why);  // src/debug/fault_guard.cpp
 void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
+void PatchSceneResolution();  // src/hooks/scene_resolution.cpp
 void LogDlcPackages(const std::filesystem::path& user_data_root);  // src/debug/dlc_log.cpp
 }  // namespace forza
 
@@ -172,6 +173,8 @@ class ForzaApp : public rex::ReXApp {
     resume_watcher_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
+    // The 3D scene below 720p (scene_resolution, #347): scenario and screen texture tables.
+    forza::PatchSceneResolution();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
     auto* vfs = runtime()->file_system();
