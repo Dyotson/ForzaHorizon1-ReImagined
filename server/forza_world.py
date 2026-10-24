@@ -251,17 +251,22 @@ class Worlds:
         return [(sid, st["campaign"]) for sid, st in self.state.items()
                 if st.get("campaign") is not None]
 
-    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False):
+    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False,
+               winnings=None):
         """A player's race result (User.WriteRaceStatsEx): logged with the campaign round
         of the world it was in, if one started there recently. The ledger takes it only from
         the player's own game (trusted), for a Co-op Festival race in that world's session.
         Returns (sid, event) or None."""
         if coop and trusted and session:
-            ledger.LEDGER.report(xuid, session, place, finished)
+            ledger.LEDGER.report(xuid, session, place, finished, winnings=winnings)
         now = time.monotonic()
         for sid, (campaign, since, members, by) in list(self.rounds.items()):
             if now - since > self.RESULT_WINDOW:
                 del self.rounds[sid]
+                continue
+            # only the round of the world it was reported in: an earlier world's round may
+            # still list the player (it left and raced elsewhere within RESULT_WINDOW)
+            if session is not None and sid != session:
                 continue
             if xuid in members:
                 log.info("co-op: world %s campaign event %d (%s, asked by %s): %s place %d/%d "

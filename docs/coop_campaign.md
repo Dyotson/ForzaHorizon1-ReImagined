@@ -459,8 +459,10 @@ About 8-12 days.
 
 - **M2, guests too:** each launcher applies the result if the event is unlocked in that save.
   Street races if the traffic test passes. The prize car through the Message Center or the
-  launcher (`garage.py` already adds stock cars).
-- **M3:** the base game (its addresses), then the in-game grant (option B) for instant credit.
+  launcher (`garage.py` already adds stock cars). Done, except the prize car, and street races
+  stay off: see "Milestone 2".
+- **M3:** the base game (its addresses), then the in-game grant (option B) for instant credit;
+  the prize car (see "What milestone 3 needs").
 - **M4:** the event prompt at its world marker instead of the chat command; the named CPU
   field if `AIFieldId` or a hook makes it possible.
 
@@ -682,6 +684,181 @@ Not done in milestone 1: guests' careers (M2: the ledger keeps their results; ea
 would apply them when the event is unlocked in its save), the prize car (`Rewards_EventPrizes`),
 the base game's addresses for the client hook (the server and launcher parts are the same for
 both), the exact time of day, the named CPU field and traffic.
+
+## Milestone 2: the guests' careers (2026-10-24)
+
+**Every player's own result goes to that player's career.** The ledger
+(`server/forza_coop_ledger.py`) now offers each human of a round its own result, not only the
+host's. The milestone 1 rules stay:
+
+- only a player's own calls count (its friends key);
+- only its first report for that world's session counts, and only while the round is open;
+- the place must be on the round's grid and the race finished.
+
+A guest's place must also agree with the host's game. Only the requester's game writes
+`XSessionWriteStats` for every human at the race's end (phase A), so a guest's own report is
+checked by a second console. Only a write from a game that proved its XUID with its friends key
+counts (`forza_stats.write(verified=...)`): a second client claiming the host's XUID can neither
+confirm nor deny a guest's place. Without that write (the host's game left before the end) the
+guest's result is not offered. The host's own place still counts without it, as in milestone 1,
+because its own game wrote both. The stats store skips a session's writes for a minute after
+rating it; the ledger now gets every write first (`forza_stats.write`), so that skip can't hide
+the race's write from it. `GET /coop/results` now also gives each result's `until` (when the
+server drops it unapplied) and `host` (the gamertag of the host who started it). The co-op log
+line names the campaign round of the world the result was reported in, and none when that world
+had no campaign round.
+
+**A guest whose career has not reached the event.** `/event` can start any of the 70 festival
+events. A guest at a lower wristband may not have the event unlocked: style-1 events unlock a
+whole level at a time. The launcher doesn't confirm such a result, so it waits on the server.
+It goes in at the first session after the career unlocks the event, at the place it was earned,
+if that still beats the save's place. After the session the Play page lists what was added and
+what waits, for example: "Co-op results: FR05 (8th in DriverA's world) waits: this career has not
+unlocked FR05 yet. It is added at the first session after you unlock it; the server keeps it
+until 23 Nov 2026."
+
+The bounds on waiting results:
+
+- they are kept for 30 days (`KEEP_DAYS`);
+- a player has at most 20 (`MAX_WAITING`) grantable results of closed rounds. Beyond that, the
+  ones earned as a guest are dropped first, then the oldest, with a log line. A report in a round
+  that is still open doesn't count yet, since it may never become grantable (not finished, no
+  host write);
+- the host's `/event` is refused while 20 results of rounds it asked for wait, so its own rounds
+  never drop its own results. Results it earned as a guest don't count, since the cap drops those
+  first. The notice says why they wait (an event the career has not unlocked) and when the oldest
+  expires;
+- the launcher drops, with a note, a result it can never apply: one from a game it did not start,
+  or from a time when two saves' sessions overlapped. A result earned with another save waits for
+  that save's next session;
+- a round leaves the ledger once it is closed and none of its results waits (each one confirmed,
+  dropped, expired or not grantable).
+
+Waiting was chosen over dropping because the result is real, and the career unlocks the
+event's level with a later wristband.
+
+**Double rewards: the grant pays the prize less what the online race paid.** An online race
+pays credits of its own, online winnings (`Main/OnlineWinnings`, added to `Main/Credits`), and
+online XP (`Main/OnlineXP`, the XP REWARDS screen). In the runs below the online winnings were:
+
+| Round | A (7th) | B (8th) |
+| --- | --- | --- |
+| FR69 | 5,000 | 5,000 |
+| FR05 | 2,500 | 1,875 |
+| FR05, second session | 2,500 | 2,500 |
+| FR05, third session | 2,500 | 2,500 |
+
+The career prize is a different amount: FR69's 7th place pays 4,300 and FR05's 750.
+
+Two ways to stop paying both were checked:
+
+- **The playlist's `payoutModifier`: no.** The post-race payout (`sub_826C0C00`) multiplies a
+  race's credits by `sub_82917058`'s float: the online game's `+2069` in a Find Game (mode 7 at
+  `+40`), 1.0 otherwise. Its place, after three flags, fits the playlist's `payoutModifier`,
+  but no copy into it was found. A Co-op Festival served with `payoutModifier` 0 still paid
+  both players 2,500 for FR05 (the second session). So either that float is not the playlist's,
+  or the world's rounds don't run in that mode, or the winnings come from another path. The client's
+  multiplayer rewards are Sean's draft PR #231's area, so this milestone doesn't hook them.
+- **The grant: yes.** A race's stats (`User.WriteRaceStatsEx`) carry the player's
+  `onlineWinnings`, written before that race pays: A's FR05 write in the second session said
+  649,731 credits and 13,750 winnings, and its save after the race had 652,231 and 16,250. So
+  the ledger keeps each result's value at the round's report and at the player's next race,
+  from any playlist, with that race's time (`winnings`, `winnings_at` in `GET /coop/results`).
+  The launcher pays the event's prize less the difference. Every save of a PC shares the Forza
+  Live identity, so it trusts the next race only when its time falls in a session of the same
+  save, and only when the value grew. Otherwise the save's own `Main/OnlineWinnings` stands in,
+  but only when the grant runs right after the session the result was earned in. When neither
+  applies (a locked result applied weeks later, after races in another save), or the result has
+  no `winnings` (an older server, or a milestone 1 ledger's round), what the race paid is not
+  known. The grant then adds the result and the XP but no prize: "+0 CR (no prize: what the
+  online race paid is not known)". The player gets the larger of the two at most, never both.
+
+What stays:
+
+- The online XP is the online track's. The grant's wristband XP goes to `Main/XP`, which the
+  online races left alone (11,230 before and after the first session in both saves).
+- The grant pays the prize and the wristband XP once per improvement. That is less than single
+  player, which pays the prize again on every replay; replaying a co-op event earns only the
+  online winnings.
+
+**Street races: off, and no career result.** Phase A found that the multiplayer race flow
+(`game_multiplayer_race_flow.xml`) turns traffic spawning off before every online race. Traffic
+would need two things beyond this milestone: a change to that step for campaign rounds, and
+traffic shared between the consoles (each game spawns its own, and FH1's online free roam has
+none). A street race without traffic is not the career's street race. So:
+
+- the server keeps street races off by default;
+- `--coop-street`, a private server's test switch, offers them for fun, and the `/event` notice
+  says "street race (no traffic online, so no career result)";
+- the ledger gives their results to nobody's career;
+- the launcher's street payout (100/50/25 % to the top three) stays for when traffic works.
+
+**Acceptance, two TU4 games** (local server; DriverA hosts, DriverB is the guest). Both saves
+were copies of one career with FR69 (level 6, R3) and FR05 (level 0, B class AWD) not raced. In
+B's save, FR05 was locked, as for a guest whose career is behind.
+
+| Milestone 2 acceptance | Result |
+| --- | --- |
+| Both race; each place is in the ledger and checked against the host's game | FR69 (Red Rock Descent, six CPU drivers in R3 cars): A 7th, B 8th; FR05 (Gladstone Dirt Sprint, 2 laps): A 7th, B 8th. The host's game wrote relative scores 1 and 0 for both rounds (7th and 8th), and every call carried the players' keys; `round 4c2dddcd27130f9c (FR69) closed with 2 result(s); DriverA place 7/8; DriverB place 8/8` |
+| The guest's launcher applies the guest's result | B: "FR69 at place 8 (was not raced): +70 XP, +2,100 CR". The save decoded after: XP 11,230 -> 11,300, `Career_EventResults` 233 = 8. B's next game loaded it and showed the credits, 646,536 after both of B's grants (`screenshots/2026-10-24_coop_guest_granted_save_credits.jpg`) |
+| A locked event waits, with a note, and applies once unlocked | B: "FR05 (8th in DriverA's world) waits: this career has not unlocked FR05 yet ..." (`applied 1, unchanged 0, locked 1`). `GET /coop/results` kept FR05 for B. After FR05 was unlocked in the save (standing in for the career's own unlock), the next grant gave "FR05 at place 8 (was not raced): +30 XP, +380 CR", and the server had nothing left for B |
+| The host as in milestone 1 | A: FR69 7th (+80 XP, +4,300 CR), FR05 7th (+40 XP, +750 CR); both confirmed, and the ledger file emptied once every result was settled. A second session's FR05 (7th and 8th again) was "unchanged" for both and confirmed |
+| No double rewards | The grants above ran before the deduction existed: they paid the prize on top of the online winnings, which is the double reward. A third session raced FR05 again with its result removed from both saves (so it counts as not raced). The server sent `"winnings": [16250, null]` for A and `[15625, null]` for B. The saves after the session had `Main/OnlineWinnings` 18,750 and 18,125: the race had paid both 2,500. The grants: "FR05 at place 7 (was not raced): +40 XP, +0 CR (the prize less the 2,500 CR the online race paid)", and the same at 8th with +30 XP. Credits stayed at 654,731 and 651,536; the result and the XP went in. `Main/XP` was unchanged by all three sessions' races |
+
+Seen along the way:
+
+- `/event FR63` ("MUST BE AUDI", class S): neither save had an S-class Audi, so both games said
+  "NO CARS AVAILABLE ..." in the lobby. The round started and ended at once with nobody on the
+  grid (`closed with 0 result(s)`). The server can't see garages. The `/event` notice already
+  names the restriction ("FR63: S class, Audi, 7 CPU drivers, 1 lap, Sunset"); a check against
+  the garage would need the client (M4).
+- The log line `co-op: world ... campaign event ...` named an earlier world's round while that
+  round was within its 20-minute window. It now uses the world the result was reported in.
+
+Tests: `server/test_forza_coop_ledger.py`:
+
+- each player's result goes to that player's launcher only, and once;
+- a guest's place needs the host's agreeing write; the host's own place doesn't;
+- a write from a client that claims the host's XUID without its key is ignored;
+- the host's write counts even within the stats store's one-minute repeat filter;
+- street races give no result;
+- waiting results are capped per player without touching others: guest results go first, and a
+  report in a round still open doesn't push out a valid one;
+- 30 days at most;
+- `/event` counts only the rounds the player asked for, and its notice says why and until when;
+- a milestone 1 ledger file still loads;
+- the online winnings around a round: its report and the player's next race, with its time.
+
+`server/test_forza_campaign.py`: the reported world's round names a result, and a world without
+a campaign round names none. In `launcher/test_coop_grant.py`:
+
+- a guest's locked result waits unconfirmed and applies at a later session once unlocked;
+- the prize is less what the online race paid, using the server's bracket only when its race was
+  in the same save, or the save's `Main/OnlineWinnings` only right after the result's session;
+- otherwise, or without `winnings`, no prize;
+- the notes are shown even when the confirmation fails;
+- results of a game the launcher did not start are dropped with a note;
+- the notes' wording and places.
+
+### What milestone 3 needs
+
+- **The base game:** the client's CPU skill hook at the base addresses (`sub_82568BD8` and the
+  world event op 2 path; the table under "Evidence"). The server and launcher parts serve both
+  builds unchanged.
+- **The in-game grant (option B):** instant credit, and for players who start the game outside
+  the launcher (their results wait, unapplied, today). It can read the same ledger and keep its
+  rules (own results only, the host's write, improvement only, no wristband level).
+- **The prize car** (`Rewards_EventPrizes`, 17 events) and any other multiplayer reward or
+  unlock: left out here because Sean's draft PR #231 changes the multiplayer rewards and
+  unlocks. M3 should build on it once it lands, not beside it.
+- **Results that wait:** an in-game note when a co-op result waits (today only the launcher's
+  Play page says so), and a way for a player to drop one.
+- **Before `/event`:** whether every player has a car for the event (FR63 above), which needs
+  the client; this could also be M4 with the event prompt.
+- **Online winnings at the source:** the game asks the server for a race multiplier at every
+  race start (`Hopper.GetRaceMultipliers`, `specialMultiplier`, always 1.0 today). Whether it
+  scales the online winnings, the online XP or both is not measured. If it scales only the
+  winnings, a co-op round could be served 0 and the grant could pay the whole prize again.
 
 ## Open questions (measure first)
 

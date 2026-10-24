@@ -154,6 +154,11 @@ class MainWindow(QMainWindow):
         self.poll = QTimer(self)
         self.poll.setInterval(500)
         self.poll.timeout.connect(self._poll)
+        self._coop_notes = []    # what the co-op results thread applied or keeps waiting (#309)
+        self._coop_thread = None
+        self._coop_timer = QTimer(self)
+        self._coop_timer.setInterval(500)
+        self._coop_timer.timeout.connect(self._show_coop_notes)
         self._first_run()
         self.show_page(0)
         self.refresh_all()
@@ -476,6 +481,18 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.session.stop()
 
+    def _show_coop_notes(self):
+        """When the co-op results thread is done: what it added to the career, and the results
+        that wait (an event this career has not unlocked), under the Play page's last message."""
+        if self._coop_thread is not None and self._coop_thread.is_alive():
+            return
+        self._coop_timer.stop()
+        self._coop_thread = None
+        notes, self._coop_notes = self._coop_notes, []
+        if notes and self.session is None:
+            current = self.play.msg.text()
+            self.play.show_message("\n".join(([current] if current else []) + notes))
+
     def update_haptics(self, settings):
         if self.session:
             self.session.update_haptics(settings)
@@ -511,11 +528,15 @@ class MainWindow(QMainWindow):
             shader_share.share_in_background(self.cfg, self.session_plan)
         except Exception as e:
             paths.log_error("start the shader list upload", e)
-        try:  # co-op campaign results (#309): the host's festival event results to its save
+        try:  # co-op campaign results (#309): the player's own festival event results to its save
             profile = getattr(self.session_plan, "save_profile", None)
             coop_grant.record_session(self.cfg, profile, getattr(self, "_session_started", 0),
                                       time.time())
-            coop_grant.after_session_in_background(self.cfg, profile)
+            notes = self._coop_notes = []
+            self._coop_thread = coop_grant.after_session_in_background(
+                self.cfg, profile, lambda line: (print(line), notes.append(line)))
+            if self._coop_thread is not None:
+                self._coop_timer.start()
         except Exception as e:
             paths.log_error("start applying co-op results", e)
         self._shader_warmup_status = None
