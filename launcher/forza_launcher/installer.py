@@ -5,6 +5,7 @@ import io
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from . import TITLE_ID, paths
@@ -15,7 +16,7 @@ import install_dlc  # noqa: E402
 import xcontent_extract  # noqa: E402
 import xiso_extract  # noqa: E402
 
-from . import xex_reference, xexcheck  # noqa: E402
+from . import dlcscan, xex_reference, xexcheck  # noqa: E402
 
 GOD = 0x7000
 # Not copied from a disc image: the console system update the disc carries (tools/xiso_extract.py).
@@ -148,7 +149,7 @@ def extract_game(package: str, dest: Path, progress, cancelled=lambda: False, no
 
 _DLC_CACHE = {}
 
-_NO_DLC = ("No DLC found in that folder. Pick the folder of your DLC packages, or a Xenia content "
+_NO_DLC = ("No DLC found in that folder or its subfolders. Pick the folder of your DLC packages, or a Xenia content "
            "folder (or its 0000000000000000, 4D5309C9 or 00000002 folder).")
 
 
@@ -180,45 +181,72 @@ def dlc_warning(found) -> str:
             "installing DLC, try removing these packages first.")
 
 
-def describe_dlc_folder(folder: str):
-    """([(name, display name)] of the DLC in a folder, [(name, reason)] of what was skipped).
-    The DLC is STFS packages (files) and/or extracted package folders (a Xenia content folder or
-    one of its subfolders). Raises InstallError. Cached per folder and modification time (each
-    package is opened to read its name)."""
-    p = Path(folder).expanduser()
-    key = _dlc_key(folder)
-    if key not in _DLC_CACHE:
-        packages, dirs, skipped = list_dlc(p)
-        for _f, _n, pkg in packages:
-            for f in getattr(pkg, "files", []):
-                try:
-                    f.close()
-                except Exception:
-                    pass
-        _DLC_CACHE[key] = ([(f.name, name) for f, name, _ in packages] + [(n, disp) for _p, n, disp, _h in dirs],
-                           skipped)
-    return _DLC_CACHE[key]
-
-
-def list_dlc(folder: Path):
-    """What a DLC folder holds: ([(path, display name, package)] of the STFS marketplace packages,
-    [(path, name, display name, header path)] of the extracted package folders, [(name, reason)]
-    skipped folders)."""
+def scan_dlc(folder: Path):
+    """A DLC folder read recursively: (dirs, files, zips, skipped), see dlcscan.scan_tree."""
     if not folder.is_dir():
         raise InstallError(f"{folder} is not a folder.")
     try:
-        _root, dirs, files, skipped = install_dlc.scan_folder(str(folder))
+        root = install_dlc.resolve_root(os.path.abspath(str(folder)))
+        return dlcscan.scan_tree(root, install_dlc._child, install_dlc._has_files,
+                                 install_dlc.header_display_name, install_dlc.KNOWN_NAMES)
     except OSError as e:
         raise InstallError(f"Cannot read {folder}: {e}")
+
+
+def _open_dlc_files(files, skipped):
+    """[(path, display name, package)] of the marketplace packages among `files`; what is not goes to `skipped`."""
     out = []
     for f in files:
         try:
             pkg = xcontent_extract.open_package(f)
         except (SystemExit, Exception):
+            skipped.append((os.path.basename(f), "damaged or unreadable package"))
             continue
         if pkg.hdr.content_type == install_dlc.MARKETPLACE:
             out.append((Path(f), pkg.hdr.display_name, pkg))
-    return out, dirs, skipped
+        else:
+            skipped.append((os.path.basename(f), "a package, but not DLC"))
+            _close(pkg)
+    return out
+
+
+def _close(pkg):
+    for f in getattr(pkg, "files", []):
+        try:
+            f.close()
+        except Exception:
+            pass
+
+
+def _dedupe(packages, dirs, skipped):
+    """Drop a package whose name was seen already (the same pack in two places); the first one is kept."""
+    seen, pk, dr = set(), [], []
+    for item in packages:
+        key = item[0].name.upper()
+        if key in seen:
+            skipped.append((item[0].name, "duplicate, installed once"))
+            _close(item[2])
+        else:
+            seen.add(key)
+            pk.append(item)
+    for item in dirs:
+        key = item[1].upper()
+        if key in seen:
+            skipped.append((item[1], "duplicate, installed once"))
+        else:
+            seen.add(key)
+            dr.append(item)
+    return pk, dr
+
+
+def list_dlc(folder: Path):
+    """What a DLC folder holds, subfolders included: ([(path, display name, package)] of the STFS
+    marketplace packages, [(path, name, display name, header path)] of the extracted package
+    folders, [(name, reason)] of what was skipped). Zips are not opened here (describe_dlc_folder
+    and install_dlc_folder do)."""
+    dirs, files, _zips, skipped = scan_dlc(folder)
+    packages, dirs = _dedupe(_open_dlc_files(files, skipped), dirs, skipped)
+    return packages, dirs, skipped
 
 
 def list_dlc_packages(folder: Path):
@@ -226,10 +254,68 @@ def list_dlc_packages(folder: Path):
     return list_dlc(folder)[0]
 
 
+def describe_dlc_folder(folder: str):
+    """([(name, display name)] of the DLC in a folder, [(name, reason)] of what was skipped).
+    The DLC is STFS packages (files), extracted package folders (a Xenia content folder or one of
+    its subfolders), and packages inside .zip archives, found in subfolders too. Raises
+    InstallError. Cached per folder and modification time (each package is opened to read its name)."""
+    p = Path(folder).expanduser()
+    key = _dlc_key(folder)
+    if key not in _DLC_CACHE:
+        dirs, files, zips, skipped = scan_dlc(p)
+        packages, dirs = _dedupe(_open_dlc_files(files, skipped), dirs, skipped)
+        for _f, _n, pkg in packages:
+            _close(pkg)
+        found = [(f.name, name) for f, name, _ in packages]
+        found += [(n, disp) for _p, n, disp, _h in dirs]
+        seen = {n.upper() for n, _ in found}
+        for z in zips:
+            names, zskipped = dlcscan.preview_zip(z)
+            skipped += zskipped
+            for n in names:
+                if n.upper() in seen:
+                    skipped.append((n, "duplicate, installed once"))
+                else:
+                    seen.add(n.upper())
+                    found.append((n, f"{n} (in {os.path.basename(z)})"))
+        _DLC_CACHE[key] = (found, skipped)
+    return _DLC_CACHE[key]
+
+
 def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda: False, log=print):
-    """Install every DLC package of a folder (package files and extracted package folders).
-    Returns the number of packages installed."""
-    found, dirs, skipped = list_dlc(Path(folder).expanduser())
+    """Install every DLC package of a folder, subfolders and zips included (package files and
+    extracted package folders). Zip entries are unpacked to a temporary folder under the data
+    folder, which is removed afterwards, also on failure or cancel. Returns the number installed."""
+    stage = None
+    opened = []
+    try:
+        dirs, files, zips, skipped = scan_dlc(Path(folder).expanduser())
+        found = _open_dlc_files(files, skipped)
+        opened += found
+        if zips:
+            tmp_root = Path(user_data) / "tmp"
+            tmp_root.mkdir(parents=True, exist_ok=True)
+            stage = Path(tempfile.mkdtemp(prefix="dlc-", dir=tmp_root))
+            try:
+                staged, zskipped = dlcscan.stage_zips(zips, stage, cancelled, progress, log)
+            except OSError as e:
+                raise InstallError(f"Could not unpack the zip into {stage}: {e}")
+            skipped += zskipped
+            more = _open_dlc_files(staged, skipped)
+            opened += more
+            found += more
+        found, dirs = _dedupe(found, dirs, skipped)
+        return _install_found(found, dirs, skipped, user_data, progress, cancelled, log)
+    finally:
+        for _f, _n, pkg in opened:
+            _close(pkg)
+        if stage is not None:
+            shutil.rmtree(stage, ignore_errors=True)
+            with contextlib.suppress(OSError):
+                stage.parent.rmdir()          # only when empty
+
+
+def _install_found(found, dirs, skipped, user_data, progress, cancelled, log):
     warning = dlc_warning([(f.name, name) for f, name, _ in found] +
                           [(name, display) for _, name, display, _ in dirs])
     if warning:

@@ -50,6 +50,16 @@ machine from their own copy:
    header is generated (display name from a table of the 23 known package names, else "DLC <name>").
    Folders that do not look like DLC (a name that is not 8 to 42 hex digits, no files inside) are
    skipped and listed in the card.
+   The scan is recursive (#410): up to 8 folders deep, links are not followed, hidden and system
+   folders are left out, and files that are not packages are ignored quietly. `.zip` archives are
+   accepted too (`launcher/forza_launcher/dlcscan.py`): only the entries that look like STFS
+   packages are unpacked, one level of zip inside a zip, to a `tmp/dlc-*` folder under the data
+   folder, then installed as usual and removed afterwards (also on failure or cancel). A zip with
+   an absolute or `..` path or a link is refused whole; a damaged one is skipped; the total is
+   capped at 8 GB and the free disk space is checked first (room for two copies). The card lists
+   what was found and what was skipped with the reason (duplicate package names install once, a
+   package that is not DLC, a zip with no DLC, ...). `launcher/test_dlc_scan.py` covers this with
+   synthetic packages and zips.
    Packages outside the known official package-name table show an amber **Unrecognized DLC**
    warning (#118), naming every package by its display name and filename, including packages
    beyond the list's 12-item preview. Installation remains available without a confirmation
