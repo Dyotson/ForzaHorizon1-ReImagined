@@ -476,6 +476,9 @@ class SettingsPage(QWidget):
         scene_reason = "Native AA renders at output resolution; this setting only affects Game MSAA."
         if scene_aa:
             states["resolution_scale"] = (False, scene_reason)
+        if active or temporal or ultrawide or scene_aa:
+            states["scene_resolution"] = (False, "NVIDIA DLSS, AMD FSR 3, a separate anti-aliasing method and "
+                                                 "Ultrawide gameplay keep the 3D scene at 720p or more.")
         if "resolution_scale" in self.rows:
             self.rows["resolution_scale"].control.setToolTip(
                 scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
