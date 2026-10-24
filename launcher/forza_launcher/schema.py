@@ -175,8 +175,8 @@ add("present_dither", "Output dithering", "Display", "bool", False,
 add("scene_msaa", "Scene anti-aliasing (MSAA)", "Display", "choice", "game",
     "The game draws the 3D scene with 4x MSAA in three parts, which costs the most CPU time on "
     "4-core PCs and the Steam Deck. 2x draws it in two parts with 2x MSAA, as the game does for "
-    "its largest races. Off draws it in one pass without MSAA: about half the GPU emulation's "
-    "work and less GPU time, with more jagged edges.", "Picture",
+    "its largest races. Off draws it in one pass without MSAA: about a fifth less CPU time in "
+    "the GPU emulation and less GPU time, with more jagged edges.", "Picture",
     choices=[("game", "4x (game)"), ("2x", "2x"), ("off", "Off (fastest)")], restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
@@ -191,6 +191,17 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+add("world_shadow_detail", "Shadow detail", "Display", "choice", "console",
+    "How far away small objects (trees on a hillside, posts, rocks, bushes) still cast a shadow. "
+    "Console is the game's own range; High casts them 3 times as far, Ultra 10 times. A few "
+    "hundred more shadow draws a frame; see docs/graphics-detail.md for the measured cost.",
+    "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_texture_detail", "Distant texture detail", "Display", "choice", "console",
+    "Sharper terrain, road and scenery textures in the distance (the track's texture LOD bias: "
+    "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
+    "shimmer slightly on fine patterns.", "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "

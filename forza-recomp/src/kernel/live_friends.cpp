@@ -649,6 +649,16 @@ bool LiveFriendsActive() {
   return active;
 }
 
+void LiveChatSay(uint8_t channel, const std::string& text) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (channel != 1 && channel != 2) return;
+  const auto to = chat_to;
+  chat_to = channel - 1;  // 0 session, 1 world (ChatSendLocked)
+  chat_text = text.substr(0, kMaxMessage);
+  ChatSendLocked();
+  chat_to = to;
+}
+
 std::vector<LiveRelation> LiveRelations() {
   std::lock_guard<std::mutex> lock(mutex);
   return relations;

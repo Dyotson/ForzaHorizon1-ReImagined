@@ -1,0 +1,134 @@
+diff --git a/src/ui/fh1_minimized_surface.h b/src/ui/fh1_minimized_surface.h
+new file mode 100644
+index 0000000..a534cdb
+--- /dev/null
++++ b/src/ui/fh1_minimized_surface.h
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include <atomic>
++#include <cstdlib>
++
++namespace rex::ui::fh1 {
++
++// FORZA_TEST_MINIMIZED_SURFACE_EMPTY=1 (#221): while the window is minimized, its surface reports
++// no area on Linux too, as a minimized Win32 window's client area (0x0) does, and minimizing drops
++// the presenter's connection the way a present that fails as outdated does on Windows. So
++// minimizing and restoring can be tested on Linux (for example with xdotool and an X11 window).
++inline bool MinimizedSurfaceEmptyTest() {
++  static const bool enabled = [] {
++    const char* value = std::getenv("FORZA_TEST_MINIMIZED_SURFACE_EMPTY");
++    return value && *value && *value != '0';
++  }();
++  return enabled;
++}
++
++// Whether the test above currently treats the window as minimized.
++inline std::atomic<bool>& MinimizedSurfaceEmptyNow() {
++  static std::atomic<bool> minimized{false};
++  return minimized;
++}
++
++}  // namespace rex::ui::fh1
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+index 90797af..b0bbbfa 100644
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -474,8 +474,14 @@ void Presenter::PaintFromUIThread(bool force_paint) {
+       SetPaintModeFromUIThread(PaintMode::kUIThreadOnRequest);
+     }
+     // Try to recover from the connection becoming outdated in the previous
+-    // paint.
+-    if (surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedOutdated) {
++    // paint. A forced paint (the window has been exposed or restored) also
++    // retries a connection that the surface's earlier state didn't allow: a
++    // minimized Win32 window has a 0x0 client area, but SDL reports no size
++    // change for a minimize or a restore, so no resize would ever retry it
++    // (#221: the picture stayed frozen after a restore).
++    if (surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedOutdated ||
++        (force_paint && surface_paint_connection_state_ ==
++                            SurfacePaintConnectionState::kUnconnectedRetryAtStateChange)) {
+       UpdateSurfacePaintConnectionFromUIThread(nullptr, false);
+     }
+     // If still paintable or recovered successfully, paint.
+@@ -1395,7 +1401,7 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
+           surface_paint_connection_has_implicit_vsync_ = is_vsync_implicit;
+           surface_width_in_paint_connection_ = surface_width;
+           surface_height_in_paint_connection_ = surface_height;
+-          if (!is_reconnect) {
++          if (!is_reconnect && repaint_needed_out) {
+             *repaint_needed_out = true;
+           }
+           break;
+diff --git a/src/ui/surface_gnulinux.cpp b/src/ui/surface_gnulinux.cpp
+index c6f5730..aab6040 100644
+--- a/src/ui/surface_gnulinux.cpp
++++ b/src/ui/surface_gnulinux.cpp
+@@ -15,10 +15,15 @@
+ 
+ #include <rex/ui/surface_gnulinux.h>
+ 
++#include "fh1_minimized_surface.h"
++
+ namespace rex {
+ namespace ui {
+ 
+ bool XcbWindowSurface::GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const {
++  if (fh1::MinimizedSurfaceEmptyNow().load(std::memory_order_relaxed)) {
++    return false;  // FORZA_TEST_MINIMIZED_SURFACE_EMPTY while minimized (#221)
++  }
+   xcb_get_geometry_reply_t* reply =
+       xcb_get_geometry_reply(connection_, xcb_get_geometry(connection_, window_), nullptr);
+   if (!reply) {
+@@ -31,6 +36,9 @@ bool XcbWindowSurface::GetSizeImpl(uint32_t& width_out, uint32_t& height_out) co
+ }
+ 
+ bool WaylandSurface::GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const {
++  if (fh1::MinimizedSurfaceEmptyNow().load(std::memory_order_relaxed)) {
++    return false;  // FORZA_TEST_MINIMIZED_SURFACE_EMPTY while minimized (#221)
++  }
+   int w = 0, h = 0;
+   if (!SDL_GetWindowSizeInPixels(sdl_window_, &w, &h) || w <= 0 || h <= 0) {
+     return false;
+diff --git a/src/ui/window.cpp b/src/ui/window.cpp
+index ab64e76..30564ee 100644
+--- a/src/ui/window.cpp
++++ b/src/ui/window.cpp
+@@ -22,6 +22,8 @@
+ 
+ #include <imgui.h>
+ 
++#include "fh1_minimized_surface.h"
++
+ REXCVAR_DEFINE_INT32(window_width, 0, "UI/Window",
+                      "Window width in logical pixels (0 = use app default)")
+     .range(0, 8192);
+@@ -663,6 +665,12 @@ void Window::OnMinimized(WindowDestructionReceiver& destruction_receiver) {
+     return;
+   }
+   REXLOG_INFO("Window minimized");
++  if (fh1::MinimizedSurfaceEmptyTest() && presenter_surface_) {
++    // As on Windows (#221): the surface has no area now, and the presenter
++    // drops its connection.
++    fh1::MinimizedSurfaceEmptyNow().store(true, std::memory_order_relaxed);
++    presenter_->OnSurfaceResizeFromUIThread();
++  }
+   UIEvent e(this);
+   SendEventToListeners([&e](auto listener) { listener->OnMinimized(e); }, destruction_receiver);
+ }
+@@ -672,6 +680,15 @@ void Window::OnRestored(WindowDestructionReceiver& destruction_receiver) {
+     return;
+   }
+   REXLOG_INFO("Window restored");
++  fh1::MinimizedSurfaceEmptyNow().store(false, std::memory_order_relaxed);
++  // Paint now, before the listeners, as for a resize. A minimized Win32
++  // window's client area is 0x0, so a present while minimized finds the
++  // swapchain outdated and the reconnection finds no area; SDL reports no size
++  // change for a minimize or a restore, so only a forced paint reconnects
++  // (#221: the picture stayed frozen while the game ran on).
++  if (presenter_surface_) {
++    OnPaint(true);
++  }
+   UIEvent e(this);
+   SendEventToListeners([&e](auto listener) { listener->OnRestored(e); }, destruction_receiver);
+ }

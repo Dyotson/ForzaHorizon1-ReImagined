@@ -41,6 +41,21 @@ X-TransactionId: <GUID as hex>                          (transactional calls onl
 <parameters>
 ```
 
+**Who is calling.** `X-UserId` is the only thing in the game's request that names the player,
+and anyone can send it. Our game adds `X-Friends-Key: <32 hex digits>` to every request on its
+title server connections (`src/kernel/live_tcp.cpp`, `lsp_request_header.h`: the head of each
+request is held until it is complete and the line goes in before its blank line), the friends
+key of its Live identity (`live_identity.txt`), which the server bound to the XUID at the
+game's first HELLO (`forza_friends.py`; the launcher's shader list upload proves itself the
+same way). The server (`forza_live_lsp.verify_caller`) refuses a call that changes anything
+(every method but `Get*`/`Search*`/`Download*`, and `Hopper.GetGameOptions`, which moves a
+world's event along) when the key is not the XUID's, and takes a call without a key, from a
+game before the key or for an XUID that never signed in with one, as unverified: accepted
+and logged (once per XUID every 10 minutes), its race stats marked `verified: false`, and
+never the player's word where it matters (`caller_trusted()`). Addresses can't do this job:
+behind a tunnel (`docs/hosting.md`) every HTTP connection and UDP datagram arrive from the
+tunnel agent's address, and a connection's TCP port says nothing about the player's UDP one.
+
 The call itself is `sub_82AABAC0(client, class, method, params, results member list,
 &results, ...)`; each service method has a small stub that passes its class and method
 names (`Logon2` calls it at `0x82ABC0A8` with class string `0x820E242C`, method
@@ -113,7 +128,7 @@ Notifications, Transaction}`. What the game calls, in order:
 | | `DLCMetadata.GetStringTableInfo("EN")` | no table (`Id` -1, #79); with the empty answer the game also asked `Xls Content.DownloadContent(0, 0, 0x40000)` x2 and saved a nameless file to `marketplace:\` |
 | Party lobby | `Hopper.GetList(maxCategoryResults 2, maxHopperResults 32)`; Title Update 4: `GetListEx` (each hopper also has `requiredOfferId`, u64) | the playlists (below) |
 | Find Game, picking a playlist | `Hopper.GetSearchSettings(hopperId)`, `GetGameOptions(hopperId, roundNum, 0x8000)`, then (after the session search) `UserRegister(hopperId, sessionId)` every `nextRegisterSeconds` | search settings, the round's GameOptions XML, 60 s |
-| Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 |
+| Race start | `GameplayLog.Write`, `Hopper.GetRaceMultipliers` | empty, multiplier 1.0 (a campaign round's players: `--coop-race-multiplier`, a test knob; 2 doubles the online XP, 0 counts as 1; `docs/coop_campaign.md`, "The race multiplier") |
 | Race end | `Scoreboard.SubmitScoreEx` / `SubmitScore`, `User.SetPlayercardInfo`, `OnlineProfile.UpdateAllTables` / `UpdateAll` | the score kept (scoreboards below) / success (profile kept) |
 | End of a Rivals race (also retiring) | `User.WriteRaceStatsEx(id, raceStats, scoreData)` | kept per player (`userXP`, credits, the race) |
 | After the sign-in (single player too) | `Xls Notifications.RetrieveForUser` `notificationPollIntervalSeconds` after `Logon2`, then every `nextRetrieveSeconds` (`StartNewSession` on some paths) | the player's notifications (Message Center, below), 15 s then 60 s (with 0 the game polled 7 times a second) |
@@ -149,8 +164,11 @@ randomizedOrder, intermissionTimeMs}`. A category holds the hoppers from its
 `sub_82730500`) lists the first category's hoppers that every party member may join
 (`sub_82888988` -> `sub_828864D0`): with `-1` meaning no limit, races < `maxAllowedRaces`,
 wins < `maxAllowedWins` and races >= `minAllowedRaces` (beginner playlists). Our hoppers:
-3 "Horizon World", 1 "Races" and 2 "Playground Games", all in the one category Online
-(a second category's hoppers would not be listed). Horizon World is
+3 "Horizon World", 1 "Races", 2 "Playground Games" and 20 "Co-op Festival", all in the one
+category Online (a second category's hoppers would not be listed). Co-op Festival is the
+Horizon World among friends (placement only into a world a friend leads), whose host starts
+festival events with `/event` in World chat (`docs/coop_campaign.md`, "Milestone 1 progress");
+it is listed only to games whose HELLO has feature 0x08. Horizon World is
 the shared free-roam world (`docs/online_vision.md`): preset 7 rounds from the festival
 (track 1101), `GameTypeFilterType="FreeRoam"`, endless (`EndConditionOptions Type="None"`;
 the client runs them as an online free roam that players JUMP IN to, which has no timed

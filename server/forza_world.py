@@ -33,6 +33,9 @@ import random
 import sqlite3
 import time
 
+import forza_campaign
+import forza_coop_ledger as ledger
+
 log = logging.getLogger("forza-live")
 
 MAX_PLAYERS = 8
@@ -43,6 +46,7 @@ PENDING_TIMEOUT = 120.0
 GAME_DB = None          # path of gamedb.slt, or None
 EVENT_MINUTES = 0.0     # schedule: an event every N minutes of a world (0: off)
 EVENT_LAPS = 0          # override the events' lap count (tests), 0: the event's own
+EMPTY_ROUND = 90.0      # a campaign round closed this soon without a report: nobody raced it
 EVENT_IDS = []          # restrict the rotation to these event ids (empty: all)
 EVENT_AI = MAX_PLAYERS - 1  # MaxAIPlayers of an event
 EVENT_PLAYERS = MAX_PLAYERS  # an event's grid (MaxPlayers)
@@ -174,24 +178,52 @@ def event_xml(event, humans):
 class Worlds:
     """Event state per world session (by session id): None, or
     {"event": ..., "state": "pending" (the host is told to take it) | "next" (served as
-    the next round), "since": time}."""
+    the next round), "since": time, "campaign": a forza_campaign.Event or None}. A campaign
+    round (the Co-op Festival's /event) is kept in `rounds` for RESULT_WINDOW after it
+    started, with the world's members, so their race results can be named (result())."""
+
+    RESULT_WINDOW = 20 * 60.0
 
     def __init__(self):
         self.state = {}       # session id (bytes) -> event state
         self.started = {}     # session id -> when its current free roam started
+        self.members = {}     # session id -> {xuid: gamertag} (forza_live_server.world_tick)
+        self.dropped = []     # campaign requests the last tick dropped
+        self.empty = []       # (sid, campaign event) of campaign rounds that ended at once
+        self.rounds = {}      # session id -> (campaign event, when it started, members)
 
-    def request(self, sid, event_id=None):
-        event = pick_event(event_id)
-        self.state[sid] = {"event": event, "state": "pending", "since": time.monotonic()}
-        log.info("world %s: event %d requested (preset %d, track %d, %d laps, class %d)",
-                 sid.hex(), event[0], event[1], event[2], event[3], event[4])
+    def request(self, sid, event_id=None, campaign=None, by="", by_xuid=0):
+        if campaign is not None:
+            event = (campaign.id, campaign.preset, campaign.track, campaign.laps,
+                     campaign.car_class)
+        else:
+            event = pick_event(event_id)
+        self.state[sid] = {"event": event, "state": "pending", "since": time.monotonic(),
+                           "campaign": campaign, "by": by, "by_xuid": by_xuid}
+        log.info("world %s: %s %d requested%s (preset %d, track %d, %d laps, class %d)",
+                 sid.hex(), "campaign event" if campaign else "event", event[0],
+                 " by %s (%s)" % (by, campaign.code) if campaign else "", event[1], event[2],
+                 event[3], event[4])
         return event
 
-    def next_round(self, sid, humans):
-        """GetGameOptions from the host of world sid: the event's XML, or None (world)."""
+    def next_round(self, sid, humans, trusted=True):
+        """GetGameOptions from the host of world sid: the event's XML, or None (world).
+        trusted: the call carries the host's own friends key (forza_live_lsp.caller_trusted);
+        only such calls move a campaign round along (start it in the ledger, close it)."""
         st = self.state.get(sid)
+        campaign = st.get("campaign") if st else None
+        if not trusted and (campaign is not None or ledger.LEDGER.open_round(sid)):
+            log.info("world %s: next round asked without the host's key: the world, no change",
+                     sid.hex())
+            return None
         if st and st["state"] == "pending":
             st["state"] = "next"
+            campaign = st.get("campaign")
+            if campaign is not None:
+                log.info("world %s: next round is campaign event %d (%s), %d human(s), AI "
+                         "Medium (skill %s, temperament %s)", sid.hex(), campaign.id,
+                         campaign.code, humans, campaign.ai_skill, campaign.ai_temperament)
+                return forza_campaign.campaign_xml(campaign, EVENT_LAPS)
             log.info("world %s: next round is event %d, %d human(s), AI %s", sid.hex(),
                      st["event"][0], humans, ai_difficulty(humans))
             return event_xml(st["event"], humans)
@@ -199,7 +231,20 @@ class Worlds:
             # the event round started (its prefetch): the world comes back after it
             log.info("world %s: event %d started; the world is next", sid.hex(),
                      st["event"][0])
+            if st.get("campaign") is not None:
+                members = dict(self.members.get(sid, {}))
+                self.rounds[sid] = (st["campaign"], time.monotonic(), members, st.get("by", ""))
+                # the career's side: forza_coop_ledger keeps the round and its results
+                ledger.LEDGER.start_round(sid, st["campaign"], st.get("by_xuid", 0),
+                                          st.get("by", ""), members)
             del self.state[sid]
+        elif trusted:  # the world's round after a campaign round
+            for r in ledger.LEDGER.close_round(sid):
+                if not r["results"] and time.time() - r["started"] < EMPTY_ROUND:
+                    campaign = self.rounds.get(sid, (None,))[0]
+                    log.info("world %s: campaign round %s (%s) ended at once, nobody raced",
+                             sid.hex(), r["id"], r["code"])
+                    self.empty.append((sid, campaign, r["code"]))
         self.started[sid] = time.monotonic()
         return None
 
@@ -207,22 +252,56 @@ class Worlds:
         st = self.state.get(sid)
         return st["event"] if st and st["state"] == "pending" else None
 
-    def tick(self, sids):
-        """Every few seconds with the world sessions that exist: expire stale requests,
-        schedule events (EVENT_MINUTES). Returns [(sid, event)] still waiting for their
-        host."""
+    def campaigns(self):
+        """[(sid, campaign event)] of the campaign rounds asked for and not started yet
+        (their CPU drivers' skill goes to every console of the world)."""
+        return [(sid, st["campaign"]) for sid, st in self.state.items()
+                if st.get("campaign") is not None]
+
+    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False,
+               winnings=None):
+        """A player's race result (User.WriteRaceStatsEx): logged with the campaign round
+        of the world it was in, if one started there recently. The ledger takes it only from
+        the player's own game (trusted), for a Co-op Festival race in that world's session.
+        Returns (sid, event) or None."""
+        if coop and trusted and session:
+            ledger.LEDGER.report(xuid, session, place, finished, winnings=winnings)
         now = time.monotonic()
+        for sid, (campaign, since, members, by) in list(self.rounds.items()):
+            if now - since > self.RESULT_WINDOW:
+                del self.rounds[sid]
+                continue
+            # only the round of the world it was reported in: an earlier world's round may
+            # still list the player (it left and raced elsewhere within RESULT_WINDOW)
+            if session is not None and sid != session:
+                continue
+            if xuid in members:
+                log.info("co-op: world %s campaign event %d (%s, asked by %s): %s place %d/%d "
+                         "finished %d", sid.hex(), campaign.id, campaign.code, by or "?",
+                         members[xuid] or "%016X" % xuid, place, places, finished)
+                return sid, campaign
+        return None
+
+    def tick(self, sids, scheduled=None):
+        """Every few seconds with the world sessions that exist: expire stale requests,
+        schedule events (EVENT_MINUTES) in the worlds of `scheduled` (default: all; the
+        Co-op Festival's worlds only get the events their host asks for). Returns
+        [(sid, event)] still waiting for their host."""
+        now = time.monotonic()
+        self.dropped = []  # (sid, state) of the campaign requests dropped now (their host is told)
         for sid in list(self.state):
             st = self.state[sid]
             if sid not in sids or (st["state"] == "pending" and now - st["since"] > PENDING_TIMEOUT):
                 if st["state"] == "pending":
                     log.info("world %s: event %d not taken, dropped", sid.hex(), st["event"][0])
+                    if st.get("campaign") is not None:
+                        self.dropped.append((sid, st))
                 del self.state[sid]
         for sid in list(self.started):
             if sid not in sids:
                 del self.started[sid]
         if EVENT_MINUTES:
-            for sid in sids:
+            for sid in sids if scheduled is None else [s for s in sids if s in scheduled]:
                 started = self.started.setdefault(sid, now)
                 if sid not in self.state and now - started >= EVENT_MINUTES * 60:
                     self.request(sid)
