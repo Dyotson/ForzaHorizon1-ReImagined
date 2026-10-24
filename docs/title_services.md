@@ -338,6 +338,49 @@ What could hide a public lobby, fixed:
 A player whose game never hears from the server sees "No Sessions Found" too (#69: its log
 has `no answer from <server> yet` and no `signed in to`): see "Without a server answer" below.
 
+#### A lobby whose host left (#391, 2026-10-24)
+
+A public King lobby was listed under Infected, with the track, time limit and host of
+rounds long gone, and joining it said PLAYER UNREACHABLE. A lobby's players publish
+standby records of it (the game picks a new host by itself when its host leaves, see
+`docs/online_vision.md`), and the server lists those once nobody hosts the session. A
+standby record kept the search key and the QoS data the player found the lobby with. In
+a custom game the game type is that key and the QoS data is everything the details pane
+shows, the host's name included. So when the host changed the setup and then left, the
+lobby went on under the old game type and the old details.
+
+What the game does (FORZA_NETTRACE on two TU4 instances, local server): when the host
+saves a new setup, every console in the lobby sets `0x10000030` to the new game type
+(Find Game's rounds never touch it on a guest; the Playground Games host keeps its
+playlist id 2 there). The player the game makes the host after the host left calls
+`XNetQosListen` for the session with its own 608 bytes. When a host leaves, its game
+releases the QoS data (a last record without any) before it withdraws.
+
+Fixed:
+
+- Client (`live_xmsg.cpp`): a joined session's standby record follows `0x10000030` set while
+  in it (a value of -1 is the party lobby's and ignored), and takes the game's own QoS data
+  as soon as the game makes us the host, kept after a release. HELLO feature 0x10 says so.
+- Server (`standby_view`, `lobby_tails`): the newest description of each lobby (key and
+  record after the slots) from its host's record and from a feature-0x10 game host's
+  standby is kept (records without QoS data don't count; dropped once no record names the
+  session, at most 4,096). Any other member's record, also that of an older game the game
+  made its host, goes out with that description.
+
+Tested with two and three TU4 games on a local server: A hosts public Infected, B finds it
+and joins, A saves King and leaves. Before, a search for Infected listed the King lobby as
+"INFECTED 05:00, Addison West Steelworks, A, host DriverA" and King found nothing. With
+both fixes King lists it as "KING 03:00, class B, host DriverB" and Infected finds nothing;
+B's setup changed to Cat and Mouse moved both records to key 6. With an older game as B
+(v0.1.33 behaviour) and only the server fixed, a third game C found it under King with
+A's last King details and joined it. `server/test_forza_lobby_details.py`.
+
+Not reproduced: a player who was in a King round for the others but never appeared in one
+player's game (the second part of #391). That player's log has every join of the lobby in
+its XSession and a player who came in during a round (`player #16927 is 0.77.0.15`,
+`joined 1 player(s), 6/8`), but nothing that names who was missing; finding out why that
+game left them out needs the logs of both.
+
 ### XP and credits
 
 The game computes the rewards itself at the end of an online race ("XP REWARDS": finished

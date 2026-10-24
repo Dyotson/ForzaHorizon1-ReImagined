@@ -946,8 +946,9 @@ class VNet {
     // (live_friends.cpp, #92), followed by our friends key (u8 length + bytes), which the
     // server binds our XUID's friends to. 0x04, text chat (#92). 0x08, the Co-op Festival
     // playlist runs as a Horizon World (world_drop_in.cpp, world_events.cpp, #309): the
-    // server lists it only to games that say so.
-    body.push_back(0x0F);
+    // server lists it only to games that say so. 0x10, our standby records follow the lobby
+    // (its game type, and as the game's host its own description; live_xmsg.cpp, #391).
+    body.push_back(0x1F);
     const std::string& key = forza::IdentityFriendsKey();
     body.push_back(uint8_t(key.size()));
     body.insert(body.end(), key.begin(), key.end());
