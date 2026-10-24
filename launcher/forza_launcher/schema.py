@@ -191,6 +191,17 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+add("world_shadow_detail", "Shadow detail", "Display", "choice", "console",
+    "How far away small objects (trees on a hillside, posts, rocks, bushes) still cast a shadow. "
+    "Console is the game's own range; High casts them 3 times as far, Ultra 10 times. A few "
+    "hundred more shadow draws a frame; see docs/graphics-detail.md for the measured cost.",
+    "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_texture_detail", "Distant texture detail", "Display", "choice", "console",
+    "Sharper terrain, road and scenery textures in the distance (the track's texture LOD bias: "
+    "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
+    "shimmer slightly on fine patterns.", "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
