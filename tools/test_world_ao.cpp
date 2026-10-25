@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 namespace ao = rex::graphics::vulkan::fh1_world_ao;
 
@@ -19,6 +20,31 @@ namespace ao = rex::graphics::vulkan::fh1_world_ao;
   } while (false)
 
 int main() {
+  // This is the production control flow around image replacement in BeforeDraw: the queue
+  // wait closes the submission, even if the following allocation fails. Texture references
+  // belong to the old submission until they are refreshed after a successful resume.
+  for (bool closes : {false, true}) {
+    for (bool allocated : {false, true}) {
+      for (bool resume_ok : {false, true}) {
+        bool open = true, refreshed = false;
+        std::vector<int> calls;
+        const auto status = ao::PrepareResourcesForDraw(
+            [&] { calls.push_back(1); open = !closes; return allocated; },
+            [&] { return open; },
+            [&] { calls.push_back(2); open = resume_ok; return resume_ok; },
+            [&] { CHECK(open); calls.push_back(3); refreshed = true; });
+        if (closes && !resume_ok) {
+          CHECK(status == ao::ResourceStatus::kSubmissionFailed);
+          CHECK(calls == std::vector<int>({1, 2}) && !refreshed);
+        } else {
+          CHECK(open);
+          CHECK(status == (allocated ? ao::ResourceStatus::kReady : ao::ResourceStatus::kUnavailable));
+          CHECK(calls == (closes ? std::vector<int>({1, 2, 3}) : std::vector<int>({1})));
+          CHECK(refreshed == closes);
+        }
+      }
+    }
+  }
   // The launcher's and the in-game screen's spellings; anything else is off.
   CHECK(ao::Level("off") == 0);
   CHECK(ao::Level("low") == 1);
