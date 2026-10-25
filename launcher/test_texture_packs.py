@@ -10,7 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from forza_launcher import config, crash_report, game, power, schema, texture_packs  # noqa: E402
+from forza_launcher import config, crash_report, game, power, schema, texture_compress, texture_packs  # noqa: E402
 from forza_launcher.config import Config  # noqa: E402
 
 try:
@@ -348,7 +348,27 @@ class TexturePacksPageTests(unittest.TestCase):
         self.dir = texture_packs.textures_dir(self.cfg)
         make_pack(self.dir, "Alpha", {f"{FP[0]}.dds": dds()}, 'name = "Alpha pack"\n')
         make_pack(self.dir, "Beta", {f"{FP[0]}.png": png(), f"{FP[1]}.png": png()})
+        # A build of the game without the compressor unless a test says otherwise.
+        self.compressor = patch.object(texture_compress, "available", return_value=False)
+        self.compressor.start()
+        self.addCleanup(self.compressor.stop)   # stopping twice (with_compressor) is harmless
         self.page = TexturePacksPage(self.cfg, window=None)
+
+    def with_compressor(self):
+        self.compressor.stop()
+        self.compressor = patch.object(texture_compress, "available", return_value=True)
+        self.compressor.start()
+        self.addCleanup(self.compressor.stop)
+        self.page.refresh()
+
+    def wait_for_task(self):
+        task = self.page.task
+        self.assertIsNotNone(task)
+        task.wait(10000)
+        for _ in range(20):
+            QCoreApplication.processEvents()
+            if self.page.task is None:
+                break
 
     def tearDown(self):
         self.page.deleteLater()
@@ -441,6 +461,71 @@ class TexturePacksPageTests(unittest.TestCase):
         self.cfg.d["specs"]["values"]["vram_gb"] = 6
         self.page.refresh()
         self.assertEqual(self.page.scale.currentData(), 2)   # back to 2x when 4x is not offered
+
+    def test_4x_needs_6_gb_when_the_pack_is_compressed(self):
+        dump = self.dir / "dump"
+        dump.mkdir()
+        (dump / "index.tsv").write_text(f"{FP[0]}\tk_DXT1\t512x512\t1\tBC1\n")
+        (dump / f"{FP[0]}.png").write_bytes(png())
+        self.with_compressor()
+        for vram, offered in ((8, True), (6, True), (4, False)):
+            with self.subTest(vram=vram):
+                self.cfg.d["specs"]["values"] = {"gpu_name": "Card", "vram_gb": vram, "integrated": False}
+                self.page.refresh()
+                four = self.page.scale.model().item(self.page.scale.findData(4))
+                self.assertEqual(four.isEnabled(), offered)
+                # BC7 with mips: a byte a texel and a third.
+                self.assertIn(f"about {1024 * 1024 * 4 // 3 / 2**20:.0f} MB", self.page.scale.itemText(0))
+                self.assertIn(f"about {2048 * 2048 * 4 // 3 / 2**20:.0f} MB", four.text())
+        self.assertIn("at least 6 GB", self.page.scale_note.text())
+        self.assertNotIn("PNGs, which take 4 times", self.page.estimate.text())
+
+    def test_without_the_compressor_the_hd_pack_says_how_to_get_it(self):
+        dump = self.dir / "dump"
+        dump.mkdir()
+        (dump / "index.tsv").write_text(f"{FP[0]}\tk_DXT1\t512x512\t1\tBC1\n")
+        (dump / f"{FP[0]}.png").write_bytes(png())
+        self.page.refresh()
+        self.assertIn("Written as PNGs, which take 4 times the graphics memory", self.page.estimate.text())
+        self.assertIn("build the game again in Setup", self.page.estimate.text())
+
+    def test_compress_pngs_of_a_pack(self):
+        self.page.table.selectRow(1)   # Beta: two PNGs
+        self.assertIn("2 of them are PNGs", self.page.details.text())
+        self.assertIn("no texture compressor", self.page.details.text())
+        self.assertFalse(self.page.compress_button.isEnabled())
+        self.with_compressor()
+        self.page.table.selectRow(1)
+        self.assertTrue(self.page.compress_button.isEnabled())
+        self.assertNotIn("no texture compressor", self.page.details.text())
+        done = texture_compress.FolderResult(compressed=2, png_bytes=3 << 20, dds_bytes=1 << 20)
+        with patch.object(texture_compress, "compress_folder", return_value=done) as compress, \
+                patch.object(self.page, "_confirm", return_value=True):
+            self.page.compress_button.click()
+            self.assertFalse(self.page.make_button.isEnabled() and self.page.compress_button.isEnabled())
+            self.wait_for_task()
+        folder, work = compress.call_args.args[1], compress.call_args.args[2]
+        self.assertEqual(folder, self.dir / "Beta")
+        self.assertEqual(work.parent, self.dir)
+        self.assertTrue(work.name.startswith("."))   # hidden: not listed as a pack
+        self.assertIn('Compressed 2 texture(s) of "Beta": 3 MB of graphics memory as PNGs, 1 MB now.',
+                      self.page.compress_status.text())
+
+    def test_added_packs_are_compressed_when_asked(self):
+        self.with_compressor()
+        self.assertTrue(self.page.compress_added.isChecked())
+        source = make_pack(self.t / "elsewhere", "Gamma", {f"{FP[3]}.png": png()})
+        with patch.object(self.page, "compress_pack") as compress:
+            self.assertTrue(self.page.add_path(source))
+        compress.assert_called_once()
+        self.assertEqual(compress.call_args.args[0].folder, "Gamma")
+        self.assertEqual(compress.call_args.kwargs, {"ask": False})
+        self.page.compress_added.setChecked(False)
+        self.assertFalse(self.cfg.d["texture_packs_compress"])
+        source = make_pack(self.t / "elsewhere", "Delta", {f"{FP[4]}.png": png()})
+        with patch.object(self.page, "compress_pack") as compress:
+            self.assertTrue(self.page.add_path(source))
+        compress.assert_not_called()
 
     def test_make_hd_pack_needs_a_dump_and_estimates_it(self):
         self.assertIn("No texture dump yet", self.page.estimate.text())

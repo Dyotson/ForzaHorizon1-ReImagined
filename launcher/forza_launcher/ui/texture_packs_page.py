@@ -1,15 +1,20 @@
-"""Texture packs (#384): the packs in the textures folder (add, remove, turn on or off, order) and
-Make HD pack, which upscales the player's own dump on this PC (hd_pack.py)."""
+"""Texture packs (#384): the packs in the textures folder (add, remove, turn on or off, order),
+Make HD pack, which upscales the player's own dump on this PC (hd_pack.py), and Compress PNGs,
+which makes a pack's PNGs DDS files that take a quarter of the graphics memory (#413,
+texture_compress.py)."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout
 
-from .. import GITHUB_URL, hd_pack, installer, pins, schema, specs, texture_packs
+from .. import GITHUB_URL, hd_pack, installer, pins, schema, specs, texture_compress, texture_packs
 from .mods_page import FolderListPage, _link_label, _size
 from .widgets import Switch, card, label
 from . import theme
 
 DOCS_URL = f"{GITHUB_URL}/blob/main/docs/texture_packs.md"
 GUIDE_LINK = f'<a href="{DOCS_URL}" style="color: {theme.ORANGE};">the texture pack guide</a>'
+COMPRESS_KEY = "texture_packs_compress"   # launcher.json: compress the PNGs of packs added (default on)
+NO_COMPRESSOR = ("This build of the game has no texture compressor (it came with the game in a later "
+                 "version): build the game again in Setup to get it.")
 
 
 def _gb(n: int) -> str:
@@ -29,6 +34,7 @@ class TexturePacksPage(FolderListPage):
                          "Higher-resolution textures, drawn by the graphics card in place of the "
                          "game's own. The game's files stay as they are.")
         self.task = None
+        self.task_kind = ""   # "hd" (Make HD pack) or "compress" (Compress PNGs)
         self.plan = None
         lay = self.page_layout
 
@@ -66,6 +72,7 @@ class TexturePacksPage(FolderListPage):
                            "texture, the one lower in the list wins. You can also drop a pack's .zip "
                            "or folder on this page.", "muted"))
         self.build_list(cl, "Add pack…", "Open textures folder")
+        self._compress_row(cl)
         lay.addWidget(c)
 
         self._hd_card(lay)
@@ -119,12 +126,17 @@ class TexturePacksPage(FolderListPage):
 
     def detail_lines(self, p):
         if p.loose:
-            return [f"{p.files} texture file(s) directly in the textures folder, {_size(p.size)}: used "
-                    "before every pack, so any pack replaces them. Untick to turn them off; to remove "
-                    "them, move or delete them in the textures folder (Open textures folder)."]
-        lines = [p.description] if p.description else []
-        lines.append(f"{p.files} texture(s), {_size(p.size)} on disk, about {_gb(p.gpu_bytes)} of "
-                     "graphics memory when every one is in use.")
+            lines = [f"{p.files} texture file(s) directly in the textures folder, {_size(p.size)}: used "
+                     "before every pack, so any pack replaces them. Untick to turn them off; to remove "
+                     "them, move or delete them in the textures folder (Open textures folder)."]
+        else:
+            lines = [p.description] if p.description else []
+            lines.append(f"{p.files} texture(s), {_size(p.size)} on disk, about {_gb(p.gpu_bytes)} of "
+                         "graphics memory when every one is in use.")
+        if p.png_files:
+            line = (f"{p.png_files} of them are PNGs, {_gb(p.png_gpu_bytes)} of that graphics memory: Compress "
+                    f"PNGs makes them DDS files (BC7) that take about a quarter of it.")
+            lines.append(line if texture_compress.available(self.cfg) else f"{line} {NO_COMPRESSOR}")
         return lines
 
     def added_text(self, p):
@@ -133,6 +145,23 @@ class TexturePacksPage(FolderListPage):
     def remove_question(self, p):
         made = " It was made on this PC: Make HD pack can make it again." if p.made_here else ""
         return f'Remove "{p.title}"? Its folder {p.folder} is deleted from the textures folder.{made}'
+
+    def add_path(self, path):
+        """Adds a pack; with Compress the PNGs of packs I add on, compresses its PNGs after."""
+        if not super().add_path(path):
+            return False
+        p = self._current()
+        if (p is not None and p.png_files and self.compress_added.isChecked() and not self.busy()
+                and texture_compress.available(self.cfg)):
+            self.compress_pack(p, ask=False)
+        return True
+
+    def _selected(self):
+        super()._selected()
+        if hasattr(self, "compress_button"):
+            p = self._current()
+            self.compress_button.setEnabled(bool(p is not None and p.png_files and not self.busy()
+                                                 and texture_compress.available(self.cfg)))
 
     def refresh(self):
         super().refresh()
@@ -161,6 +190,120 @@ class TexturePacksPage(FolderListPage):
                 self._say(f"Could not save the setting: {e}", error=True)
         self.refresh()
 
+    # ---- Compress PNGs ------------------------------------------------------------------------
+    def _compress_row(self, cl):
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self.compress_added = QCheckBox("Compress the PNG textures of packs I add")
+        self.compress_added.setToolTip("Makes them DDS files (BC7) that take about a quarter of the graphics "
+                                       "memory, with mip levels. The pack's own files are replaced.")
+        self.compress_added.setChecked(bool(self.cfg.d.get(COMPRESS_KEY, True)))
+        self.compress_added.toggled.connect(self._set_compress_added)
+        row.addWidget(self.compress_added)
+        row.addStretch()
+        self.compress_button = QPushButton("Compress PNGs")
+        self.compress_button.setToolTip("Makes the selected pack's PNG textures DDS files (BC7, or BC1 where "
+                                        "it keeps them as well) with mip levels: about a quarter of the "
+                                        "graphics memory.")
+        self.compress_button.clicked.connect(lambda: self.compress_pack(self._current()))
+        row.addWidget(self.compress_button)
+        self.compress_cancel = QPushButton("Cancel")
+        self.compress_cancel.clicked.connect(self.cancel_task)
+        self.compress_cancel.hide()
+        row.addWidget(self.compress_cancel)
+        cl.addLayout(row)
+        self.compress_bar = QProgressBar()
+        self.compress_bar.setRange(0, 1000)
+        self.compress_bar.hide()
+        cl.addWidget(self.compress_bar)
+        self.compress_status = label("", "muted")
+        self.compress_status.hide()
+        cl.addWidget(self.compress_status)
+
+    def _set_compress_added(self, on):
+        self.cfg.d[COMPRESS_KEY] = bool(on)
+        try:
+            self.cfg.save()
+        except OSError as e:
+            self._say(f"Could not save the setting: {e}", error=True)
+
+    def compress_pack(self, p, ask=True):
+        """Compresses the PNGs of pack `p` in the background (texture_compress.compress_folder)."""
+        if p is None or not p.png_files or self.busy():
+            return
+        if not texture_compress.available(self.cfg):
+            self.compress_status.setText(NO_COMPRESSOR)
+            self.compress_status.show()
+            return
+        if ask and not self._confirm("Compress PNGs", (
+                f'Compress the {p.png_files} PNG texture(s) of "{p.title}"? They become DDS files (BC7, or BC1 '
+                f"where it keeps them as well) that take about a quarter of their {_gb(p.png_gpu_bytes)} of "
+                "graphics memory, with mip levels. The PNGs are replaced; it applies from the next start.")):
+            return
+        cfg, folder, title = self.cfg, self.folder(), p.title
+        target = folder if p.loose else folder / p.folder
+        work = folder / f".compressing-{'loose' if p.loose else p.folder}"
+
+        def job(task):
+            try:
+                result = texture_compress.compress_folder(
+                    cfg, target, work, lambda n, total: task.progress.emit(
+                        n / total if total else 1.0, f'Compressing "{title}": {n} of {total}'),
+                    task.cancelled, top_only=p.loose)
+            except (RuntimeError, OSError) as e:
+                raise installer.InstallError(f"Compressing stopped: {e}") from e
+            words = (f'Compressed {result.compressed} texture(s) of "{title}": {_gb(result.png_bytes)} of graphics '
+                     f"memory as PNGs, {_gb(result.dds_bytes)} now.")
+            if result.failed:
+                words += f" {len(result.failed)} could not be compressed (first: {result.failed[0]})."
+            return words
+
+        self._start_task(job, "compress PNGs", "compress")
+        self.compress_status.setText(f'Compressing "{title}"…')
+
+    def _start_task(self, job, name, kind):
+        from .workers import Task
+        self.task, self.task_kind = Task(job, name), kind
+        self.task.progress.connect(self._task_progress)
+        self.task.done.connect(self._task_done)
+        bar = self.bar if kind == "hd" else self.compress_bar
+        bar.setValue(0)
+        bar.show()
+        status = self.hd_status if kind == "hd" else self.compress_status
+        status.setStyleSheet("")
+        status.show()
+        self.compress_cancel.setVisible(kind == "compress")
+        self.task.start()
+        self._refresh_hd()
+        self._selected()
+
+    def _task_progress(self, fraction, text):
+        bar, status = (self.bar, self.hd_status) if self.task_kind == "hd" else (self.compress_bar,
+                                                                                 self.compress_status)
+        bar.setValue(int(max(0.0, min(1.0, fraction)) * 1000))
+        status.setText(text)
+
+    def _task_done(self, ok, message):
+        kind = self.task_kind
+        self.task.wait()
+        self.task, self.task_kind = None, ""
+        self.compress_cancel.hide()
+        if kind == "hd":
+            self._hd_done(ok, message)
+            return
+        self.compress_bar.hide()
+        if not ok and message == "Cancelled.":
+            message = "Stopped. The textures compressed so far stay compressed."
+        self.compress_status.setText(message)
+        self.compress_status.setStyleSheet("" if ok or "Stopped" in message else f"color: {theme.ERR};")
+        self.refresh()
+
+    def cancel_task(self):
+        if self.busy():
+            self.task.cancel()
+            if self.task_kind == "compress":
+                self.compress_status.setText("Stopping… the textures compressed so far stay compressed.")
+
     # ---- Make HD pack -------------------------------------------------------------------------
     def _hd_card(self, lay):
         c, cl = card(spacing=12)
@@ -169,15 +312,17 @@ class TexturePacksPage(FolderListPage):
         cl.addWidget(label(
             "Upscales the textures you dumped, on this PC, with Real-ESRGAN (an AI upscaler, free "
             "software, any graphics card): rocks, roads, terrain, bark and signs get sharper. Masks, "
-            "normal and data maps and small textures are left as they are. The result is the pack \"HD pack "
-            f"(made on this PC)\". The first time, the upscaler ({size} MB) is downloaded from its "
-            "official release; nothing of the game is downloaded or shared.", "muted"))
+            "normal and data maps and small textures are left as they are. The textures are compressed "
+            "(BC7 DDS files with mip levels, a quarter of the graphics memory of PNGs). The result is the "
+            f"pack \"HD pack (made on this PC)\". The first time, the upscaler ({size} MB) is downloaded "
+            "from its official release; nothing of the game is downloaded or shared.", "muted"))
         link = f'style="color: {theme.ORANGE};"'
         cl.addWidget(_link_label(
             f'Licences: the program <a href="{hd_pack.PROGRAM_LICENCE_URL}" {link}>Real-ESRGAN-ncnn-vulkan</a> '
             f'is MIT, the model <a href="{hd_pack.MODEL_LICENCE_URL}" {link}>realesrgan-x4plus</a> (Real-ESRGAN) '
             f'BSD-3-Clause. The launcher downloads them from the <a href="{hd_pack.RELEASE_URL}" {link}>official '
-            "release</a>, checks their pinned checksums and never ships them."))
+            "release</a>, checks their pinned checksums and never ships them. The compressor, built with the "
+            f'game, uses <a href="{texture_compress.LICENCE_URL}" {link}>bc7enc_rdo</a> (MIT).'))
         row = QHBoxLayout()
         row.setSpacing(12)
         self.scale = QComboBox()
@@ -215,21 +360,29 @@ class TexturePacksPage(FolderListPage):
     def busy(self) -> bool:
         return self.task is not None and self.task.isRunning()
 
+    def hd_busy(self) -> bool:
+        return self.busy() and self.task_kind == "hd"
+
+    def _min_vram_4x(self) -> int:
+        return hd_pack.min_vram_gb_4x(texture_compress.available(self.cfg))
+
     def _scale(self) -> int:
         return int(self.scale.currentData() or 2)
 
     def four_x_refused(self) -> str:
         """Why 4x is not offered ("" when it is): it needs a card with at least
-        hd_pack.MIN_VRAM_GB_4X GB of its own memory (the launcher's GPU detection, #206)."""
+        hd_pack.min_vram_gb_4x() GB of its own memory (the launcher's GPU detection, #206): 6 for a
+        compressed pack, 10 for PNGs (a build of the game without the compressor)."""
         s = self.cfg.pc_specs()
+        need = self._min_vram_4x()
         if s.integrated is True:
-            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory; "
+            return (f"4x needs a graphics card with at least {need} GB of its own memory; "
                     "integrated graphics share the PC's.")
         if s.vram_gb <= 0:
-            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory, "
+            return (f"4x needs a graphics card with at least {need} GB of its own memory, "
                     "and the launcher could not tell how much yours has.")
-        if s.vram_gb < hd_pack.MIN_VRAM_GB_4X:
-            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory; "
+        if s.vram_gb < need:
+            return (f"4x needs a graphics card with at least {need} GB of its own memory; "
                     f"yours has {s.vram_gb:.0f} GB.")
         return ""
 
@@ -258,7 +411,7 @@ class TexturePacksPage(FolderListPage):
     def _refresh_hd(self):
         if not hasattr(self, "scale"):
             return
-        running = self.busy()
+        running = self.hd_busy()
         self.make_button.setVisible(not running)
         self.cancel_button.setVisible(running)
         self.scale.setEnabled(not running)
@@ -290,9 +443,16 @@ class TexturePacksPage(FolderListPage):
                          "memory with Use texture packs on."
                          + (f" About {minutes} min on a mid-range graphics card; the game can run meanwhile."
                             if p.todo else " Dump more textures (drive somewhere else) to add to it."))
+            if p.compressed and p.png_done:
+                lines.append(f"{p.png_done:,} made before as PNGs are compressed first.")
+            if not p.compressed:
+                lines.append("Written as PNGs, which take 4 times the graphics memory of compressed textures. "
+                             + NO_COMPRESSOR)
         self.estimate.setText(" ".join(lines))
-        self.make_button.setEnabled(bool(p.todo))
-        self.make_button.setText("Continue HD pack" if p.done and p.todo else "Make HD pack")
+        self.make_button.setEnabled(bool(p.todo or (p.compressed and p.png_done)) and not self.busy())
+        self.make_button.setText("Continue HD pack" if p.done and p.todo else
+                                 "Compress HD pack" if p.compressed and p.png_done and not p.todo else
+                                 "Make HD pack")
         warning = self._gpu_warning(p)
         self.hd_warning.setText(warning)
         self.hd_warning.setVisible(bool(warning))
@@ -334,7 +494,6 @@ class TexturePacksPage(FolderListPage):
                                                  "official release on GitHub? It is checked against its "
                                                  "known checksum and kept in the launcher's tools folder."):
                 return
-        from .workers import Task
         cfg = self.cfg
 
         def job(task):
@@ -348,7 +507,13 @@ class TexturePacksPage(FolderListPage):
                                       cancelled=task.cancelled)
             except (RuntimeError, OSError) as e:  # words for the player; Task logs the details
                 raise installer.InstallError(f"Make HD pack stopped: {e}") from e
-            words = f"Made {result.made} texture(s) in {max(1, round(result.seconds / 60))} min."
+            words = f"Made {result.made} texture(s) in {max(1, round(result.seconds / 60))} min"
+            if result.compressed:
+                formats = ", ".join(f"{n} {f}" for f, n in sorted(result.formats.items(), key=lambda x: -x[1]))
+                words += f" ({formats})" if formats else ""
+                if result.converted:
+                    words += f"; {result.converted} made before compressed"
+            words += "."
             if result.left_out:
                 words += (f" {sum(result.left_out.values())} looked like normal or data maps and were "
                           "left as they are.")
@@ -356,28 +521,16 @@ class TexturePacksPage(FolderListPage):
                 words += f" {len(result.failed)} could not be made (first: {result.failed[0]})."
             return words
 
-        self.task = Task(job, "make HD pack")
-        self.task.progress.connect(self._hd_progress)
-        self.task.done.connect(self._hd_done)
-        self.bar.setValue(0)
-        self.bar.show()
+        self._start_task(job, "make HD pack", "hd")
         self.hd_status.setText("Starting…")
-        self.task.start()
-        self._refresh_hd()
 
     def cancel_hd_pack(self):
-        if self.busy():
+        if self.hd_busy():
             self.task.cancel()
             self.hd_status.setText("Stopping… the textures made so far are kept; Make HD pack continues "
                                    "from there.")
 
-    def _hd_progress(self, fraction, text):
-        self.bar.setValue(int(max(0.0, min(1.0, fraction)) * 1000))
-        self.hd_status.setText(text)
-
     def _hd_done(self, ok, message):
-        self.task.wait()
-        self.task = None
         self.bar.hide()
         if not ok and message == "Cancelled.":
             message = "Stopped. The textures made so far are kept: Make HD pack continues from there."
@@ -388,7 +541,8 @@ class TexturePacksPage(FolderListPage):
             self.hd_status.setText(message + " Turn on Use texture packs above to see it in the game.")
 
     def shutdown(self, wait_ms=15000) -> bool:
-        """Stops Make HD pack (when the window closes); False when it did not stop in time."""
+        """Stops Make HD pack or Compress PNGs (when the window closes); False when it did not stop
+        in time."""
         if not self.busy():
             return True
         self.task.cancel()

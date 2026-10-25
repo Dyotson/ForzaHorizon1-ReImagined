@@ -43,6 +43,14 @@ jobs:
         run: python -m pip install -r launcher/requirements.txt
       - name: Verify Qt runtime is available
         run: python -c "from PySide6.QtWidgets import QApplication"
+      - name: Texture pack compressor and its round trip (forza-texcompress, #413)
+        shell: bash
+        run: |
+          cmake -S forza-recomp/texcompress -B "$RUNNER_TEMP/texcompress" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/texcompress" --config Release --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/texcompress" -C Release --output-on-failure
+          exe=forza-texcompress; [ "$RUNNER_OS" = Windows ] && exe=forza-texcompress.exe
+          echo "FORZA_TEXCOMPRESS=$RUNNER_TEMP/texcompress/$exe" >> "$GITHUB_ENV"
       - name: Launcher unit and Qt tests
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
       - name: Livery codec tests
