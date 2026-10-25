@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Forza Horizon 1: ReImagined</title>
-<meta name="description" content="The 2012 Forza Horizon, running natively on Windows and Linux. Title Update 4, online free roam, and a frame rate you set. The launcher builds it on your PC from your own copy. No game code or data included.">
+<meta name="description" content="The 2012 Forza Horizon, running natively on Windows and Linux. Title Update 4, online free roam, a co-op campaign, mods, HD texture packs, and a frame rate you set. The launcher builds it on your PC from your own copy. No game code or data included.">
 <meta name="theme-color" content="#140d2e">
 <meta property="og:title" content="Forza Horizon 1: ReImagined">
 <meta property="og:description" content="The 2012 Xbox 360 game, native on Windows and Linux. Horizon Rally and the 1000 Club, online free roam, and a frame rate you set. No game code or data included: you bring your own copy.">
@@ -48,7 +48,7 @@
 <header class="topbar">
   <a class="brand" href="#festival"><img src="images/logo.svg" alt="" width="36" height="36"><span>Forza Horizon 1<b>ReImagined</b></span></a>
   <nav aria-label="Sections">
-    <a href="#festival">Festival</a><a href="#mountains">Mountains</a><a href="#numbers">Numbers</a><a href="#highway">Install</a><a href="#online">Online</a><a class="nav-keep" href="leaderboards.html">Leaderboards</a>
+    <a href="#festival">Festival</a><a href="#mountains">Mountains</a><a href="#extras">Make it yours</a><a href="#numbers">Numbers</a><a href="#highway">Install</a><a href="#online">Online</a><a class="nav-keep" href="leaderboards.html">Leaderboards</a>
     <a class="nav-discord" href="https://discord.gg/yu7zScdcWw">Discord</a>
     <a class="nav-cta" href="https://github.com/Dyotson/ForzaHorizon1-ReImagined">GitHub</a>
   </nav>
@@ -83,9 +83,11 @@
         <li><b>The whole festival, single player.</b> Free roam, festival events and races, showcase events, audio and saves have been played through on ReImagined. A Xenia Canary save can be continued.</li>
         <li><b>Title Update 4.</b> The default when you supply it. Horizon Rally (the co-driver is heard) and the 1000 Club, and all 23 DLC packages can be installed.</li>
         <li><b>Keyboard, gamepad, or a wheel.</b> Keyboard and mouse cover menus, free roam, races, the map and photo mode. Throttle and brake on the keyboard are on/off. Racing wheels use the game's force feedback, and can use an H-shifter and a clutch. Logitech G29, G920 and G923 are tested. A DualSense can use adaptive triggers (resistance as you press; off by default).</li>
-        <li><b>Picture.</b> AMD FSR 1, AMD FSR 3 and CAS, plus SMAA. On Windows, an RTX GPU can use NVIDIA DLSS and DLAA. Render scale, HDR on Vulkan, and ultrawide gameplay (menus and the map stay 16:9). Frame-rate presets include Match display.</li>
-        <li><b>Photos, the minimap, saves.</b> A photo gallery in the launcher, sharper minimap icons, automatic save backups, a profile editor, and the seven unicorn cars if your save is missing them. After a crash, Play can show a report. Nothing is uploaded unless you send it.</li>
+        <li><b>Picture.</b> AMD FSR 1, AMD FSR 3 and CAS, plus SMAA. On Windows, an RTX GPU can use NVIDIA DLSS and DLAA. Render scale, a 540p scene option for weak laptops, world detail (shadows and distant textures), scene anti-aliasing (MSAA) options, HDR on Vulkan, and ultrawide gameplay (menus and the map stay 16:9). Frame-rate presets include Match display.</li>
+        <li><b>Photos, the minimap, saves.</b> A photo gallery in the launcher, faster radio station changes as an option, sharper minimap icons, automatic save backups, a profile editor, and the seven unicorn cars if your save is missing them. After a crash, Play can show a report. Nothing is uploaded unless you send it.</li>
         <li><b>Online free roam.</b> Horizon World places you in a shared Colorado of up to 8 players, with drop-in while a world is running. Friends, chat, leaderboards, Rivals, car clubs and the Message Center go through the Forza Live server.</li>
+        <li><b>Co-op Festival.</b> A multiplayer playlist for friends: the world's host types <code>/event</code> in chat, everyone races that festival event, and every player's career advances. A loaner car is lent if you have none that fits.</li>
+        <li><b>Mods and HD texture packs.</b> A Mods page and a Texture packs page in the launcher. Add a pack or a mod from a .zip, turn each on or off, and set the order.</li>
         <li><b>Your own server, or the public one.</b> Xbox LIVE and Turn 10's services are gone. The project ships Forza Live. You can host it, or join the public server. You forward no ports for the public one.</li>
       </ul>
       <p class="aside">On a Steam Deck or a low-end PC, leave the frame rate at 30. The high numbers in the next section are from one desktop.</p>
@@ -98,7 +100,21 @@
     </ul>
   </section>
 
-  <section id="numbers" class="stop left">
+  <section id="extras" class="stop left">
+    <div class="panel">
+      <p class="kicker">Mile 18 &middot; Make it yours</p>
+      <h2>Together, modded, sharper</h2>
+      <dl class="modes">
+        <dt>Co-op Festival</dt><dd>Pick it under Multiplayer, Find Game. The host types <code>/event FR05</code> (or any event code; <code>/events</code> lists them) and everyone races that festival event with CPU drivers. After the session the launcher adds each player's result, XP and prize to their own save. <a href="https://github.com/Dyotson/ForzaHorizon1-ReImagined/blob/main/docs/coop_campaign.md">Design notes</a></dd>
+        <dt>Mods</dt><dd>The launcher's Mods page: <b>Add mod...</b> takes a .zip or a folder. Turn mods on or off and put them in order; the one lower in the list wins when two change the same file. Mods survive rebuilds and updates. <a href="https://github.com/Dyotson/ForzaHorizon1-ReImagined/blob/main/docs/modding.md">Modding guide</a></dd>
+        <dt>HD texture packs</dt><dd>Install a community pack, or press <b>Make HD pack</b> to upscale your own textures on your PC with a local AI upscaler (Real-ESRGAN). Packs are compressed, about 4x less graphics memory. Vulkan only. Nothing of the game's art is shared. <a href="https://github.com/Dyotson/ForzaHorizon1-ReImagined/blob/main/docs/texture_packs.md">Texture packs guide</a></dd>
+        <dt>Leaderboards and map</dt><dd>The public server's speed traps, speed zones, Rivals and event times on a map of Colorado. <a href="leaderboards.html">Open the leaderboards</a></dd>
+        <dt>Steam Deck</dt><dd>Install with the Flatpak, use the Deck preset, and keep the frame rate low. <a href="https://github.com/Dyotson/ForzaHorizon1-ReImagined/blob/main/docs/steam_deck.md">Steam Deck guide</a></dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="numbers" class="stop right">
     <div class="panel">
       <p class="kicker">Mile 24 &middot; By the numbers</p>
       <h2>Measured, not promised</h2>
@@ -121,7 +137,7 @@
     </div>
   </section>
 
-  <section id="highway" class="stop right">
+  <section id="highway" class="stop left">
     <div class="panel">
       <p class="kicker">Mile 36 &middot; The open highway</p>
       <h2>Install with the launcher</h2>
@@ -146,7 +162,7 @@
     </div>
   </section>
 
-  <section id="online" class="stop left">
+  <section id="online" class="stop right">
     <div class="panel">
       <p class="kicker">Mile 48 &middot; Playing online</p>
       <h2>Horizon World</h2>
@@ -161,7 +177,7 @@
     </div>
   </section>
 
-  <section id="finish" class="stop right">
+  <section id="finish" class="stop left">
     <div class="panel finish">
       <p class="kicker">Finish line</p>
       <h2>Ready to drive?</h2>
