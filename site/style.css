@@ -342,7 +342,6 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 /* phones: the road runs down the left edge */
 @media (max-width: 820px) {
   :root { --road-w: 26px; }
-  nav a:not(.nav-cta):not(.nav-discord):not(.nav-keep) { display: none; }
   .stop { padding-left: 52px; padding-right: 14px; min-height: 0; padding-top: 90px; }
   .stop.left > *, .stop.right > * { align-self: stretch; }
   .panel, .shots, .cards { width: 100%; }
@@ -360,3 +359,19 @@ footer p { max-width: 760px; margin: 0 0 10px; }
 
 .cards li:not(.wide) img { aspect-ratio: 16 / 10; object-fit: cover; }
 .cards li:not(.wide) img[src*="launcher"] { object-position: top; }
+
+nav a[aria-current="page"] { color: var(--cream); }
+.scroll-hint { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 20px 0 0; color: var(--muted); font-size: 14px; font-weight: 600; text-align: center; }
+.scroll-hint svg { color: var(--orange); animation: hint-bob 1.6s ease-in-out infinite; }
+@keyframes hint-bob { 0%, 100% { transform: translateY(0); opacity: .6; } 50% { transform: translateY(6px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .scroll-hint svg { animation: none; } }
+@media (max-width: 460px) {
+  .topbar { gap: 8px; padding: 0 12px; }
+  .brand { gap: 8px; font-size: 13px; }
+  .brand b { font-size: 12px; }
+  .brand img { width: 30px; height: 30px; }
+  nav { gap: 8px; }
+  nav a { font-size: 13px; }
+  nav .nav-cta { padding: 5px 10px; }
+  nav .nav-discord { padding: 3px 9px; }
+}
