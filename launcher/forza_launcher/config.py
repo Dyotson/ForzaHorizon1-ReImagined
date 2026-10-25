@@ -182,20 +182,26 @@ class Config:
         return specs.warnings(self.pc_specs(), self.effective_settings())
 
     def specs_banner_due(self) -> bool:
-        """Some settings are heavy for this PC and the player has not answered for this hardware."""
+        """Some settings are heavy for this PC (or a Steam Deck's differ from its preset) and the player has
+        not answered for this hardware."""
         s = self.pc_specs()
         return (s.known() and self.d["specs"].get("dismissed") != s.signature()
-                and any(w.fix for w in self.specs_warnings()))
+                and bool(any(w.fix for w in self.specs_warnings()) or specs.deck_offer(s, self.effective_settings())))
+
+    def specs_banner_text(self) -> str:
+        return specs.banner_text(self.pc_specs())
 
     def dismiss_specs_banner(self):
         self.d["specs"]["dismissed"] = self.pc_specs().signature()
 
     def use_recommended(self) -> list:
-        """Apply the fixes of the warnings only (never another setting); returns the keys changed."""
+        """Apply the fixes of the warnings only, and on a Steam Deck its preset (never another setting);
+        returns the keys changed."""
         fixes = {}
         for w in self.specs_warnings():
             for key, value in w.fix.items():   # the CPU and the card may both limit the frame rate: the lower wins
                 fixes[key] = min(fixes[key], value) if key == "frame_rate" and key in fixes else value
+        fixes.update(specs.deck_offer(self.pc_specs(), {**self.effective_settings(), **fixes}))
         changed = [k for k, v in fixes.items() if self.settings.get(k) != v]
         self.settings.update(fixes)
         self.dismiss_specs_banner()

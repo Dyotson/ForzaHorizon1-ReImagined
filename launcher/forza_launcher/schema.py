@@ -56,14 +56,16 @@ add("frame_rate", "Frame rate", "Display", "fps", 30,
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
     "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
     "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
-    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60).", "Frame rate")
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60, and on a Steam Deck with its "
+    "screen at 40 Hz or 80 Hz; Match display picks 40 there).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
 add("battery_saver", "Battery saver", "Display", "choice", "off",
-    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off), the "
-    "lightest settings, without changing yours: they apply again at the next start on mains "
-    "power. Auto applies it when a Steam Deck runs on its battery as the game starts.",
+    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off) and Scene "
+    "anti-aliasing Off, the lightest settings, without changing yours: they apply again at the next "
+    "start on mains power. A frame rate of 20 or 40 (for a screen at 40 Hz) stays. Auto applies it "
+    "when a Steam Deck runs on its battery as the game starts.",
     "Frame rate", choices=list(power.MODES), platform="linux", restart=True)
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
