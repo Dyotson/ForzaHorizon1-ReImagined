@@ -24,6 +24,15 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - **Cockpit gauges:** the game lights the instruments only when the headlights are on;
   `cockpit_gauges_lit = true` in `forza.toml` (launcher: Display, Picture, Cockpit gauges
   always lit) keeps them lit by day too, for your own car only.
+- **Radio stations (#401):** the game takes the next station about 3.5 s after the last
+  (a 1 s wait, and none while the station banner shows) and fades the music out and in
+  over 0.5 s each; the new stream starts within a frame or two of the fade out, so the
+  wait is the game's, also on the console. `radio_station_switch = "fast"` (launcher:
+  Audio, Radio, Station changes: Fast) takes a new station every 0.15 s, also while the
+  banner shows (it shows the new one), fades over the game's own 0.25 s for player changes,
+  and quick presses end on the last station picked. The new station then starts about
+  0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
+  (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Mouse cursor:** the game hides it after three seconds without movement and shows it

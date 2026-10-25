@@ -609,6 +609,9 @@ generated `forza.toml` and command line). Keys that hold their default are not w
 Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
 keeps the instrument backlight of your own car on by day too; the headlights and other cars
 stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
+Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
+a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
+0.5 s ([playing.md](playing.md#running-the-game)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

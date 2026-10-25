@@ -115,6 +115,7 @@ endif()
 set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
+    src/hooks/radio_station.cpp
     src/debug/cpu_profile.cpp
     src/debug/codriver_log.cpp
     src/debug/dlc_log.cpp
