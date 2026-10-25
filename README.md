@@ -25,11 +25,11 @@ The original PowerPC executable is statically recompiled to C++ with the
 [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk), the same approach as
 [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach). On top of that build the project adds:
 
-- **The whole festival, single player.** Free roam, festival events, showcase events, audio and saves have been played through on ReImagined. A Xenia Canary save can be continued. Title Update 4 (the default) adds Horizon Rally and the 1000 Club, and all 23 DLC packages can be installed. The Rally co-driver is heard. [`docs/dlc.md`](docs/dlc.md)
-- **Online through Forza Live.** Xbox LIVE and Turn 10's services are gone. The game signs in to the Forza Live server (`server/`): Horizon World, the friends list and chat, leaderboards and Rivals, car clubs and the Message Center. There is a public server, and you can host your own. [`docs/online_vision.md`](docs/online_vision.md)
-- **Co-op campaign.** The **Co-op Festival** playlist: friends race the festival's events together, and every player's career advances. [`docs/coop_campaign.md`](docs/coop_campaign.md)
-- **Mods and HD texture packs.** A Mods page and a Texture packs page in the launcher, with community packs and **Make HD pack** (a local AI upscaler). [`docs/modding.md`](docs/modding.md) · [`docs/texture_packs.md`](docs/texture_packs.md)
-- **A frame rate you set.** The original game is 30 fps. The setting goes up to 240 for a PC that can hold the higher rate. The high numbers further down were measured on one desktop. A Steam Deck or a low-end PC is much slower.
+- **Single player, Title Update 4 and DLC.** The whole festival, Horizon Rally, the 1000 Club and all 23 DLC packages. [`docs/dlc.md`](docs/dlc.md)
+- **Online through Forza Live.** Horizon World, friends, leaderboards and Rivals, on a public server or your own. [`docs/online_vision.md`](docs/online_vision.md)
+- **Co-op campaign.** Friends race the festival's events together, and every career advances. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Mods and HD texture packs.** [`docs/modding.md`](docs/modding.md) · [`docs/texture_packs.md`](docs/texture_packs.md)
+- **A frame rate you set.** 30 fps is the original; the setting goes up to 240 on a PC that can hold it.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (a disc image, a Games on Demand package, or an extracted folder). The recompiled
@@ -52,26 +52,27 @@ C++ is generated from that copy on your machine. No game binaries are published 
 
 ## Screenshots
 
-Captured from the recompiled game running natively on Linux.
+Captured from the recompiled game and its launcher.
 
 | | |
 |---|---|
 | ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
-| ![Prologue drive](docs/images/forza-prologue-drive.jpg)<br>Free roam, Colorado mountains | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist: race lobby and races |
+| ![Co-op Festival lobby](site/images/coop-lobby.webp)<br>Co-op Festival lobby, two players | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
+| ![Original and HD 2x textures](site/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](site/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
+| ![Mods page](site/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](site/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
 
 ## What you can play
 
-- **Single player, Title Update 4 and DLC.** TU4 is the default when you give the launcher your update. Horizon Rally and the 1000 Club need it. All 23 DLC packages count as installed, including the Rally Expansion's cars and the 1000 Club's cars. [`docs/dlc.md`](docs/dlc.md)
-- **Controls.** Keyboard and mouse (menus, free roam, a race, the pause menu, the map and photo mode). Throttle and brake are on/off, and the menus have no pointer. [`docs/playing.md`](docs/playing.md#keyboard-and-mouse). A gamepad works. Racing wheels are presented as the Xbox 360 Wireless Racing Wheel, with the game's force feedback, an H-pattern shifter and a clutch pedal. Logitech G29, G920 and G923 are tested; other wheels go through **Settings > Controls > Axis numbers** and **Settings > Controls > Button numbers**. Press-to-bind mapping and calibration are in progress ([#279](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/279)). On the launcher's Controls page, **DualSense adaptive triggers** (**Enable adaptive triggers while driving**) adds throttle and brake resistance on a DualSense or DualSense Edge. It follows how far the trigger is pressed. RPM, tire slip, ABS and road effects are not available yet. [`docs/playing.md`](docs/playing.md#racing-wheels-issue-4)
-- **Picture.** **Settings > Display > Upscaling filter:** Bilinear, AMD CAS (sharpen), AMD FSR 1, or AMD FSR 3 (temporal), on any GPU under Vulkan. On Windows, an RTX GPU can use **Settings > Display > NVIDIA DLSS** (Quality, Balanced, Performance) and DLAA. **Settings > Display > Anti-aliasing:** the game's MSAA, SMAA 1x, FSR Native AA, and on Windows NVIDIA DLAA. A separate anti-aliasing method applies when upscaling is off. **Settings > Display > Render scale** draws at 1x to 8x the game's 1280x720. **Settings > Display > Frame rate** lists 20, 30, 40, 60, 75, 90, 100, 120, 144, 165, 180, 200 and 240 fps, or a rate you type from 60 to 240. 20 is for a PC that can't hold 30: every frame stays on a 60 Hz screen equally long. The first entry is **Match display**, which follows the monitor the game runs on, up to what that PC is likely to hold. **Settings > Display > HDR output** is Vulkan only: an HDR display with HDR turned on in the OS. It brightens the existing SDR picture. It does not add HDR detail the game never stored, and Direct3D 12 does not use it. **Settings > Display > Ultrawide gameplay** widens the view under Vulkan. Menus and the map stay 16:9. Title Update 4 also has a Graphics page in the pause menu. [`docs/rendering.md`](docs/rendering.md) · [`docs/hdr.md`](docs/hdr.md) · [`docs/ultrawide.md`](docs/ultrawide.md) · [`docs/antialiasing.md`](docs/antialiasing.md)
-- **Co-op Festival (Multiplayer > Find Game).** The world's host types `/event FR05` (or any event code; `/events` lists them) in World chat, and everyone races that event with CPU drivers. After the session the launcher adds each player's result, XP and prize to their own save. If you have no car that fits, the lobby lends you one. [`docs/coop_campaign.md`](docs/coop_campaign.md)
-- **Mods.** The launcher's **Mods** page: **Add mod...** takes a .zip or a folder; turn mods on or off and set the load order (the one lower in the list wins). [`docs/modding.md`](docs/modding.md)
-- **HD texture packs (Vulkan).** The **Texture packs** page installs community packs. **Make HD pack** upscales textures you dumped from your own game with a local AI upscaler (Real-ESRGAN), and packs are compressed, about 4x less graphics memory. [`docs/texture_packs.md`](docs/texture_packs.md)
-- **More graphics options.** **Settings > Display > Picture** has a 540p 3D scene for weak laptop graphics. **World detail** raises shadow detail and distant texture detail. Scene anti-aliasing (MSAA) can be set to Off or 2x. **Settings > Audio > Radio > Station changes: Fast** flips stations quickly.
-- **Leaderboards site.** The public server's leaderboards on a map of Colorado: [forza.dyotson.dev/leaderboards.html](https://forza.dyotson.dev/leaderboards.html).
-- **Steam Deck.** [`docs/steam_deck.md`](docs/steam_deck.md) covers the install and the settings.
-- **Photos, the minimap, unicorn cars.** Photo mode saves into your profile. The launcher's Photo gallery browses those pictures and can export a PNG or JPEG. The minimap uses the full-size map icons. **Saves** backs up the profile before Play (on by default) and can restore a backup. **Edit profile…** can change credits, XP and the wristband offline, and **Add missing unicorns** adds the seven unicorn cars the save does not already have. [`docs/unicorn_cars.md`](docs/unicorn_cars.md)
-- **Crash reports.** After an unexpected exit, **Play > Review crash report…** shows a report you can edit, copy or save. Nothing is uploaded unless you choose to open a GitHub issue.
+- **Single player, Title Update 4 and DLC.** TU4 is the default when you give the launcher your update; Horizon Rally and the 1000 Club need it. All 23 DLC packages count as installed. [`docs/dlc.md`](docs/dlc.md)
+- **Co-op Festival** (Multiplayer > Find Game). The host types `/event FR05` in chat, everyone races that event, and each player's career advances. A loaner car is lent if you have none that fits. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Mods.** The **Mods** page: **Add mod...**, on or off, load order. [`docs/modding.md`](docs/modding.md)
+- **HD texture packs** (Vulkan). Add a community pack, or **Make HD pack** with a local AI upscaler. Packs are compressed. [`docs/texture_packs.md`](docs/texture_packs.md)
+- **Controls.** Keyboard and mouse, gamepad, or a wheel with force feedback (Logitech G29, G920 and G923 tested). DualSense adaptive triggers are optional. [`docs/playing.md`](docs/playing.md)
+- **Picture.** AMD FSR 1 and 3, CAS, SMAA, NVIDIA DLSS and DLAA (Windows, RTX), render scale, HDR, ultrawide. [`docs/rendering.md`](docs/rendering.md) · [`docs/hdr.md`](docs/hdr.md) · [`docs/ultrawide.md`](docs/ultrawide.md) · [`docs/antialiasing.md`](docs/antialiasing.md)
+- **Weak PCs.** A 540p 3D scene (about 44% more fps when the graphics card is the limit), **World detail** (shadows, distant textures) and scene anti-aliasing (MSAA) Off or 2x. Steam Deck: [`docs/steam_deck.md`](docs/steam_deck.md)
+- **Frame rate.** 20 to 240 fps, or Match display.
+- **Radio.** **Settings > Audio > Radio > Station changes: Fast** flips stations quickly.
+- **Photos, saves, unicorn cars.** Photo gallery, automatic save backups, a profile editor and the seven unicorn cars. [`docs/unicorn_cars.md`](docs/unicorn_cars.md)
 - **Online.** See [Playing online](#playing-online).
 
 ## Performance
