@@ -190,11 +190,9 @@ class PackFolders(unittest.TestCase):
     def test_listed_in_order_with_the_made_pack_first(self):
         for name in ("Beta", "Alpha", texture_packs.HD_PACK, ".adding-x", "dump"):
             make_pack(self.dir, name, {f"{FP[0]}.dds": dds()})
-        (self.dir / f"{FP[1]}.dds").write_bytes(dds())
         listed = texture_packs.listed(self.cfg)
         self.assertEqual([p.folder for p in listed], [texture_packs.HD_PACK, "Alpha", "Beta"])
         self.assertEqual(listed[0].title, "HD pack (made on this PC)")
-        self.assertEqual(texture_packs.loose_files(self.dir), 1)
         listed.reverse()
         listed[0].enabled = False
         texture_packs.remember(self.cfg, listed)
@@ -206,6 +204,37 @@ class PackFolders(unittest.TestCase):
         self.assertEqual(clashes["Alpha"], [(FP[0], texture_packs.HD_PACK, False)])
         self.assertEqual(clashes[texture_packs.HD_PACK], [(FP[0], "Alpha", True)])
         self.assertNotIn("Beta", clashes)
+
+    def test_loose_files_are_the_first_pack_and_stay(self):
+        """Milestone 1's layout: texture files directly in textures/ keep working, as the pack "."
+        before every other (any pack wins over them); it can be turned off, not removed."""
+        make_pack(self.dir, "Alpha", {f"{FP[0]}.dds": dds()})
+        (self.dir / f"{FP[0]}.png").write_bytes(png())
+        (self.dir / f"{FP[1]}.dds").write_bytes(dds())
+        (self.dir / "notes.txt").write_text("x")
+        listed = texture_packs.listed(self.cfg)
+        self.assertEqual([p.folder for p in listed], [texture_packs.LOOSE, "Alpha"])
+        loose = listed[0]
+        self.assertEqual((loose.title, loose.files, loose.problem, loose.note), ("Loose files (textures folder)",
+                                                                                 2, "", ""))
+        self.assertEqual(loose.names, [FP[0], FP[1]])  # not Alpha's files: only the folder's own
+        # A saved order cannot move it: it stays first.
+        self.cfg.d["texture_packs"] = {"order": ["Alpha", texture_packs.LOOSE], "disabled": []}
+        self.assertEqual([p.folder for p in texture_packs.listed(self.cfg)], [texture_packs.LOOSE, "Alpha"])
+        self.assertEqual(texture_packs.conflicts(texture_packs.listed(self.cfg))[texture_packs.LOOSE],
+                         [(FP[0], "Alpha", False)])
+        self.cfg.settings["texture_replace"] = True
+        self.assertEqual(texture_packs.launch_args(self.cfg), ["--texture_packs=.|Alpha"])
+        self.cfg.d["texture_packs"]["disabled"] = [texture_packs.LOOSE]
+        self.assertEqual(texture_packs.launch_args(self.cfg), ["--texture_packs=Alpha"])
+        with self.assertRaises(texture_packs.InstallError) as e:
+            texture_packs.remove(self.cfg, texture_packs.LOOSE)
+        self.assertIn("not a pack folder", str(e.exception))
+        self.assertTrue((self.dir / f"{FP[0]}.png").is_file())
+        # Without loose files there is no such entry.
+        for name in (f"{FP[0]}.png", f"{FP[1]}.dds"):
+            (self.dir / name).unlink()
+        self.assertEqual([p.folder for p in texture_packs.listed(self.cfg)], ["Alpha"])
 
     def test_the_game_gets_the_packs_in_order(self):
         make_pack(self.dir, "Alpha", {f"{FP[0]}.dds": dds()})
@@ -363,6 +392,20 @@ class TexturePacksPageTests(unittest.TestCase):
         with mock.patch.object(self.page, "_confirm", return_value=True):
             self.page.remove_selected()
         self.assertEqual(self.names(), ["Alpha pack", "Beta"])
+
+    def test_the_loose_files_row_cannot_move_or_go(self):
+        (self.dir / f"{FP[3]}.dds").write_bytes(dds())
+        self.page.refresh()
+        self.assertEqual(self.names()[0], "Loose files (textures folder)")
+        self.page.table.selectRow(0)
+        self.assertFalse(self.page.down_button.isEnabled())
+        self.assertFalse(self.page.remove_button.isEnabled())
+        self.page.table.selectRow(1)
+        self.assertFalse(self.page.up_button.isEnabled())   # nothing goes above it
+        self.page.move(-1)
+        self.assertEqual(self.names()[0], "Loose files (textures folder)")
+        self.page.table.item(0, 0).setCheckState(Qt.Unchecked)
+        self.assertEqual(self.cfg.d["texture_packs"]["disabled"], ["."])
 
     def test_make_hd_pack_needs_a_dump_and_estimates_it(self):
         self.assertIn("No texture dump yet", self.page.estimate.text())

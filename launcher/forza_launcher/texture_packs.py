@@ -7,7 +7,12 @@ it too) and an optional pack.toml (name, version, author, description). The game
 ("texture_packs": {"order": [...], "disabled": [...]}, the Mods page's format); with Use texture
 packs on, the game gets the packs to use as --texture_packs (folders '|'-separated, a later one
 winning for the same texture: SDK patch 0310). "hd-pack" is the pack Make HD pack writes
-(hd_pack.py); it starts at the top of the list, so the packs below it win."""
+(hd_pack.py); it starts at the top of the list, so the packs below it win.
+
+Texture files directly in the textures folder (milestone 1's layout) are the implicit pack
+"Loose files (textures folder)" (folder "."; the game reads "." as the files in the folder
+itself, not its folders): always first, so every pack wins over it; it can be turned off, not
+moved or removed."""
 import os
 import re
 import shutil
@@ -28,6 +33,8 @@ STATE_KEY = "texture_packs"
 MANIFEST = "pack.toml"
 DUMP = "dump"
 HD_PACK = "hd-pack"
+LOOSE = "."   # the loose files directly in the textures folder (--texture_packs name)
+LOOSE_TITLE = "Loose files (textures folder)"
 NONE = "|"  # --texture_packs value for "no packs"
 FINGERPRINT = re.compile(r"^[0-9a-fA-F]{16}$")
 EXTENSIONS = (".dds", ".png")
@@ -59,9 +66,16 @@ class Pack:
 
     @property
     def title(self) -> str:
+        if self.folder == LOOSE:
+            return LOOSE_TITLE
         if self.name:
             return self.name
         return "HD pack (made on this PC)" if self.folder == HD_PACK else self.folder
+
+    @property
+    def loose(self) -> bool:
+        """The loose files: always first, cannot be moved or removed."""
+        return self.folder == LOOSE
 
     @property
     def made_here(self) -> bool:
@@ -242,9 +256,10 @@ def _read_manifest(folder: Path, pack: Pack):
             setattr(pack, key, str(value).strip())
 
 
-def _read_files(folder: Path, pack: Pack, check=True):
+def _read_files(folder: Path, pack: Pack, check=True, top_only=False):
     """The files the game takes (SDK pack.cpp: <fingerprint>.dds/.png in the folder and the
-    folders inside it, links to folders not followed; a .dds before a .png, then the first path)."""
+    folders inside it, links to folders not followed; a .dds before a .png, then the first path).
+    top_only: only the folder's own files (the loose files)."""
     chosen = {}       # fingerprint -> (is not dds, path, TextureFile)
     unusable, others, duplicates = [], 0, 0
 
@@ -252,11 +267,11 @@ def _read_files(folder: Path, pack: Pack, check=True):
         raise e
 
     for dirpath, dirnames, filenames in os.walk(folder, onerror=onerror):
-        dirnames.sort()
+        dirnames[:] = [] if top_only else sorted(dirnames)
         for name in sorted(filenames):
             fp = fingerprint_of(name)
             if fp is None:
-                if not name.lower().endswith(DOC_EXTENSIONS):
+                if not top_only and not name.lower().endswith(DOC_EXTENSIONS):
                     others += 1
                 continue
             p = Path(dirpath) / name
@@ -294,19 +309,27 @@ def _read_files(folder: Path, pack: Pack, check=True):
 
 
 def scan(directory: Path, check=True) -> list:
-    """The pack folders in the textures folder, by name (not the dump, nor hidden folders)."""
+    """The pack folders in the textures folder, by name (not the dump, nor hidden folders), after
+    the loose files when there are any."""
     try:
         folders = sorted((p for p in Path(directory).iterdir()
                           if not p.name.startswith(".") and p.name.lower() != DUMP and p.is_dir()),
                          key=lambda p: p.name.lower())
     except OSError:
         return []
-    return [read_pack(p, check) for p in folders]
+    packs = [read_pack(p, check) for p in folders]
+    if loose_files(directory):
+        loose = Pack(folder=LOOSE, description="Texture files directly in the textures folder.")
+        try:
+            _read_files(Path(directory), loose, check, top_only=True)
+        except OSError as e:
+            loose.problem = f"the textures folder could not be read ({e})"
+        packs.insert(0, loose)
+    return packs
 
 
 def loose_files(directory: Path) -> int:
-    """Texture files directly in the textures folder, which the game does not use (packs are
-    folders)."""
+    """Texture files directly in the textures folder (the loose files)."""
     try:
         return sum(1 for p in Path(directory).iterdir() if p.is_file() and fingerprint_of(p.name))
     except OSError:
@@ -321,7 +344,7 @@ def ordered(cfg, found: list) -> list:
     if HD_PACK not in saved:
         made = [p for p in out if p.folder == HD_PACK]
         out = made + [p for p in out if p.folder != HD_PACK]
-    return out
+    return [p for p in out if p.loose] + [p for p in out if not p.loose]
 
 
 def remember(cfg, packs: list):
@@ -543,6 +566,9 @@ def remove(cfg, folder: str):
     forgets its place in the order."""
     directory = textures_dir(cfg)
     target = directory / folder
+    if folder == LOOSE:
+        raise InstallError("The loose files are not a pack folder: turn them off here, or move or delete "
+                           "them in the textures folder (Open textures folder).")
     if target.parent != directory or folder in ("", ".", "..") or folder.lower() == DUMP:
         raise InstallError(f'"{folder}" is not a texture pack in the textures folder.')
     try:

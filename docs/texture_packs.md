@@ -53,8 +53,12 @@ launcher.json keeps the order and the packs turned off (`"texture_packs": {"orde
 **Extra command-line flags** name `texture_packs` or `texture_pack_root`. The game reads only
 those folders (SDK patch 0310); without the option (the game started without the launcher) it
 reads every folder in `textures/` but `dump/`, the first path in alphabetical order winning.
-Texture files directly in `textures/` are not a pack: the page says how many there are and that
-they need a folder of their own.
+
+Texture files directly in `textures/` (where milestone 1 told you to put them) keep working: they
+are listed as **Loose files (textures folder)**, always first, so every pack wins over them for the
+same texture. Untick them to turn them off; they cannot be moved or removed on the page (move or
+delete the files in the folder). The launcher passes them as `.` in `texture_packs` (the files in
+the folder itself, not in its folders).
 
 ### Add pack…
 
@@ -218,7 +222,8 @@ many: they are dumped the next time they load.
 ## Making a replacement
 
 Put a file named `<fingerprint>.dds` or `<fingerprint>.png` in a pack folder in `textures/`
-(folders inside it are fine). Keep the name of the dumped texture you started from.
+(folders inside it are fine), or directly in `textures/` (the loose files). Keep the name of the
+dumped texture you started from.
 
 - **Size**: any, as long as the aspect ratio is the same (a 512x256 texture can become
   1024x512 or 4096x2048, within a texel). Up to 16384.
@@ -302,7 +307,7 @@ SDK patch 0280 (`docs/sdk_patches.md`): `src/graphics/pipeline/texture/pack.{h,c
 fingerprint, the dump writer with its untiling, DDS and PNG encoders, the replacement reader and
 its two worker threads), the hook in `TextureCache::CommitPreparedTextureLoad`, and the Vulkan
 texture cache's replacement images (`VulkanTextureCache::UploadTexturePackReplacement`,
-`GetTexturePackView`). SDK patch 0310: `texture_packs`, the packs to read in order
+`GetTexturePackView`). SDK patch 0310: `texture_packs`, the packs to read in order, `.` for the loose files
 (`ParsePackOrder` in `pack_format.cpp`, tested by `tools/test_texture_pack_dds.cpp`). The game
 sets `texture_pack_root` (`src/forza_app.h`); the launcher's options are in
 `launcher/forza_launcher/schema.py`, the packs in `texture_packs.py` (tests:

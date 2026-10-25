@@ -93,6 +93,13 @@ class FolderListPage(QWidget):
     def clash_name(self, name: str) -> str:
         return name
 
+    def movable(self, item) -> bool:
+        """Whether the item can change places (and others can take its place)."""
+        return True
+
+    def removable(self, item) -> bool:
+        return True
+
     def detail_lines(self, item) -> list:
         """Lines shown under the summary of the selected item, before its problems and clashes."""
         return [item.description] if getattr(item, "description", "") else []
@@ -244,6 +251,8 @@ class FolderListPage(QWidget):
         to = r + step
         if not (0 <= r < len(self.items) and 0 <= to < len(self.items)):
             return
+        if not (self.movable(self.items[r]) and self.movable(self.items[to])):
+            return
         self.items[r], self.items[to] = self.items[to], self.items[r]
         self._save()
         self.clashes = self.conflicts(self.items)
@@ -258,9 +267,10 @@ class FolderListPage(QWidget):
     def _selected(self):
         m = self._current()
         r = self.table.currentRow()
-        self.up_button.setEnabled(m is not None and r > 0)
-        self.down_button.setEnabled(m is not None and r < len(self.items) - 1)
-        self.remove_button.setEnabled(m is not None and not self._game_running())
+        self.up_button.setEnabled(m is not None and r > 0 and self.movable(m) and self.movable(self.items[r - 1]))
+        self.down_button.setEnabled(m is not None and r < len(self.items) - 1 and self.movable(m)
+                                    and self.movable(self.items[r + 1]))
+        self.remove_button.setEnabled(m is not None and not self._game_running() and self.removable(m))
         if m is None:
             self.details.setText(f"Select a {self.NOUN} to see its details." if self.items else "")
             return

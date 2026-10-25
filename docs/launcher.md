@@ -526,6 +526,9 @@ same texture), **Add pack…** (zip, folder or a drop; only fingerprint-named te
 are copied, checked as the game reads them, zip slip and size caps as for mods, a dump refused),
 **Remove**, **Refresh**, **Open textures folder**, and the details of the selected pack (its
 textures, size, graphics memory, the textures it shares with other packs and whose copy is used).
+Texture files directly in `textures/` (milestone 1's layout) are the pack **Loose files (textures
+folder)**: always first (every pack wins over it), passed as `.`, which can be turned off but not
+moved or removed.
 launcher.json keeps `"texture_packs": {"order": [...], "disabled": [...]}`; with Use texture packs
 on, every start passes `--texture_packs=A|B` (SDK patch 0310; `|` alone: none) unless the extra
 flags name `texture_packs` or `texture_pack_root`.

@@ -66,8 +66,6 @@ class TexturePacksPage(FolderListPage):
                            "texture, the one lower in the list wins. You can also drop a pack's .zip "
                            "or folder on this page.", "muted"))
         self.build_list(cl, "Add pack…", "Open textures folder")
-        self.loose = label("", "warn")
-        cl.addWidget(self.loose)
         lay.addWidget(c)
 
         self._hd_card(lay)
@@ -113,7 +111,17 @@ class TexturePacksPage(FolderListPage):
         return (f"No texture packs yet. Use <b>Add pack…</b>, put a pack folder in {self.folder()}, "
                 f"or make one from your dump below. How packs work: {GUIDE_LINK}.")
 
+    def movable(self, p):
+        return not p.loose
+
+    def removable(self, p):
+        return not p.loose
+
     def detail_lines(self, p):
+        if p.loose:
+            return [f"{p.files} texture file(s) directly in the textures folder, {_size(p.size)}: used "
+                    "before every pack, so any pack replaces them. Untick to turn them off; to remove "
+                    "them, move or delete them in the textures folder (Open textures folder)."]
         lines = [p.description] if p.description else []
         lines.append(f"{p.files} texture(s), {_size(p.size)} on disk, about {_gb(p.gpu_bytes)} of "
                      "graphics memory when every one is in use.")
@@ -135,11 +143,6 @@ class TexturePacksPage(FolderListPage):
         vulkan = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         self.vulkan_note.setVisible(not vulkan)
         self.switches["texture_replace"].setEnabled(vulkan)
-        loose = texture_packs.loose_files(self.folder())
-        self.loose.setText(f"{loose} texture file(s) are directly in the textures folder, where the game "
-                           "does not use them: a pack is a folder. Put them in a folder of their own "
-                           "(Open textures folder) and press Refresh.")
-        self.loose.setVisible(bool(loose))
         if self.items and not self.cfg.settings.get("texture_replace"):
             self._say(self.message.text() + " Use texture packs is off: turn it on above to use them.")
         self._refresh_hd()

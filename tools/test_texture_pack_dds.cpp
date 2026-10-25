@@ -302,14 +302,15 @@ int main() {
     }
   }
 
-  // texture_packs (patch 0310): folder names in order; paths, "dump" and repeats left out.
+  // texture_packs (patch 0310): folder names in order, "." for the loose files; paths, "dump"
+  // and repeats left out.
   {
     size_t refused = 0;
     CHECK(tp::ParsePackOrder("|", refused).empty() && refused == 0);
     CHECK(tp::ParsePackOrder("", refused).empty());
-    const auto names = tp::ParsePackOrder("hd-pack|Rocks v2||hd-pack|../up|a/b|c\\d|C:|.|..|Dump|x", refused);
-    CHECK((names == std::vector<std::string>{"hd-pack", "Rocks v2", "x"}));
-    CHECK(refused == 7);
+    const auto names = tp::ParsePackOrder(".|hd-pack|Rocks v2||hd-pack|../up|a/b|c\\d|C:|.|..|Dump|x", refused);
+    CHECK((names == std::vector<std::string>{".", "hd-pack", "Rocks v2", "x"}));
+    CHECK(refused == 6);
   }
 
   std::printf("texture pack DDS: PASS\n");
