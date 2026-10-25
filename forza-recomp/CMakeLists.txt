@@ -138,6 +138,7 @@ set(FORZA_SOURCES
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
     src/hooks/vr_head_pose.cpp
+    src/hooks/camera_fov.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
     src/hooks/native_car_tuning.cpp

@@ -6,7 +6,7 @@ from . import display, power, schema
 FILENAME = "graphics-settings.json"
 KEYS = {"output", "upscaler", "resolution_scale", "frame_rate", "vsync",
         "anisotropic_override", "forza_hud_edges", "forza_performance_overlay", "anti_aliasing",
-        "forza_cockpit_fov"}
+        *schema.CAMERA_FOV_KEYS}
 NVIDIA = {"quality", "balanced", "dlss", "dlaa"}
 FSR3 = {"fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_native"}
 
@@ -67,7 +67,7 @@ def translate(document, current, pc=None):
             valid = ((key == "frame_rate" and (number in schema.LOW_FRAME_RATES or 60 <= number <= 240)) or
                      (key == "resolution_scale" and 1 <= number <= 8) or
                      (key == "anisotropic_override" and -1 <= number <= 5) or
-                     (key == "forza_cockpit_fov" and (number == 0 or 40 <= number <= 90)))
+                     (key in schema.CAMERA_FOV_KEYS and (number == 0 or 40 <= number <= 90)))
             if not valid:
                 raise ValueError(f"unsupported {key}")
             if key == "frame_rate" and current.get("frame_rate") == 0 and number == display.effective(

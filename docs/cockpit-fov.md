@@ -1,97 +1,116 @@
-# Cockpit field of view
+# Driving camera field of view
 
-The launcher's Display > Camera setting and TU4's native Graphics screen expose
-**Cockpit FOV (vertical)**. Stock (`forza_cockpit_fov = 0`, the default) leaves
-the game's camera state untouched, normally 62 vertical degrees. Explicit
-overrides accept integer degrees from 40 to 90. Stock is also the reset choice.
-The bounds avoid extreme narrow views and near-180-degree projection distortion;
-they are a supported setting range, not a claim that all car interiors suit every
-value. Native Save applies and persists; Back discards unsaved edits. The launcher
-imports the native settings file before the next launch. The macOS app writes its
-external TOML on Save through the existing graphics configuration path.
+The launcher Display > Camera section and TU4 native Graphics screen expose
+separate base FOV choices for chase near, chase far, cockpit, hood and bumper.
+Every choice defaults to Stock (0), which leaves the original camera behavior
+untouched. Explicit choices are 40–90 vertical degrees. Save applies and persists;
+Back discards unsaved edits. The launcher imports the native settings file before
+its next launch; macOS also writes the external TOML through the existing path.
 
-Only the active `Camera::CCamDriver` is eligible. The separate `CCamCockpit`,
-chase, hood, bumper, photo, menu and rear-view camera classes are excluded.
-The current world's existing pause/replay flag, loaded flag and time scale also
-exclude replays, rewinds and paused/loading worlds, even with a driver camera.
-Mirrors retain their own rear-view projection. The override does not change the
-camera's position, near/far planes, aspect ratio or its simulation state.
-Ultrawide continues to expand the horizontal view using the selected vertical
-FOV. The setting is bypassed while `vr_head_pose_test` is enabled, including an
-identity pose. There is currently no headset stereo projection implementation;
-a future VR projection owner must retain this bypass and supply its own per-eye
-frustum rather than use this flat-screen setting.
+These are **base** values. The game still adds its CameraPhysics effects, including
+speed widening, so the moving FOV can exceed the selected base. The existing
+`forza_cockpit_fov` key keeps its degree values: 90 still selects a 90-degree base,
+not a 90-degree offset. No migration or reinterpretation of saved cockpit values
+is needed. The other keys are `forza_chase_near_fov`, `forza_chase_far_fov`,
+`forza_hood_fov` and `forza_bumper_fov`.
 
-## Runtime ownership and hook points
+The hook reads the original camera's base FOV and adds only the difference between
+that base and the selected one to the game's finished FOV. It preserves user-owned
+camera settings when Stock is selected and never edits game archives or data.
+Stock CameraSettings.ini bases are 48.5, 58, 62, 66 and 53 degrees respectively.
+CameraPhysics.xml adds up to 22 degrees for the chase cameras, 8 for Driver
+(starting above 140 mph), 10 for hood and 23 for bumper. These values explain why
+parked screenshots alone cannot validate preservation of dynamic FOV.
 
-The director's `+304` is vertical FOV in radians. The driver vtable is
-`0x82075DD4` (TU4 `0x820860FC`). Stock camera settings identify Driver FOV as
-62 vertical degrees; see [the camera research](vr.md). The implementation uses
-the two existing head-pose hook boundaries, without an SDK projection patch:
+## Scope and transitions
 
-| Reader | TU0 | TU4 | Consumer |
+Only CCamFollowLow, CCamFollowHigh, CCamDriver, CCamHood and CCamBumperHigh are
+eligible leaves. Other classes, including CCamCockpit, RearView/mirrors, Wheel,
+Side, free/photo/menu cameras and the base CCamFollow class, contribute zero.
+CBlendCamera interpolates the endpoint adjustments with the same t used by its
+original FOV getter. Entering or leaving a selected camera therefore does not
+switch its whole adjustment on or off at the final frame. Nested blends are
+bounded to eight levels and 31 visited nodes, with cycle, pointer, numeric and
+layout checks; malformed graphs retain the original FOV.
+
+The current world's existing pause/replay flag, loaded flag and time scale
+exclude paused, replay, rewind and loading worlds. These are the same fields used
+by the existing wheel-driving gate, read directly without its debounce delay.
+All adjustments are bypassed while vr_head_pose_test is enabled, even for an
+identity pose. This is compatibility with the existing head-pose prototype;
+real-headset asymmetric stereo projection has not been implemented or tested.
+
+Camera position, near/far planes and aspect are untouched. Ultrawide retains its
+existing aspect query. Mirrors retain their own unmodified rear-view camera.
+The half-FOV flags used by the original class getters are respected too.
+
+## Runtime ownership and hook
+
+The accessor hook is `0x8284EF90` in TU0 and `0x828FF260` in TU4. Both owned
+executables independently confirm the leaf reads one float from director +304
+and returns. No guest camera or director bytes are written by this hook.
+
+The director update `0x82905418` (TU4) calls the active camera's +28 virtual
+getter, stores the base FOV at +304, then calls `0x82904110`, which adds the
+CameraPhysics FOV contribution. The accessor hook calls the original exactly
+once and adjusts its returned float. The adjustment cannot accumulate across
+frames or across readers.
+
+There are seven direct accessor call sites across six TU4 functions:
+
+| Function | Calls | Consumer |
+| --- | --- | --- |
+| 0x82621F20 | 2 | Presentation FOV setter and complete render-state camera update |
+| 0x82A58DA0 | 1 | Game-side visibility frustum |
+| 0x824131A8 | 1 | World update |
+| 0x82622558 | 1 | Split-view camera setup |
+| 0x82514DB8 | 1 | Car/post-effect setup |
+| 0x824C4EA8 | 1 | Further camera setup |
+
+All seven now use the same accessor adjustment, without a caller-address filter.
+The earlier two temporary scopes covered three of these calls and missed four.
+
+`FORZA_FOV_TRACE=1` enables bounded diagnostic samples of caller, director,
+active camera kind, blend t, unmodified FOV and returned FOV. It records initial
+calls, sparse longer-run samples and up to 4,096 blend samples. It is off by
+default and exists to qualify actual transitions and dynamic FOV in test runs.
+
+| Camera | TU0 vtable | TU4 vtable | Base storage |
 | --- | --- | --- | --- |
-| `CSplitView` presentation update | `0x825A9D20` | `0x82621F20` | Presentation FOV setter, then complete deferred camera update |
-| View 0 visibility frustum | `0x829A4860` | `0x82A58DA0` | Game-side view matrix/FOV/aspect/clip frustum builder |
-| Director FOV accessor | `0x8284EF90` | `0x828FF260` | Loads one float from director `+304` |
+| FollowLow | 0x820755AC | 0x820858D4 | degrees at *(camera+192)+28; half flag +196 |
+| FollowHigh | 0x8207562C | 0x82085954 | same |
+| Driver | 0x82075DD4 | 0x820860FC | radians +272; half flag +304 |
+| Hood | 0x82075D54 | 0x8208607C | same |
+| BumperHigh | 0x82075E54 | 0x8208617C | same |
+| CBlendCamera | 0x82075444 | 0x8208576C | from +192, to +196, t +200 |
 
-TU4 generated-source inspection confirms both readers call `0x828FF260`.
-Presentation passes its result through the original unit conversion to the
-camera's virtual setter at `+56`, and reads it again for the complete deferred
-update. Visibility applies the same conversion for `0x8241AF90` (TU0
-`0x823EAED0`). Both calls therefore see the same overridden vertical FOV;
-render-side projection/culling and game-side visibility retain their existing
-camera pipeline. Aspect stays in the existing viewport query, including the
-ultrawide hook. Rear-view uses a different camera vtable and is excluded.
+Vtable/getter layouts were independently checked from the owned executables and
+TU4 generated source, following the maintainer's notes on issue #436. No game
+code or data is included in the repository changes.
 
-Each reader temporarily substitutes the big-endian float and restores the exact
-original bytes afterward, unless the guest wrote a newer value. Default zero
-does not substitute any bytes. Camera transitions to a different active class
-stop the override immediately. No archives, game settings files or game data
-are modified or distributed.
+## Revision validation
 
-The existing world-update hook `0x823E40D8` (TU4 `0x82414068`) records its
-world address before calling the original. TU4's original calls the camera
-world update `0x824131A8` within that call. Readers inspect the current world's
-`+0x0C` pause/replay flag, `+0x0D` loaded flag and positive float time scale at
-`+0x28`, the same fields documented and used in `platform/driving_gate.h`.
-This uses no frame-delay or rumble heuristic. A world that has not been observed
-is ineligible.
+The standalone guest-memory test covers every allowed base on all five classes,
+stock/invalid values, source-derived speed additions, full 101-step transitions
+in both directions, nested blends, split-screen scaling, invalid pointers/fields,
+cycles, recursion/node budgets, world guards and nonaccumulation without writes.
+A second test compiles the actual production hook with minimal SDK interfaces
+for both TU0 and TU4: all seven caller return PCs receive the same corrected
+value, the original is called exactly once, and guest bytes and other context
+fields stay unchanged. These tests run in the existing Windows/Linux/macOS CI
+workflow. Real SDK TU0/TU4 syntax checks remain separate from those test stubs.
 
-## Validation
+Local revised checks passed: both standalone hook variants with /W4 /WX,
+real-SDK syntax checks for the affected hooks on TU0/TU4, and 27 focused launcher
+checks covering all five independent settings and the unchanged cockpit degree
+contract. All 84 authored Windows host sources compiled and linked normally
+against immutable TU4 generated objects. The installed SDK's 1,265-file SHA-256
+manifest and 121-patch manifest matched.
 
-`cockpit_fov_test.cpp` checks every supported degree, radians conversion,
-identical values for both reader scopes, exact restoration, adjacent bytes,
-stock/invalid values, excluded cameras, VR bypass and preservation of a newer
-guest write. Launcher tests check native Save import, invalid-request atomicity,
-TOML output, persistence across reload and stock reset. Both TU0 and TU4 hook
-translation units are syntax checked against the exact 121-patch SDK.
-
-Windows TU4 in-game checks on an RTX 5060 Ti (Vulkan driver `0x9A438000`)
-used an offline, disposable copied profile at the
-same parked VW spawn, 1280x720 window, 60 FPS cap and native Vulkan rendering.
-Stock versus 90 degrees visibly changes the cockpit's vertical framing while
-chase and main-menu framing remain unchanged. Both mirror images render.
-The native Graphics screen was checked at the 1080p output preset: an unsaved
-40-degree edit wrote no settings file, Back restored Stock after reopening,
-and Save wrote 40. The launcher imported that actual file, generated TOML with
-40, and a restarted game displayed 40 in the native menu and the narrower
-cockpit view. The shorter native Stock value fits between the spinner arrows.
-
-With 90 selected, the native rewind menu displayed stock cockpit framing.
-The observed menu's X / View Replay entered the game's overhead replay camera
-and native replay toolbar successfully. This is a replay smoke test; every
-replay camera has not been compared against stock.
-With 90 and `vr_head_pose_test=true`, an identity pose also retained stock
-framing; the log confirmed zero rotation/translation and the enabled prototype.
-This validates the prototype bypass, not real-headset stereo projection.
-Every run had a hard time limit, closed its owned process, and verified the
-source profile hashes remained unchanged. Captures, copied saves, caches and
-build products remain outside Git.
-
-The Windows host compiled all 83 current authored sources and linked normally
-against immutable TU4 generated objects. The SDK's 1,265-file SHA-256 manifest
-and 121-patch manifest matched. After the paired camera runs, only the native
-Stock label changed in runtime sources; the camera sources were unchanged.
-A full TU0 host build/game run, real-headset VR, other cars, continuous driving
-at the bounds and an ultrawide in-game FOV comparison remain unverified.
+**Revised in-game validation is pending a reserved game slot.** The retained
+checkpoint dde9469 had actual Stock/40/90 parked cockpit, native Save/Back/restart,
+rewind/replay smoke and identity-head-pose captures on an RTX 5060 Ti. Those
+captures do not validate this new accessor, dynamic speed or blend path. The PR
+must remain draft until the revised path and five-row native layout are tested.
+All prior runs used offline copied profiles, hard limits and unchanged source
+profile hashes. Captures, game data, caches and build products remain outside Git.

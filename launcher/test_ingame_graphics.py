@@ -62,6 +62,20 @@ class InGameGraphicsTests(unittest.TestCase):
             self.assertEqual(self.cfg.settings, previous)
             self.assertTrue(self.pending.exists())
 
+    def test_all_camera_bases_round_trip_and_reject_partial_requests(self):
+        values = {key: str(60 + index) for index, key in enumerate(sorted(schema.CAMERA_FOV_KEYS))}
+        self.request(**values)
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        restored = Config(self.cfg.path)
+        for key, value in values.items():
+            self.assertEqual(restored.settings[key], int(value))
+        previous = dict(self.cfg.settings)
+        for key in schema.CAMERA_FOV_KEYS:
+            bad = {**values, key: "91"}
+            self.request(**bad)
+            self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+            self.assertEqual(self.cfg.settings, previous)
+
     def test_ultrawide_live_settings_preserve_launcher_rendering(self):
         self.cfg.settings.update(forza_ultrawide=True, resolution="720p", resolution_scale=1)
         self.request(frame_rate="120", vsync="false", anisotropic_override="5",
