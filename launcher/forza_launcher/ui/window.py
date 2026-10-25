@@ -18,8 +18,10 @@ from .catalogs import CatalogsPage, CATALOG_PAGE_ID
 from .controls_page import ControlsPage
 from .saves_page import SavesPage
 from .mods_page import ModsPage
+from .texture_packs_page import TexturePacksPage
 
 MODS_PAGE_ID = 8
+TEXTURE_PACKS_PAGE_ID = 9
 
 
 class MainWindow(QMainWindow):
@@ -110,17 +112,19 @@ class MainWindow(QMainWindow):
         self.catalogs = CatalogsPage(cfg, self)
         self.saves = SavesPage(cfg, self)
         self.mods = ModsPage(cfg, self)
+        self.texture_packs = TexturePacksPage(cfg, self)
         self.navs = QButtonGroup(self)
         self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
                        4: self.gallery, 5: self.controls, 6: self.saves,
-                       CATALOG_PAGE_ID: self.catalogs, MODS_PAGE_ID: self.mods}
+                       CATALOG_PAGE_ID: self.catalogs, MODS_PAGE_ID: self.mods,
+                       TEXTURE_PACKS_PAGE_ID: self.texture_packs}
         # In id order, so a page's stack index is its id.
         for page in self._pages.values():
             self.stack.addWidget(page)
         for i, name in ((0, "Play"), (4, "Photo gallery"),
                         (CATALOG_PAGE_ID, "Designs && vinyls"), (1, "Setup"),
                         (5, "Controls"), (2, "Settings"), (6, "Saves"), (MODS_PAGE_ID, "Mods"),
-                        (3, "About")):
+                        (TEXTURE_PACKS_PAGE_ID, "Texture packs"), (3, "About")):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
@@ -199,6 +203,8 @@ class MainWindow(QMainWindow):
             self.saves.refresh()
         elif self._pages[i] is self.mods:
             self.mods.refresh()
+        elif self._pages[i] is self.texture_packs:
+            self.texture_packs.refresh()
         self.status("")
 
     def refresh_all(self):
@@ -254,6 +260,12 @@ class MainWindow(QMainWindow):
                 return
             self.setup.task.cancel()
             self.setup.task.wait(15000)
+        if self.texture_packs.busy():
+            if QMessageBox.question(self, "Quit", "Make HD pack is still running. Stop it and quit? It "
+                                    "continues where it stopped next time.") != QMessageBox.Yes:
+                e.ignore()
+                return
+            self.texture_packs.shutdown()
         if not self.gallery.shutdown():
             self._close_after_gallery = True
             self.status("Finishing photo tasks before closing…")

@@ -507,9 +507,10 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
     # The mods turned on in the Mods page, in their load order (#149). An option the player
     # names in the extra flags ("--name=value" or "--name value") is left to them: the game
     # refuses one given twice.
-    from . import mods
+    from . import mods, texture_packs
     named = {a[2:].split("=", 1)[0] for a in extra if a.startswith("--")}
     args += mods.launch_args(cfg, named)
+    args += texture_packs.launch_args(cfg, named)  # the packs turned on, in order (#384)
     args += extra
     env.update(parse_env(cfg.advanced.get("extra_env", "")))
 
