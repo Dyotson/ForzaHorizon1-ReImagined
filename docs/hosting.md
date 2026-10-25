@@ -21,8 +21,9 @@ forward nothing (UDP hole punching, server relay as fallback).
         -v /path/to/data:/data forza-live --host 0.0.0.0
 
 Use `--network host`: with a bridge network the players' public ip:port is hidden behind
-Docker's UDP proxy. The optional world events need the game's `gamedb.slt`
-(`--game-db`, not included; mount it into the container).
+Docker's UDP proxy. The optional world events and the Co-op Festival (its festival events
+with CPU drivers; without the database the playlist is not offered) need the game's
+`gamedb.slt` (`--game-db`, not included; mount it into the container).
 
 Unraid: copy `server/` to `/mnt/user/appdata/forza-live/src`, build there, run with
 `-v /mnt/user/appdata/forza-live/data:/data`. `docker inspect forza-live` shows the token.

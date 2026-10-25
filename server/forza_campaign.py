@@ -351,6 +351,9 @@ def configure(args, game_db):
     _events = None
     log.info("co-op campaign: %d events for /event (%s)", len(available()),
              "festival and street races" if STREET else "festival races")
+    if not available():
+        log.warning("co-op campaign: no events (the game's media/db/gamedb.slt, --game-db): "
+                    "the Co-op Festival playlist is not offered")
 
 
 def race_multiplier(round_id):

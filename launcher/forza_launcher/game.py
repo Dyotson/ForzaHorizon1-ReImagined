@@ -121,9 +121,15 @@ def server_listening(port=LOCAL_HTTP_PORT) -> bool:
         return False
 
 
-def server_command(script: Path, data_dir: Path):
+def server_command(script: Path, data_dir: Path, game_files: Path | None = None):
     args = ["--host", "127.0.0.1", "--port", LOCAL_SERVER.split(":")[1],
             "--http-port", str(LOCAL_HTTP_PORT), "--data-dir", str(data_dir)]
+    # The festival events (the Co-op Festival's /event, the Horizon World's events) come from
+    # the game's database. The server only looks for it in a source checkout (extracted/game
+    # beside server/); without it the Co-op Festival is not offered at all (#67).
+    db = game_files / "media" / "db" / "gamedb.slt" if game_files else None
+    if db and db.is_file():
+        args += ["--game-db", str(db)]
     if paths.FROZEN:  # run the server inside this executable (no Python needed)
         return [sys.executable, "--live-server", str(script)] + args
     return [sys.executable, str(script)] + args
@@ -470,7 +476,7 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         else:
             env["FORZA_SERVER"] = LOCAL_SERVER
             if not server_listening():
-                server_argv = server_command(script, home / "live_server")
+                server_argv = server_command(script, home / "live_server", data)
     else:
         if mode == "custom":
             notes.append("No custom server address set: starting offline.")
