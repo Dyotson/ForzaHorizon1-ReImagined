@@ -6,7 +6,7 @@
 
 > [!TIP]
 > **Install with the launcher: [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest).**
-> Windows installer, Linux Flatpak (recommended on SteamOS), or the Linux `.tar.gz`.
+> Windows installer, Linux Flatpak (recommended on SteamOS: [Steam Deck steps](docs/steam_deck.md)), or the Linux `.tar.gz`.
 > It updates itself, and it builds the game on your PC from your own copy.
 > [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/yu7zScdcWw)
 
@@ -78,7 +78,7 @@ These numbers are from one machine, a Ryzen 7 7800X3D with a Radeon RX 9060 XT (
 | 120 | 115.2 fps | 75.7 fps |
 | 144 | 111.5 fps | 70.1 fps |
 
-Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is Vulkan, render scale 1, AMD FSR 1 and 30 fps. Higher render scales and 60 fps cost more than the Deck has to spare.
+Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is render scale 1 with AMD FSR 1, 30 fps (40 with the screen at 40 Hz), Scene anti-aliasing Off and Console detail. Higher render scales and 60 fps cost more than the Deck has to spare. Install, settings, controls and suspend: [`docs/steam_deck.md`](docs/steam_deck.md).
 
 Shader prebuild and the shader-cache fixes shipped in 0.1.28. Further CPU savings for 4-core systems are in testing ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45)). [`docs/shader_prebuild.md`](docs/shader_prebuild.md) · [`docs/perf.md`](docs/perf.md)
 
@@ -108,6 +108,8 @@ This is the way to install. The launcher builds the game on your machine from yo
    ```sh
    flatpak install flathub org.freedesktop.Sdk.Extension.llvm22//26.08
    ```
+
+   **On SteamOS (Steam Deck):** in Desktop Mode, download the `.flatpak` and open it in Dolphin (Discover installs it) or run the command above, install the compiler extension, then in Steam choose **Games > Add a Non-Steam Game to My Library** and pick **Forza Horizon 1: ReImagined**. It then starts from Game Mode. [`docs/steam_deck.md`](docs/steam_deck.md)
 
 2. In Setup, **Game files**: your disc image, Games on Demand package, or an extracted folder. **Updates & DLC**: Title Update 4 and your DLC folder, if you have them.
 3. **Build.** The launcher generates the game from your copy and compiles it. A measured build at 4 jobs on an 8-core PC took about 4.6 minutes ([`docs/launcher.md`](docs/launcher.md)). It can be cancelled and resumed, and it runs again only when something changed.

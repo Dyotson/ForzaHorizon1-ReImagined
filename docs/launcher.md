@@ -695,16 +695,17 @@ Graphics menu saves the frame rate it was started with every time; if that is th
 stays, and any other rate chosen in the menu replaces it. Tests: `launcher/test_match_display.py`.
 
 **Battery saver (#140, Linux).** Display > Frame rate > Battery saver: Off (the default), On, or "Auto on battery
-(Steam Deck)". When it applies, Play starts the game at 30 fps and render scale 1 with AMD FSR 1 (FSR 3 becomes
-FSR 1, SMAA and FSR Native AA the game's own anti-aliasing) and passes `--gpu_wait_blocking=true` (already the
-default on Linux). Only this start's `forza.toml` and command line change: `launcher.json` keeps the player's own
-values, which the next start on mains power uses again, and the player's own extra flags still come last. Auto
-applies on a Steam Deck (DMI board name, as the GPU detection) whose battery runs it: no charger in
+(Steam Deck)". When it applies, Play starts the game at 30 fps and render scale 1 with AMD FSR 1 and Scene
+anti-aliasing Off (FSR 3 becomes FSR 1, SMAA and FSR Native AA the game's own anti-aliasing) and passes
+`--gpu_wait_blocking=true` (already the default on Linux). A frame rate of 20 or 40 stays: the player chose it for a
+screen 30 does not divide (a Deck at 40 Hz). Only this start's `forza.toml` and command line change: `launcher.json`
+keeps the player's own values, which the next start on mains power uses again, and the player's own extra flags
+still come last. Auto applies on a Steam Deck (as the GPU detection finds it) whose battery runs it: no charger in
 `/sys/class/power_supply` online (type Mains, USB, ...) and the system battery discharging; a controller's or a
-mouse's battery (scope Device) does not count. The power source is read once, at Play; Auto on another PC shows
-that it never applies there. The in-game Graphics menu saves every value it shows, so the values battery saver
-forced at the last start (kept in `launcher.json` under `power`) are not taken from it as the player's choice.
-The shader prebuild plans with the player's own settings. Tests: `launcher/test_power.py` (fake sysfs).
+mouse's battery (scope Device) does not count. The power source is read once, at Play; Auto on another PC shows that
+it never applies there. The in-game Graphics menu saves every value it shows, so the values battery saver forced at
+the last start (kept in `launcher.json` under `power`) are not taken from it as the player's choice. The shader
+prebuild plans with the player's own settings. Tests: `launcher/test_power.py` (fake sysfs).
 
 ### GPU choice (#52)
 
@@ -713,8 +714,11 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 `launcher.json` under `gpu`) and preselects it; the player can change it at any time.
 
 * **Detection** (`launcher/forza_launcher/gpu.py`, no Qt): Linux reads `/sys/class/drm/card*/device/vendor`
-  (0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel); the Steam Deck is the DMI board name `Jupiter` (LCD) or `Galileo`
-  (OLED) from Valve and wins over its AMD APU. Windows asks PowerShell (`Get-CimInstance Win32_VideoController`
+  (0x10de NVIDIA, 0x1002 AMD, 0x8086 Intel); the Steam Deck is the DMI board or product name `Jupiter` (LCD) or
+  `Galileo` (OLED) from Valve and wins over its AMD APU; without those (#140) its APU: the graphics' PCI id
+  (1002:163f Van Gogh, 1002:1435 Sephiroth) or the CPU's name (`AMD Custom APU 0405` or `0932`), and Steam's
+  `SteamDeck=1` together with another "AMD Custom APU" (`gpu.steam_deck_reason`; Windows: the board, the CPU or
+  the adapter `AMD Custom GPU 0405`). Windows asks PowerShell (`Get-CimInstance Win32_VideoController`
   and `Win32_BaseBoard`), falling back to `wmic`; the vendor comes from the adapter name or the `VEN_xxxx` of its
   PNP id; Microsoft Basic, remote and virtual adapters are ignored. With several cards (laptop iGPU + dGPU) the
   discrete one wins (NVIDIA, then AMD, then Intel). `FORZA_GPU=nvidia|amd|intel|deck` overrides.
@@ -750,6 +754,13 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
   always win). Settings that are heavy for the PC get an orange line with the numbers (render scale 2 renders 2560x1440
   ...). A launcher with existing settings is never changed silently: a banner on the Settings page offers "Use
   recommended" (only the settings that warn) or "Keep mine", and comes back only when the hardware changes.
+  On a Steam Deck (#140) the banner offers the Deck preset itself (`gpu.DECK_SETTINGS`, below) whenever a setting
+  differs from it (a frame rate of 20 or 40 counts as the preset's), "Use recommended" applies all of it, and the
+  answer is kept per preset revision (`specs.DECK_OFFER`), so a Deck that answered before the preset had Scene
+  anti-aliasing Off is asked once more. A new launcher on a Deck gets the whole preset. On a Deck the frame rate
+  warns above 40 (not 30), and Scene anti-aliasing other than Off warns. Match display on a Deck picks a rate its
+  screen divides, at most 40 (`display.under_cap`: 40 at 40, 80 or 120 Hz, 30 at 60 or 90 Hz); elsewhere a 40 Hz
+  screen gets 40 and any other under 60 gets 30, as before. Tests: `launcher/test_steam_deck.py`.
 * **Known problems** are never forbidden: the option keeps working, with an orange line under it giving the reason
   and the issue number while it holds the problem value, and the choice is marked ("Direct3D 12 (flickers on
   NVIDIA, #46)"). The explicit choice of the player always wins.
@@ -759,7 +770,7 @@ Steam Deck, or "Other / not sure". The launcher detects the card once (first sta
 | NVIDIA | Vulkan, render scale 1, AMD FSR 1, 60 fps, shader cache and background shader compilation on (scale 2 is the most you should need) | Direct3D 12 (Windows): flicker, green reflections on glass and paint (#46). Render scale 3 and above: flicker and coloured artifacts across the map (#47). Background compilation or the shader cache off: Vulkan stutter (#49, open: warm-cache stutter unmeasured). Traffic car glow in the distance (#48): no setting avoids it |
 | AMD (Linux and Windows) | Vulkan, render scale 1, AMD FSR 1, 60 fps | none; render scale 3 and 4 are clean on Radeon (Vulkan/RADV, and Direct3D 12 under vkd3d-proton at 3) |
 | Intel | Vulkan, render scale 1, AMD FSR 1, 30 fps | nothing reported yet; Direct3D 12 (a different render target path on Intel) and render scale 2 and up are marked as untested / slow |
-| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC | render scale above 1 and a frame rate above 30: the Deck ran 17 to 25 fps (#45). 20 and 40 fps are in the Frame rate list (#263: they divide 60 and 120 Hz screens; 40 suits a Deck screen set to 40 Hz) but not in the preset |
+| Steam Deck | Vulkan, render scale 1, AMD FSR 1, 30 fps, Scene anti-aliasing Off, Console shadow and texture detail, 3D scene at 720p, Letterbox on, shader cache and background shader compilation on; Battery saver (above) stays off, as on every PC ([steam_deck.md](steam_deck.md)) | render scale above 1 and a frame rate above 40: the Deck ran 17 to 25 fps (#45); 40 suits its screen at 40 Hz (LCD) or 80 Hz (OLED) |
 
 Tests: `python3 -m unittest launcher/test_gpu.py` (detection from a fake sysfs and PowerShell / wmic output, presets
 valid for the schema, warnings, the first-run / existing-settings / player-choice flows, the `--gpu_vendor` argument).
