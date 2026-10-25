@@ -431,11 +431,19 @@ jobs:
           Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          # Hash the final staged payload before Inno Setup packages it. Keep a copy
+          # outside the installer so a quarantined file can still be identified.
+          python launcher/packaging/windows_build_manifest.py out/ForzaHorizon1-ReImagined --version "$env:VERSION" --commit "$env:GITHUB_SHA" --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Windows payload manifest' }
           & $iscc "/DAppVersion=$env:VERSION" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+          Copy-Item -LiteralPath out/ForzaHorizon1-ReImagined/windows-build-manifest.json -Destination "installer/ForzaHorizon1-ReImagined-windows-files-$env:VERSION.json"
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows
-          path: installer/*.exe
+          path: |
+            installer/*.exe
+            installer/*-windows-files-*.json
 
   # The installer on a clean Windows machine: silent install, files and shortcuts, the launcher's
   # --version and --dry-run, silent uninstall (launcher/packaging/test_installer.ps1).

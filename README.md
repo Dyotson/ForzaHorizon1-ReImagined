@@ -123,6 +123,14 @@ On Linux, put both files in the same folder and run
 `sha256sum --ignore-missing -c SHA256SUMS`. A match confirms the downloaded bytes match
 the published checksum; it does not certify that the program is safe or code-signed.
 
+Windows releases also include `ForzaHorizon1-ReImagined-windows-files-<version>.json`,
+with hashes for the installed payload and a link to the build that produced it.
+The same document is installed as `windows-build-manifest.json`. If antivirus
+quarantines a file, report the exact file path, detection name and launcher version
+from Protection history. The published manifest can identify the expected file
+without restoring it. Signing and antivirus assessment remain separate work
+([#354](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/354)).
+
 ## Building from source
 
 For developers. Players should use the launcher.
