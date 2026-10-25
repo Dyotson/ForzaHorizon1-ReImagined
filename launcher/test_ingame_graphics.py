@@ -47,6 +47,21 @@ class InGameGraphicsTests(unittest.TestCase):
         self.assertEqual(saved.settings["fsr3_output_resolution"], previous)
         self.assertEqual(saved.settings["frame_rate"], 120)
 
+    def test_cockpit_fov_round_trip_and_stock_reset(self):
+        self.assertEqual(self.cfg.settings["forza_cockpit_fov"], 0)
+        for degrees in (40, 62, 75, 90, 0):
+            self.request(forza_cockpit_fov=str(degrees))
+            self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+            self.assertEqual(Config(self.cfg.path).settings["forza_cockpit_fov"], degrees)
+
+    def test_invalid_cockpit_fov_rejects_whole_request(self):
+        previous = dict(self.cfg.settings)
+        for value in ("-1", "1", "39", "91", "nan", "inf", "62.5", "true"):
+            self.request(frame_rate="120", forza_cockpit_fov=value)
+            self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+            self.assertEqual(self.cfg.settings, previous)
+            self.assertTrue(self.pending.exists())
+
     def test_ultrawide_live_settings_preserve_launcher_rendering(self):
         self.cfg.settings.update(forza_ultrawide=True, resolution="720p", resolution_scale=1)
         self.request(frame_rate="120", vsync="false", anisotropic_override="5",

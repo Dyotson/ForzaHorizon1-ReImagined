@@ -249,7 +249,8 @@ std::vector<std::pair<std::string, std::string>> preview_baseline;
 
 bool IsLive(const Setting &setting) {
   return setting.key == "vsync" || setting.key == "anisotropic_override" ||
-         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay";
+         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay" ||
+         setting.key == "forza_cockpit_fov";
 }
 
 void RememberPreview() {
@@ -285,8 +286,9 @@ bool ApplyPreview() {
 }
 
 constexpr size_t kAntiAliasing = 9;
+constexpr size_t kCockpitFov = 10;
 // Preset first, then image quality, frame pacing, HUD and monitoring.
-constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 4, 6, 7};
+constexpr std::array<size_t, 11> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 4, kCockpitFov, 6, 7};
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
@@ -367,7 +369,11 @@ void Snapshot() {
        {{"custom", "Custom"}, {"auto", "Auto (recommended)"}, {"low", "Low"},
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
+      {"forza_cockpit_fov", "forza_cockpit_fov", "Cockpit FOV (vertical)", "",
+       {{"0", "Stock (normally 62 degrees)"}}},
   };
+  for (int degrees = 40; degrees <= 90; ++degrees)
+    settings[kCockpitFov].choices.push_back({std::to_string(degrees), std::to_string(degrees) + " degrees"});
 #ifdef __APPLE__
   settings[0].choices.insert(settings[0].choices.begin(), {"720p", "1280 x 720"});
 #endif
@@ -412,6 +418,10 @@ void Snapshot() {
   // Never let an unknown/current launcher mode silently select spinner index
   // zero (1080p). Native ultrawide owns drawing and output until restart.
   auto &output = settings[0];
+  auto &fov = settings[kCockpitFov];
+  if (std::none_of(fov.choices.begin(), fov.choices.end(),
+                   [&](const Choice &choice) { return choice.value == fov.value; }))
+    fov.value = "0";
   if (const auto extent = forza::ultrawide::OutputSize(); extent.width) {
     output.choices = {{output.value, std::to_string(extent.width) + " x " +
         std::to_string(extent.height) + " (window)"}};
@@ -489,7 +499,7 @@ bool SaveNativeConfig() {
       "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
       "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
       "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
-      "forza_hud_edges", "forza_performance_overlay"}) {
+      "forza_hud_edges", "forza_performance_overlay", "forza_cockpit_fov"}) {
     auto value = rex::cvar::GetFlagByName(name);
     if (value.empty()) continue;
     const std::string key(name);
@@ -622,7 +632,8 @@ std::string Help(size_t i) {
       "Move ultrawide HUD anchors to the center or edges. Save applies this change when HUD layout is enabled.",
       "Show measured game FPS, optionally with recent frame times in milliseconds. Save applies this change.",
       "Adjust reconstruction and filtering together. Auto uses available features and output size, not a benchmark. HUD and FPS limit stay unchanged.",
-      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method."};
+      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method.",
+      "Driving cockpit only: 40-90 vertical degrees. Stock preserves the game's FOV (normally 62). Ultrawide still widens horizontally. Disabled while VR owns the camera. Save applies; Back discards."};
   return i < std::size(help) ? help[i] : "Save applies graphics changes without restarting.";
 }
 uint32_t MakeChoices(Native &ui, uint8_t *base, size_t i) {

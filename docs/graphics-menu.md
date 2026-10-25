@@ -17,6 +17,12 @@ and ultrawide HUD placement. Irrelevant rows dim immediately without requiring
 hover or selection, and restore when relevant. Inactive values are retained.
 The game's font cache is updated separately from native row input state.
 
+Cockpit FOV is available before HUD placement: Stock preserves the game's
+camera behavior (normally 62 vertical degrees), or choose 40–90 vertical
+degrees. Save applies it without restarting; Back discards unsaved edits.
+It affects the driving cockpit camera and is bypassed while VR owns the camera.
+See [Cockpit field of view](cockpit-fov.md) for scope and hook evidence.
+
 Ultrawide shows the physical window output and automatic drawing size. Its
 rendering controls are read-only because changing them requires a launcher
 restart; frame pacing, filtering and HUD controls still save independently.

@@ -51,6 +51,12 @@ def add(*a, **k):
 
 
 # --- Display ---------------------------------------------------------------------------
+add("forza_cockpit_fov", "Cockpit FOV (vertical degrees)", "Display", "choice", 0,
+    "Stock preserves the game's camera behavior (normally 62 degrees vertical). "
+    "Override only the driving cockpit view, from 40 to 90 vertical degrees. "
+    "Ultrawide keeps its wider horizontal view. Disabled while VR owns the camera.",
+    "Camera", choices=[(0, "Stock (normally 62 degrees)")] +
+    [(degrees, f"{degrees} degrees") for degrees in range(40, 91)])
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "

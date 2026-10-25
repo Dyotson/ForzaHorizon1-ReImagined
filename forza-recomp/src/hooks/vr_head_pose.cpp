@@ -35,6 +35,7 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/vr_head_pose_math.h"
+#include "../platform/cockpit_fov.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -58,6 +59,9 @@
 REXCVAR_DEFINE_BOOL(vr_head_pose_test, false, "VR",
                     "Experimental: apply a test head pose (FORZA_VR_POSE / FORZA_VR_POSE_FIFO) "
                     "to the in-car camera");
+REXCVAR_DEFINE_INT32(forza_cockpit_fov, 0, "Display",
+                    "Cockpit vertical FOV in degrees (40-90); 0 preserves the game default. "
+                    "Disabled while VR owns the camera.");
 
 namespace {
 using forza::vr::HeadPose;
@@ -231,19 +235,36 @@ uint32_t FirstViewDirector(uint8_t* base) {
   if (!Valid(manager)) return 0;
   return Load32(base, manager + 244 + 8);
 }
+
+uint8_t* DriverFov(uint8_t* base, uint32_t director) {
+  if (!Valid(director)) return nullptr;
+  const auto camera = Load32(base, director + kActiveCamera);
+  if (!Valid(camera) || Load32(base, camera) != FORZA_ADDR(0x82075DD4)) return nullptr;
+  const auto world = forza::camera::cockpit_world.load(std::memory_order_relaxed);
+  if (!Valid(world) || !forza::camera::LiveCockpitWorld(forza::GuestPtr(base, world))) return nullptr;
+  return forza::GuestPtr(base, director + 304);
+}
 }  // namespace
 
 // The view's presentation camera update (view = CSplitView: +8 director, +40 camera).
 extern "C" REX_FUNC(__imp__sub_825A9D20);
 extern "C" REX_FUNC(sub_825A9D20) {
   const uint32_t view = ctx.r3.u32;
-  PosedView posed(base, Valid(view) ? Load32(base, view + 8) : 0, "view");
+  const uint32_t director = Valid(view) ? Load32(base, view + 8) : 0;
+  const int degrees = REXCVAR_GET(forza_cockpit_fov);
+  forza::camera::ScopedCockpitFov fov(degrees ? DriverFov(base, director) : nullptr,
+      degrees, true, REXCVAR_GET(vr_head_pose_test));
+  PosedView posed(base, director, "view");
   __imp__sub_825A9D20(ctx, base);
 }
 
 // View 0's frustum for the game-side visibility.
 extern "C" REX_FUNC(__imp__sub_829A4860);
 extern "C" REX_FUNC(sub_829A4860) {
-  PosedView posed(base, REXCVAR_GET(vr_head_pose_test) ? FirstViewDirector(base) : 0, "frustum");
+  const int degrees = REXCVAR_GET(forza_cockpit_fov);
+  const uint32_t director = (degrees || REXCVAR_GET(vr_head_pose_test)) ? FirstViewDirector(base) : 0;
+  forza::camera::ScopedCockpitFov fov(degrees ? DriverFov(base, director) : nullptr,
+      degrees, true, REXCVAR_GET(vr_head_pose_test));
+  PosedView posed(base, director, "frustum");
   __imp__sub_829A4860(ctx, base);
 }
