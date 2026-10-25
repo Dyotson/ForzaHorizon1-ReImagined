@@ -219,6 +219,14 @@ add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
     "Console is the game's own filter. Also in the "
     "in-game Graphics screen, where it applies without a restart.", "World detail",
     choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
+add("world_ambient_occlusion", "Ambient occlusion", "Display", "choice", "off",
+    "Darker sunlight where surfaces meet: under cars, along curbs and rails, at the foot of walls "
+    "and in creases of the ground (screen-space ambient occlusion on the world's sunlight; the cars "
+    "and trees keep their own shading). Low or High strength, the same cost: about 0.5 ms "
+    "per frame at 2560x1440 on an RX 9060 XT, nothing measurable under a 60 fps cap; other GPUs "
+    "may differ. Off is the game's lighting. Vulkan only. Also in the in-game Graphics screen, "
+    "where it applies without a restart.", "World detail",
+    choices=[("off", "Off"), ("low", "Low"), ("high", "High")])
 # Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
 # --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
 add("texture_dump", "Dump textures", "Display", "bool", False,

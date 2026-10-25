@@ -10,7 +10,9 @@ and apply from the next start (the game reads them when it loads the track):
 
 A third option, **Shadow softness** (`world_shadow_filter`, #380), changes how the shadows
 are filtered rather than which objects cast them; it applies live and is also in the in-game
-Graphics screen. See [Shadow softness](#shadow-softness-380) below.
+Graphics screen. See [Shadow softness](#shadow-softness-380) below. A fourth,
+**Ambient occlusion** (`world_ambient_occlusion`, #380), darkens the sunlight where surfaces
+meet; also live and in the Graphics screen, see [Ambient occlusion](#ambient-occlusion-380).
 
 `src/hooks/world_detail.cpp` changes the values after the game reads the track's
 `media/tracks/<track>/TrackSettings.xml` (loader `sub_82D505C0`, Title Update 4
@@ -174,3 +176,101 @@ Kept out of Git. The same paused frame at the free roam spawn (2560x1440, render
 MSAA), switched live in the Graphics screen: the car's own shadow on the road, a roadside
 tree's shadow and the rail and pole shadows get progressively softer edges with Soft and
 Softer; the shadowed areas themselves stay as dark.
+
+## Ambient occlusion (#380)
+
+**Settings > Display > World detail > Ambient occlusion** and the in-game **Graphics** screen
+offer Off (default), Low and High (`world_ambient_occlusion`). It applies live (Save in the
+Graphics screen) and needs Vulkan: SDK patch 0350 (`src/graphics/vulkan/fh1_world_ao.cpp`)
+does the work; the Graphics screen dims the row on Direct3D 12.
+
+### Where it goes
+
+The game has no ambient occlusion of its own, and no normal buffer, but it gives a pass
+everything a depth-only one needs. Each frame it draws a depth pre-pass of the main view
+(1280x720 guest, no MSAA, reversed depth: 1 at the 0.3 m near plane, 0 for the sky),
+writes a stencil per object (0 the static world, 3 x an object id for the cars, 128 the
+ground around the player's car, 129 the alpha-tested trees and grass) and resolves both to a
+texture (`WorldDepth`; the speed blur reads its stencil later). The sun shadow mask's passes
+(`ApplyShadows`, see [Shadow softness](#shadow-softness-380)) read that texture as
+`k_24_8_FLOAT` and rebuild each pixel's view position from it with their pixel constants:
+view z = c25.y / (1 - c25.x - depth), x = z * ndc.x / c0.x, y = z * ndc.y / c1.y. They write
+the sun's visibility to the mask's red channel (green 1, blue and alpha 0), the blur follows,
+and the world materials multiply their sunlight by it.
+
+The patch multiplies an occlusion term into that red channel. That darkens sunlight only,
+and before the materials add their fog, so distant fogged hills are not darkened twice. A
+multiply over the finished scene color was the alternative: it would also darken the
+ambient light in shade, but it would have to undo the fog, would land on glass, smoke and
+other transparent surfaces drawn after the opaque world, and would sit inside Sean's native
+world-color composition (#157). Shaded areas (under a tree's own shadow, the side of a
+building facing away from the sun) therefore get no occlusion; sunlit contact areas do.
+
+### What it does
+
+At the first shadow pass of a frame (its pixel shader is one of the effect's seven
+`ApplyShadows` techniques and its target's pitch is the depth texture's width, so a
+mirror's mask is left alone), on the GPU, outside the game's render pass:
+
+1. Linear depth at half the scene's resolution from 1920 pixels wide (1280x720 at render
+   scale 2), the scene's own below; the nearest of each 2x2 block, so thin rails and posts stay.
+2. Scalable ambient obscurance (McGuire et al. 2012): 12 samples on a spiral within 1.5 m,
+   turned per pixel by interleaved gradient noise; the normal from the depth (the smaller step
+   on each axis). Low uses intensity 0.6, High 1.0. It fades out from 60 to 160 m.
+3. A 9-tap Gaussian each way, weighted by depth so it does not cross silhouettes.
+4. Full resolution: the result upsampled with depth weights into an RGBA8 image (four pixels
+   per texel). Pixels whose pre-pass stencil marks a car or the alpha-tested foliage, and the
+   sky, keep 1: the cars keep their own shading (no darker paint in their creases) and the
+   noisy foliage is not darkened. Both still occlude the ground (contact shadows under cars).
+   The stencil comes from an 8-bit view of the same resolve, which the texture cache loads
+   through fetch constant 31 (unused by the shadow passes; set for the request and put back).
+
+Right after the next draw into the mask by another shader (the 2x2 box blur in play; with
+Shadow softness Softer, the 6-tap horizontal pass, whose vertical pass then blurs the
+product; photo mode's 4-tap pair should take the same path, not checked), one full-screen
+draw multiplies the factor into the red channel (blend destination x source, red only). Off
+records nothing.
+
+### Cost
+
+Title Update 4, RX 9060 XT (RADV), 1920x1080 window, render scale 2 (2560x1440 scene), 2x
+MSAA, at the free roam spawn; the levels switched live in the Graphics screen in one session,
+in the order Off, Low, High, High, Low, Off, twice (12 s per phase, 3 s after each switch
+skipped), BENCH lock held. GPU = the process's DRM engine time.
+
+| Run | Off | Low | High |
+| --- | --- | --- | --- |
+| Uncapped (`--frame_rate=240 --vsync=false`), paused frame, GPU-bound (99.5% busy): fps | 89.7-89.9 | 85.8-85.9 | 85.7-85.9 |
+| the same, GPU ms per frame | 11.07-11.10 | 11.58-11.59 | 11.58-11.60 |
+| 60 fps cap (`--frame_rate=60 --vsync=true`), car standing: fps | 59.8-60.0 | 59.9-60.0 | 59.7-60.0 |
+| the same, GPU busy ms per second | 823-839 | 838-840 | 839-840 |
+
+About 0.5 ms a frame at 2560x1440 (the five compute passes, the 1280x720 occlusion among
+them, and the multiply), the same for Low and High (only the strength differs): 4-5% fps
+while the GPU is the limit, nothing measurable under a 60 fps cap (the GPU's clock drops with
+the headroom, so its busy time per frame is higher at 60 than uncapped for every level). The paused frame keeps traffic and the
+sky still; in play with the car standing, uncapped, the same switch gave 2-3 fps less
+(85.7-88.2 Off, 83.3-84.9 Low and High), with more spread from passing traffic.
+
+### Screenshots
+
+Kept out of Git. The same paused frame, switched live in the Graphics screen (2560x1440,
+render scale 2, 2x MSAA), Off / Low / High: at the free roam spawn the road behind and beside
+the car gets a soft contact shadow, the crease where the road meets the gravel shoulder and
+the grass tufts at its edge darken slightly, and the rail on the right changes little (the
+ground under it is already in its shadow). In the grass beside the road a few metres on, the
+ground between the blades and the foot of the rail posts darken clearly; the rail's face
+darkens too (the grass in front of it counts as an occluder). Switching back to Off gives
+the identical image (no pixel differs).
+
+### Limits
+
+Depth-only and screen-space: what is off screen or hidden behind a nearer surface does not
+occlude, so the darkening at a screen edge or behind a car can change as the camera moves.
+Sunlight only, as above. The pass depends on the game's own shaders (their hashes) and its
+depth/stencil layout; checked on Title Update 4 in free roam (Console and Softer shadow
+softness), RADV; the validation layers (with synchronization validation) report nothing from
+its passes. (They do report `VUID-vkCmdEndQuery-None-07007` once per host screenshot,
+`FORZA_SCREENSHOT_TRIGGER`, with the occlusion off as well.) The seven shadow-pass shaders are
+byte-identical in the disc's executable (`tools/fxobj_shaders.py` finds the same hashes), but
+the disc build was not run.
