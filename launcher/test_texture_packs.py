@@ -407,6 +407,17 @@ class TexturePacksPageTests(unittest.TestCase):
         self.page.table.item(0, 0).setCheckState(Qt.Unchecked)
         self.assertEqual(self.cfg.d["texture_packs"]["disabled"], ["."])
 
+    def test_three_packs_with_one_texture_name_the_one_used(self):
+        (self.dir / f"{FP[0]}.dds").write_bytes(dds())   # loose, Alpha and Beta all have FP[0]
+        self.page.refresh()
+        self.page.table.selectRow(1)  # Alpha, in the middle
+        text = self.page.details.text()
+        self.assertIn("Same texture(s) as Loose files (textures folder): " + FP[0] + "; Beta's copy is used "
+                      "(it is the lowest in the list).", text)
+        self.assertIn("Same texture(s) as Beta: " + FP[0] + "; Beta's copy is used (it is lower in the list).", text)
+        self.page.table.selectRow(2)
+        self.assertIn("this texture pack's copy is used (it is lower than Alpha pack)", self.page.details.text())
+
     def test_4x_needs_10_gb_of_graphics_memory(self):
         dump = self.dir / "dump"
         dump.mkdir()

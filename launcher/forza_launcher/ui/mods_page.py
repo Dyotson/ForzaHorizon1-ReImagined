@@ -285,14 +285,21 @@ class FolderListPage(QWidget):
         clashes = self.clashes.get(m.folder, [])
         if clashes:
             titles = {x.folder: x.title for x in self.items}
+            # The one whose copy is used, per file: with three or more, maybe neither of a pair.
+            winner = {name: folder for folder, entries in self.clashes.items()
+                      for name, _other, wins in entries if wins}
             by_other = {}
             for name, other, wins in clashes:
-                by_other.setdefault((other, wins), []).append(name)
-            for (other, wins), names in by_other.items():
+                by_other.setdefault((other, m.folder if wins else winner.get(name, other)), []).append(name)
+            for (other, used), names in by_other.items():
                 shown = ", ".join(self.clash_name(n) for n in names[:3]) + (", …" if len(names) > 3 else "")
                 count = f" ({len(names)})" if len(names) > 3 else ""
-                who = f"this {self.NOUN}'s copy is used (it is lower than {titles[other]})" if wins else \
-                      f"{titles[other]}'s copy is used (it is lower in the list)"
+                if used == m.folder:
+                    who = f"this {self.NOUN}'s copy is used (it is lower than {titles[other]})"
+                elif used == other:
+                    who = f"{titles[other]}'s copy is used (it is lower in the list)"
+                else:
+                    who = f"{titles[used]}'s copy is used (it is the lowest in the list)"
                 lines.append(f"Same {self.CONFLICT_UNIT} as {titles[other]}{count}: {shown}; {who}.")
         self.details.setText("\n".join(lines))
 
