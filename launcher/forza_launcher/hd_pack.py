@@ -190,6 +190,7 @@ class Plan:
     skipped: Counter = field(default_factory=Counter)  # reason -> textures
     dumped: int = 0                                # textures in the dump
     out_pixels: int = 0                            # of todo and done
+    replaces: int = 0                              # the scale of the pack it replaces (0: none)
 
     @property
     def count(self) -> int:
@@ -248,11 +249,15 @@ def read_left_out(pack: Path) -> dict:
 
 
 def plan(cfg, scale: int) -> Plan:
+    """What making the pack at `scale` does. A pack made at another scale is replaced as a whole:
+    nothing of it counts as made (Plan.replaces names its scale)."""
     p = Plan(scale=scale)
     dump, pack = dump_dir(cfg), pack_dir(cfg)
     index = read_index(dump)
     left_out = read_left_out(pack)
-    same_scale = existing_scale(cfg) in (None, scale)
+    before = existing_scale(cfg)
+    same_scale = before in (None, scale)
+    p.replaces = 0 if same_scale else before
     p.dumped = len(index)
     for fp, (game_format, w, h, file_format) in sorted(index.items()):
         if fp in left_out:

@@ -108,6 +108,23 @@ class HdPackTests(unittest.TestCase):
         self.assertEqual(p.dumped, 7)
         self.assertEqual(p.gpu_bytes(), 128 * 128 * 4 * 4 // 3)
 
+    def test_a_texture_is_made_only_at_the_scale_asked_for(self):
+        """A 2x pack does not count as made for 4x (and back): the other scale is work to remake,
+        and the page asks to replace the pack."""
+        (self.dump / "index.tsv").write_text(index_line(FP[0], "k_DXT1", 64, 64, "BC1"))
+        (self.dump / f"{FP[0]}.png").write_bytes(b"")
+        pack = hd_pack.pack_dir(self.cfg)
+        for made, other in ((2, 4), (4, 2)):
+            with self.subTest(made=made):
+                pack.mkdir(parents=True, exist_ok=True)
+                hd_pack._manifest(self.cfg, made)
+                QImage(64 * made, 64 * made, QImage.Format_RGB888).save(str(pack / f"{FP[0]}.png"))
+                p = hd_pack.plan(self.cfg, made)
+                self.assertEqual((p.done, len(p.todo), p.replaces), (1, 0, 0))
+                p = hd_pack.plan(self.cfg, other)
+                self.assertEqual((p.done, [i.fingerprint for i in p.todo], p.replaces), (0, [FP[0]], made))
+                self.assertEqual(p.gpu_bytes(), (64 * other) ** 2 * 4 * 4 // 3)
+
     def test_alpha_holes_are_filled_and_alpha_kept(self):
         self.picture(self.t / "src.png", 16, 8, alpha_hole=True)
         info = hd_pack.prepare(self.t / "src.png", self.t / "in.png")
@@ -164,6 +181,14 @@ class HdPackTests(unittest.TestCase):
         self.assertEqual(sorted(p.stem for p in pack.glob("*.png")), [FP[0], FP[1], FP[2]])
         self.assertEqual(hd_pack.existing_scale(self.cfg), 2)
         self.assertEqual(hd_pack.plan(self.cfg, 2).todo, [])
+        # Then 4x: everything is to remake, and making it replaces every file; then back to 2x.
+        self.assertEqual((len(hd_pack.plan(self.cfg, 4).todo), hd_pack.plan(self.cfg, 4).replaces), (3, 2))
+        hd_pack.make(self.cfg, 4)
+        self.assertEqual(QImage(str(pack / f"{FP[0]}.png")).width(), 256)
+        self.assertEqual((hd_pack.plan(self.cfg, 4).todo, hd_pack.existing_scale(self.cfg)), ([], 4))
+        self.assertEqual(len(hd_pack.plan(self.cfg, 2).todo), 3)
+        hd_pack.make(self.cfg, 2)
+        self.assertEqual(QImage(str(pack / f"{FP[0]}.png")).width(), 128)
         out = QImage(str(pack / f"{FP[1]}.png"))
         self.assertEqual((out.width(), out.height()), (256, 128))
         self.assertTrue(out.hasAlphaChannel())

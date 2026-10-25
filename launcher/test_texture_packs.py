@@ -480,6 +480,7 @@ class TexturePacksPageTests(unittest.TestCase):
                 self.assertTrue(self.page.make_button.isEnabled())
                 self.assertEqual(len(self.page.plan.todo), 1)
                 self.assertEqual(self.page.plan.done, 0)
+                self.assertIn(f"Making it at {new}x replaces your {old}x HD pack.", self.page.estimate.text())
                 with patch.object(self.page, "_confirm", return_value=False) as confirm:
                     self.page.make_button.click()
                 confirm.assert_called_once()

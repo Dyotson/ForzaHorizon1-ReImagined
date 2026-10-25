@@ -282,6 +282,8 @@ class TexturePacksPage(FolderListPage):
         else:
             lines = [f"{p.dumped:,} textures dumped: all {p.count:,} to upscale are in the HD pack"]
         lines[0] += f"; {skipped:,} left as they are ({why})." if skipped else "."
+        if p.replaces:
+            lines.append(f"Making it at {p.scale}x replaces your {p.replaces}x HD pack.")
         if p.count:
             minutes = max(1, round(p.seconds() / 60))
             lines.append(f"The pack: about {_gb(p.disk_bytes())} on disk and {_gb(p.gpu_bytes())} of graphics "
