@@ -66,3 +66,32 @@ stock/invalid values, excluded cameras, VR bypass and preservation of a newer
 guest write. Launcher tests check native Save import, invalid-request atomicity,
 TOML output, persistence across reload and stock reset. Both TU0 and TU4 hook
 translation units are syntax checked against the exact 121-patch SDK.
+
+Windows TU4 in-game checks on an RTX 5060 Ti (Vulkan driver `0x9A438000`)
+used an offline, disposable copied profile at the
+same parked VW spawn, 1280x720 window, 60 FPS cap and native Vulkan rendering.
+Stock versus 90 degrees visibly changes the cockpit's vertical framing while
+chase and main-menu framing remain unchanged. Both mirror images render.
+The native Graphics screen was checked at the 1080p output preset: an unsaved
+40-degree edit wrote no settings file, Back restored Stock after reopening,
+and Save wrote 40. The launcher imported that actual file, generated TOML with
+40, and a restarted game displayed 40 in the native menu and the narrower
+cockpit view. The shorter native Stock value fits between the spinner arrows.
+
+With 90 selected, the native rewind menu displayed stock cockpit framing.
+The observed menu's X / View Replay entered the game's overhead replay camera
+and native replay toolbar successfully. This is a replay smoke test; every
+replay camera has not been compared against stock.
+With 90 and `vr_head_pose_test=true`, an identity pose also retained stock
+framing; the log confirmed zero rotation/translation and the enabled prototype.
+This validates the prototype bypass, not real-headset stereo projection.
+Every run had a hard time limit, closed its owned process, and verified the
+source profile hashes remained unchanged. Captures, copied saves, caches and
+build products remain outside Git.
+
+The Windows host compiled all 83 current authored sources and linked normally
+against immutable TU4 generated objects. The SDK's 1,265-file SHA-256 manifest
+and 121-patch manifest matched. After the paired camera runs, only the native
+Stock label changed in runtime sources; the camera sources were unchanged.
+A full TU0 host build/game run, real-headset VR, other cars, continuous driving
+at the bounds and an ultrawide in-game FOV comparison remain unverified.

@@ -370,7 +370,7 @@ void Snapshot() {
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
       {"forza_cockpit_fov", "forza_cockpit_fov", "Cockpit FOV (vertical)", "",
-       {{"0", "Stock (normally 62 degrees)"}}},
+       {{"0", "Stock (62 degrees)"}}},
   };
   for (int degrees = 40; degrees <= 90; ++degrees)
     settings[kCockpitFov].choices.push_back({std::to_string(degrees), std::to_string(degrees) + " degrees"});
