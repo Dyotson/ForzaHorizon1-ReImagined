@@ -12,7 +12,7 @@ import math
 from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -458,6 +458,16 @@ for _k, _label, _default in KEYBINDS:
         "Key names (A, Space, Return, Up, Semicolon, F5, Numpad1, LMB for the left mouse "
         "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
+
+# --- Gameplay --------------------------------------------------------------------------
+add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
+    "Game: as the game shipped, a CPU driver ahead of you eases off (the weaker ones down to "
+    "a fifth of their power) and one behind you brakes and corners better to catch up. Off: "
+    "every CPU driver races at its own skill wherever you are, so the faster car pulls away "
+    "on the straights and the better-handling one in the corners; the difficulty still sets "
+    "how good they are. Single-player races and free roam only: online races and Co-op "
+    "Festival rounds always play as shipped.",
+    "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
 
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
