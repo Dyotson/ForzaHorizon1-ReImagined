@@ -770,6 +770,16 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   manifest; they are not code signatures or a malware assessment. Code-signing and vendor
   submissions remain separate work. The version comes from the tag. Nothing here needs
   the game or generated code.
+  The Windows job also records `windows-build-manifest.json` after staging the final
+  payload and before compiling the installer. It lists each staged file's relative
+  path, size and SHA-256, the source commit, public Actions run URL, Python version
+  and packaging dependency versions. The installer includes it, and a copy named
+  `ForzaHorizon1-ReImagined-windows-files-<version>.json` is published beside the
+  installer and covered by `SHA256SUMS`. This lets maintainers identify an installed
+  file even if antivirus has removed it. It covers the staged payload, not Inno's
+  generated uninstaller or the separately bundled Microsoft redistributable. If
+  payload signing is added, generate this manifest after signing. The installer
+  smoke test verifies that the installed launcher matches its recorded hash.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.
