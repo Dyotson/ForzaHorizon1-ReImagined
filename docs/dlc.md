@@ -294,6 +294,58 @@ valid nested paths retain their package layout. Synthetic-package tests verify t
 parent-path entry cannot overwrite an existing sibling file. Link tests use symlinks or
 Windows junctions when available.
 
+#### The same bad copy in #327 and #422, and checks that see it in an extracted folder
+
+Both players crash about halfway through Kettle Hills stage 1, and both logs have the same
+`ZIPREAD` line just before the fault: `32768 of 81792 bytes out, input 28426 of 28426 read`,
+compressed-input CRC-32 `e4eba1e0`, and the same 14 CRCs per 2 KB. The member is
+`coloradodirtout.09183.rmb.bin`, whose data starts at 0x5742A8A of `ColoradoDirt_pri_65.zip`
+(file block 22338 + 0xA8A). The archive
+copy's 12 wrong blocks (22339-22350) cover the member from its byte 1,398 to its end, and the
+zip extracted from that copy (SHA-256 `80ea0f61...`, the one of the #86 player) has exactly
+`e4eba1e0` and the same 14 CRCs there; the intact zip has `37af238d`. So both players have
+this bad copy, from its package or from a Xenia content folder made from it (Xenia does not
+check the blocks either). The intact zip is 484,262,732 bytes, SHA-1
+`f0ce7054a11f0128e7fb5b6eccae9405768d543a`; every block of the installed intact pack matches
+the archive copy's own hash table, which is intact.
+
+Reproduced on Linux (TU4 build, offline, a copy of the #327 save, which opens on the rally
+hub with Kettle Hills, the Impreza, `tools/autodrive.py` with `AD_OPEN=1` on
+`tools/owt_path.py`'s path of `route_016.owt`; `FORZA_BENCHMARK_AI=1` made a driver but the
+car did not move in a rally stage): with the archive copy's zip, at 60 % (route point 985) the
+same `ZIPREAD` line, CRC `e4eba1e0`, then within 0.3 s reads of guest 0x8 and 0x170 on two
+threads and the game ends. With the intact zip the stage finished (50th), no `ZIPREAD`.
+
+What #422's fault is: the read ends short (the hook of #86), the resource loader goes on
+with a 32 KB resource of garbage, writes past it (a write fault at guest 0x2EB3A000 on the
+loader thread 5 ms earlier), and the main thread then calls a virtual function of an object
+whose vtable pointer it overwrote: TU4 `sub_82414068` at 0x82414234, `lwz r11,68(r11)` in
+the loop over the list at +60/+64 that calls vtable slot 0x44 (registers: r3 = 2EA0C960 the
+object, r11 = 0, lr = 82414240 after the previous call). The address read (0x44, 0x8,
+0x170...) depends on what got overwritten; the cause is the member. No change in the game
+can bring the missing bytes back.
+
+Checks (`launcher/forza_launcher/dlccheck.py`):
+
+- `launcher/forza_launcher/data/dlc-4D5309C9.json`: size and SHA-1 of every file of the 12
+  packages whose package files are at hand (1,107 files: Rally, 1000 Club, 10 car packs),
+  written by `tools/dlc_manifest.py`, which checks every 4 KB block of an extracted folder
+  against the package's own hash table (with the stored padding for the last block), so a
+  damaged package copy can still vouch for a good folder. Plus `known_damage`: the 12 blocks
+  of the Rally zip with the SHA-1 of the right bytes and the bad stream's CRC.
+- Install DLC from an extracted folder (Xenia's content folder) hashes each file while it
+  copies it (one read) and compares: a damaged, short or missing file gives a `WARNING`
+  line naming it, like a package whose blocks fail. Either way the result is shown in
+  orange with a "Damaged DLC" dialog (it used to be the log only). The pack is still
+  installed: the rest of it works.
+- Play checks the installed known packages: every file's size, and the known damaged region
+  (a 48 KB read), so a bad Rally pack installed before this check is named in the Play
+  notes ("Your Rally Expansion Pack is damaged: ... (Kettle Hills stage 1 of Horizon Rally
+  crashes about halfway)").
+- A crash report whose log has a `ZIPREAD` short read gets a "Damaged game file" section,
+  naming the Rally pack when the CRC is `e4eba1e0`.
+- `launcher/test_dlc_integrity.py`.
+
 ### The 1000 Club (#17)
 
 Checked 2026-10-14 with the TU4 build, a scratch copy of the Xenia career save (free roam

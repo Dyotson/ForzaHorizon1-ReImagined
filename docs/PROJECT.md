@@ -751,7 +751,7 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   of 28426 read`, at `+D728A` of a different cache block each time, then guest access
   violations (the loader going on with a short resource). The only member of that size in
   our DLC is `coloradodirtout.09183.rmb.bin` in the Rally pack's `ColoradoDirt_pri_65.zip`
-  (data at 0x5743A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
+  (data at 0x5742A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
   compressed bytes and a last one of 16,256 bytes out. Not a Windows codegen difference: the
   game's XMemDecompressStream (TU4 `sub_831AE7D8`) with its 66 callees, cut out of the
   generated code into a harness (context made as `sub_82D38810` makes it: `sub_831AFBE8` /

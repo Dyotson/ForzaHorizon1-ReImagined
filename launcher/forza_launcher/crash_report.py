@@ -6,7 +6,7 @@ import platform
 import re
 from urllib.parse import urlencode
 
-from . import GITHUB_URL, __version__, game, paths, specs
+from . import GITHUB_URL, __version__, dlccheck, game, paths, specs
 from .config import flatten, parse_toml
 
 # Deliberately exclude profile IDs, paths, custom servers and arbitrary extra settings.
@@ -137,6 +137,9 @@ def collect(plan, code, context):
     settings = "\n".join(f"{k} = {v}" for k, v in context["settings"].items()) or "Not available"
     heap_failure = game.heap_failure_summary(tail)
     diagnosis = f"## Internal heap allocation failure\n{heap_failure}\n\n" if heap_failure else ""
+    short_read = dlccheck.short_read_summary(tail)
+    if short_read:
+        diagnosis += f"## Damaged game file\n{short_read}\n\n"
     body = (
         "## What happened\nThe game closed unexpectedly.\n\n"
         "## Steps to reproduce\nDescribe what you were doing when it crashed.\n\n"
