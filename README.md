@@ -17,7 +17,7 @@
 
 <p align="center">
   The original 2012 Forza Horizon, running natively on PC: single player, online free roam,
-  leaderboards and rivals. Windows is what most players use now. Linux works too.
+  leaderboards and rivals, on Windows and Linux.
 </p>
 
 **Forza Horizon 1: ReImagined** runs **Forza Horizon (Xbox 360)** natively on Windows and Linux.
