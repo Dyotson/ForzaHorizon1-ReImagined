@@ -201,29 +201,37 @@ texture would save another quarter of the memory, at the cost above.
 
 Ryzen 7 7800X3D with a Radeon RX 9060 XT (16 GB, Linux, RADV), the dump of a festival race (1,228
 textures): 738 upscaled, 490 left as they are (423 small, 25 masks, 22 normal maps, 20 data maps:
-the red and green blend maps). The times are for 758 textures (the data maps were still upscaled
-then); the game runs are the race of the Cost section below (`tools/perf_scenario.sh race` inputs,
-720p, 3 minutes, 30 fps cap), one each.
+the red and green blend maps). Compressed, 678 of the 738 are BC7 and 60 BC1. The game runs are
+`tools/perf_scenario.sh`'s race (3 minutes from the start to 26 s of racing) and free roam (90 s of
+driving) inputs, 720p, 30 fps cap, a warm shader cache, one each, back to back with nothing else
+running (the desktop held 1.0 GB of the card before each):
 
-| | Without packs | HD pack 2x | HD pack 4x |
-| --- | --- | --- | --- |
-| Making the pack | | 9 min 4 s | 9 min 50 s |
-| On disk | | 369 MB | 1.3 GB |
-| Graphics memory of the whole pack | | 1.6 GB | 6.4 GB |
-| In the race: textures drawn from the pack, their graphics memory | | 725, 1,604 MiB | 718, 6,172 MiB |
-| Race: fps, p99 frame (`PERF` race line) | 29.7, 53.4 ms | 29.7, 34.9 ms | 29.7, 35.7 ms |
-| Minute 3 (racing): fps, 1% low, worst frame | 29.8, 18.2, 152 ms | 30.0, 29.3, 34 ms | 30.0, 29.1, 38 ms |
-| The card's used memory at its peak (all programs) | 4.1 GB | 7.4 GB | 11.8 GB |
+| | HD pack 2x, PNG | HD pack 2x, compressed | HD pack 4x, PNG | HD pack 4x, compressed |
+| --- | --- | --- | --- | --- |
+| Making the pack | 9 min 4 s | 8 min 36 s | 9 min 50 s | 8 min 41 s |
+| Compressing a PNG pack that is there (8 threads) | | 29 s | | 1 min 56 s |
+| On disk | 369 MB | 423 MB | 1.3 GB | 1.7 GB |
+| Graphics memory of the whole pack | 1.6 GB | 0.4 GB | 6.4 GB | 1.6 GB |
+| Race: textures drawn from the pack, their graphics memory | 705, 1,580 MiB | 709, 408 MiB | 705, 6,118 MiB | 709, 1,552 MiB |
+| Race: textures read in the first two minutes | 512 | 513 | 412 | 516 |
+| Race: fps, p99 frame (`PERF` race line) | 30.0, 34.1 ms | 30.0, 34.1 ms | 30.0, 34.1 ms | 30.0, 34.2 ms |
+| Race, minute 3: fps, 1% low, worst frame | 30.0, 29.6, 34 ms | 30.0, 29.6, 34 ms | 30.0, 29.6, 34 ms | 30.0, 29.5, 34 ms |
+| Free roam: textures drawn from the pack, their graphics memory | 274, 645 MiB | 264, 157 MiB | 245, 2,586 MiB | 274, 618 MiB |
+| Free roam: fps, p99 frame | 29.9, 34.1 ms | 29.8, 34.2 ms | 29.9, 34.0 ms | 29.9, 34.1 ms |
+| The card's used memory at its peak (all programs), race / free roam | 3.7 / 2.7 GB | 2.5 / 2.2 GB | 8.1 / 4.5 GB | 3.5 / 2.7 GB |
 
-The frame rate held the game's 30 fps with either pack (the run without packs had one 152 ms
-hitch, which is noise: the packs add no work per frame). The replacements are read on a worker and
-uploaded at 32 MiB a frame, so at 4x they come in more slowly (401 of 610 read in the second
-minute, against 523 at 2x). The card's used memory is the driver's total (the desktop and a
-browser held 1.3 GB before the first run, and the driver gave memory back slowly between runs, so
-the later runs' peaks include up to 3 GB left over); the pack's own share is the line above it.
-What changes: tiled ground textures (road, gravel, dirt) lose their DXT blocks and gain fine
-grit, rock faces get sharper cracks, bark and foliage cards show more detail; from the chase
-camera at 1440p the difference is clear on the near road and foliage, small on distant terrain.
+Compressed, a pack takes a quarter of the graphics memory (a compressed 4x pack as much as a PNG 2x
+one), and its textures load faster: a PNG 4x pack had read 412 textures two minutes into the race
+(245 in free roam, against 274 compressed), a compressed one 516. The frame rate held the game's
+30 fps in every run: the packs add no work per frame. Making the pack takes no longer, as the
+processor compresses one batch while the graphics card upscales the next (the PNG times are from
+before the data maps were left out: 758 textures). The compressed pack is a little larger on disk
+than the PNGs: a DDS file holds its texture as the card does, and the mip levels.
+What changes with the pack: tiled ground textures (road, gravel, dirt) lose their DXT blocks and
+gain fine grit, rock faces get sharper cracks, bark and foliage cards show more detail; from the
+chase camera at 1440p the difference is clear on the near road and foliage, small on distant
+terrain. Compressed and PNG packs look the same in the game: the shots at the spawn point differ
+only where something moved between runs (foliage in the wind, traffic's tyre tracks on the dirt).
 
 ## Making and sharing a pack
 
