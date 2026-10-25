@@ -172,12 +172,19 @@ class TexturePacksPage(FolderListPage):
             "normal and data maps and small textures are left as they are. The result is the pack \"HD pack "
             f"(made on this PC)\". The first time, the upscaler ({size} MB) is downloaded from its "
             "official release; nothing of the game is downloaded or shared.", "muted"))
+        link = f'style="color: {theme.ORANGE};"'
+        cl.addWidget(_link_label(
+            f'Licences: the program <a href="{hd_pack.PROGRAM_LICENCE_URL}" {link}>Real-ESRGAN-ncnn-vulkan</a> '
+            f'is MIT, the model <a href="{hd_pack.MODEL_LICENCE_URL}" {link}>realesrgan-x4plus</a> (Real-ESRGAN) '
+            f'BSD-3-Clause. The launcher downloads them from the <a href="{hd_pack.RELEASE_URL}" {link}>official '
+            "release</a>, checks their pinned checksums and never ships them."))
         row = QHBoxLayout()
         row.setSpacing(12)
         self.scale = QComboBox()
         self.scale.addItem("2x (recommended)", 2)
-        self.scale.addItem("4x (needs a lot of graphics memory)", 4)
+        self.scale.addItem("4x", 4)
         self.scale.setAccessibleName("Upscale")
+        self.scale.setMinimumWidth(330)
         self.scale.currentIndexChanged.connect(lambda _i: self._refresh_hd())
         row.addWidget(self.scale)
         self.make_button = QPushButton("Make HD pack")
@@ -189,6 +196,9 @@ class TexturePacksPage(FolderListPage):
         row.addWidget(self.cancel_button)
         row.addStretch()
         cl.addLayout(row)
+        self.scale_note = label("", "muted")
+        self.scale_note.hide()
+        cl.addWidget(self.scale_note)
         self.estimate = label("", "muted")
         cl.addWidget(self.estimate)
         self.hd_warning = label("", "warn")
@@ -208,6 +218,43 @@ class TexturePacksPage(FolderListPage):
     def _scale(self) -> int:
         return int(self.scale.currentData() or 2)
 
+    def four_x_refused(self) -> str:
+        """Why 4x is not offered ("" when it is): it needs a card with at least
+        hd_pack.MIN_VRAM_GB_4X GB of its own memory (the launcher's GPU detection, #206)."""
+        s = self.cfg.pc_specs()
+        if s.integrated is True:
+            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory; "
+                    "integrated graphics share the PC's.")
+        if s.vram_gb <= 0:
+            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory, "
+                    "and the launcher could not tell how much yours has.")
+        if s.vram_gb < hd_pack.MIN_VRAM_GB_4X:
+            return (f"4x needs a graphics card with at least {hd_pack.MIN_VRAM_GB_4X} GB of its own memory; "
+                    f"yours has {s.vram_gb:.0f} GB.")
+        return ""
+
+    def _scale_items(self):
+        """Each choice with its pack's graphics memory; 4x greyed out (with the reason) on a card
+        with too little memory."""
+        refused = self.four_x_refused()
+        plans = {}
+        for index in range(self.scale.count()):
+            scale = int(self.scale.itemData(index))
+            plans[scale] = hd_pack.plan(self.cfg, scale)
+            gpu = plans[scale].gpu_bytes()
+            name = "2x (recommended)" if scale == 2 else "4x"
+            self.scale.setItemText(index, f"{name}: about {_gb(gpu)} of graphics memory" if gpu else name)
+            if scale == 4:
+                item = self.scale.model().item(index)
+                if item is not None:
+                    item.setEnabled(not refused)
+                    item.setToolTip(refused)
+        if refused and self._scale() == 4:
+            self.scale.setCurrentIndex(self.scale.findData(2))
+        self.scale_note.setText(refused)
+        self.scale_note.setVisible(bool(refused))
+        return plans
+
     def _refresh_hd(self):
         if not hasattr(self, "scale"):
             return
@@ -217,7 +264,10 @@ class TexturePacksPage(FolderListPage):
         self.scale.setEnabled(not running)
         if running:
             return
-        self.plan = p = hd_pack.plan(self.cfg, self._scale())
+        self.scale.blockSignals(True)
+        plans = self._scale_items()
+        self.scale.blockSignals(False)
+        self.plan = p = plans[self._scale()]
         if not p.dumped:
             self.estimate.setText("No texture dump yet: turn on Dump textures above, play and drive where "
                                   "you want sharper textures (a race dumps about 1,300), then come back.")
@@ -263,6 +313,9 @@ class TexturePacksPage(FolderListPage):
         if self.busy() or self.plan is None:
             return
         scale = self._scale()
+        if scale == 4 and self.four_x_refused():
+            self.hd_status.setText(self.four_x_refused())
+            return
         before = hd_pack.existing_scale(self.cfg)
         if before and before != scale and hd_pack.pack_dir(self.cfg).is_dir():
             if not self._confirm("Make HD pack", f"Your HD pack was made at {before}x. Making it at {scale}x "

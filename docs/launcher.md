@@ -537,7 +537,10 @@ flags name `texture_packs` or `texture_pack_root`.
 Real-ESRGAN's ncnn-Vulkan build, downloaded on first use from its official release (pinned in
 `pins.py`, SHA-256 checked) into `<data folder>/tools`, in a background `Task` with progress,
 **Cancel** and resume; closing the window asks first and stops it. The page shows the estimate
-(textures, disk, graphics memory, time) and warns on weak graphics cards. Details, the licences and
+(textures, disk, graphics memory, time; each scale with its graphics memory) and warns on weak
+graphics cards; 4x is offered only with at least 10 GB of dedicated graphics memory
+(`Config.pc_specs`, else greyed out with the reason). The page names the upscaler's and the
+model's licences with links. Details, the licences and
 the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_texture_packs.py`,
 `launcher/test_hd_pack.py`.
 

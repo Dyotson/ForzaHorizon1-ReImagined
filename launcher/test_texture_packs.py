@@ -407,6 +407,30 @@ class TexturePacksPageTests(unittest.TestCase):
         self.page.table.item(0, 0).setCheckState(Qt.Unchecked)
         self.assertEqual(self.cfg.d["texture_packs"]["disabled"], ["."])
 
+    def test_4x_needs_10_gb_of_graphics_memory(self):
+        dump = self.dir / "dump"
+        dump.mkdir()
+        (dump / "index.tsv").write_text(f"{FP[0]}\tk_DXT1\t512x512\t1\tBC1\n")
+        (dump / f"{FP[0]}.png").write_bytes(png())
+        for vram, integrated, offered in ((12, False, True), (8, False, False), (0, None, False),
+                                          (16, True, False)):
+            with self.subTest(vram=vram, integrated=integrated):
+                self.cfg.d["specs"]["values"] = {"gpu_name": "Card", "vram_gb": vram, "integrated": integrated}
+                self.page.refresh()
+                four = self.page.scale.model().item(self.page.scale.findData(4))
+                self.assertEqual(four.isEnabled(), offered)
+                self.assertEqual(self.page.scale_note.isHidden(), offered)
+                # The pack's graphics memory next to each choice: 1024x1024 or 2048x2048 RGBA8, mips.
+                self.assertIn(f"about {1024 * 1024 * 4 * 4 // 3 / 2**20:.0f} MB", self.page.scale.itemText(0))
+                self.assertIn(f"about {2048 * 2048 * 4 * 4 // 3 / 2**20:.0f} MB", four.text())
+        self.assertIn("at least 10 GB", self.page.scale_note.text())
+        self.cfg.d["specs"]["values"] = {"gpu_name": "Card", "vram_gb": 12, "integrated": False}
+        self.page.refresh()
+        self.page.scale.setCurrentIndex(self.page.scale.findData(4))
+        self.cfg.d["specs"]["values"]["vram_gb"] = 6
+        self.page.refresh()
+        self.assertEqual(self.page.scale.currentData(), 2)   # back to 2x when 4x is not offered
+
     def test_make_hd_pack_needs_a_dump_and_estimates_it(self):
         self.assertIn("No texture dump yet", self.page.estimate.text())
         self.assertFalse(self.page.make_button.isEnabled())

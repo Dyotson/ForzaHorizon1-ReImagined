@@ -83,7 +83,10 @@ change nothing, and a pack must not contain them).
 ## Make HD pack
 
 **Make HD pack** upscales your dump into the pack "HD pack (made on this PC)" (`textures/hd-pack`),
-at **2x** (default) or **4x**. Turn on **Dump textures**, play where you want sharper textures (a
+at **2x** (default) or **4x**. Each choice shows how much graphics memory its pack takes. 4x is
+offered only on a graphics card with at least 10 GB of its own memory (the launcher's GPU
+detection, as for the recommended settings); otherwise it is greyed out and the page says why
+(the card's memory, integrated graphics, or memory the launcher could not read). Turn on **Dump textures**, play where you want sharper textures (a
 race from the festival dumps about 1,300), then press **Make HD pack**. It runs in the background
 (the rest of the launcher and Play work meanwhile; the game can run, more slowly while both use
 the graphics card), with a progress bar, the time left and **Cancel**. What is made stays: the next
@@ -123,8 +126,8 @@ What it upscales, from the dump's `index.tsv`:
 | Model licence | BSD-3-Clause, [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE) (Copyright (c) 2021 Xintao Wang): the weights are release files of that repository, with no other terms | |
 | From | the official release [Real-ESRGAN v0.2.5.0](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0): `realesrgan-ncnn-vulkan-20220424-{ubuntu,windows,macos}.zip` (45-50 MB) | |
 
-The launcher downloads the archive for your system the first time you press Make HD pack (after
-asking), checks its SHA-256 against the one pinned in `launcher/forza_launcher/pins.py` (the release
+The page names both licences with links. The launcher downloads the archive for your system the
+first time you press Make HD pack (after asking), checks its SHA-256 against the one pinned in `launcher/forza_launcher/pins.py` (the release
 predates GitHub's asset checksums; the pinned hashes match nixpkgs' package of the same archive and
 other projects' pins), keeps only the program and its model (plus `vcomp140.dll`, Microsoft's OpenMP
 runtime, on Windows) in `<data folder>/tools/realesrgan-ncnn-vulkan-20220424` with a `SOURCE.txt`
