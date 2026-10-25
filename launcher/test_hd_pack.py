@@ -187,6 +187,10 @@ class HdPackTests(unittest.TestCase):
         self.picture(self.t / "art.png", 64, 64, colour=(200, 60, 20))
         self.assertIsInstance(hd_pack.prepare(self.t / "art.png", self.t / "in4.png"), dict)
 
+    def a_png_exists(self):
+        # Cancel once the first texture is on disk (deterministic, unlike counting progress calls).
+        return any(hd_pack.pack_dir(self.cfg).glob("*.png"))
+
     def test_the_job_makes_resumes_and_says_why_it_stopped(self):
         rows = [(FP[0], "k_DXT1", 64, 64, "BC1"), (FP[1], "k_DXT4_5", 128, 64, "BC3"),
                 (FP[2], "k_DXT1", 64, 128, "BC1"), (FP[3], "k_DXN", 64, 64, "BC5"),
@@ -201,10 +205,8 @@ class HdPackTests(unittest.TestCase):
         self.assertTrue(hd_pack.installed(self.cfg))
         # Stopped after the first texture's batch: what was made stays.
         with mock.patch.object(hd_pack, "BATCH_MAX", 1):
-            calls = []
             with self.assertRaises(fetch.Cancelled):
-                hd_pack.make(self.cfg, 2, progress=lambda f, t: calls.append(f),
-                             cancelled=lambda: len(calls) > 3)
+                hd_pack.make(self.cfg, 2, cancelled=self.a_png_exists)
         pack = hd_pack.pack_dir(self.cfg)
         made = sorted(p.stem for p in pack.glob("*.png"))
         self.assertTrue(set(made) < {FP[0], FP[1], FP[2]})
@@ -272,9 +274,8 @@ class HdPackTests(unittest.TestCase):
         shutil.rmtree(hd_pack.pack_dir(self.cfg))
         # Stopped after the first texture, still without the compressor: PNGs.
         with mock.patch.object(hd_pack, "BATCH_MAX", 1):
-            calls = []
             with self.assertRaises(fetch.Cancelled):
-                hd_pack.make(self.cfg, 2, progress=lambda f, t: calls.append(f), cancelled=lambda: len(calls) > 3)
+                hd_pack.make(self.cfg, 2, cancelled=self.a_png_exists)
         pack = hd_pack.pack_dir(self.cfg)
         before = sorted(p.stem for p in pack.glob("*.png"))
         self.assertTrue(before)

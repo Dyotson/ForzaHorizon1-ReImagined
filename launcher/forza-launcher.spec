@@ -63,6 +63,8 @@ for name in ("ATTRIBUTION.md", "FONT-AWESOME-LICENSE.txt"):
     datas.append((str(repo / "tools" / "native_menu" / "icons" / name), "tools/native_menu/icons"))
 # The shipped pipeline list (hashes and render state only).
 datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
+# The known-good DLC files (sizes and SHA-1 only, forza_launcher/dlccheck.py, #422).
+datas.append((str(root / "forza_launcher" / "data" / "dlc-4D5309C9.json"), "forza_launcher/data"))
 
 a = Analysis(
     [str(root / "main.py")],

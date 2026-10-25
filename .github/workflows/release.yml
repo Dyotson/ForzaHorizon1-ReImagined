@@ -53,6 +53,8 @@ jobs:
           echo "FORZA_TEXCOMPRESS=$RUNNER_TEMP/texcompress/$exe" >> "$GITHUB_ENV"
       - name: Launcher unit and Qt tests
         run: python -m unittest discover -s launcher -p 'test_*.py' -v
+      - name: forza.exe DPI manifest (#418)
+        run: python tools/test_dpi_manifest.py -v
       - name: Livery codec tests
         run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
       - name: Standalone car tuning model, library and donor checks

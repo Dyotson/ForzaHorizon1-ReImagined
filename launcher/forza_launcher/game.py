@@ -313,8 +313,9 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
     no update (the base game starts: no Horizon Rally, no 1000 Club), or DLC installed or chosen but
     none in the user data folder the game is started on (Horizon Rally then says "Xbox LIVE
     Marketplace error"; issues #65, #70), or DLC there without the Rally Expansion Pack (the same
-    error, #79)."""
-    from . import datafolder
+    error, #79), or a known DLC package there that is damaged or incomplete (dlccheck: the Rally pack's
+    bad copy crashes Kettle Hills stage 1, #422)."""
+    from . import datafolder, dlccheck
     out = []
     if cfg["tu_package"].strip() and not extra_update and not (game.dir / "update").is_dir():
         out.append(f"Title Update 4 is chosen in Setup, but this build has none ({game.dir / 'update'} is "
@@ -341,6 +342,11 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
                        f"{root / datafolder.DLC_DIR / '00000002'}: Horizon Rally says \"Xbox LIVE Marketplace "
                        "error\" (issue #79). Open Setup and install the DLC again (step 2) with the Rally "
                        "Expansion Pack.")
+        for name, problem, effect in dlccheck.installed_problems(root):
+            out.append(f"Your {dlccheck.display_name(name)} is damaged: {problem}"
+                       + (f" ({effect})" if effect else "") +
+                       ". Install it again from an intact copy of its package file (Setup, step 2), "
+                       "which checks every block.")
     return out
 
 

@@ -224,13 +224,22 @@ if(WIN32)
         set(FORZA_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc")
         configure_file(resources/app.rc.in "${FORZA_ICON_RC}" @ONLY)
         set_source_files_properties("${FORZA_ICON_RC}" PROPERTIES
-            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico")
+            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico;${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.manifest")
     else()
         message(STATUS "No resource compiler found: forza.exe is built without its icon")
     endif()
     add_executable(forza WIN32 ${FORZA_SOURCES} ${FORZA_ICON_RC})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
+    # Per-monitor-v2 DPI awareness from the first instruction (#418), from resources/forza.manifest.
+    # With a resource compiler it is the exe's RT_MANIFEST resource (app.rc.in) and the linker's own
+    # default manifest is off (it would collide); without one the linker merges the file itself.
+    if(FORZA_ICON_RC)
+        target_link_options(forza PRIVATE "/MANIFEST:NO")
+    else()
+        target_link_options(forza PRIVATE "/MANIFEST:EMBED"
+            "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.manifest")
+    endif()
 else()
     add_executable(forza ${FORZA_SOURCES})
 endif()
