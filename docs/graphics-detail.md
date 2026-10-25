@@ -8,6 +8,10 @@ and apply from the next start (the game reads them when it loads the track):
 | Shadow detail | `world_shadow_detail` | small objects cast shadows up to 60 m x their size factor | 3x as far (180) | 10x (600) |
 | Distant texture detail | `world_texture_detail` | the track's texture LOD bias, 0 | -0.5 | -1 |
 
+A third option, **Shadow softness** (`world_shadow_filter`, #380), changes how the shadows
+are filtered rather than which objects cast them; it applies live and is also in the in-game
+Graphics screen. See [Shadow softness](#shadow-softness-380) below.
+
 `src/hooks/world_detail.cpp` changes the values after the game reads the track's
 `media/tracks/<track>/TrackSettings.xml` (loader `sub_82D505C0`, Title Update 4
 `sub_82E128B8`; the struct layout is the same in both builds). Both values are read again
@@ -94,3 +98,79 @@ and return.
 
 These knobs could also sit in the in-game Graphics screen (#116): both values are read
 every frame, so a live change only needs the settings struct the hook already sees.
+
+## Shadow softness (#380)
+
+**Settings > Display > World detail > Shadow softness** and the in-game **Graphics** screen
+(Title Update 4) offer Console (default), Soft and Softer. The value is read at every shadow
+pass, so the Graphics screen's Save applies it without a restart.
+
+| Level | `world_shadow_filter` | Filter disc | Mask blur |
+| --- | --- | --- | --- |
+| Console | `console` | the game's | the game's 2x2 box |
+| Soft | `soft` | 1.5x as wide | the game's 2x2 box |
+| Softer | `softer` | 2x as wide | 6-tap horizontal + vertical |
+
+### How the game filters its shadows
+
+The world shaders do not sample the shadow maps. The renderer (TU4 `sub_824829D8`, disc
+`sub_824532F0`) first draws a screen-space shadow mask (`ShadowMask`, read by the world and car
+materials as `ShadowMaskSamp`): for each cascade, `ApplyShadows` (`sub_82C3AF68`, TU4
+`sub_82CFB8D8`) picks a technique of the engine effect in the executable by its r10 and draws a
+full-screen pass that rebuilds the position from the scene depth and compares the cascade's
+shadow map. Then the mask is blurred (`sub_823EFC08`, TU4 `sub_8241FD00`) and resolved.
+
+- r10 = 4, `ApplyShadowsLQ` (`...WithFading_Depth` for the last cascade): 4 point taps at the
+  `FilterTaps` offsets (its r9, float4[4] built per cascade; Colorado's nearest cascade has 2
+  and 1.4 texels), turned by an angle hashed from the pixel position, then averaged. This is
+  what the game uses in play, for all 11 mask passes of a frame in free roam (3 cascades, then
+  8 passes over four more maps with inner/outer fades and a wider "spread" kernel).
+- r10 = 8, `ApplyShadowsHQ`: 8 taps. Photo mode uses it for the first cascade (a flag at +9519
+  of the view object). Forced in play it lightened the near shadows (the four extra offsets
+  look unset outside photo mode), and the last cascade then asks for an `...HQWithFading`
+  technique the effect does not have, so that cascade drew nothing.
+- r10 = 1-3, `ApplyShadowsPCF2x2/3x3/4x4WithFading`: a 4x4 grid of point taps weighted with
+  `getWeights2D` (bilinear PCF). A dead development path (the renderer's +8428 is only cleared
+  by its constructor), and it only exists with fading. Forcing the 4x4 one in play (with the
+  fading flag on the first two cascades, whose fade range starts past them) works, but gives
+  **sharper** edges than the console's disc, not softer, and changes little at render scale 2.
+- The blur kinds: 0 the 2x2 box (what play uses), 1/2 a 4-tap horizontal/vertical pair (picked
+  with the same +9519 flag), 3/4 a 6-tap pair that nothing selects. The renderer's +8440 is the number of blur
+  passes (1).
+
+So Soft and Softer scale `FilterTaps` for the call (and write the game's values back after
+it). Softer, whose wider disc leaves more grain, also replaces the box with the 6-tap pair, with
+the same resolve of the mask between the two passes that the game does between its own. Console calls both functions unchanged; switching
+back to Console in the same paused frame gives the same image (no pixel differs by more than
+2 of 255, the output dithering). `tests/shadow_filter_test.cpp` checks the levels.
+
+Not changed: the dual-map pass (`ApplyDualShadows`, `sub_82C3B3F8`; not drawn in free roam)
+and the shadow map resolution (it follows the render scale). The blur is screen-space and not
+depth-aware, as the game's box is: the wider blur can darken the lit edge of an object right
+next to a shadow by a pixel or two more.
+
+### Cost
+
+Title Update 4, RX 9060 XT (RADV), 1920x1080 window, render scale 2 (2560x1440 scene), 2x
+MSAA, uncapped (`--frame_rate=240 --vsync=false`), the car standing at the free roam spawn; the
+levels switched live in the Graphics screen in one session, twice each (15 s per phase, 3 s
+after each switch skipped), BENCH lock held. The GPU was the limit (busy 99% of the time), so
+the frame time is the GPU time.
+
+| Level | fps (run 1, run 2) | ms per frame |
+| --- | --- | --- |
+| Console | 87.8, 89.1 | 11.27 |
+| Soft | 88.2, 88.5 | 11.29 |
+| Softer | 85.5, 83.4 | 11.83 |
+
+Soft costs nothing measurable: the taps only move. Softer's two 6-tap passes and the extra
+resolve of the 2560x1440 mask cost about 0.5 ms (3-5% fps while the GPU is the limit; nothing
+under a 60 fps cap here). An earlier session with the 6-tap blur on both levels gave the same
+0.4-0.5 ms for it (Console 87.1 fps, both levels 83.4-84.9).
+
+### Screenshots
+
+Kept out of Git. The same paused frame at the free roam spawn (2560x1440, render scale 2, 2x
+MSAA), switched live in the Graphics screen: the car's own shadow on the road, a roadside
+tree's shadow and the rail and pole shadows get progressively softer edges with Soft and
+Softer; the shadowed areas themselves stay as dark.
