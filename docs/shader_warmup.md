@@ -102,6 +102,13 @@ versions is kept and converted.
   models a driver that finds a third of the pipelines under a new key at every
   start: one seeded cache grows from 13.8 to 36.8 MB over six starts, while the
   per-pipeline entries stay at 13.8 MB.
+- Windows RTX 5060 Ti, 1440p/2x scene, three prebuild-only starts on an isolated
+  private host fixture: the first compiled 330 scene pipelines and saved 252 in
+  535,444,993 bytes (510.6 MiB), omitting 78 at the 512 MiB cap. Both closed-process
+  restarts loaded and reused all 252 retained pipelines; the omitted 78 compiled
+  again. Cache identity and file bytes stayed identical across all three starts.
+  This validates bounded persistence for that fixture; gameplay performance and
+  the cause of large driver payloads were not assessed.
 - `tools/test_pipeline_store.cpp` writes stores with valid records and records
   the device rejects (the last ones among them), damaged and partial records,
   the original header and other versions. Every valid record survives, in
