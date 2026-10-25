@@ -162,8 +162,10 @@ def _dlc_key(folder: str):
     def walk(d, depth):
         try:
             st = os.stat(d)
-            parts.append((str(d), st.st_mtime_ns))
             entries = sorted(os.scandir(d), key=lambda e: e.name)
+            # Directory timestamps may be coarse or settle after a Windows scan.
+            # Names must participate even when adding a file leaves the time equal.
+            parts.append((str(d), st.st_mtime_ns, tuple(e.name for e in entries)))
         except OSError:
             return
         for e in entries:
@@ -171,9 +173,8 @@ def _dlc_key(folder: str):
                 if e.is_symlink() or e.name.startswith(".") or e.name.lower() in dlcscan.SYSTEM_NAMES:
                     continue
                 if e.is_file():
-                    if dlcscan.is_zip(e.name):
-                        s = e.stat()
-                        parts.append((e.path, s.st_mtime_ns, s.st_size))
+                    s = e.stat()
+                    parts.append((e.path, s.st_mtime_ns, s.st_size))
                 elif e.is_dir() and depth < dlcscan.MAX_DEPTH and not install_dlc.NAME_RE.fullmatch(e.name):
                     walk(e.path, depth + 1)
                 elif e.is_dir():
@@ -188,7 +189,13 @@ def _dlc_key(folder: str):
 def dlc_cached(folder: str):
     """describe_dlc_folder's result if this folder was read already (and did not change), else None.
     Reads directory listings only (see _dlc_key)."""
-    return _DLC_CACHE.get(_dlc_key(folder))
+    return dlc_snapshot(folder)[1]
+
+
+def dlc_snapshot(folder: str):
+    """Current directory snapshot and its cached result, for asynchronous UI probes."""
+    key = _dlc_key(folder)
+    return key, _DLC_CACHE.get(key)
 
 
 def dlc_warning(found) -> str:

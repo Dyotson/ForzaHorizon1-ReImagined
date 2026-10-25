@@ -308,6 +308,7 @@ class SetupPage(QWidget):
         self.task = None
         self._probes = {}   # key -> Probe running off the GUI thread (#124)
         self._probe_done = set()   # keys already probed: an answer that cannot be cached is not asked again
+        self._dlc_snapshot = None
         self._dlc_error = None     # (folder, message) of a DLC folder that cannot be read
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
@@ -598,7 +599,12 @@ class SetupPage(QWidget):
         d = self.dlc.text().strip()
         warning = ""
         if d:
-            got = installer.dlc_cached(d)
+            snapshot, got = installer.dlc_snapshot(d)
+            if snapshot != self._dlc_snapshot:
+                # A folder can change while its worker scans, including delayed
+                # Windows directory metadata. Permit a fresh probe for that state.
+                self._probe_done.discard("dlc:" + d)
+                self._dlc_snapshot = snapshot
             if self._dlc_error and self._dlc_error[0] == d:
                 self.dlclist.setText(self._dlc_error[1])
             elif got is None:

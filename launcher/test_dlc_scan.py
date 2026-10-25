@@ -95,7 +95,12 @@ class Folders(Base):
         self.assertIsNone(installer.dlc_cached(str(self.src)))
         found, _ = installer.describe_dlc_folder(str(self.src))
         self.assertEqual(sorted(n for n, _ in found), sorted([A, B]))
-        packed(self.src / "b" / "c", C, "C")
+        parent = self.src / "b" / "c"
+        before = parent.stat()
+        packed(parent, C, "C")
+        # Reproduce coarse/preserved directory times instead of relying on sleep.
+        os.utime(parent, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertIsNone(installer.dlc_cached(str(self.src)))
         found, _ = installer.describe_dlc_folder(str(self.src))
         self.assertEqual(len(found), 3)
 
