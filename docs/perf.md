@@ -1977,5 +1977,19 @@ readers, plus the existing corruption, replacement and six-start reuse model.
 A negative control disabling the unchanged fast path fails the omitted-only
 assertion. A private harness compiled the exact patched
 `SaveDriverPipelineCache` body and passed generation acknowledgement/no-write
-and denied Windows replacement/retry checks. No full GPU plugin/game build,
-HDD trace or game run was performed for this change.
+and denied Windows replacement/retry checks. Initial validation did not include
+a full GPU plugin/game build, HDD trace or game run.
+
+
+Follow-up Windows build validation: a private reconstruction of the pinned SDK
+plus all 124 public patches, with exact local gitlink copies and the carried
+SDL patches, configured with Clang 23.1.3, Vulkan/D3D12, DLSS, FSR3, Tracy and
+performance counters enabled. The three affected Vulkan translation units
+compiled first. The remaining `rexgpu-xenos` target then compiled and linked
+with ordinary Ninja `-j1 -k1` in 361 seconds, within a 20-minute limit. The
+matching `rexruntime.dll` linked too; the Ninja graph and all 1369 tracked SDK
+source hashes were unchanged. Static AMD64 PE inspection found the required
+`rex_gpu_abi_version` and `rex_gpu_create` exports plus the two existing GPU
+selection hints, and the plugin imports `rexruntime.dll`. Its DLSS capability
+manifest matches its SHA-256. No DLL was loaded, no shared prefix installed,
+and no game, persistence/restart reuse or HDD stutter validation was performed.
