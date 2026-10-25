@@ -490,8 +490,9 @@ add("world_challenges", "Head-to-head challenges", "Online", "bool", True,
 add("world_event_wait_seconds", "Event lobby wait (s)", "Online", "int", 30,
     "How long the wait lobby before an event lasts.", "Horizon World", lo=0, hi=600)
 add("world_event_cpu_with_peers", "AI drivers in multi-player world events", "Online", "bool",
-    True, "Only the Horizon World events the server starts; playlist and custom races have no AI "
-    "drivers, as on the Xbox 360. Off: only a solo event gets them.", "Horizon World")
+    True, "Horizon World events and the Co-op Festival's /event races (also alone on This PC); "
+    "playlist and custom races have no AI drivers, as on the Xbox 360. Off: only a solo event "
+    "gets them.", "Horizon World")
 add("world_event_cpu_ready", "Do not wait for AI after events", "Online", "bool", True,
     "The results screen returns to the lobby without waiting for them.", "Horizon World")
 add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,

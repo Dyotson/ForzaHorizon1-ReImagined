@@ -287,17 +287,30 @@ class CoopWorldCase(unittest.TestCase):
 
 
 class CoopFestivalTest(CoopWorldCase):
+    @staticmethod
+    def playlists(peer):
+        """The playlist ids Find Game lists to peer's game (Hopper.GetListEx)."""
+        body = bytes(x.encode(x.HopperGetList_Params,
+                              {"maxCategoryResults": 2, "maxHopperResults": 32}))
+        results, _ = x.decode(x.HopperGetListEx_Results,
+                              lsp.hopper_get_list_ex(peer.xuid, body)[12:])
+        return [h["id"] for h in results["hoppers"]]
+
     def test_listed_only_to_games_that_have_it(self):
-        def ids(peer):
-            body = bytes(x.encode(x.HopperGetList_Params,
-                                  {"maxCategoryResults": 2, "maxHopperResults": 32}))
-            results, _ = x.decode(x.HopperGetListEx_Results,
-                                  lsp.hopper_get_list_ex(peer.xuid, body)[12:])
-            return [h["id"] for h in results["hoppers"]]
-        self.assertEqual(ids(self.a), [lsp.WORLD_HOPPER, 1, 2, lsp.COOP_HOPPER])
-        self.assertEqual(ids(self.old), [lsp.WORLD_HOPPER, 1, 2])
+        self.assertEqual(self.playlists(self.a), [lsp.WORLD_HOPPER, 1, 2, lsp.COOP_HOPPER])
+        self.assertEqual(self.playlists(self.old), [lsp.WORLD_HOPPER, 1, 2])
         lsp.client_features = None  # no server: unknown, not listed
-        self.assertEqual(ids(self.a), [lsp.WORLD_HOPPER, 1, 2])
+        self.assertEqual(self.playlists(self.a), [lsp.WORLD_HOPPER, 1, 2])
+
+    def test_not_listed_without_the_game_database(self):
+        """The festival events with their CPU drivers come from the game's database: a server
+        without one (the launcher's "This PC" server gave it none before #67) has no Co-op
+        Festival."""
+        cp.GAME_DB, cp._events = os.path.join(self.tmp.name, "no-gamedb.slt"), None
+        self.assertEqual(cp.available(), [])
+        self.assertEqual(self.playlists(self.a), [lsp.WORLD_HOPPER, 1, 2])
+        cp.GAME_DB, cp._events = self.db, None  # given with --game-db
+        self.assertEqual(self.playlists(self.a), [lsp.WORLD_HOPPER, 1, 2, lsp.COOP_HOPPER])
 
     def test_placement_only_into_a_friend_s_world(self):
         store = self.server.friends.store
