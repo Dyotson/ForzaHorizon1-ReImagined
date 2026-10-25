@@ -80,14 +80,24 @@ bool ReadFile(const fs::path& path, std::vector<uint8_t>& out, std::string& erro
 bool WriteFile(const fs::path& path, const std::vector<uint8_t>& data, std::string& error) {
   fs::path temp = path;
   temp += ".tmp";
+  bool written = false;
   {
     std::ofstream file(temp, std::ios::binary | std::ios::trunc);
-    if (!file || !file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()))) {
-      error = "cannot write " + PathText(temp);
-      std::error_code ignored;
-      fs::remove(temp, ignored);
-      return false;
+    if (file && file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()))) {
+      file.flush();
+      if (file) {
+        file.close();
+        written = !file.fail();
+      }
     }
+  }
+  // Buffered writes can fail only at flush/close. Never publish one as a successful job:
+  // the launcher removes its source PNG after success. Close before cleanup on Windows.
+  if (!written) {
+    error = "cannot write " + PathText(temp);
+    std::error_code ignored;
+    fs::remove(temp, ignored);
+    return false;
   }
   std::error_code ec;
   fs::rename(temp, path, ec);

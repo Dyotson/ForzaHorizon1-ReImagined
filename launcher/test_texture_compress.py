@@ -241,6 +241,59 @@ class RealCompressor(Base):
         self.assertEqual(sorted(p.name for p in (self.t / "out").iterdir()), ["a.dds", "b.dds"])
 
 
+    def test_unicode_paths_and_replacing_an_existing_output(self):
+        folder = self.t / "caf\u00e9 \u65e5\u672c"
+        folder.mkdir()
+        raw, output = folder / "pixels.rgba", folder / "texture.dds"
+        raw.write_bytes(b"\x80\x40\x20\xff" * 16)
+        output.write_bytes(b"old output")
+        job = texture_compress.Job("bc7", 4, 4, raw, output)
+        result = texture_compress.run(self.cfg, [job], self.t / "work")
+        self.assertIn(str(output), result.done)
+        self.assertTrue(output.read_bytes().startswith(b"DDS "))
+        self.assertFalse(Path(str(output) + ".tmp").exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows sharing semantics")
+    def test_locked_output_preserves_previous_file(self):
+        import ctypes
+        from ctypes import wintypes
+
+        raw, output = self.t / "pixels.rgba", self.t / "texture.dds"
+        raw.write_bytes(b"\x80\x40\x20\xff" * 16)
+        output.write_bytes(b"old output")
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                       ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        # Allow reads, but deny replacing this disposable output while the job runs.
+        handle = kernel.CreateFileW(str(output), 0x80000000, 1, None, 3, 0, None)
+        self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+        try:
+            job = texture_compress.Job("bc7", 4, 4, raw, output)
+            result = texture_compress.run(self.cfg, [job], self.t / "work")
+            self.assertIn(str(output), result.failed)
+            self.assertNotIn(str(output), result.done)
+            self.assertEqual(output.read_bytes(), b"old output")
+            self.assertFalse(Path(str(output) + ".tmp").exists())
+        finally:
+            kernel.CloseHandle(handle)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux full-device fixture")
+    def test_failed_buffer_flush_does_not_publish_output(self):
+        raw, output = self.t / "pixels.rgba", self.t / "texture.dds"
+        raw.write_bytes(b"\x80\x40\x20\xff" * 16)
+        output.write_bytes(b"old output")
+        temp = Path(str(output) + ".tmp")
+        temp.symlink_to("/dev/full")
+        job = texture_compress.Job("bc7", 4, 4, raw, output)
+        result = texture_compress.run(self.cfg, [job], self.t / "work")
+        self.assertIn(str(output), result.failed)
+        self.assertNotIn(str(output), result.done)
+        self.assertEqual(output.read_bytes(), b"old output")
+        self.assertFalse(temp.is_symlink())
+
+
 class StandInCompressor(Base):
     def setUp(self):
         super().setUp()
