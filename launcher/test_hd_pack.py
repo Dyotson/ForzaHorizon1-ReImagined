@@ -1,7 +1,10 @@
 """Make HD pack (#384, hd_pack.py): what is upscaled, the images (alpha, colours, size) and the
-job with a stand-in upscaler (no download, no GPU). Disposable folders only."""
+job with a stand-in upscaler (no download, no GPU), writing PNGs (a build without the compressor)
+or DDS files (#413: forza-texcompress built from the sources when there is a C++ compiler, else a
+stand-in). Disposable folders only."""
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -11,8 +14,9 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from forza_launcher import fetch, hd_pack, pins, texture_packs  # noqa: E402
+from forza_launcher import fetch, hd_pack, pins, texture_compress, texture_packs  # noqa: E402
 from forza_launcher.config import Config  # noqa: E402
+import test_texture_compress  # noqa: E402
 
 try:
     from PySide6.QtGui import QColor, QImage
@@ -56,6 +60,30 @@ class HdPackTests(unittest.TestCase):
         self.cfg.advanced["data_root"] = str(self.t / "home")
         self.dump = hd_pack.dump_dir(self.cfg)
         self.dump.mkdir(parents=True)
+        self.no_compressor()
+
+    def no_compressor(self):
+        """A build of the game without forza-texcompress: the pack is written as PNGs."""
+        texture_compress._checked.clear()
+        env = mock.patch.dict(os.environ, {"FORZA_TEXCOMPRESS": str(self.t / "no-compressor")})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def compressor(self):
+        """forza-texcompress built from the sources (True), else the stand-in (False)."""
+        texture_compress._checked.clear()
+        tool = test_texture_compress.real_tool()
+        if tool is None:
+            tool = self.t / "fake_texcompress.py"
+            tool.write_text(test_texture_compress.FAKE)
+            command = mock.patch.object(texture_compress, "_command",
+                                        lambda p, args: [sys.executable, str(p)] + args)
+            command.start()
+            self.addCleanup(command.stop)
+        env = mock.patch.dict(os.environ, {"FORZA_TEXCOMPRESS": str(tool)})
+        env.start()
+        self.addCleanup(env.stop)
+        return tool.suffix != ".py"
 
     def picture(self, path, w, h, alpha_hole=False, colour=(120, 90, 60)):
         img = QImage(w, h, QImage.Format_RGBA8888)
@@ -106,7 +134,13 @@ class HdPackTests(unittest.TestCase):
         self.assertEqual([i.fingerprint for i in p.todo], [FP[0]])
         self.assertEqual(p.skipped, {"normal maps": 1, "masks": 2, "small": 2, "without a .png in the dump": 1})
         self.assertEqual(p.dumped, 7)
+        self.assertFalse(p.compressed)
         self.assertEqual(p.gpu_bytes(), 128 * 128 * 4 * 4 // 3)
+        # Compressed (BC7, a byte a texel, plus a third for the mips): a quarter; 4x then needs a
+        # card with 6 GB, not 10.
+        self.assertEqual(hd_pack.plan(self.cfg, 2, compressed=True).gpu_bytes(), 128 * 128 * 4 // 3)
+        self.assertEqual(hd_pack.plan(self.cfg, 2, compressed=True).disk_bytes(), 128 * 128 * 4 // 3)
+        self.assertEqual((hd_pack.min_vram_gb_4x(True), hd_pack.min_vram_gb_4x(False)), (6, 10))
 
     def test_a_texture_is_made_only_at_the_scale_asked_for(self):
         """A 2x pack does not count as made for 4x (and back): the other scale is work to remake,
@@ -225,6 +259,89 @@ class HdPackTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as e:
             hd_pack.make(self.cfg, 2)
         self.assertIn("changed since it was downloaded", str(e.exception))
+
+    def test_the_job_writes_compressed_textures_and_compresses_the_pngs_made_before(self):
+        rows = [(FP[0], "k_DXT1", 64, 64, "BC1"), (FP[1], "k_DXT4_5", 128, 64, "BC3"),
+                (FP[2], "k_DXT1", 64, 128, "BC1")]
+        self.write_dump(rows)
+        self.fake_upscaler()
+        # The PNG pack a build without the compressor makes: the reference for the quality below.
+        reference = self.t / "reference"
+        hd_pack.make(self.cfg, 2)
+        shutil.copytree(hd_pack.pack_dir(self.cfg), reference)
+        shutil.rmtree(hd_pack.pack_dir(self.cfg))
+        # Stopped after the first texture, still without the compressor: PNGs.
+        with mock.patch.object(hd_pack, "BATCH_MAX", 1):
+            calls = []
+            with self.assertRaises(fetch.Cancelled):
+                hd_pack.make(self.cfg, 2, progress=lambda f, t: calls.append(f), cancelled=lambda: len(calls) > 3)
+        pack = hd_pack.pack_dir(self.cfg)
+        before = sorted(p.stem for p in pack.glob("*.png"))
+        self.assertTrue(before)
+        # With the compressor: the PNGs made before are compressed first, the rest written as DDS.
+        real = self.compressor()
+        p = hd_pack.plan(self.cfg, 2)
+        self.assertTrue(p.compressed)
+        self.assertEqual(p.png_done, len(before))
+        logs = []
+        result = hd_pack.make(self.cfg, 2, log=logs.append)
+        self.assertTrue(result.compressed)
+        self.assertEqual(result.converted, len(before))
+        self.assertEqual(result.made, 3 - len(before))
+        self.assertEqual(sum(result.formats.values()), result.made)
+        self.assertEqual(list(pack.glob("*.png")), [])
+        self.assertEqual(sorted(x.stem for x in pack.glob("*.dds")), [FP[0], FP[1], FP[2]])
+        self.assertIn('format = "dds"', (pack / "pack.toml").read_text())
+        self.assertFalse(hd_pack.work_dir(self.cfg).exists())
+        p = hd_pack.plan(self.cfg, 2)
+        self.assertEqual((p.done, p.png_done, p.todo), (3, 0, []))
+        info = texture_packs.read_pack(pack)
+        self.assertEqual((info.files, info.png_files, info.problem), (3, 0, ""))
+        for fp, w, h in ((FP[0], 128, 128), (FP[1], 256, 128), (FP[2], 128, 256)):
+            header = texture_packs.read_texture_header(pack / f"{fp}.dds")
+            self.assertEqual((header.width, header.height, header.problem), (w, h, ""))
+        if not real:
+            print("(stand-in compressor: the quality checks are skipped)", file=sys.stderr)
+            return
+        # The real compressor: the cut-out is BC7; each texture decodes back close to the PNG the
+        # same job writes without compression (alpha too: no holes in the cut-out half).
+        self.assertEqual(texture_packs.read_texture_header(pack / f"{FP[1]}.dds").format, "BC7")
+        tool = Path(os.environ["FORZA_TEXCOMPRESS"])
+        for fp in (FP[0], FP[1], FP[2]):
+            with self.subTest(fp=fp):
+                data = test_texture_compress.decode(tool, pack / f"{fp}.dds", self.t / f"{fp}.rgba")[0]
+                png = QImage(str(reference / f"{fp}.png")).convertToFormat(QImage.Format_RGBA8888)
+                want = bytes(png.constBits())[: png.width() * png.height() * 4]
+                self.assertGreater(test_texture_compress.psnr(want, data), 38)
+                flips = sum(1 for i in range(3, len(want), 4) if abs(want[i] - 128) >= 32 and
+                            (want[i] >= 128) != (data[i] >= 128))
+                self.assertEqual(flips, 0)
+
+    def test_a_compressed_pack_at_another_scale_is_remade(self):
+        """The scale switch with DDS files: a 2x DDS pack counts as nothing made at 4x, making it
+        replaces every file, and a PNG written over a DDS of the other scale (a build without the
+        compressor) takes the DDS away (the game would use the DDS first)."""
+        self.write_dump([(FP[0], "k_DXT1", 64, 64, "BC1"), (FP[1], "k_DXT4_5", 128, 64, "BC3")])
+        self.fake_upscaler()
+        self.compressor()
+        pack = hd_pack.pack_dir(self.cfg)
+        hd_pack.make(self.cfg, 2)
+        self.assertEqual(sorted(x.name for x in pack.glob(f"{FP[0]}.*")), [f"{FP[0]}.dds"])
+        self.assertEqual(texture_packs.read_texture_header(pack / f"{FP[0]}.dds").width, 128)
+        p = hd_pack.plan(self.cfg, 4)
+        self.assertEqual((p.done, p.png_done, len(p.todo), p.replaces), (0, 0, 2, 2))
+        result = hd_pack.make(self.cfg, 4)
+        self.assertEqual((result.made, result.converted), (2, 0))
+        self.assertEqual(texture_packs.read_texture_header(pack / f"{FP[0]}.dds").width, 256)
+        self.assertEqual((hd_pack.plan(self.cfg, 4).todo, hd_pack.existing_scale(self.cfg)), ([], 4))
+        # Back to 2x without the compressor: PNGs, and no DDS of 4x left to win over them.
+        self.no_compressor()
+        p = hd_pack.plan(self.cfg, 2)
+        self.assertEqual((p.done, len(p.todo), p.replaces, p.compressed), (0, 2, 4, False))
+        hd_pack.make(self.cfg, 2)
+        self.assertEqual(sorted(x.name for x in pack.iterdir() if x.suffix in (".png", ".dds")),
+                         [f"{FP[0]}.png", f"{FP[1]}.png"])
+        self.assertIn('format = "png"', (pack / "pack.toml").read_text())
 
 
 if __name__ == "__main__":

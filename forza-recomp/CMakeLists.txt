@@ -228,6 +228,10 @@ endif()
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 include(cmake/discord.cmake)
 
+# forza-texcompress: texture packs to BC7/BC1 DDS files, run by the launcher's Make HD pack and
+# Compress PNGs (#413, docs/texture_packs.md). Its own executable next to forza.
+add_subdirectory(texcompress)
+
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})

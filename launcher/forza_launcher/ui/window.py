@@ -261,8 +261,10 @@ class MainWindow(QMainWindow):
             self.setup.task.cancel()
             self.setup.task.wait(15000)
         if self.texture_packs.busy():
-            if QMessageBox.question(self, "Quit", "Make HD pack is still running. Stop it and quit? It "
-                                    "continues where it stopped next time.") != QMessageBox.Yes:
+            what = ("Make HD pack is still running. Stop it and quit? It continues where it stopped next time."
+                    if self.texture_packs.hd_busy() else
+                    "A texture pack is being compressed. Stop it and quit? What is compressed stays.")
+            if QMessageBox.question(self, "Quit", what) != QMessageBox.Yes:
                 e.ignore()
                 return
             self.texture_packs.shutdown()
