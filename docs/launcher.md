@@ -22,9 +22,10 @@ calibration controls. It defaults off and falls back to SDR on unsupported
 surfaces. See [HDR setup, Windows online steps and validation](hdr.md).
 
 **Texture packs (#384):** Settings > Display > Texture packs has **Dump textures**
-(`texture_dump`), **Use texture packs** (`texture_replace`, Vulkan only) and **Open textures
+(`texture_dump`), **Use texture packs** (`texture_replace`, Vulkan only), **Open textures
 folder** (`textures` in the data folder, passed to the game as `texture_pack_root` while
-either option is on). Both default off. See [texture packs](texture_packs.md).
+either option is on) and **Texture packs page…** (below). Both default off. See
+[texture packs](texture_packs.md).
 
 No prebuilt game is ever shipped (the generated C++ is translated game code). The release
 holds only the **launcher**, the project's own sources, the Forza Live server and the patched
@@ -514,6 +515,20 @@ launcher.json keeps the order and the mods turned off (`"mods": {"order": [...],
 none), except an option that **Extra command-line flags** (**Settings > Advanced**) name, as
 `--name=value` or `--name value` (the game refuses an option given twice). The player's guide is
 [modding.md](modding.md). Tests: `launcher/test_mods.py`.
+
+### Texture packs (#384)
+
+**Texture packs** has the two switches of Settings > Display > Texture packs (the same settings,
+through `SettingsPage.apply_external`) and the list of packs. The list is the
+Mods page's (`FolderListPage` in `ui/mods_page.py`): the folders in `<data folder>/textures` but
+`dump/` (`texture_packs.py`), ticked to use, **Move up** / **Move down** (a lower pack wins for the
+same texture), **Add pack…** (zip, folder or a drop; only fingerprint-named textures and text files
+are copied, checked as the game reads them, zip slip and size caps as for mods, a dump refused),
+**Remove**, **Refresh**, **Open textures folder**, and the details of the selected pack (its
+textures, size, graphics memory, the textures it shares with other packs and whose copy is used).
+launcher.json keeps `"texture_packs": {"order": [...], "disabled": [...]}`; with Use texture packs
+on, every start passes `--texture_packs=A|B` (SDK patch 0310; `|` alone: none) unless the extra
+flags name `texture_packs` or `texture_pack_root`. Tests: `launcher/test_texture_packs.py`.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 

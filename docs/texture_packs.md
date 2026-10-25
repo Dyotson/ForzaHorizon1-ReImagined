@@ -3,26 +3,101 @@
 Higher-resolution textures without touching the game's files: the renderer recognises a
 texture the game loads by a fingerprint of its contents, and draws a file named after that
 fingerprint instead. The game itself never sees the file; it keeps its own texture, in its own
-memory, and only the graphics card's copy changes. This is milestone 1 of #384 (dump and
-replace); how packs are made and shared comes later.
+memory, and only the graphics card's copy changes.
 
-**Settings > Display > Texture packs**:
+A **texture pack** is a folder of such files, made by players and added with **Add pack…**. The
+project hosts none (they are derived from the game's art).
+
+## The Texture packs page
+
+The launcher's **Texture packs** page (also **Settings > Display > Texture packs > Texture packs
+page…**):
 
 | Launcher | cvar | What it does |
 | --- | --- | --- |
+| Use texture packs | `texture_replace` | Draws the ticked packs' textures (Vulkan) |
 | Dump textures | `texture_dump` | Saves each texture the game loads, once, to `textures/dump/` |
-| Use texture packs | `texture_replace` | Draws textures from the files in `textures/` (Vulkan) |
+| The list of packs | `texture_packs` | The packs to use, in order (the launcher passes it) |
 | Open textures folder | | Opens `textures/` in the game's data folder |
 
-Both are off by default and apply from the next start. The folder is `textures` in the game's
-data folder (`~/.local/share/forza/textures` on Linux, `%LOCALAPPDATA%\ForzaReImagined\textures`
-on Windows): the launcher passes it as `texture_pack_root`; without the launcher it is
+Both switches are off by default, are the same settings as in Settings > Display, and apply from
+the next start. The folder is `textures` in the game's data folder
+(`~/.local/share/forza/textures` on Linux, `%LOCALAPPDATA%\ForzaReImagined\textures` on
+Windows): the launcher passes it as `texture_pack_root`; without the launcher it is
 `<user_data_root>/textures`. Other cvars, for `forza.toml` or the command line:
 
 - `texture_dump_png` (on): with `texture_dump`, also write a `.png` of the largest level.
 - `texture_replace_preload` (off): read every pack file at start instead of when its texture
   first loads, so no texture is shown at the original resolution first (more memory).
-- `texture_pack_root`: another folder.
+- `texture_pack_root`: another folder (the launcher then passes no `texture_packs`).
+
+### The list
+
+Each folder in `textures/` is a pack (not `dump/`, nor folders starting with a dot). The list
+shows its name, author and version (from its `pack.toml`), its textures and how much graphics
+memory they take when all are in use; tick a pack to use it (Return, Enter or a controller's A on
+the selected row too). **Ticked packs are used from top to bottom: when two packs replace the
+same texture, the one lower in the list wins** (as on the Mods page). The details under the list
+name the textures a pack shares with others and whose copy is used. **Move up**, **Move down**,
+**Remove** (asks first; a linked folder loses only the link) and **Refresh** work as on the Mods
+page. A folder named `hd-pack` ("HD pack (made on this PC)") starts at the top, so hand-made packs
+below it win over it.
+
+launcher.json keeps the order and the packs turned off (`"texture_packs": {"order": [...],
+"disabled": [...]}`). With Use texture packs on, every start passes
+`--texture_packs=<pack>|<pack>` with the ticked packs in order (`|` alone: none), unless
+**Extra command-line flags** name `texture_packs` or `texture_pack_root`. The game reads only
+those folders (SDK patch 0310); without the option (the game started without the launcher) it
+reads every folder in `textures/` but `dump/`, the first path in alphabetical order winning.
+Texture files directly in `textures/` are not a pack: the page says how many there are and that
+they need a folder of their own.
+
+### Add pack…
+
+**Add pack…** takes a **Zip file…** or a **Folder…** (dropping either on the page does the same).
+The pack is the folder that has `pack.toml` or texture files at its top, the zip's or folder's top
+or the one folder inside it; it is named after that folder (a zip with its files at the top: the
+zip's name). Only files named `<fingerprint>.dds` or `.png` and the pack's text files (`.txt`,
+`.md`, `.toml`: read-me, licence, `pack.toml`) are copied; anything else in the zip is left out.
+The files are unpacked into a hidden `.adding-*` folder in `textures/`, checked as the game reads
+them, and moved into place only when the pack is usable; a pack of the same name is replaced
+only after you say yes (never while the game runs).
+
+Refused, in words under the list: a zip with an absolute path, `..` or a link (zip slip), more
+than 200,000 files or 32 GB unpacked, a texture over 2 GB, a texture dump (a folder with
+`index.tsv`: the game's own textures), and a pack without a single texture the game can use. A
+pack named `hd-pack` or `dump` is added as `hd-pack (added)` (those folders stay the made pack's
+and the dump's). Kept, with a note: files the game cannot use (a cube map, a format it does not
+read, a size over 16384, a file shorter than its header), files not named by a fingerprint, a
+texture in a pack twice, and files that are byte for byte the game's own dumped textures (they
+change nothing, and a pack must not contain them).
+
+## Making and sharing a pack
+
+A pack is a folder:
+
+```
+Rocks HD/
+  pack.toml            name = "Rocks HD", version = "1.0", author = "you", description = "..."
+  README.md            optional: what it changes, your licence
+  b5fcb5a5a9d78d71.dds the replacement of the dumped texture b5fcb5a5a9d78d71
+  terrain/1808870a1806a9d5.png   folders inside are fine
+```
+
+1. Turn on **Dump textures** and play where the textures you want to change are. Each texture is
+   in `textures/dump/` as `<fingerprint>.dds` and `.png` (to look at), listed in `index.tsv`.
+2. Make your replacement from the dumped file (paint it, redraw it, make it larger) and save it
+   with **the same file name** in your pack folder, as described below (same aspect ratio; DDS
+   BC1/BC3/BC7 with mips is smallest in graphics memory, PNG works too).
+3. Put the folder in `textures/` (or **Add pack…**), tick it, turn on **Use texture packs** and play.
+4. To share it, zip the folder. Name the files by fingerprint only; the fingerprint is the same on
+   every PC and in every run.
+
+**Sharing is your responsibility.** A pack holds changed game art, which belongs to the game's
+publisher; the project does not host packs and cannot vouch for any. Share only your own work:
+never the game's textures unchanged, the dumped files, files only re-saved or converted from them,
+or a dump. The launcher notes files of an added pack that are the game's
+own textures unchanged.
 
 ## Dumping
 
@@ -57,8 +132,8 @@ many: they are dumped the next time they load.
 
 ## Making a replacement
 
-Put a file named `<fingerprint>.dds` or `<fingerprint>.png` anywhere in `textures/` (folders
-inside it are fine, `dump/` is not read). Keep the name of the dumped texture you started from.
+Put a file named `<fingerprint>.dds` or `<fingerprint>.png` in a pack folder in `textures/`
+(folders inside it are fine). Keep the name of the dumped texture you started from.
 
 - **Size**: any, as long as the aspect ratio is the same (a 512x256 texture can become
   1024x512 or 4096x2048, within a texel). Up to 16384.
@@ -78,8 +153,8 @@ inside it are fine, `dump/` is not read). Keep the name of the dumped texture yo
   Direct3D 9 tools write them); other padding only in a file without mips. A header whose pitch
   is shorter than a row, or a file shorter than its header says, is not used (the log says
   why).
-- When both a `.dds` and a `.png` exist, the `.dds` is used; the same name in two folders, the
-  first path in alphabetical order.
+- When both a `.dds` and a `.png` exist in a pack, the `.dds` is used; the same name twice in a
+  pack, the first path in alphabetical order; in two packs, the later pack's (see the list).
 
 The replacement shows from the frame after it is read (a worker reads and decodes it the first
 time its texture loads, and the frame start uploads it): the original is drawn until then,
@@ -99,12 +174,6 @@ and why (a wrong aspect ratio, an unsupported format).
   the new image, a little sharper than before.
 - Only what the list above dumps can be replaced: no cube maps (sky, reflections), 3D textures
   or other formats yet.
-
-## Sharing packs
-
-The project does not host packs: they are derived from the game's art. A pack must never
-contain the game's original textures, the dumped files or files only re-saved from them; and
-never share a dump. Share only your own work.
 
 ## The log
 
@@ -148,5 +217,9 @@ SDK patch 0280 (`docs/sdk_patches.md`): `src/graphics/pipeline/texture/pack.{h,c
 fingerprint, the dump writer with its untiling, DDS and PNG encoders, the replacement reader and
 its two worker threads), the hook in `TextureCache::CommitPreparedTextureLoad`, and the Vulkan
 texture cache's replacement images (`VulkanTextureCache::UploadTexturePackReplacement`,
-`GetTexturePackView`). The game sets `texture_pack_root` (`src/forza_app.h`); the launcher's
-options are in `launcher/forza_launcher/schema.py`.
+`GetTexturePackView`). SDK patch 0310: `texture_packs`, the packs to read in order
+(`ParsePackOrder` in `pack_format.cpp`, tested by `tools/test_texture_pack_dds.cpp`). The game
+sets `texture_pack_root` (`src/forza_app.h`); the launcher's options are in
+`launcher/forza_launcher/schema.py`, the packs in `texture_packs.py` (tests:
+`launcher/test_texture_packs.py`), the page in `ui/texture_packs_page.py` (its list is the Mods
+page's, `ui/mods_page.py` `FolderListPage`).

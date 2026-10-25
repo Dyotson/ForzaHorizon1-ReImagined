@@ -587,8 +587,19 @@ class SettingsPage(QWidget):
         self.texture_folder_button.setToolTip(str(folder))
         self.texture_folder_button.clicked.connect(self._open_texture_folder)
         row.addWidget(self.texture_folder_button)
+        self.texture_page_button = QPushButton("Texture packs page…")
+        self.texture_page_button.setToolTip("Add, order and turn packs on or off.")
+        self.texture_page_button.clicked.connect(self._show_texture_packs)
+        row.addWidget(self.texture_page_button)
         row.addStretch(1)
         content.addLayout(row)
+
+    def _show_texture_packs(self):
+        from .window import TEXTURE_PACKS_PAGE_ID
+        show = getattr(self.window, "show_page", None)
+        if show is not None:
+            self.flush()
+            show(TEXTURE_PACKS_PAGE_ID)
 
     def _open_texture_folder(self):
         folder = game.texture_pack_folder(self.cfg)
