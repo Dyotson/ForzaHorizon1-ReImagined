@@ -92,8 +92,11 @@ class GameLanguageTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "extracted" / "game" / "media" / "stringtables"
         if not root.is_dir():
             self.skipTest("no extracted game")
+        # The disc names some tables in lower case (br.zip, cz.zip, nl.zip); the game's file
+        # lookups ignore case, so compare that way.
+        have = {p.name.lower() for p in root.glob("*.zip")}
         for value, (_l, _c, folder) in EXPECTED.items():
-            self.assertTrue((root / f"{folder}.zip").is_file(), folder)
+            self.assertIn(f"{folder}.zip".lower(), have, folder)
 
 
 if __name__ == "__main__":
