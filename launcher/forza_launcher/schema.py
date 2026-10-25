@@ -9,7 +9,7 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
-from . import gamertag, power
+from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
 GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
@@ -502,9 +502,16 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 add("gamertag", "Gamertag", "Profile", "str", "",
     "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
     "Identity")
+add("game_language", "Game language", "Profile", "choice", "",
+    "The language of the game's menus and text. Automatic uses the Language ID and Country ID "
+    "below (English, United States by default). Any other choice sets both for you; Hungarian, "
+    "Czech, Dutch, Danish, Finnish, Norwegian and Swedish pick English with their country, as "
+    "the game does. A language that has no Country ID of its own uses yours.", "Identity",
+    choices=languages.CHOICES, restart=True)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
-    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
+    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian. "
+    "Used when Game language is Automatic.",
     "Identity", lo=0, hi=20)
 add("user_country", "Country ID", "Profile", "int", 103, "Xbox country code.", "Identity",
     lo=0, hi=300)

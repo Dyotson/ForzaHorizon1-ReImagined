@@ -7,11 +7,11 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, paths, schema, specs
+from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, languages, paths, schema, specs
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 # Settings of the launcher itself: not game cvars, never written to forza.toml.
-LAUNCHER_ONLY = ("share_shader_list", "battery_saver")
+LAUNCHER_ONLY = ("share_shader_list", "battery_saver", "game_language")
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
 FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
@@ -295,6 +295,10 @@ def render_toml(cfg: Config) -> str:
                 or s.key in LAUNCHER_ONLY:
             continue
         v = schema.coerce(s, settings.get(s.key, s.default))
+        if s.key in ("user_language", "user_country"):    # the Game language choice (#434) sets both
+            v = dict(zip(("user_language", "user_country"), languages.resolve(
+                settings.get("game_language", ""), settings.get("user_language", s.default),
+                settings.get("user_country", s.default))))[s.key]
         if v != s.default:
             lines.append(f"{s.key} = {toml_value(v)}")
     # public and custom servers are named here too; local (an environment variable at start)
