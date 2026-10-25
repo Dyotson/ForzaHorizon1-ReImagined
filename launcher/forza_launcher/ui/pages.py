@@ -308,6 +308,7 @@ class SetupPage(QWidget):
         self.task = None
         self._probes = {}   # key -> Probe running off the GUI thread (#124)
         self._probe_done = set()   # keys already probed: an answer that cannot be cached is not asked again
+        self._dlc_snapshot = None
         self._dlc_error = None     # (folder, message) of a DLC folder that cannot be read
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
@@ -406,7 +407,7 @@ class SetupPage(QWidget):
 
         # 3. DLC ------------------------------------------------------------------------
         self.c2 = StepCard(3, "DLC",
-                           "The folder with your DLC: packages (4D5309C9/00000002), or a Xenia content folder (or its "
+                           "The folder with your DLC: packages (4D5309C9/00000002), .zip archives of them, or a Xenia content folder (or its "
                            "00000002 folder). They are installed for the game to find; you can add more later. "
                            "Without DLC the extra cars and events are missing.")
         row, self.dlc, _ = path_row("Folder of DLC", None, self._pick_dlc)
@@ -598,7 +599,12 @@ class SetupPage(QWidget):
         d = self.dlc.text().strip()
         warning = ""
         if d:
-            got = installer.dlc_cached(d)
+            snapshot, got = installer.dlc_snapshot(d)
+            if snapshot != self._dlc_snapshot:
+                # A folder can change while its worker scans, including delayed
+                # Windows directory metadata. Permit a fresh probe for that state.
+                self._probe_done.discard("dlc:" + d)
+                self._dlc_snapshot = snapshot
             if self._dlc_error and self._dlc_error[0] == d:
                 self.dlclist.setText(self._dlc_error[1])
             elif got is None:
@@ -653,9 +659,9 @@ class SetupPage(QWidget):
     def _dlc_text(found, skipped):
         txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
                (" ..." if len(found) > 12 else "")) if found else (
-            "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
+            "No DLC found in this folder or its subfolders. Pick the folder of your DLC packages, or a Xenia content folder.")
         if skipped:
-            txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
+            txt += (f"  Skipped {len(skipped)} item(s) that are not usable DLC: " +
                     ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
         return txt
 
