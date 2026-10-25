@@ -375,3 +375,13 @@ nav a[aria-current="page"] { color: var(--cream); }
   nav .nav-cta { padding: 5px 10px; }
   nav .nav-discord { padding: 3px 9px; }
 }
+@media (max-width: 380px) {
+  .topbar { gap: 6px; padding: 0 8px; }
+  .brand { gap: 6px; font-size: 12px; }
+  .brand b { font-size: 11px; }
+  .brand img { width: 26px; height: 26px; }
+  nav { gap: 6px; }
+  nav a { font-size: 12px; }
+  nav .nav-cta { padding: 5px 6px; }
+  nav .nav-discord { padding: 3px 6px; }
+}
