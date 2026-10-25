@@ -1,0 +1,423 @@
+diff --git a/cmake/ForzaNative.cmake b/cmake/ForzaNative.cmake
+index 947ffb9..d0c4a94 100644
+--- a/cmake/ForzaNative.cmake
++++ b/cmake/ForzaNative.cmake
+@@ -1,9 +1,9 @@
+ # The canonical implementation is maintained and tested by the FH1 project.
+ # Leave empty for a standalone SDK build with the original renderer only.
+ set(REXGLUE_FH1_NATIVE_SOURCE_DIR "" CACHE PATH "FH1 native renderer source directory")
+-target_sources(rexgpu-xenos PRIVATE vulkan/fh1_native_renderer.cpp)
++target_sources(rexgpu-xenos PRIVATE vulkan/fh1_native_renderer.cpp vulkan/fh1_native_geometry.cpp)
+ if(REXGLUE_FH1_NATIVE_SOURCE_DIR)
+-    foreach(source velocity.h velocity_pass.h velocity_pass.cpp vulkan_dispatch.h velocity.comp resolve.h resolve.comp resolve-LICENSE.txt)
++    foreach(source velocity.h velocity_pass.h velocity_pass.cpp vulkan_dispatch.h velocity.comp resolve.h resolve.comp resolve-LICENSE.txt geometry.h geometry_pass.h geometry_pass.cpp geometry.vert)
+         if(NOT EXISTS "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/${source}")
+             message(FATAL_ERROR "Missing native renderer source: ${REXGLUE_FH1_NATIVE_SOURCE_DIR}/${source}")
+         endif()
+@@ -20,7 +20,13 @@ if(REXGLUE_FH1_NATIVE_SOURCE_DIR)
+         DESTINATION share/licenses/fh1-native-resolve)
+     configure_file("${CMAKE_CURRENT_LIST_DIR}/fh1_native_shader.h.in"
+         "${CMAKE_CURRENT_BINARY_DIR}/fh1_native_shader.h" @ONLY)
+-    target_sources(rexgpu-xenos PRIVATE "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/velocity_pass.cpp")
++    file(READ "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/geometry.vert" FH1_NATIVE_GEOMETRY_SOURCE)
++    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
++        "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/geometry.vert")
++    configure_file("${CMAKE_CURRENT_LIST_DIR}/fh1_native_geometry_shader.h.in"
++        "${CMAKE_CURRENT_BINARY_DIR}/fh1_native_geometry_shader.h" @ONLY)
++    target_sources(rexgpu-xenos PRIVATE "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/velocity_pass.cpp"
++        "${REXGLUE_FH1_NATIVE_SOURCE_DIR}/geometry_pass.cpp")
+     target_include_directories(rexgpu-xenos PRIVATE
+         "${REXGLUE_FH1_NATIVE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+     target_compile_definitions(rexgpu-xenos PRIVATE REXGLUE_FH1_NATIVE_RENDERER=1)
+diff --git a/cmake/fh1_native_geometry_shader.h.in b/cmake/fh1_native_geometry_shader.h.in
+new file mode 100644
+index 0000000..7fa5f67
+--- /dev/null
++++ b/cmake/fh1_native_geometry_shader.h.in
+@@ -0,0 +1,4 @@
++#pragma once
++static constexpr char kFh1NativeGeometrySource[] = R"FH1_GEOMETRY(
++@FH1_NATIVE_GEOMETRY_SOURCE@
++)FH1_GEOMETRY";
+diff --git a/include/rex/graphics/vulkan/command_processor.h b/include/rex/graphics/vulkan/command_processor.h
+index 36b11e9..4a81d6d 100644
+--- a/include/rex/graphics/vulkan/command_processor.h
++++ b/include/rex/graphics/vulkan/command_processor.h
+@@ -50,6 +50,7 @@
+ namespace rex::graphics::vulkan {
+ class Fh1Dlss;
+ class Fh1NativeRenderer;
++class Fh1NativeGeometry;
+ 
+ class VulkanCommandProcessor : public CommandProcessor {
+  public:
+@@ -971,6 +972,7 @@ class VulkanCommandProcessor : public CommandProcessor {
+   // Temporary storage for memexport stream constants used in the draw.
+   std::vector<draw_util::MemExportRange> memexport_ranges_;
+   std::unique_ptr<Fh1NativeRenderer> fh1_native_renderer_;
++  std::unique_ptr<Fh1NativeGeometry> fh1_native_geometry_;
+ };
+ 
+ }  // namespace rex::graphics::vulkan
+diff --git a/include/rex/graphics/vulkan/deferred_command_buffer.h b/include/rex/graphics/vulkan/deferred_command_buffer.h
+index 22f473a..f1c82bd 100644
+--- a/include/rex/graphics/vulkan/deferred_command_buffer.h
++++ b/include/rex/graphics/vulkan/deferred_command_buffer.h
+@@ -20,6 +20,7 @@
+ #include <rex/ui/vulkan/api.h>
+ #include <rex/graphics/vulkan/fh1_dlss.h>
+ #include <rex/graphics/vulkan/fh1_native_renderer.h>
++#include <rex/graphics/vulkan/fh1_native_geometry.h>
+ 
+ namespace rex::graphics::vulkan {
+ 
+@@ -32,6 +33,12 @@ class DeferredCommandBuffer {
+                         size_t initial_size_bytes = 1024 * 1024);
+ 
+   void Reset();
++  void CmdFh1NativeGeometryUpload(const Fh1NativeGeometry::Packet& packet) {
++    std::memcpy(WriteCommand(Command::kFh1NativeGeometryUpload, sizeof(packet)), &packet, sizeof(packet));
++  }
++  void CmdFh1NativeGeometryDraw(const Fh1NativeGeometry::Packet& packet) {
++    std::memcpy(WriteCommand(Command::kFh1NativeGeometryDraw, sizeof(packet)), &packet, sizeof(packet));
++  }
+   void CmdFh1NativeVelocity(const Fh1NativeRenderer::Packet& packet) {
+     auto& args = *reinterpret_cast<Fh1NativeRenderer::Packet*>(
+         WriteCommand(Command::kFh1NativeVelocity, sizeof(Fh1NativeRenderer::Packet)));
+@@ -456,6 +463,8 @@ class DeferredCommandBuffer {
+     kVkSetViewport,
+     kHoistedCommands,
+     kFh1NativeVelocity,
++    kFh1NativeGeometryUpload,
++    kFh1NativeGeometryDraw,
+   };
+ 
+   struct CommandHeader {
+diff --git a/include/rex/graphics/vulkan/fh1_native_geometry.h b/include/rex/graphics/vulkan/fh1_native_geometry.h
+new file mode 100644
+index 0000000..a95db54
+--- /dev/null
++++ b/include/rex/graphics/vulkan/fh1_native_geometry.h
+@@ -0,0 +1,42 @@
++#pragma once
++#include <array>
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++#include <rex/ui/vulkan/api.h>
++namespace rex::ui::vulkan { class VulkanDevice; }
++namespace rex::graphics::vulkan {
++bool CompileFh1Vertex(std::string_view, std::vector<uint32_t>&, std::string&);
++class Fh1NativeGeometry {
++ public:
++  // DeferredCommandBuffer stores eight-byte words. Keep this envelope aligned
++  // to those words and memcpy its opaque payload into an aligned local token.
++  struct Packet {
++    const Fh1NativeGeometry* owner = nullptr;
++    const void* pass = nullptr;
++    std::array<unsigned char, 512> token{};
++  };
++  struct Source {
++    bool dynamic_rendering = false;
++    VkBuffer buffer = VK_NULL_HANDLE;
++    uint64_t buffer_bytes = 0;
++    uint32_t vertex_offset = 0, vertex_bytes = 0, index_offset = 0, index_bytes = 0;
++    uint32_t vertex_endian = 0, index_endian = 0;
++    std::array<float, 20> constants{};
++    std::array<float, 3> ndc_scale{}, ndc_offset{};
++    VkViewport viewport{};
++    VkRect2D scissor{};
++    uint32_t stencil_reference = 0;
++  };
++  explicit Fh1NativeGeometry(const ui::vulkan::VulkanDevice*);
++  ~Fh1NativeGeometry();
++  std::optional<Packet> Prepare(VkRenderPass, const Source&, uint64_t submission, uint64_t completed);
++  static void RecordUploads(VkCommandBuffer, const Packet&);
++  static void Record(VkCommandBuffer, const Packet&);
++ private:
++  struct State;
++  std::unique_ptr<State> state_;
++};
++}
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index ad16496..4e53b4b 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -53,6 +53,7 @@ REXCVAR_DECLARE(double, forza_ultrawide_hud_offset_y);
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/vulkan/command_processor.h>
+ #include <rex/graphics/vulkan/fh1_native_renderer.h>
++#include <rex/graphics/vulkan/fh1_native_geometry.h>
+ #include <rex/graphics/util/fh1_jitter.h>
+ #include <rex/graphics/vulkan/fh1_dlss.h>
+ #include <rex/graphics/vulkan/fh1_fsr3.h>
+@@ -625,6 +626,10 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
+ 
+ }  // namespace
+ 
++bool CompileFh1Vertex(std::string_view source, std::vector<uint32_t>& spirv, std::string& error) {
++  return CompileGlslToSpirvInternal(EShLangVertex, source, spirv, error);
++}
++
+ bool CompileFh1Compute(std::string_view source, std::vector<uint32_t>& spirv, std::string& error) {
+   return CompileGlslToSpirvInternal(EShLangCompute, source, spirv, error);
+ }
+@@ -2305,6 +2310,7 @@ void VulkanCommandProcessor::ShutdownSubmissionThread() {
+ void VulkanCommandProcessor::ShutdownContext() {
+   AwaitAllQueueOperationsCompletion();
+   ShutdownSubmissionThread();
++  fh1_native_geometry_.reset();
+   fh1_native_renderer_.reset();
+   InvalidateAllVertexBufferResidency();
+   ShutdownOcclusionQueryResources();
+@@ -5398,6 +5404,95 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+     }
+   }
+ 
++  // Authored rigid geometry is an independent, opt-in milestone. Match the
++  // verified shader identity, parameter map and raster contract, not binary size.
++  // Unsupported draws (including HUD, materials and animated vertices) continue
++  // through the original path below.
++  static bool native_geometry_failed = false;
++  if (!native_geometry_failed && native_mode && std::string_view(native_mode) == "geometry" &&
++      vertex_shader->ucode_data_hash() == 0xB5C1F8D3D9E11F38ull &&
++      !pixel_shader && !normalized_color_mask && is_rasterization_done &&
++      !active_occlusion_query_.valid && !memexport_writes_possible && memexport_ranges_.empty() &&
++      primitive_processing_result.host_vertex_shader_type == Shader::HostVertexShaderType::kVertex &&
++      primitive_processing_result.host_primitive_type == xenos::PrimitiveType::kTriangleStrip &&
++      primitive_processing_result.host_primitive_reset_enabled &&
++      primitive_processing_result.index_buffer_type == PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
++      primitive_processing_result.host_index_format == xenos::IndexFormat::kInt16 &&
++      primitive_processing_result.host_draw_vertex_count <= 131068 &&
++      vertex_shader_modification.value == 0 && normalized_depth_control.value == 0x087087E7 &&
++      regs.Get<reg::PA_SU_SC_MODE_CNTL>().value == 0x00219800 &&
++      regs.Get<reg::PA_CL_CLIP_CNTL>().value == 0x00080000 &&
++      dynamic_depth_bias_constant_factor_ == 0 && dynamic_depth_bias_slope_factor_ == 0 &&
++      dynamic_stencil_compare_mask_front_ == 255 && dynamic_stencil_compare_mask_back_ == 255 &&
++      dynamic_stencil_write_mask_front_ == 255 && dynamic_stencil_write_mask_back_ == 255 &&
++      dynamic_stencil_reference_front_ == dynamic_stencil_reference_back_ &&
++      system_constants_.vertex_base_index == 0 && system_constants_.vertex_index_min == 0 &&
++      system_constants_.vertex_index_max == 0xFFFFFF &&
++      (system_constants_.flags & 0x700) == 0x400 &&
++      uint32_t(system_constants_.vertex_index_endian) <= 1 &&
++      render_target_cache_->GetPath() == RenderTargetCache::Path::kHostRenderTargets &&
++      !render_target_cache_->UsesFractionalRaster() && render_target_cache_->last_update_render_pass()) {
++    const auto& key = render_target_cache_->last_update_render_pass_key();
++    const auto& map = vertex_shader->constant_register_map();
++    const auto fetch = regs.GetVertexFetch(95);
++    if (key.depth_and_color_used == 1 && key.msaa_samples == xenos::MsaaSamples::k1X &&
++        render_target_cache_->GetDepthVulkanFormat(key.depth_format) == VK_FORMAT_D32_SFLOAT_S8_UINT &&
++        map.float_count == 5 && !map.float_dynamic_addressing &&
++        map.float_bitmap[0] == 0xF && map.float_bitmap[1] == (1ull << 52) &&
++        !map.float_bitmap[2] && !map.float_bitmap[3] &&
++        !map.vertex_fetch_bitmap[0] && !map.vertex_fetch_bitmap[1] && map.vertex_fetch_bitmap[2] == 0x80000000 &&
++        fetch.type == xenos::FetchConstantType::kVertex && fetch.size && fetch.size % 7 == 0 &&
++        uint32_t(fetch.endian) <= 3) {
++      Fh1NativeGeometry::Source source;
++      source.dynamic_rendering = REXCVAR_GET(vulkan_dynamic_rendering) && GetVulkanDevice()->properties().dynamicRendering;
++      source.buffer = shared_memory_->buffer(); source.buffer_bytes = SharedMemory::kBufferSize;
++      source.vertex_offset = fetch.address << 2; source.vertex_bytes = fetch.size << 2;
++      source.index_offset = primitive_processing_result.guest_index_base;
++      source.index_bytes = primitive_processing_result.host_draw_vertex_count * 2;
++      source.vertex_endian = uint32_t(fetch.endian);
++      source.index_endian = uint32_t(system_constants_.vertex_index_endian);
++      std::memcpy(source.constants.data(), &regs[XE_GPU_REG_SHADER_CONSTANT_000_X], 64);
++      std::memcpy(source.constants.data() + 16, &regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 116 * 4], 16);
++      std::copy_n(system_constants_.ndc_scale, 3, source.ndc_scale.begin());
++      std::copy_n(system_constants_.ndc_offset, 3, source.ndc_offset.begin());
++      source.viewport = dynamic_viewport_; source.scissor = dynamic_scissor_;
++      source.stencil_reference = dynamic_stencil_reference_front_;
++      try {
++        if (!fh1_native_geometry_) fh1_native_geometry_ = std::make_unique<Fh1NativeGeometry>(GetVulkanDevice());
++        const auto packet = fh1_native_geometry_->Prepare(render_target_cache_->last_update_render_pass(),
++            source, GetCurrentSubmission(), GetCompletedSubmission());
++        if (packet) {
++          // Snapshot at the draw's position in the GPU stream. Never use a CPU
++          // memory mirror: the game may have produced these vertices on the GPU.
++          EndRenderPass();
++          shared_memory_->Use(VulkanSharedMemory::Usage::kRead);
++          SubmitBarriers(true);
++          deferred_command_buffer_.CmdFh1NativeGeometryUpload(*packet);
++          SubmitBarriersAndEnterRenderTargetCacheRenderPass(
++              render_target_cache_->last_update_render_pass(), render_target_cache_->last_update_framebuffer());
++          if (hoist_render_pass_) {
++            MarkSharedMemoryReadInRenderPass(source.vertex_offset, source.vertex_bytes);
++            MarkSharedMemoryReadInRenderPass(source.index_offset, source.index_bytes);
++          }
++          deferred_command_buffer_.CmdFh1NativeGeometryDraw(*packet);
++          // A native graphics pipeline replaces static and dynamic state. Force
++          // the next original draw to restore every affected binding/state.
++          Fh1InvalidateBindings();
++          current_guest_graphics_pipeline_layout_ = VK_NULL_HANDLE;
++          dynamic_viewport_update_needed_ = dynamic_scissor_update_needed_ = true;
++          dynamic_depth_bias_update_needed_ = dynamic_blend_constants_update_needed_ = true;
++          dynamic_stencil_compare_mask_front_update_needed_ = dynamic_stencil_compare_mask_back_update_needed_ = true;
++          dynamic_stencil_write_mask_front_update_needed_ = dynamic_stencil_write_mask_back_update_needed_ = true;
++          dynamic_stencil_reference_front_update_needed_ = dynamic_stencil_reference_back_update_needed_ = true;
++          return true;
++        }
++      } catch (const std::exception& error) {
++        native_geometry_failed = true;
++        REXGPU_ERROR("FH1 native geometry setup failed; original draws retained: {}", error.what());
++      }
++    }
++  }
++
+   // Draw.
+   if (primitive_processing_result.index_buffer_type ==
+           PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
+diff --git a/src/graphics/vulkan/deferred_command_buffer.cpp b/src/graphics/vulkan/deferred_command_buffer.cpp
+index c671270..687e7b7 100644
+--- a/src/graphics/vulkan/deferred_command_buffer.cpp
++++ b/src/graphics/vulkan/deferred_command_buffer.cpp
+@@ -73,6 +73,14 @@ VkCommandBuffer DeferredCommandBuffer::ExecuteStream(VkCommandBuffer command_buf
+     stream_remaining -= kCommandHeaderSizeElements;
+ 
+     switch (header.command) {
++      case Command::kFh1NativeGeometryUpload: {
++        const auto& packet = *reinterpret_cast<const Fh1NativeGeometry::Packet*>(stream);
++        Fh1NativeGeometry::RecordUploads(command_buffer, packet);
++      } break;
++      case Command::kFh1NativeGeometryDraw: {
++        const auto& packet = *reinterpret_cast<const Fh1NativeGeometry::Packet*>(stream);
++        Fh1NativeGeometry::Record(command_buffer, packet);
++      } break;
+       case Command::kFh1NativeVelocity: {
+         const auto& packet = *reinterpret_cast<const Fh1NativeRenderer::Packet*>(stream);
+         Fh1NativeRenderer::Record(command_buffer, packet);
+diff --git a/src/graphics/vulkan/fh1_native_geometry.cpp b/src/graphics/vulkan/fh1_native_geometry.cpp
+new file mode 100644
+index 0000000..6e85938
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_native_geometry.cpp
+@@ -0,0 +1,128 @@
++#include <rex/graphics/vulkan/fh1_native_geometry.h>
++#include <rex/ui/vulkan/device.h>
++#include <rex/logging.h>
++#include <cstring>
++#include <stdexcept>
++#if defined(REXGLUE_FH1_NATIVE_RENDERER)
++#include "geometry_pass.h"
++#include "fh1_native_geometry_shader.h"
++#include <algorithm>
++#include <atomic>
++#include <type_traits>
++#include <unordered_map>
++namespace rex::graphics::vulkan {
++namespace nr = forza::native_renderer;
++static_assert(std::is_trivially_copyable_v<nr::GeometryPass::Dispatch>);
++static_assert(sizeof(nr::GeometryPass::Dispatch) <= 512);
++static_assert(alignof(Fh1NativeGeometry::Packet) <= alignof(uintmax_t));
++struct Fh1NativeGeometry::State {
++  const ui::vulkan::VulkanDevice* device;
++  nr::GeometryVulkanDispatch functions;
++  struct Pool { std::unique_ptr<nr::GeometryPass> pass; uint32_t next = 0; };
++  std::unordered_map<uint64_t, Pool> pools;
++  std::vector<uint32_t> shader;
++  uint64_t prepared = 0;
++  std::atomic<uint64_t> executed{0};
++  bool failed = false;
++};
++Fh1NativeGeometry::Fh1NativeGeometry(const ui::vulkan::VulkanDevice* device)
++    : state_(std::make_unique<State>()) {
++  state_->device = device;
++  auto load = [&](const char* name) {
++    const auto& instance = *device->vulkan_instance();
++    return std::string_view(name).starts_with("vkGetPhysicalDevice") ?
++        instance.functions().vkGetInstanceProcAddr(instance.instance(), name) :
++        instance.functions().vkGetDeviceProcAddr(device->device(), name);
++  };
++#define FH1_GEOMETRY_LOAD(name) state_->functions.name = reinterpret_cast<PFN_##name>(load(#name));
++  FORZA_NATIVE_VULKAN_FUNCTIONS(FH1_GEOMETRY_LOAD)
++  FORZA_NATIVE_GEOMETRY_VULKAN_FUNCTIONS(FH1_GEOMETRY_LOAD)
++#undef FH1_GEOMETRY_LOAD
++  if (!state_->functions.Valid()) throw std::runtime_error("Native geometry functions unavailable");
++  std::string error;
++  if (!CompileFh1Vertex(kFh1NativeGeometrySource, state_->shader, error))
++    throw std::runtime_error("Native geometry shader: " + error);
++}
++Fh1NativeGeometry::~Fh1NativeGeometry() = default;
++std::optional<Fh1NativeGeometry::Packet> Fh1NativeGeometry::Prepare(
++    VkRenderPass render_pass, const Source& source, uint64_t submission, uint64_t completed) {
++  auto& state = *state_;
++  constexpr uint32_t kSlots = 64, kMaxBytes = 256 * 1024;
++  if (state.failed || !render_pass || !source.vertex_bytes || !source.index_bytes ||
++      source.vertex_bytes > kMaxBytes || source.index_bytes > kMaxBytes - 4 ||
++      source.vertex_bytes % 28 || source.index_bytes % 2) return {};
++  nr::GeometryParameters p;
++  std::memcpy(p.clip_columns.data(), source.constants.data(), 64);
++  std::memcpy(p.origin_scale.data(), source.constants.data() + 16, 16);
++  std::copy(source.ndc_scale.begin(), source.ndc_scale.end(), p.ndc_scale.begin());
++  std::copy(source.ndc_offset.begin(), source.ndc_offset.end(), p.ndc_offset.begin());
++  p.layout = {7, source.vertex_endian, source.vertex_bytes / 28, source.index_endian};
++  if (!nr::Valid(p)) return {};
++  nr::GeometryPass::GpuMesh mesh;
++  mesh.vertices = {source.buffer, source.buffer_bytes, source.vertex_offset, source.vertex_bytes};
++  mesh.indices = {source.buffer, source.buffer_bytes, source.index_offset, source.index_bytes};
++  nr::GeometryPass::Raster raster{source.viewport, source.scissor, source.stencil_reference};
++  try {
++    // Four fixed size classes bound memory and prevent menu-only mesh sizes
++    // from exhausting the pool cache before a race starts.
++    const uint32_t bytes = std::max(source.vertex_bytes, source.index_bytes + 4);
++    const uint32_t capacity = bytes <= 4096 ? 4096 : bytes <= 16384 ? 16384 : bytes <= 65536 ? 65536 : kMaxBytes;
++    const uint64_t key = (uint64_t(source.dynamic_rendering) << 32) | capacity;
++    auto found = state.pools.find(key);
++    if (found == state.pools.end()) {
++      // All callers guarantee the same single-sample, D32S8-only compatibility
++      // class. Pipeline creation doesn't retain its original render-pass handle.
++      if (state.pools.size() >= 8) return {};
++      State::Pool pool;
++      pool.pass = std::make_unique<nr::GeometryPass>();
++      nr::GeometryPass::Config config;
++      config.render_pass = render_pass; config.slots = kSlots;
++      config.dynamic_rendering = source.dynamic_rendering;
++      config.vertex_capacity = config.index_capacity = capacity;
++      pool.pass->Initialize(state.functions, state.device->physical_device(), state.device->device(), config, state.shader);
++      found = state.pools.emplace(key, std::move(pool)).first;
++    }
++    auto& pool = found->second;
++    for (uint32_t attempt = 0; attempt < kSlots; ++attempt) {
++      const uint32_t slot = (pool.next + attempt) % kSlots;
++      const auto draw = pool.pass->PrepareGpu(slot, mesh, p, raster, submission, completed);
++      if (!draw) continue;
++      pool.next = (slot + 1) % kSlots;
++      Packet packet; packet.owner = this; packet.pass = pool.pass.get();
++      std::memcpy(packet.token.data(), &*draw, sizeof(*draw));
++      if (++state.prepared == 1 || state.prepared % 120 == 0)
++        REXGPU_INFO("FH1 native geometry: prepared rigid depth draw {} ({} indices, submission {}, completed {})",
++            state.prepared, source.index_bytes / 2, submission, completed);
++      return packet;
++    }
++  } catch (const std::exception& error) {
++    state.failed = true;
++    REXGPU_ERROR("FH1 native geometry disabled; original draws retained: {}", error.what());
++  }
++  return {};
++}
++void Fh1NativeGeometry::RecordUploads(VkCommandBuffer command, const Packet& packet) {
++  nr::GeometryPass::Dispatch draw;
++  std::memcpy(&draw, packet.token.data(), sizeof(draw));
++  static_cast<const nr::GeometryPass*>(packet.pass)->RecordUploads(command, draw);
++}
++void Fh1NativeGeometry::Record(VkCommandBuffer command, const Packet& packet) {
++  nr::GeometryPass::Dispatch draw;
++  std::memcpy(&draw, packet.token.data(), sizeof(draw));
++  static_cast<const nr::GeometryPass*>(packet.pass)->Record(command, draw);
++  if (packet.owner->state_->executed.fetch_add(1) == 0)
++    REXGPU_INFO("FH1 native geometry: GPU snapshots and authored rigid depth draw executed on submission thread");
++}
++}
++#else
++namespace rex::graphics::vulkan {
++struct Fh1NativeGeometry::State {};
++Fh1NativeGeometry::Fh1NativeGeometry(const ui::vulkan::VulkanDevice*) {
++  throw std::runtime_error("Native geometry not built; set REXGLUE_FH1_NATIVE_SOURCE_DIR");
++}
++Fh1NativeGeometry::~Fh1NativeGeometry() = default;
++std::optional<Fh1NativeGeometry::Packet> Fh1NativeGeometry::Prepare(VkRenderPass, const Source&, uint64_t, uint64_t) { return {}; }
++void Fh1NativeGeometry::RecordUploads(VkCommandBuffer, const Packet&) {}
++void Fh1NativeGeometry::Record(VkCommandBuffer, const Packet&) {}
++}
++#endif

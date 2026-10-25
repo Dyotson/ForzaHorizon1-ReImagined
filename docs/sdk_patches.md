@@ -373,6 +373,96 @@ the `fh1_fast_resolve_copy` diagnostic switch. Both paths pass the standalone
 Vulkan reference matrix, including transfers to/from 3x. See
 [cross-scale minimap corruption](rendering.md#cross-scale-minimap-corruption-at-3x).
 
+0117 adds an opt-in native Vulkan depth/motion/blur pass to the draw stream.
+`FORZA_NATIVE_RENDERER=velocity` replaces the recognized full-screen motion draw;
+`validate` executes the native pass alongside the original. Unsupported states,
+active occlusion queries and fractional scene rasters retain the original draw.
+The deferred command carries an immutable descriptor/image snapshot, with slots
+reused only after their submission fences complete. Shutdown drains recording and
+GPU work before releasing the pass. The HUD continues through the existing path.
+
+The SDK's `REXGLUE_FH1_NATIVE_SOURCE_DIR` points at the canonical implementation in
+`forza-recomp/src/platform/native_renderer`; project build scripts and release CI
+set it explicitly. An empty path builds a standalone SDK with a fallback bridge,
+and a nonempty but incomplete path fails configuration. The shader header is
+generated in the build directory. Native rendering is disabled by default and
+does not require NVIDIA libraries. See [Native renderer](native_renderer.md) for
+the deliberately limited replacement scope and validation evidence.
+
+0118 adds `FORZA_NATIVE_RENDERER=velocity-direct`. The native motion pass writes
+its RGBA8 output directly into the existing color attachment, removing the
+intermediate blur image and copy. The render-target owner handles the borrowed
+image's layout and visibility; the pass retains its own depth/motion images and
+submission-protected descriptor slots. Only compatible single-sample RGBA8
+attachments receive storage usage. Unsupported formats and states retain the
+original draw. This does not yet bypass EDRAM resolves or replace geometry.
+
+0119 adds `FORZA_NATIVE_RENDERER=velocity-resolve`. For an immediately preceding
+native motion output, a native RGBA8 image-to-buffer shader replaces the EDRAM
+dump and resolve with one dispatch. It preserves the existing tiled/scaled
+texture buffer, upload, readback and clear contracts. Integer-scale,
+single-sample unsigned RGBA8 layouts are supported; conversions, array targets,
+half-pixel fill, MSAA and other sources retain the original resolve. The source
+owner tracks image visibility, while existing buffer range and descriptor
+retirement rules order consumers. Canonical shader/layout sources and their BSD
+mapping license are supplied through `REXGLUE_FH1_NATIVE_SOURCE_DIR`. The feature
+is off by default. See [Native renderer](native_renderer.md#native-rgba8-resolve)
+for GPU equivalence and actual-game validation.
+
+0120 adds `FORZA_NATIVE_RENDERER=rgba8-resolve`, selecting a fully owned source
+from the SDK render-target ownership map. Only a complete, non-wrapping region
+owned by one matching single-sample RGBA8 target uses the native image-to-buffer
+resolve. Mixed ownership, reinterpreted sources and unsupported conversion states
+retain the original path. The original motion draw remains active in this mode
+for independent resolve validation. It is disabled by default and does not
+replace geometry. See [Native renderer](native_renderer.md#resolve-from-tracked-attachment-ownership).
+
+0121 carries the SDK's half-pixel edge-fill flag into the native RGBA8 resolve.
+The top/left gap samples the first surely covered texel at half the integer
+scale, independently on each axis. The native destination mapping and ownership
+checks are unchanged. Runtime endian modes are limited to 0..3 to match the
+existing fast 32-bit SDK shader; 64/128-bit swaps retain its original path. This
+allows the captured full-scene RGBA8 case to bypass EDRAM while preserving the original scaled resolve output. See
+[Native renderer](native_renderer.md#full-scene-half-pixel-edge-filling) for
+original-GPU byte comparisons and synthetic coverage.
+
+0122 adds the independent `FORZA_NATIVE_RENDERER=geometry` development mode.
+It replaces only a verified rigid depth/stencil draw using an authored native
+vertex shader and immutable GPU-source vertex/index snapshots. The bridge gates
+shader identity, constant maps, primitive, depth/stencil, raster, target format
+and sample count; unsupported draws retain the original path. Copies precede
+the draw outside a render pass, source read tracking orders later writes, and
+all affected graphics state is restored on the next original draw. Slots retire
+with waited submissions and are released after recording/GPU shutdown. The
+canonical native pipeline supports reversed viewport depth ranges and both
+traditional render passes and dynamic rendering. Standalone
+SDK builds keep a fallback stub. See
+[Native renderer](native_renderer.md#live-rigid-depth-integration).
+
+0123 adds `FORZA_NATIVE_RENDERER=combined`, enabling the validated rigid-depth,
+direct-motion and ownership-based RGBA8-resolve paths in the same game session.
+It preserves the independent diagnostic modes and every existing contract gate;
+unsupported draws and resolves continue through the original path. See
+[Native renderer](native_renderer.md#combined-native-execution).
+
+0124 adds the separately selected `FORZA_NATIVE_RENDERER=world-color` pass:
+authored world-color filtering, bloom, exposure, grading and output composition
+with immutable GPU quad snapshots and per-region controls. Unsupported states
+retain the existing draw. See [Native world-color composition](native_world_color.md).
+
+0125 adds `FORZA_NATIVE_RENDERER=world-color-transfer`. A guarded R10 resolve
+reads the tracked scene attachment directly, applying the original exposure
+conversion while writing canonical tiled backing and an immutable packed image.
+A matching texture load copies that image instead of untiling the backing.
+Shared-memory invalidation, waited reader/producer fences and bounded allocations
+protect reuse; unsupported states retain the original path. See
+[Native scene transfer](native_scene_transfer.md) for exact-output and GPU tests.
+
+0126 lets a subsequent supported R10 producer populate its previously observed
+consumer's cache-owned image directly through its R32_UINT storage view. This
+removes repeated snapshot copies for the exact key while preserving canonical
+backing, normal texture views, usage barriers, eviction and memory watches.
+Initial consumers and missing storage views retain 0125's snapshot fallback.
 ### XMA decoder crash (#228)
 
 The reporter's game stopped during the opening drive with "Unhandled read fault at host 0x0"
