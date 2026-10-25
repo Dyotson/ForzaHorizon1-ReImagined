@@ -25,6 +25,7 @@ std::mutex view_mutex;
 View view;
 std::atomic<Screen> screen{Screen::hidden};
 std::atomic<int> action{0};
+std::atomic<bool> reset_pad{false};
 std::atomic<bool> automatic{false}, boot_input{false}, confirm_input{false},
     pause_input{false};
 std::filesystem::path source_root, settings_snapshot;
@@ -52,6 +53,8 @@ void Status(const std::string &status, Screen next) {
   std::lock_guard lock(view_mutex);
   view.status = status;
   view.screen = next;
+  if (next == Screen::setup || next == Screen::results)
+    reset_pad.store(true);
   screen.store(next);
 }
 uint32_t Read(uint8_t *base, uint32_t address) {
@@ -301,6 +304,7 @@ void Completed(bool valid, const char *reason,
   view.status = valid ? "Benchmark complete"
                       : std::string("Benchmark incomplete: ") + reason;
   view.screen = Screen::results;
+  reset_pad.store(true);
   screen.store(Screen::results);
   confirm_input.store(false);
   pause_input.store(valid);
@@ -309,7 +313,12 @@ uint16_t Pad(uint16_t buttons, bool &block_all) {
   static uint16_t previous = 0;
   static Screen previous_screen = Screen::hidden;
   const auto current = screen.load();
-  const uint16_t pressed = current == previous_screen ? buttons & ~previous : 0;
+  // Pad is not polled while the overlay is hidden. After closing and reopening
+  // setup, previous_screen can still be setup: discard the opening A press on
+  // every dialog entry, even when no hidden-screen poll occurred between them.
+  const bool entered = reset_pad.exchange(false);
+  const uint16_t pressed = !entered && current == previous_screen
+                               ? buttons & ~previous : 0;
   previous = buttons;
   previous_screen = current;
   if (pause_input.exchange(false)) {

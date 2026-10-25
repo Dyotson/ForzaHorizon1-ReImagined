@@ -32,6 +32,16 @@ the linked bytes and checks that writable profile copies remain independent. It 
 covers extended-path reuse and UNC path conversion without accessing a network share.
 This validates the setup failure path; a complete benchmark run still needs a game retest.
 
+The #405 screenshot shows the same ordinary-path hard-link failure, and its attached
+log records TU4 and 21 DLC packages despite the report form saying none. That capture
+predates #399; it does not establish a separate no-DLC failure.
+
+Closing setup with B and reopening it needs a separate confirmation press. Input is
+only polled while the dialog is visible, so remembering the previous screen alone
+cannot detect a close/reopen cycle. Each dialog entry resets the pad edge history;
+the opening A press and a continued hold cannot also start a benchmark. This addresses
+the immediate second-open restart reported in #374, separately from its DLC setup error.
+
 ## Focused tests
 
 Compile and run `forza-recomp/tests/benchmark_stats_test.cpp` and `benchmark_profile_test.cpp` as standalone C++20 programs. They check time-weighted FPS, percentile/1% low behavior, real stalls, invalid samples and save-copy independence. End-to-end validation additionally needs the user's TU4 game data and a disposable saved profile.
@@ -46,6 +56,16 @@ cmake -S forza-recomp/tests/benchmark -B build/benchmark-tests \
 cmake --build build/benchmark-tests --parallel 2
 ctest --test-dir build/benchmark-tests --output-on-failure
 ```
+
+The session fixtures compile the actual session implementation for base and TU4,
+stubbing only the process restart and race callbacks. They check close/reopen input,
+one restart after a fresh confirmation, invalid and consumed request markers, setup
+failure without an automatic retry, independent copied saves, settings restoration
+and the return marker. They start no game or GPU. For a rendered retest on a disposable
+profile, open Benchmark, press B, then reopen it with A and hold A: setup must remain
+visible until release and another A press. That fresh press must restart once and
+start the copied offline session. Record the build, input method and original-profile
+hashes separately from these fixtures.
 
 The title regression repeats each stock choice 20 times with both one and two
 extra rows, checking local/world transforms and child geometry after every
