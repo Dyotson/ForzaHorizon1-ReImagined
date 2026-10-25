@@ -15,6 +15,12 @@
 #include <string>
 #include <string_view>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 REX_DEFINE_APP(forza, ForzaApp::Create)
 
 REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
@@ -41,6 +47,25 @@ REXCVAR_DEFINE_INT32(frame_rate, 30, "Display",
       return fps == 20 || fps == 30 || fps == 40 || (fps >= 60 && fps <= 240);
     })
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+#ifdef _WIN32
+namespace {
+// forza.exe's manifest (resources/forza.manifest) already makes the process per-monitor-v2 DPI
+// aware. This is the same request for a build whose manifest did not make it into the exe: it is
+// refused (harmlessly) once the awareness is set. Before main() so it runs ahead of any window.
+// Without it, display scaling (200% on a 4K TV) shrinks exclusive fullscreen to a quarter (#418).
+const bool g_dpi_aware = [] {
+  using Fn = BOOL(WINAPI*)(HANDLE);
+  if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+    if (auto fn = reinterpret_cast<Fn>(
+            reinterpret_cast<void*>(GetProcAddress(user32, "SetProcessDpiAwarenessContext")))) {
+      fn(reinterpret_cast<HANDLE>(-4));  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
+  }
+  return true;
+}();
+}  // namespace
+#endif
 
 namespace {
 
