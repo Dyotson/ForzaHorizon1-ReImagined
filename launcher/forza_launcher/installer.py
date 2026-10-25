@@ -16,7 +16,7 @@ import install_dlc  # noqa: E402
 import xcontent_extract  # noqa: E402
 import xiso_extract  # noqa: E402
 
-from . import dlcscan, xex_reference, xexcheck  # noqa: E402
+from . import dlccheck, dlcscan, xex_reference, xexcheck  # noqa: E402
 
 GOD = 0x7000
 # Not copied from a disc image: the console system update the disc carries (tools/xiso_extract.py).
@@ -313,10 +313,24 @@ def describe_dlc_folder(folder: str):
     return _DLC_CACHE[key]
 
 
-def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda: False, log=print):
+def damaged_note(damaged) -> str:
+    """The end of Install DLC's message when packages came out damaged ("" when none did)."""
+    if not damaged:
+        return ""
+    names = list(dict.fromkeys(name for name, _ in damaged))
+    return (f" Damaged: {', '.join(names)} ({damaged[0][1]}{'; see the log' if len(damaged) > 1 else ''}). "
+            "The game can crash where it uses that content (a damaged Rally pack: Kettle Hills stage 1). "
+            "Install it again from an intact copy of the package file.")
+
+
+def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda: False, log=print,
+                       damaged=None):
     """Install every DLC package of a folder, subfolders and zips included (package files and
     extracted package folders). Zip entries are unpacked to a temporary folder under the data
-    folder, which is removed afterwards, also on failure or cancel. Returns the number installed."""
+    folder, which is removed afterwards, also on failure or cancel. Returns the number installed.
+    A package that installed but is damaged (blocks that fail the package's hashes, or an extracted
+    folder whose files differ from the known intact ones, dlccheck) is logged with a WARNING line
+    and added to `damaged` as (display name, what is wrong)."""
     stage = None
     opened = []
     try:
@@ -336,7 +350,8 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
             opened += more
             found += more
         found, dirs = _dedupe(found, dirs, skipped)
-        return _install_found(found, dirs, skipped, user_data, progress, cancelled, log)
+        return _install_found(found, dirs, skipped, user_data, progress, cancelled, log,
+                              damaged if damaged is not None else [])
     finally:
         for _f, _n, pkg in opened:
             _close(pkg)
@@ -346,7 +361,7 @@ def install_dlc_folder(folder: str, user_data: Path, progress, cancelled=lambda:
                 stage.parent.rmdir()          # only when empty
 
 
-def _install_found(found, dirs, skipped, user_data, progress, cancelled, log):
+def _install_found(found, dirs, skipped, user_data, progress, cancelled, log, damaged):
     warning = dlc_warning([(f.name, name) for f, name, _ in found] +
                           [(name, display) for _, name, display, _ in dirs])
     if warning:
@@ -375,12 +390,16 @@ def _install_found(found, dirs, skipped, user_data, progress, cancelled, log):
             done[0] += entry.size
         return bad
 
+    digests = {}
+
     def copy(src, dst):
         if cancelled():
             raise Cancelled()
         progress(done[0], total, os.path.basename(src))
-        shutil.copy2(src, dst)
-        done[0] += os.path.getsize(dst)
+        sha1 = dlccheck.copy_file(src, dst)
+        size = os.path.getsize(dst)
+        digests[os.path.abspath(src)] = (size, sha1)
+        done[0] += size
 
     xcontent_extract.extract = counted
     count = 0
@@ -389,14 +408,17 @@ def _install_found(found, dirs, skipped, user_data, progress, cancelled, log):
             buf = io.StringIO()
             try:
                 with contextlib.redirect_stdout(buf):
-                    install_dlc.install(str(f), str(user_data))
+                    bad = install_dlc.install(str(f), str(user_data)) or []
             except SystemExit as e:
                 log(f"{f.name}: {e}")
                 continue
             for line in buf.getvalue().splitlines():
                 log(line)
+            for path, blocks in bad:
+                damaged.append((name, f"{path} has {blocks} damaged 4 KB block(s)"))
             count += 1
         for d, name, disp, header in dirs:
+            digests.clear()
             try:
                 install_dlc.install_folder(d, name, header, str(user_data), copy=copy, display_name=disp)
             except OSError as e:
@@ -404,6 +426,12 @@ def _install_found(found, dirs, skipped, user_data, progress, cancelled, log):
                 continue
             log(f"{disp}: {name}" + ("" if header else " (header generated)"))
             count += 1
+            if digests:   # nothing is copied when the folder is the installed one itself
+                copied = {os.path.relpath(src, os.path.abspath(d)): v for src, v in digests.items()}
+                for problem in dlccheck.compare(name, copied):
+                    log(f"WARNING: {name}: {problem}: this extracted copy of {disp} is damaged or "
+                        "incomplete, so that content will not work. Install it from an intact package.")
+                    damaged.append((disp, problem))
     finally:
         xcontent_extract.extract = real_extract
     if not count:

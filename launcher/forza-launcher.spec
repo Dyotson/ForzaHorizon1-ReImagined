@@ -58,6 +58,8 @@ for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_
         datas.append((str(repo / "tools" / _tool), "tools"))
 # The shipped pipeline list (hashes and render state only).
 datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
+# The known-good DLC files (sizes and SHA-1 only, forza_launcher/dlccheck.py, #422).
+datas.append((str(root / "forza_launcher" / "data" / "dlc-4D5309C9.json"), "forza_launcher/data"))
 
 a = Analysis(
     [str(root / "main.py")],

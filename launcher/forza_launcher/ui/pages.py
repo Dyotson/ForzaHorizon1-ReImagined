@@ -1070,6 +1070,7 @@ class SetupPage(QWidget):
         key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3",
                id(self.msg4): "msg4"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
+        warn = ok and bool(getattr(self.task, "warning", False))
         blocked = bool(getattr(self.task, "blocked", False))
         if blocked:
             self.cfg.advanced["blocked_root"] = str(self.cfg.data_home())
@@ -1086,7 +1087,7 @@ class SetupPage(QWidget):
                 self.build_details.set_expanded(True)
         else:
             self._msg.setText(message)
-            self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.MUTED};")
+            self._msg.setStyleSheet(f"color: {theme.ORANGE if warn else theme.OK if ok else theme.MUTED};")
         # keep the QThread object alive until its run() has really returned
         self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
@@ -1102,6 +1103,8 @@ class SetupPage(QWidget):
                 self.change_folder()
         elif failed:
             QMessageBox.warning(self, "Something went wrong", message)
+        elif warn:
+            QMessageBox.warning(self, "Damaged DLC", message)
 
     def _cancel(self):
         if self.task:
