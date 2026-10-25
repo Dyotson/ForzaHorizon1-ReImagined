@@ -588,7 +588,8 @@ class SettingsPage(QWidget):
         self.texture_folder_button.clicked.connect(self._open_texture_folder)
         row.addWidget(self.texture_folder_button)
         self.texture_page_button = QPushButton("Texture packs page…")
-        self.texture_page_button.setToolTip("Add, order and turn packs on or off.")
+        self.texture_page_button.setToolTip("Add, order and turn packs on or off, and make an HD pack "
+                                            "from your dump.")
         self.texture_page_button.clicked.connect(self._show_texture_packs)
         row.addWidget(self.texture_page_button)
         row.addStretch(1)

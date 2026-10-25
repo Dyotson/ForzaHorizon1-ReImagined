@@ -260,6 +260,12 @@ class MainWindow(QMainWindow):
                 return
             self.setup.task.cancel()
             self.setup.task.wait(15000)
+        if self.texture_packs.busy():
+            if QMessageBox.question(self, "Quit", "Make HD pack is still running. Stop it and quit? It "
+                                    "continues where it stopped next time.") != QMessageBox.Yes:
+                e.ignore()
+                return
+            self.texture_packs.shutdown()
         if not self.gallery.shutdown():
             self._close_after_gallery = True
             self.status("Finishing photo tasks before closing…")

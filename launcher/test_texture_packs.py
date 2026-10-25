@@ -364,6 +364,25 @@ class TexturePacksPageTests(unittest.TestCase):
             self.page.remove_selected()
         self.assertEqual(self.names(), ["Alpha pack", "Beta"])
 
+    def test_make_hd_pack_needs_a_dump_and_estimates_it(self):
+        self.assertIn("No texture dump yet", self.page.estimate.text())
+        self.assertFalse(self.page.make_button.isEnabled())
+        dump = self.dir / "dump"
+        dump.mkdir()
+        rows = [(FP[0], "k_DXT1", 512, 512, "BC1"), (FP[1], "k_DXN", 256, 256, "BC5"),
+                (FP[2], "k_DXT1", 16, 16, "BC1"), (FP[3], "k_DXT4_5", 1024, 512, "BC3")]
+        (dump / "index.tsv").write_text("".join(f"{a}\t{b}\t{c}x{d}\t1\t{e}\n" for a, b, c, d, e in rows))
+        for fp in (FP[0], FP[3]):
+            (dump / f"{fp}.png").write_bytes(png())
+        self.page.refresh()
+        text = self.page.estimate.text()
+        self.assertIn("4 textures dumped: 2 to upscale; 2 left as they are (1 normal maps, 1 small).", text)
+        self.assertTrue(self.page.make_button.isEnabled())
+        # 2x: (1024x1024 + 2048x1024) RGBA8 with mips.
+        self.assertIn(f"{(1024 * 1024 + 2048 * 1024) * 4 * 4 // 3 / 2**20:.0f} MB of graphics", text)
+        self.cfg.d["specs"]["values"] = {"gpu_name": "Radeon Graphics", "vram_gb": 0.5, "integrated": True}
+        self.page.refresh()
+        self.assertIn("integrated", self.page.hd_warning.text())
 
 
 if __name__ == "__main__":

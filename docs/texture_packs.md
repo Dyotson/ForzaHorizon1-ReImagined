@@ -5,8 +5,12 @@ texture the game loads by a fingerprint of its contents, and draws a file named 
 fingerprint instead. The game itself never sees the file; it keeps its own texture, in its own
 memory, and only the graphics card's copy changes.
 
-A **texture pack** is a folder of such files, made by players and added with **Add pack…**. The
-project hosts none (they are derived from the game's art).
+A **texture pack** is a folder of such files. Packs come from two places, and the project hosts
+neither (they are derived from the game's art):
+
+- **Make HD pack**: the launcher upscales the textures *you* dumped, on your PC, with an AI
+  upscaler (Real-ESRGAN). Nothing of the game is downloaded or shared.
+- **Community packs**: packs other players made by hand, added with **Add pack…**.
 
 ## The Texture packs page
 
@@ -40,8 +44,8 @@ the selected row too). **Ticked packs are used from top to bottom: when two pack
 same texture, the one lower in the list wins** (as on the Mods page). The details under the list
 name the textures a pack shares with others and whose copy is used. **Move up**, **Move down**,
 **Remove** (asks first; a linked folder loses only the link) and **Refresh** work as on the Mods
-page. A folder named `hd-pack` ("HD pack (made on this PC)") starts at the top, so hand-made packs
-below it win over it.
+page. The pack Make HD pack writes, "HD pack (made on this PC)" (`hd-pack`), starts at the top, so
+hand-made packs below it win over it.
 
 launcher.json keeps the order and the packs turned off (`"texture_packs": {"order": [...],
 "disabled": [...]}`). With Use texture packs on, every start passes
@@ -66,11 +70,91 @@ only after you say yes (never while the game runs).
 Refused, in words under the list: a zip with an absolute path, `..` or a link (zip slip), more
 than 200,000 files or 32 GB unpacked, a texture over 2 GB, a texture dump (a folder with
 `index.tsv`: the game's own textures), and a pack without a single texture the game can use. A
-pack named `hd-pack` or `dump` is added as `hd-pack (added)` (those folders stay the made pack's
+pack named `hd-pack` or `dump` is added as `hd-pack (added)` (those folders are Make HD pack's
 and the dump's). Kept, with a note: files the game cannot use (a cube map, a format it does not
 read, a size over 16384, a file shorter than its header), files not named by a fingerprint, a
 texture in a pack twice, and files that are byte for byte the game's own dumped textures (they
 change nothing, and a pack must not contain them).
+
+## Make HD pack
+
+**Make HD pack** upscales your dump into the pack "HD pack (made on this PC)" (`textures/hd-pack`),
+at **2x** (default) or **4x**. Turn on **Dump textures**, play where you want sharper textures (a
+race from the festival dumps about 1,300), then press **Make HD pack**. It runs in the background
+(the rest of the launcher and Play work meanwhile; the game can run, more slowly while both use
+the graphics card), with a progress bar, the time left and **Cancel**. What is made stays: the next
+**Make HD pack** (then named **Continue HD pack**) goes on from there. A pack made at another scale
+is replaced after you say yes. Before it starts, the page says how many textures it will upscale,
+how big the pack will be on disk and in graphics memory, and how long it takes on a mid-range card;
+it warns on an integrated or small graphics card, and when the pack would take more than 40% of the
+card's memory.
+
+What it upscales, from the dump's `index.tsv`:
+
+- **Colour textures only.** DXT5A/BC4 and 8-bit textures (one channel: masks), DXN/BC5 and 8_8
+  textures (two channels: normal maps) are left as they are: an RGB upscaler would ruin their
+  data. So are colour textures that look like normal maps (red and green around the middle, blue
+  high) or data maps (channels used as masks: most values at 0 or 255 and many texels pure red,
+  green or yellow, like the game's blend maps).
+- **Not small ones**: a side under 32 or under 64x64 in all (UI bits, solid colours, ramps).
+- **Sizes**: 2x or 4x, same aspect ratio; a side is never made longer than 4096 (a 2048 texture
+  at 4x becomes 4096, at 2x stays out).
+- **Alpha** is kept: the colour under transparent black texels (BC1 cut-outs: foliage, fences) is
+  filled from the texels around them before upscaling, so edges do not turn dark; the alpha
+  channel is scaled smoothly on its own. Opaque textures are written without alpha.
+- **Colours**: the model shifts colours a little (darker, less saturated); each texture's mean and
+  contrast per channel are matched back to the original's over the texels it shows (not the filled
+  cut-out holes), so upscaled and original textures still match side by side. New detail stays.
+- **Files**: `hd-pack/<fingerprint>.png` (the game makes the mips) and a `pack.toml` with the
+  scale. Each is written to a temporary file and renamed, so a cancelled or interrupted run
+  leaves no half-written texture.
+
+### The upscaler
+
+| | Chosen: Real-ESRGAN ncnn-Vulkan | Also considered |
+| --- | --- | --- |
+| What | `realesrgan-ncnn-vulkan` 20220424 with the `realesrgan-x4plus` model (general photos, 4x) | waifu2x-ncnn-vulkan (MIT, models MIT): fast, but keeps the DXT block artefacts and its models are for drawings; Real-CUGAN ncnn (MIT): anime only; Real-ESRGAN's `realesr-animevideov3`: anime, smooths textures to cartoons; upscayl-ncnn: AGPL-3.0 and community models with unclear or non-commercial licences (not used); chaiNNer and the PyTorch models: need Python or CUDA |
+| Runs on | any Vulkan GPU (AMD, NVIDIA, Intel; the CPU's llvmpipe as a last resort), Windows, Linux (Flatpak too: its runtime has `libvulkan.so.1` and `libgomp.so.1`), macOS; no Python, CUDA or install | |
+| Program licence | MIT (Copyright (c) 2021 Xintao Wang, and (c) 2019 nihui for realsr-ncnn-vulkan), [Real-ESRGAN-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/blob/master/LICENSE); it is built with ncnn (BSD-3-Clause) | |
+| Model licence | BSD-3-Clause, [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE) (Copyright (c) 2021 Xintao Wang): the weights are release files of that repository, with no other terms | |
+| From | the official release [Real-ESRGAN v0.2.5.0](https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0): `realesrgan-ncnn-vulkan-20220424-{ubuntu,windows,macos}.zip` (45-50 MB) | |
+
+The launcher downloads the archive for your system the first time you press Make HD pack (after
+asking), checks its SHA-256 against the one pinned in `launcher/forza_launcher/pins.py` (the release
+predates GitHub's asset checksums; the pinned hashes match nixpkgs' package of the same archive and
+other projects' pins), keeps only the program and its model (plus `vcomp140.dll`, Microsoft's OpenMP
+runtime, on Windows) in `<data folder>/tools/realesrgan-ncnn-vulkan-20220424` with a `SOURCE.txt`
+naming the source and licences, and deletes the archive. Before every run each file is checked
+against the SHA-256 recorded when it was unpacked; a changed file is not run. The project's
+repository and releases never contain the upscaler.
+
+### Measured
+
+Ryzen 7 7800X3D with a Radeon RX 9060 XT (16 GB, Linux, RADV), the dump of a festival race (1,228
+textures): 738 upscaled, 490 left as they are (423 small, 25 masks, 22 normal maps, 20 data maps:
+the red and green blend maps). The times are for 758 textures (the data maps were still upscaled
+then); the game runs are the race of the Cost section below (`tools/perf_scenario.sh race` inputs,
+720p, 3 minutes, 30 fps cap), one each.
+
+| | Without packs | HD pack 2x | HD pack 4x |
+| --- | --- | --- | --- |
+| Making the pack | | 9 min 4 s | 9 min 50 s |
+| On disk | | 369 MB | 1.3 GB |
+| Graphics memory of the whole pack | | 1.6 GB | 6.4 GB |
+| In the race: textures drawn from the pack, their graphics memory | | 725, 1,604 MiB | 718, 6,172 MiB |
+| Race: fps, p99 frame (`PERF` race line) | 29.7, 53.4 ms | 29.7, 34.9 ms | 29.7, 35.7 ms |
+| Minute 3 (racing): fps, 1% low, worst frame | 29.8, 18.2, 152 ms | 30.0, 29.3, 34 ms | 30.0, 29.1, 38 ms |
+| The card's used memory at its peak (all programs) | 4.1 GB | 7.4 GB | 11.8 GB |
+
+The frame rate held the game's 30 fps with either pack (the run without packs had one 152 ms
+hitch, which is noise: the packs add no work per frame). The replacements are read on a worker and
+uploaded at 32 MiB a frame, so at 4x they come in more slowly (401 of 610 read in the second
+minute, against 523 at 2x). The card's used memory is the driver's total (the desktop and a
+browser held 1.3 GB before the first run, and the driver gave memory back slowly between runs, so
+the later runs' peaks include up to 3 GB left over); the pack's own share is the line above it.
+What changes: tiled ground textures (road, gravel, dirt) lose their DXT blocks and gain fine
+grit, rock faces get sharper cracks, bark and foliage cards show more detail; from the chase
+camera at 1440p the difference is clear on the near road and foliage, small on distant terrain.
 
 ## Making and sharing a pack
 
@@ -96,7 +180,8 @@ Rocks HD/
 **Sharing is your responsibility.** A pack holds changed game art, which belongs to the game's
 publisher; the project does not host packs and cannot vouch for any. Share only your own work:
 never the game's textures unchanged, the dumped files, files only re-saved or converted from them,
-or a dump. The launcher notes files of an added pack that are the game's
+or a dump; and keep the pack Make HD pack made on your PC to yourself (it is the game's art run
+through a program, not your work). The launcher notes files of an added pack that are the game's
 own textures unchanged.
 
 ## Dumping
@@ -221,5 +306,6 @@ texture cache's replacement images (`VulkanTextureCache::UploadTexturePackReplac
 (`ParsePackOrder` in `pack_format.cpp`, tested by `tools/test_texture_pack_dds.cpp`). The game
 sets `texture_pack_root` (`src/forza_app.h`); the launcher's options are in
 `launcher/forza_launcher/schema.py`, the packs in `texture_packs.py` (tests:
-`launcher/test_texture_packs.py`), the page in `ui/texture_packs_page.py` (its list is the Mods
+`launcher/test_texture_packs.py`), Make HD pack in `hd_pack.py` (tests: `launcher/test_hd_pack.py`,
+with a stand-in for the upscaler), the page in `ui/texture_packs_page.py` (its list is the Mods
 page's, `ui/mods_page.py` `FolderListPage`).

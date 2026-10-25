@@ -519,7 +519,7 @@ none), except an option that **Extra command-line flags** (**Settings > Advanced
 ### Texture packs (#384)
 
 **Texture packs** has the two switches of Settings > Display > Texture packs (the same settings,
-through `SettingsPage.apply_external`) and the list of packs. The list is the
+through `SettingsPage.apply_external`), the list of packs and **Make HD pack**. The list is the
 Mods page's (`FolderListPage` in `ui/mods_page.py`): the folders in `<data folder>/textures` but
 `dump/` (`texture_packs.py`), ticked to use, **Move up** / **Move down** (a lower pack wins for the
 same texture), **Add pack…** (zip, folder or a drop; only fingerprint-named textures and text files
@@ -528,7 +528,15 @@ are copied, checked as the game reads them, zip slip and size caps as for mods, 
 textures, size, graphics memory, the textures it shares with other packs and whose copy is used).
 launcher.json keeps `"texture_packs": {"order": [...], "disabled": [...]}`; with Use texture packs
 on, every start passes `--texture_packs=A|B` (SDK patch 0310; `|` alone: none) unless the extra
-flags name `texture_packs` or `texture_pack_root`. Tests: `launcher/test_texture_packs.py`.
+flags name `texture_packs` or `texture_pack_root`.
+
+**Make HD pack** (`hd_pack.py`) upscales the player's dump into `textures/hd-pack` with
+Real-ESRGAN's ncnn-Vulkan build, downloaded on first use from its official release (pinned in
+`pins.py`, SHA-256 checked) into `<data folder>/tools`, in a background `Task` with progress,
+**Cancel** and resume; closing the window asks first and stops it. The page shows the estimate
+(textures, disk, graphics memory, time) and warns on weak graphics cards. Details, the licences and
+the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_texture_packs.py`,
+`launcher/test_hd_pack.py`.
 
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
