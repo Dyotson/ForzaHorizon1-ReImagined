@@ -11,10 +11,10 @@ diff --git a/include/rex/graphics/vulkan/driver_cache_file.h b/include/rex/graph
 -// The whole file: about 50 KB per pipeline on the largest drivers seen, so thousands fit.
 +// Bound disk usage even when a driver produces megabytes per pipeline (#406).
  constexpr uint64_t kMaxFileSize = uint64_t(512) * 1024 * 1024;
- 
+
  struct Identity {
 @@ -172,23 +172,30 @@
- 
+
  struct WriteResult {
    bool written = false;
 -  // Over kMaxFileSize: nothing was written.
