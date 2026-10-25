@@ -54,6 +54,7 @@ CHANNELS = {SESSION: "session", WORLD: "world", DIRECT: "direct"}
 
 MAX_CHARS = 200
 MAX_BYTES = 800
+NO_WORLD = "World chat is for a Horizon World or Co-op Festival world (Find Game): use Session chat here"
 RATE = (0.5, 5)  # messages per second and burst, per player
 RING = 200
 MAX_SESSIONS = 4
@@ -261,8 +262,8 @@ class Chat:
             return to or "%s is offline" % self.store.name(target)
         if channel == WORLD:
             mine = self.server.world_of_peer(peer.id)
-            if mine is None:
-                return "You are not in a Horizon World"
+            if mine is None:  # a custom game, another playlist, single player (#395)
+                return NO_WORLD
             to = [p for p in others if p.room == peer.room
                   and self.server.world_of_peer(p.id) == mine]
             return to or "No one else in your Horizon World has chat"

@@ -298,6 +298,17 @@ def user_logon2(xuid, body):
         "defaultTimeoutMs": 30000, "defaultContentTimeoutMs": 60000}})
 
 
+def race_multipliers(xuid, body):
+    """Hopper.GetRaceMultipliers at a race's start: 1.0, or the campaign's for the players of
+    an open campaign round (forza_campaign.RACE_MULTIPLIERS, a test knob)."""
+    value = 1.0
+    rid = coop_ledger.LEDGER.open_round_of(xuid)
+    if rid is not None and campaign.RACE_MULTIPLIERS != [1.0]:
+        value = campaign.race_multiplier(rid)
+        log.info("title: race multiplier %.2f for %016X (campaign round %s)", value, xuid, rid)
+    return x.reply(x.HopperGetRaceMultipliers_Results, {"specialMultiplier": value})
+
+
 def user_write_race_stats(xuid, body):
     head, _ = x.decode(x.UserWriteRaceStats_Head, body)
     stats = head["raceStats"]
@@ -314,10 +325,13 @@ def user_write_race_stats(xuid, body):
              stats["userFinishPosition"], stats["maxPlaces"], stats["finished"],
              stats["userLevel"], stats["userXP"], stats["currentCredits"],
              "" if caller_trusted() else " (unverified caller)")
+    if caller_trusted():  # what the player's last co-op round paid online (forza_coop_ledger)
+        coop_ledger.LEDGER.race_written(xuid, stats["onlineWinnings"])
     if stats["hopperId"] in WORLD_HOPPERS:
         world.WORLDS.result(xuid, stats["userFinishPosition"], stats["maxPlaces"],
                             stats["finished"], session=stats["sessionId"],
-                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER)
+                            trusted=caller_trusted(), coop=stats["hopperId"] == COOP_HOPPER,
+                            winnings=stats["onlineWinnings"])
     return x.reply()
 
 
@@ -552,9 +566,7 @@ SERVICES = {
     ("Hopper", "ReportQosData"): lambda xuid, body: x.reply(),
     ("Hopper", "ReportVoting"): lambda xuid, body: x.reply(),
     ("DLCMetadata", "GetStringTableInfo"): dlc_string_table_info,
-    ("Hopper", "GetRaceMultipliers"):
-        lambda xuid, body: x.reply(x.HopperGetRaceMultipliers_Results,
-                                   {"specialMultiplier": 1.0}),
+    ("Hopper", "GetRaceMultipliers"): race_multipliers,
     **scores.services(gamertag_of),
     **market.services(gamertag_of),
     **clubs.services(),

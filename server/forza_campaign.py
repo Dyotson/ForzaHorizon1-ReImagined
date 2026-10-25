@@ -17,6 +17,13 @@ A campaign round carries the single-player event's settings (campaign_xml):
 - the time of day: `TimeOfDayStart` (seconds after midnight) as the nearest of the four
   times the online options can name (HorizonTimeOfDay);
 - the crowd (`CrowdSize`, `CrowdExcitement`);
+- the cars: ForceOnlyRentalCars 0 (the presets' Overrides force it to 1). With 1, a player's
+  car comes from the rental garage (Data_Car.IsRentable: one stock car per class), so an event
+  that car doesn't meet ("S class, Audi": the S rental is a Lamborghini) had no car for anyone
+  ("NO CARS AVAILABLE") and ended at once. With 0, the game picks a loaner from every installed
+  car that meets the restrictions (SELECT Id FROM Restrictions_Data_Car AS Garage WHERE
+  Garage.ClassId=6 AND Garage.MakeId=3 ... ORDER BY PerformanceIndex DESC): a player who owns
+  none races an Audi R8 GT, which stays out of its garage;
 - the CPU drivers' skill: AIDifficulty Medium, and the event's own `AISkillMed` /
   `AITemperamentMed`, which the server sends to every console of the world
   (WORLD_EVENT op 2) and the client's hook writes into each CPU driver (the online
@@ -76,6 +83,8 @@ GAME_DB = None
 STREET = False
 AI_FIELD = False    # test knob (--coop-ai-field): AIFieldId = the event id (docs: question 3)
 _events = None
+RACE_MULTIPLIERS = [1.0]  # test knob: GetRaceMultipliers for campaign rounds, one per round in turn
+_multipliers = {}        # round id -> its multiplier
 
 
 def decode_restrictions(value):
@@ -109,6 +118,45 @@ def decode_restrictions(value):
     return out
 
 
+# A CarRestrictions attribute's Data_Car column (the lobby's loaner pick names them alike);
+# the ranges as (column, scale). PowerMin/Max and WeightMin/Max: no event sets them.
+CAR_IDS = {"CarClassId": "ClassID", "BodyFamilyId": "FamilyBodyID", "CarTypeId": "CarTypeID",
+           "RegionId": "RegionID", "CountryId": "CountryID", "MakeId": "MakeID",
+           "ModelFamilyId": "FamilyModelID", "ModelId": "ModelId", "DriveTypeId": "DriveTypeID",
+           "EngineConfigId": "EngineConfigID", "EnginePlacementId": "EnginePlacementID",
+           "CylinderId": "CylinderID", "AspirationId": "AspirationTypeId",
+           "FamilySpecialId": "FamilySpecialID"}
+CAR_RANGES = {"Year": ("Year", 1), "BaseCost": ("BaseCost", 1), "PI": ("PerformanceIndex", 1000)}
+
+
+def car_fits(car, restrictions):
+    """A stock Data_Car row (dict) meets a decoded restriction: the ids with their comparators,
+    and the year, base cost and PI ranges (0: open)."""
+    for attr, column in CAR_IDS.items():
+        if attr in restrictions and car.get(column) is not None:
+            equal = int(car[column]) == int(restrictions[attr])
+            if equal == (restrictions.get(attr.replace("Id", "Comparator")) == "DoesNotEqual"):
+                return False
+    for attr, (column, scale) in CAR_RANGES.items():
+        if car.get(column) is not None:
+            value = car[column] * scale
+            low, high = float(restrictions.get(attr + "Min", 0)), float(restrictions.get(attr + "Max", 0))
+            if (low and value < low) or (high and value > high):
+                return False
+    return True
+
+
+def stock_cars(db):
+    """Data_Car's cars the lobby may lend (not the unicorns), as dicts; None without the table."""
+    columns = sorted(set(CAR_IDS.values()) | {c for c, _ in CAR_RANGES.values()})
+    try:
+        cursor = db.execute("SELECT %s FROM Data_Car WHERE IsUnicorn = 0" % ", ".join(
+            '"%s"' % c for c in columns))
+        return [dict(zip(columns, row)) for row in cursor]
+    except sqlite3.Error:
+        return None
+
+
 def time_of_day(seconds):
     """The HorizonTimeOfDay name nearest to a time (seconds after midnight)."""
     day = 86400
@@ -136,9 +184,17 @@ class Event:
                       crowd_excitement if crowd_excitement is not None else 1.0)
         self.restrictions = restrictions
         self.names = names
+        self.loaners = None  # stock cars that meet the event (None: not known)
 
     def describe(self):
         """A short text for chat: FR05: B class, 1960-1969, 7 CPU drivers, 1 lap, Sunset."""
+        return "%s: %s" % (self.code, ", ".join(self.describe_parts()))
+
+    def restriction_text(self):
+        """The class and restrictions alone: S class, Audi."""
+        return ", ".join(self.describe_parts()[:-3])
+
+    def describe_parts(self):
         parts = [("%s class" % self.names.get(("class", self.car_class)))
                  if ("class", self.car_class) in self.names else "any class"]
         r = self.restrictions
@@ -160,11 +216,11 @@ class Event:
             parts.append("stock")
         parts.append("%d CPU driver%s" % (self.drivers, "" if self.drivers == 1 else "s"))
         if self.street:
-            parts.append("street race")
+            parts.append("street race (no traffic online, so no career result)")
         else:
             parts.append("%d lap%s" % (self.laps, "" if self.laps == 1 else "s"))
         parts.append(time_of_day(self.time_of_day))
-        return "%s: %s" % (self.code, ", ".join(parts))
+        return parts
 
 
 def load_events(path=None):
@@ -187,6 +243,7 @@ def load_events(path=None):
                           db.execute("SELECT ID, DriveType FROM List_DriveType")})
             restr = {e: v for e, v in db.execute(
                 "SELECT EventID, Value FROM EventRestrictions WHERE BucketId = 0")}
+            cars = stock_cars(db)
             rows = db.execute(
                 "SELECT e.Id, e.HorizonEventID, e.CareerEventStyle, e.Level, e.CareerTypeId, "
                 "r.TrackId, r.NumLaps, t.RibbonConfiguration, e.TargetClass, e.NumberOfDrivers, "
@@ -204,7 +261,10 @@ def load_events(path=None):
                 except ValueError as e:
                     log.warning("campaign: event %d: %s", row[0], e)
                     continue
-                events[row[0]] = Event(row, r, names)
+                event = events[row[0]] = Event(row, r, names)
+                if cars is not None:
+                    fit = dict(r, CarClassId=str(event.car_class)) if event.car_class != 255 else r
+                    event.loaners = sum(1 for c in cars if car_fits(c, fit))
         except sqlite3.Error as e:
             log.warning("campaign: cannot read %s: %s", path, e)
     _events = events
@@ -239,6 +299,7 @@ CAMPAIGN_XML = """<GameOptions GameTypePreset="{preset}" GameTypeFilterType="{fi
   <StartingGridOptions StartType="OpenWorld" GridOrderingType="PIWithPlayerLast"/>
   <EndConditionOptions Type="{end}" NumLaps="{laps}" EndRaceCounter="30.0"/>
   <ScoringOptions Type="TimeBased" BiggerIsBetter="0"/>
+  <Overrides ForceTeamColors="0" StockUpgradesOrTuning="AllowUpgradesAndTuning" ForceOnlyRentalCars="0" ForceOffSuggestedLine="0" ForceOffSTM="0" ForceOffTCS="0" EasiestBrakingAllowed="Assisted" EasiestSteeringAllowed="Assisted" EasiestShiftingAllowed="Automatic" ForcedCamera="None"/>
 </GameOptions>
 """
 
@@ -270,23 +331,45 @@ def ai_message(event, sid):
 def add_arguments(parser):
     parser.add_argument("--coop-street", action="store_true",
                         help="offer the street races in the Co-op Festival's /event list too "
-                             "(they run online with their checkpoints, without traffic)")
+                             "(they run online with their checkpoints, without traffic, so "
+                             "their results do not go to the careers)")
     parser.add_argument("--coop-ai-field", action="store_true",
                         help="test knob: campaign rounds name the event as their AIFieldId")
+    parser.add_argument("--coop-race-multiplier", default="1",
+                        help="test knob: Hopper.GetRaceMultipliers' specialMultiplier for the "
+                             "players of campaign rounds, comma separated: one per round in turn")
 
 
 def configure(args, game_db):
-    global GAME_DB, STREET, AI_FIELD, _events
+    global GAME_DB, STREET, AI_FIELD, RACE_MULTIPLIERS, _events
     GAME_DB = game_db
     STREET = args.coop_street
     AI_FIELD = args.coop_ai_field
+    RACE_MULTIPLIERS = [float(v) for v in str(getattr(args, "coop_race_multiplier", "1")).split(",")
+                        if v.strip()] or [1.0]
+    _multipliers.clear()
     _events = None
     log.info("co-op campaign: %d events for /event (%s)", len(available()),
              "festival and street races" if STREET else "festival races")
 
 
+def race_multiplier(round_id):
+    """The specialMultiplier of a campaign round's races (RACE_MULTIPLIERS in turn)."""
+    if round_id not in _multipliers:
+        if len(_multipliers) > 1000:
+            _multipliers.clear()
+        _multipliers[round_id] = RACE_MULTIPLIERS[len(_multipliers) % len(RACE_MULTIPLIERS)]
+    return _multipliers[round_id]
+
+
 USAGE = ("Co-op Festival: /event <code or id> starts a festival event for this world, "
          "e.g. /event FR05; /events [level] lists them")
+# Where /event works, in the game's own menu names (#395: a Custom Free Roam's host was only
+# told "You are not in a Horizon World"). One line each: the Chat tab shows one notice.
+WHERE = "Multiplayer > Find Game > Co-op Festival"
+NOT_IN_WORLD = "/event needs a Co-op Festival world (custom games have none): " + WHERE
+IN_HORIZON_WORLD = "/event needs a Co-op Festival world, not the Horizon World: " + WHERE
+NOT_WORLD_CHAT = "Type /event in World chat (To: Horizon World), in a Co-op Festival world"
 
 
 def listing(level=None, width=180):

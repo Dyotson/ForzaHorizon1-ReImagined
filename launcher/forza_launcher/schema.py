@@ -121,6 +121,14 @@ add("resolution_scale", "Render scale", "Display", "int", 1,
     "Draws at 1x to 8x the guest resolution. 1 with FSR 1 is the fast default; 2 is real extra detail "
     "for about 40% fewer fps; above 2 is experimental (flicker on NVIDIA, issue #47).", "Picture",
     lo=1, hi=8, restart=True)
+add("scene_resolution", "3D scene resolution", "Display", "choice", "720",
+    "For integrated graphics that can't hold the frame rate: 540p draws the 3D scene at 960x540 "
+    "(about half the pixels) and scales it to 720p; the HUD, text and menus stay at 720p, and the "
+    "upscaling filter (AMD FSR 1 is the sharpest) takes the picture to the window. It saves GPU time "
+    "only: a PC limited by its CPU (Steam Deck) gets nothing. The scene is drawn in one pass with 2x "
+    "MSAA (Scene anti-aliasing Off removes it). Not with AMD FSR 3, NVIDIA DLSS, a separate "
+    "anti-aliasing method or Ultrawide gameplay, which keep 720p.", "Picture",
+    choices=[("720", "720p (game)"), ("540", "540p")], restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
     choices=[(-1, "Game default"), (0, "Off"), (1, "1x"), (2, "2x"), (3, "4x"), (4, "8x"),
@@ -176,8 +184,8 @@ add("present_dither", "Output dithering", "Display", "bool", False,
 add("scene_msaa", "Scene anti-aliasing (MSAA)", "Display", "choice", "game",
     "The game draws the 3D scene with 4x MSAA in three parts, which costs the most CPU time on "
     "4-core PCs and the Steam Deck. 2x draws it in two parts with 2x MSAA, as the game does for "
-    "its largest races. Off draws it in one pass without MSAA: about half the GPU emulation's "
-    "work and less GPU time, with more jagged edges.", "Picture",
+    "its largest races. Off draws it in one pass without MSAA: about a fifth less CPU time in "
+    "the GPU emulation and less GPU time, with more jagged edges.", "Picture",
     choices=[("game", "4x (game)"), ("2x", "2x"), ("off", "Off (fastest)")], restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
@@ -203,6 +211,19 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
     "shimmer slightly on fine patterns.", "World detail",
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+# Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
+# --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
+add("texture_dump", "Dump textures", "Display", "bool", False,
+    "Save each texture the game loads, once, to textures/dump in the game's data folder, named "
+    "by its fingerprint: a .dds and a .png to look at. A replacement must have the same name. "
+    "Takes disk space (about 200 MB for the first race) and a little time as textures "
+    "load. The files are the game's art: never share them.", "Texture packs",
+    restart=True)
+add("texture_replace", "Use texture packs", "Display", "bool", False,
+    "Draw textures from the .dds and .png files in the textures folder (and folders inside it) "
+    "instead of the game's: higher resolution, same aspect ratio, named like the dumped "
+    "texture. Uses graphics memory, not the game's. Vulkan only.", "Texture packs",
+    restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
@@ -434,6 +455,12 @@ for _k, _label, _default in KEYBINDS:
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
+add("radio_station_switch", "Station changes", "Audio", "choice", "game",
+    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
+    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
+    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
+    "0.25 s fades for player changes; quick presses end on the last station picked.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
 
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,

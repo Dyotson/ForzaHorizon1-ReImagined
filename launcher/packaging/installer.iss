@@ -30,6 +30,10 @@ SetupIconFile=../../forza-recomp/resources/forza.ico
 UninstallDisplayIcon={app}\forza-launcher.exe
 LicenseFile={#Stage}\licenses\ForzaHorizon1-ReImagined.txt
 DisableProgramGroupPage=yes
+; Always show where the files go and let the player change it, also on updates (Inno Setup's
+; default skips the page once a previous install exists, issue #403). The launcher's own update
+; passes /DIR, so the page comes up filled with the current install folder.
+DisableDirPage=no
 ; Installed files keep the build's real (UTC) file times. By default Inno Setup stores the build machine's
 ; local time (UTC on CI) and sets it as the player's local time: hours in the future west of UTC, which
 ; keeps ninja re-running CMake (issue #35).

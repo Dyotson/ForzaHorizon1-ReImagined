@@ -36,10 +36,24 @@ DOWNLOADS = {
     "sdk-linux": (
         f"{_GH}/rexglue/rexglue-sdk/releases/download/{SDK_TAG}/rexglue-sdk-{SDK_VERSION}-dev.gbd833a2-linux-amd64.zip",
         "0a56565221a4e75f91fc71f787d9299a0d0298127b970c8a88a292f8d3a3befe", "zip"),
+    # Make HD pack's upscaler (#384, hd_pack.py): Real-ESRGAN's ncnn-Vulkan build with its models,
+    # from the official Real-ESRGAN v0.2.5.0 release (program MIT, models BSD-3-Clause). The
+    # release predates GitHub's asset digests: the hashes match nixpkgs' realesrgan-ncnn-vulkan
+    # (the Linux archive's contents) and other projects' pins of the same files.
+    "realesrgan-linux": (
+        f"{_GH}/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
+        "e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96", "zip"),
+    "realesrgan-windows": (
+        f"{_GH}/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip",
+        "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d", "zip"),
+    "realesrgan-macos": (
+        f"{_GH}/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip",
+        "e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a", "zip"),
 }
 
 # Rough download sizes in MB, for the confirmation text.
 SIZES_MB = {"llvm-linux": 2016, "llvm-windows": 901, "cmake-linux": 65, "cmake-windows": 54,
-            "ninja-linux": 1, "ninja-windows": 1, "xwin-windows": 3, "sdk-linux": 122}
+            "ninja-linux": 1, "ninja-windows": 1, "xwin-windows": 3, "sdk-linux": 122,
+            "realesrgan-linux": 45, "realesrgan-windows": 44, "realesrgan-macos": 50}
 
 MS_LICENSE_URL = "https://go.microsoft.com/fwlink/?LinkId=2086102"

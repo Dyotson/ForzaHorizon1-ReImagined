@@ -22,6 +22,10 @@ def _default():
         "version": 1,
         "haptics": dict(HAPTICS_DEFAULTS),
         "save_manager": {"automatic": True, "keep_automatic": 10},
+        # Mods (#149, mods.py): folder names in load order, and those turned off.
+        "mods": {"order": [], "disabled": []},
+        # Texture packs (#384, texture_packs.py): the same for the folders in <data>/textures.
+        "texture_packs": {"order": [], "disabled": []},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)

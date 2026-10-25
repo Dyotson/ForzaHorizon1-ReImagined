@@ -276,8 +276,10 @@ struct HostedSession {
   uint32_t max_public, max_private;     // slots
   uint32_t filled_public, filled_private;
   uint64_t order;                       // creation order: the newest presence session wins
-  uint32_t playlist = 0;                // a joined matchmaking session's (what we searched)
-  std::vector<uint8_t> qos;             // a joined session's QoS data (from the search)
+  uint32_t playlist = 0;                // a joined matchmaking session's (what we searched,
+                                        // then the game type the game sets)
+  std::vector<uint8_t> qos;             // a joined session's QoS data (from the search, or our
+                                        // game's own once it made us the host)
   std::vector<uint64_t> members;
 };
 std::mutex sessions_mutex;
@@ -407,7 +409,9 @@ void XSessionCreate(uint8_t* base, uint32_t buffer) {
 // XSessionDelete {session object, ...}
 void XSessionDelete(uint8_t* base, uint32_t buffer) {
   std::lock_guard<std::mutex> lock(sessions_mutex);
-  if (guest_sessions.erase(Load32(GuestPtr(base, buffer)))) {
+  if (auto g = guest_sessions.find(Load32(GuestPtr(base, buffer))); g != guest_sessions.end()) {
+    qos_data.erase(SessionId(g->second.info));  // what we described it with as its game host
+    guest_sessions.erase(g);
     PublishStandbyLocked();
     PublishPresenceLocked();
   }
@@ -737,12 +741,30 @@ void XUserSetProperty(uint8_t* base, uint32_t buffer) {
   UserValue v;
   v.type = type;
   std::memcpy(v.value, GuestPtr(base, value), size);
+  if (Trace()) REXLOG_INFO("NETTRACE XUserSetProperty {:08X} = {:08X}", id, Load32(v.value));
   std::lock_guard<std::mutex> lock(sessions_mutex);
   user_properties[id] = v;
+  // In a custom game every console sets the game type (the search key of Find Custom
+  // Game) whenever the host changes the setup; Find Game's rounds leave it alone (#391).
+  // A session we joined is advertised under the key it has now, not the one we found it by.
+  const uint32_t key = Load32(v.value);
+  if (id != kPropertyForzaHopper || key == 0xFFFFFFFF) return;  // -1: the party lobby's
+  bool changed = false;
+  for (auto& [object, g] : guest_sessions) {
+    if ((g.flags & kSessionUsesMatchmaking) && g.playlist != key) {
+      g.playlist = key;
+      changed = true;
+    }
+  }
+  if (changed && standby_published) PublishStandbyLocked();
 }
 
 // XUserSetContext {user index, unused, XUID, context id, value}
 void XUserSetContext(uint8_t* base, uint32_t buffer) {
+  if (Trace()) {
+    REXLOG_INFO("NETTRACE XUserSetContext {:08X} = {:08X}", Load32(GuestPtr(base, buffer + 16)),
+                Load32(GuestPtr(base, buffer + 20)));
+  }
   std::lock_guard<std::mutex> lock(sessions_mutex);
   user_contexts[Load32(GuestPtr(base, buffer + 16))] = Load32(GuestPtr(base, buffer + 20));
 }
@@ -1575,8 +1597,23 @@ extern "C" REX_FUNC(__imp__NetDll_XNetQosListen) {
       qos_data[id].assign(GuestPtr(base, data), GuestPtr(base, data) + std::min<uint32_t>(size, 1000));
     }
     if (flags & (kDisable | kRelease)) qos_data.erase(id);
+    if (Trace()) {
+      REXLOG_INFO("NETTRACE XNetQosListen {:016X}: flags {:X}, {} bytes", id, flags,
+                  (flags & kSetData) && data ? size : 0);
+    }
     PublishPresenceLocked();
     PublishMatchLocked();
+    // A session we joined: the game made us its host and describes it now (Find Custom
+    // Game's details: game type, track, class, time, the host's name). Its standby record
+    // carries the newest description from then on, not the one we found it with (#391).
+    bool described = false;
+    for (auto& [object, g] : guest_sessions) {
+      if (SessionId(g.info) == id && (flags & kSetData) && data) {
+        g.qos.assign(GuestPtr(base, data), GuestPtr(base, data) + std::min<uint32_t>(size, 1000));
+        described = true;
+      }
+    }
+    if (described) PublishStandbyLocked();
   }
   ctx.r3.u64 = 0;
 }

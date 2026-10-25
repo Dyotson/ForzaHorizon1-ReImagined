@@ -1033,6 +1033,12 @@ def stage_runtime(opts: Options, rep: Reporter, bdir: Path, sdk: Path) -> Path:
     notice = bdir / "LICENSE-Pinyon-Shift"
     if notice.is_file():
         shutil.copy2(notice, rt / notice.name)
+    # The texture compressor (#413, forza-recomp/texcompress) the texture packs page runs.
+    tool = bdir / ("forza-texcompress" + EXE)
+    if tool.is_file():
+        tmp = rt / ("." + tool.name + ".new")
+        shutil.copy2(tool, tmp)
+        os.replace(tmp, rt / tool.name)
     if IS_WIN:
         for f in [bdir / "forza.exe"] + sorted(bdir.glob("forza_*.dll")):
             shutil.copy2(f, rt / f.name)

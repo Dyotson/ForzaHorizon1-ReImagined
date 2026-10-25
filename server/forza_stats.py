@@ -207,9 +207,11 @@ def int_value(kind, value):
     return 0
 
 
-def write(xuid, gamertag, body, allowed=None, now=None):
+def write(xuid, gamertag, body, allowed=None, now=None, verified=True):
     """A write from a player (body after the op byte). allowed: the XUIDs this player may
-    write for (itself and the players of its room); others are ignored."""
+    write for (itself and the players of its room); others are ignored. verified: the writer
+    proved its XUID (its HELLO's friends key); only such writes reach on_skill_write (the
+    co-op ledger takes a host's write as a guest's second-console check)."""
     session, target, views = parse_write(body)
     now = time.monotonic() if now is None else now
     if allowed is not None and target not in allowed:
@@ -222,6 +224,8 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             values = {pid: int_value(kind, v) for pid, kind, v in props}
             if RELATIVE_SCORE not in values:
                 continue
+            if on_skill_write and verified:  # the co-op ledger: its first write after a start
+                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             key = (session, view)
             if session and now - STORE.rated.get(key, -RATED_MEMORY) < RATED_MEMORY:
                 log.info("stats: %016X wrote view %08X for %016X again: session %016X is rated",
@@ -233,8 +237,6 @@ def write(xuid, gamertag, body, allowed=None, now=None):
             match["at"] = now
             match["writes"][target] = (values[RELATIVE_SCORE], values.get(SESSION_TEAM, -1))
             match["tags"][target] = tag
-            if on_skill_write:
-                on_skill_write(xuid, session, target, values[RELATIVE_SCORE])
             log.info("stats: %016X wrote view %08X for %016X '%s': relative score %d team %d "
                      "(session %016X)", xuid, view, target, tag, values[RELATIVE_SCORE],
                      values.get(SESSION_TEAM, -1), session)

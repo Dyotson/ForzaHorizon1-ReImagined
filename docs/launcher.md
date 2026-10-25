@@ -21,6 +21,12 @@ paper white, display peak, highlight strength, source gamma, comparison and
 calibration controls. It defaults off and falls back to SDR on unsupported
 surfaces. See [HDR setup, Windows online steps and validation](hdr.md).
 
+**Texture packs (#384):** Settings > Display > Texture packs has **Dump textures**
+(`texture_dump`), **Use texture packs** (`texture_replace`, Vulkan only), **Open textures
+folder** (`textures` in the data folder, passed to the game as `texture_pack_root` while
+either option is on) and **Texture packs page…** (below). Both default off. See
+[texture packs](texture_packs.md).
+
 No prebuilt game is ever shipped (the generated C++ is translated game code). The release
 holds only the **launcher**, the project's own sources, the Forza Live server and the patched
 ReXGlue SDK pieces (SDK code, BSD-3-Clause). The launcher builds the game on the player's
@@ -45,6 +51,16 @@ machine from their own copy:
    header is generated (display name from a table of the 23 known package names, else "DLC <name>").
    Folders that do not look like DLC (a name that is not 8 to 42 hex digits, no files inside) are
    skipped and listed in the card.
+   The scan is recursive (#410): up to 8 folders deep, links are not followed, hidden and system
+   folders are left out, and files that are not packages are ignored quietly. `.zip` archives are
+   accepted too (`launcher/forza_launcher/dlcscan.py`): only the entries that look like STFS
+   packages are unpacked, one level of zip inside a zip, to a `tmp/dlc-*` folder under the data
+   folder, then installed as usual and removed afterwards (also on failure or cancel). A zip with
+   an absolute or `..` path or a link is refused whole; a damaged one is skipped; the total is
+   capped at 8 GB and the free disk space is checked first (room for two copies). The card lists
+   what was found and what was skipped with the reason (duplicate package names install once, a
+   package that is not DLC, a zip with no DLC, ...). `launcher/test_dlc_scan.py` covers this with
+   synthetic packages and zips.
    Packages outside the known official package-name table show an amber **Unrecognized DLC**
    warning (#118), naming every package by its display name and filename, including packages
    beyond the list's 12-item preview. Installation remains available without a confirmation
@@ -81,7 +97,7 @@ machine from their own copy:
    stores (split scene/HUD rendering, output size, render scale, render target path, API). Every later
    start also warms the listed pipelines. The step refuses to start the game while the Build step says "Rebuild needed" or "Not built" (a game built by an older launcher does not know `--shader_prebuild_only`): it shows "Rebuild first" and asks for Setup > Build. Before it builds, the step also fetches the server's list (below) and merges it with the shipped one; offline or on any failure it uses the shipped list alone. [Shader prebuild](shader_prebuild.md).
    **Share shader list (#276, Settings > Online, on by default):** after a game session the launcher uploads the pipeline descriptions of your own pipeline cache that it has not sent before to the server you play on: shader hashes and render settings, plus how to rebuild each shader from game files (no shader code, no game data, nothing personal). The server publishes entries that at least 3 different players reported. Only the public server and your own server are used, never offline or "This PC"; the upload runs in the background with short timeouts, failures only go to the launcher log, and the launcher keeps a record of what was sent (`shader_share.json` in the data folder). The setting is launcher-only and is not written to `forza.toml`.
-   **Co-op campaign results (#309):** after a game session the launcher asks the server you play on (the public one or your own, never offline or "This PC") for the results of the Co-op Festival events you started as a world's host, and applies each to the save of the session it was earned in (the launcher keeps which save each session used; another save's results wait for that save's next session, and a game started outside the launcher gets none), when that save has the event unlocked and the result beats its place for the event: the event's and race's result, the wristband XP of the improvement, the event's prize at that place and the event's own unlock rewards, with a backup ("Before co-op results") and the save editor's checks. The wristband level and the unlocks by XP are left to the game (Race Central and your next race). Results it settled are confirmed to the server; the others, and failures, wait on the server (30 days) for a later session, and failures only go to the launcher log (`coop_grant.py`, `docs/coop_campaign.md`).
+   **Co-op campaign results (#309):** after a game session the launcher asks the server you play on (the public one or your own, never offline or "This PC") for your results of the Co-op Festival events you raced, as the world's host or as a guest (a guest's place counts when the host's game saw the same place), and applies each to the save of the session it was earned in (the launcher keeps which save each session used; another save's results wait for that save's next session, and a game started outside the launcher gets none), when that save has the event unlocked and the result beats its place for the event: the event's and race's result, the wristband XP of the improvement, the event's prize at that place less the online winnings that race already paid (you get the larger of the two once; no prize when that amount is not known, for example after races in another save), and the event's own unlock rewards, with a backup ("Before co-op results") and the save editor's checks. The wristband level and the unlocks by XP are left to the game (Race Central and your next race). The Play page lists what was added and each result that waits for an event your career has not unlocked yet (a guest behind the host's wristband): it is added at the first session after you unlock the event. Results it settled are confirmed to the server; results of a game it did not start can never go to a save and are dropped with a note; the others, and failures, wait on the server (30 days, at most 20 a player; results earned as a guest go first, then the oldest) for a later session, and failures only go to the launcher log (`coop_grant.py`, `docs/coop_campaign.md`).
 5. **Play**, **Settings**, log folder, versions.
 
 Data lives in the game's user folder (`~/.local/share/forza`; on Windows `%LOCALAPPDATA%\ForzaReImagined`, or
@@ -479,6 +495,65 @@ file. A separate copy loaded in the native TU4 game, which then saved normally w
 1,000,000 credits and 12,345 XP intact and exited cleanly. The original fixture and real
 user save were not modified.
 
+### Mods (#149)
+
+**Mods** lists the folders in `<data folder>/mods` (name, version, author from each mod's
+`mod.toml`, and its files), each with a tick to turn it on or off (Return, Enter or a controller's
+A on the selected row too), **Move up** / **Move down** for the load order (a lower mod wins over
+a higher one for the same file), **Add mod…**, **Remove**, **Refresh** and **Open mods folder**.
+The details under the list name the files a mod shares with other mods and whose copy is used.
+
+- **Add mod…** asks for a **Zip file…** or a **Folder…** (dropping either on the page does the
+  same). `mods.install` finds the mod in it (a folder with `media/` or `mod.toml`, at the top or
+  one folder down), unpacks or copies it into a hidden `.adding-*` folder in the mods folder,
+  checks it with the game's rules (`read_mod`) and only then moves it into place; a mod of that
+  name is replaced only after the player says yes (never while the game runs). A zip with an
+  absolute path, `..`, a link, more than 200,000 files or more than 8 GB unpacked is refused.
+  Errors are said under the list ("Not added: ...").
+- **Remove** asks first and deletes the mod's folder (a linked folder: only the link); it is off
+  while the game runs.
+- With no mods the page says how to add one and links the guide; while the game runs, a notice
+  says changes apply at its next start.
+- A mod the game would skip shows "(will not load)" and why, by the game's rules
+  (`mod_archive.h` ScanMod): no `media/` folder or no usable file (non-ASCII names, paths over 255
+  characters and `.zip` files are left out), a file it cannot read, two names that differ only in
+  case, a file over 64 MB that replaces no loose file in the game's `media` folder, a folder named
+  `*` or with a `|`.
+
+launcher.json keeps the order and the mods turned off (`"mods": {"order": [...], "disabled":
+[...]}`); every start passes `--forza_mods_dir=<data folder>/mods --forza_mods=A|B` (`|` alone:
+none), except an option that **Extra command-line flags** (**Settings > Advanced**) name, as
+`--name=value` or `--name value` (the game refuses an option given twice). The player's guide is
+[modding.md](modding.md). Tests: `launcher/test_mods.py`.
+
+### Texture packs (#384)
+
+**Texture packs** has the two switches of Settings > Display > Texture packs (the same settings,
+through `SettingsPage.apply_external`), the list of packs and **Make HD pack**. The list is the
+Mods page's (`FolderListPage` in `ui/mods_page.py`): the folders in `<data folder>/textures` but
+`dump/` (`texture_packs.py`), ticked to use, **Move up** / **Move down** (a lower pack wins for the
+same texture), **Add pack…** (zip, folder or a drop; only fingerprint-named textures and text files
+are copied, checked as the game reads them, zip slip and size caps as for mods, a dump refused),
+**Remove**, **Refresh**, **Open textures folder**, and the details of the selected pack (its
+textures, size, graphics memory, the textures it shares with other packs and whose copy is used).
+Texture files directly in `textures/` (milestone 1's layout) are the pack **Loose files (textures
+folder)**: always first (every pack wins over it), passed as `.`, which can be turned off but not
+moved or removed.
+launcher.json keeps `"texture_packs": {"order": [...], "disabled": [...]}`; with Use texture packs
+on, every start passes `--texture_packs=A|B` (SDK patch 0310; `|` alone: none) unless the extra
+flags name `texture_packs` or `texture_pack_root`.
+
+**Make HD pack** (`hd_pack.py`) upscales the player's dump into `textures/hd-pack` with
+Real-ESRGAN's ncnn-Vulkan build, downloaded on first use from its official release (pinned in
+`pins.py`, SHA-256 checked) into `<data folder>/tools`, in a background `Task` with progress,
+**Cancel** and resume; closing the window asks first and stops it. The page shows the estimate
+(textures, disk, graphics memory, time; each scale with its graphics memory) and warns on weak
+graphics cards; 4x is offered only with at least 10 GB of dedicated graphics memory
+(`Config.pc_specs`, else greyed out with the reason). The page names the upscaler's and the
+model's licences with links. Details, the licences and
+the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_texture_packs.py`,
+`launcher/test_hd_pack.py`.
+
 ## Toolchain (pinned in `launcher/forza_launcher/pins.py`, every archive checked by sha256)
 
 * Linux: the system `clang` (>= 21; the project is tested with 23), `cmake` (>= 3.25) and
@@ -573,6 +648,9 @@ generated `forza.toml` and command line). Keys that hold their default are not w
 Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
 keeps the instrument backlight of your own car on by day too; the headlights and other cars
 stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
+Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
+a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
+0.5 s ([playing.md](playing.md#running-the-game)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3
@@ -705,6 +783,16 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   manifest; they are not code signatures or a malware assessment. Code-signing and vendor
   submissions remain separate work. The version comes from the tag. Nothing here needs
   the game or generated code.
+  The Windows job also records `windows-build-manifest.json` after staging the final
+  payload and before compiling the installer. It lists each staged file's relative
+  path, size and SHA-256, the source commit, public Actions run URL, Python version
+  and packaging dependency versions. The installer includes it, and a copy named
+  `ForzaHorizon1-ReImagined-windows-files-<version>.json` is published beside the
+  installer and covered by `SHA256SUMS`. This lets maintainers identify an installed
+  file even if antivirus has removed it. It covers the staged payload, not Inno's
+  generated uninstaller or the separately bundled Microsoft redistributable. If
+  payload signing is added, generate this manifest after signing. The installer
+  smoke test verifies that the installed launcher matches its recorded hash.
 * `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
   deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
 * Preview the page: `tools/preview_site.sh`.

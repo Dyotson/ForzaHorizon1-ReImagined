@@ -24,6 +24,15 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - **Cockpit gauges:** the game lights the instruments only when the headlights are on;
   `cockpit_gauges_lit = true` in `forza.toml` (launcher: Display, Picture, Cockpit gauges
   always lit) keeps them lit by day too, for your own car only.
+- **Radio stations (#401):** the game takes the next station about 3.5 s after the last
+  (a 1 s wait, and none while the station banner shows) and fades the music out and in
+  over 0.5 s each; the new stream starts within a frame or two of the fade out, so the
+  wait is the game's, also on the console. `radio_station_switch = "fast"` (launcher:
+  Audio, Radio, Station changes: Fast) takes a new station every 0.15 s, also while the
+  banner shows (it shows the new one), fades over the game's own 0.25 s for player changes,
+  and quick presses end on the last station picked. The new station then starts about
+  0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
+  (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Mouse cursor:** the game hides it after three seconds without movement and shows it
@@ -184,6 +193,11 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - Render scale 2 adds real detail for about 30 % fewer fps (42 fps at a 60 fps target on an
   RX 9060 XT); fine at 30 fps. Above 2 is experimental and halves the frame rate (#47).
 - **AMD FSR 3 (temporal)** is a heavier, temporal upscaler; on integrated graphics and the Deck, FSR 1 is the better choice. `cas` only sharpens. See `docs/rendering.md`.
+- **3D scene resolution** 540p (Display > Picture, `scene_resolution = "540"`) is for
+  integrated graphics that can't hold the frame rate: the 3D scene is drawn smaller and scaled to
+  720p, the HUD and menus stay sharp at 720p. It only saves GPU time; a PC limited by its CPU gains
+  nothing. Not with FSR 3, DLSS, SMAA or ultrawide. Measurements in
+  [perf.md](perf.md#scene-resolution-below-720p-scene_resolution-347-2026-10-24).
 
 ## Steam Deck
 

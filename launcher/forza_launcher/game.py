@@ -390,6 +390,17 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         cfg.d["settings"] = real
 
 
+def texture_pack_folder(cfg: Config) -> Path:
+    """Texture packs and dumps (#384): <data folder>/textures, also with a Xenia save (whose user
+    data root is a copy elsewhere); Settings > Display > Open textures folder opens it."""
+    return cfg.data_home() / "textures"
+
+
+def texture_packs_used(cfg: Config) -> bool:
+    settings = cfg.effective_settings()
+    return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
+
+
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
     from . import ingame
     if cfg.gamertag_cleaned:
@@ -477,6 +488,10 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
     dlss.configure(cfg, env, args, notes, write)
     dlss_status_file = Path(env["FORZA_DLSS_STATUS_FILE"]) if "FORZA_DLSS_STATUS_FILE" in env else None
     fsr3.configure(cfg, args, notes)
+    extra_textures = any(a.startswith("--texture_pack_root")
+                         for a in split_args(cfg.advanced.get("extra_args", "")))
+    if texture_packs_used(cfg) and not extra_textures:  # a flag given twice confuses the game
+        args.append(f"--texture_pack_root={texture_pack_folder(cfg)}")
     from . import antialiasing
     antialiasing.configure_runtime(cfg, env, args, write=write)
 
@@ -489,6 +504,13 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         notes.append(saver.note())
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
+    # The mods turned on in the Mods page, in their load order (#149). An option the player
+    # names in the extra flags ("--name=value" or "--name value") is left to them: the game
+    # refuses one given twice.
+    from . import mods, texture_packs
+    named = {a[2:].split("=", 1)[0] for a in extra if a.startswith("--")}
+    args += mods.launch_args(cfg, named)
+    args += texture_packs.launch_args(cfg, named)  # the packs turned on, in order (#384)
     args += extra
     env.update(parse_env(cfg.advanced.get("extra_env", "")))
 

@@ -46,6 +46,7 @@ PENDING_TIMEOUT = 120.0
 GAME_DB = None          # path of gamedb.slt, or None
 EVENT_MINUTES = 0.0     # schedule: an event every N minutes of a world (0: off)
 EVENT_LAPS = 0          # override the events' lap count (tests), 0: the event's own
+EMPTY_ROUND = 90.0      # a campaign round closed this soon without a report: nobody raced it
 EVENT_IDS = []          # restrict the rotation to these event ids (empty: all)
 EVENT_AI = MAX_PLAYERS - 1  # MaxAIPlayers of an event
 EVENT_PLAYERS = MAX_PLAYERS  # an event's grid (MaxPlayers)
@@ -188,6 +189,7 @@ class Worlds:
         self.started = {}     # session id -> when its current free roam started
         self.members = {}     # session id -> {xuid: gamertag} (forza_live_server.world_tick)
         self.dropped = []     # campaign requests the last tick dropped
+        self.empty = []       # (sid, campaign event) of campaign rounds that ended at once
         self.rounds = {}      # session id -> (campaign event, when it started, members)
 
     def request(self, sid, event_id=None, campaign=None, by="", by_xuid=0):
@@ -236,8 +238,13 @@ class Worlds:
                 ledger.LEDGER.start_round(sid, st["campaign"], st.get("by_xuid", 0),
                                           st.get("by", ""), members)
             del self.state[sid]
-        elif trusted:
-            ledger.LEDGER.close_round(sid)  # the world's round after a campaign round
+        elif trusted:  # the world's round after a campaign round
+            for r in ledger.LEDGER.close_round(sid):
+                if not r["results"] and time.time() - r["started"] < EMPTY_ROUND:
+                    campaign = self.rounds.get(sid, (None,))[0]
+                    log.info("world %s: campaign round %s (%s) ended at once, nobody raced",
+                             sid.hex(), r["id"], r["code"])
+                    self.empty.append((sid, campaign, r["code"]))
         self.started[sid] = time.monotonic()
         return None
 
@@ -251,17 +258,22 @@ class Worlds:
         return [(sid, st["campaign"]) for sid, st in self.state.items()
                 if st.get("campaign") is not None]
 
-    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False):
+    def result(self, xuid, place, places, finished, session=None, trusted=False, coop=False,
+               winnings=None):
         """A player's race result (User.WriteRaceStatsEx): logged with the campaign round
         of the world it was in, if one started there recently. The ledger takes it only from
         the player's own game (trusted), for a Co-op Festival race in that world's session.
         Returns (sid, event) or None."""
         if coop and trusted and session:
-            ledger.LEDGER.report(xuid, session, place, finished)
+            ledger.LEDGER.report(xuid, session, place, finished, winnings=winnings)
         now = time.monotonic()
         for sid, (campaign, since, members, by) in list(self.rounds.items()):
             if now - since > self.RESULT_WINDOW:
                 del self.rounds[sid]
+                continue
+            # only the round of the world it was reported in: an earlier world's round may
+            # still list the player (it left and raced elsewhere within RESULT_WINDOW)
+            if session is not None and sid != session:
                 continue
             if xuid in members:
                 log.info("co-op: world %s campaign event %d (%s, asked by %s): %s place %d/%d "

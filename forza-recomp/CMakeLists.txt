@@ -118,6 +118,7 @@ endif()
 set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
+    src/hooks/radio_station.cpp
     src/debug/cpu_profile.cpp
     src/debug/codriver_log.cpp
     src/debug/dlc_log.cpp
@@ -154,6 +155,7 @@ set(FORZA_SOURCES
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_resolution.cpp
     src/hooks/scene_tiling.cpp
     src/hooks/world_detail.cpp
     src/hooks/physics_loader_check.cpp
@@ -179,6 +181,7 @@ set(FORZA_SOURCES
     src/kernel/live_friends.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/mod_overlay.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp
@@ -234,6 +237,10 @@ endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 include(cmake/discord.cmake)
+
+# forza-texcompress: texture packs to BC7/BC1 DDS files, run by the launcher's Make HD pack and
+# Compress PNGs (#413, docs/texture_packs.md). Its own executable next to forza.
+add_subdirectory(texcompress)
 
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")

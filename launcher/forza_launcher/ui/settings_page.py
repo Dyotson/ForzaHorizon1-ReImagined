@@ -1,8 +1,8 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, Signal
-from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
+from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
@@ -266,6 +266,7 @@ class SettingsPage(QWidget):
         self.cfg = cfg
         self.window = window
         self.rows = {}
+        self.section_contents = {}
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(350)
@@ -448,6 +449,7 @@ class SettingsPage(QWidget):
 
         hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
+        states["texture_replace"] = (hdr_supported, "Texture packs require Vulkan.")
         for key in self.rows:
             if key.startswith("present_hdr_"):
                 states[key] = (hdr_supported and bool(self.cfg.settings.get("present_hdr")),
@@ -476,6 +478,9 @@ class SettingsPage(QWidget):
         scene_reason = "Native AA renders at output resolution; this setting only affects Game MSAA."
         if scene_aa:
             states["resolution_scale"] = (False, scene_reason)
+        if active or temporal or ultrawide or scene_aa:
+            states["scene_resolution"] = (False, "NVIDIA DLSS, AMD FSR 3, a separate anti-aliasing method and "
+                                                 "Ultrawide gameplay keep the 3D scene at 720p or more.")
         if "resolution_scale" in self.rows:
             self.rows["resolution_scale"].control.setToolTip(
                 scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
@@ -516,6 +521,7 @@ class SettingsPage(QWidget):
                 section = s.section
                 content = section_card(lay, section)
                 content.setSpacing(0)
+                self.section_contents[section] = content
             else:
                 content.addWidget(hline())
             row = SettingRow(s, self.cfg, self.set_value)
@@ -558,6 +564,8 @@ class SettingsPage(QWidget):
         if g == "Profile":
             self._profile_block(lay)
         self._rows(lay, g)
+        if g == "Display":
+            self._texture_pack_block()
         if g == "Controls":
             lay.addWidget(label("Everything on this page is a forza.toml key; the keyboard bindings "
                                 "use the SDK's key names.", "help"))
@@ -567,6 +575,43 @@ class SettingsPage(QWidget):
             self._advanced_block(lay)
         lay.addStretch(1)
         return scroll
+
+    # --- texture packs (#384) -------------------------------------------------------
+    def _texture_pack_block(self):
+        content = self.section_contents.get("Texture packs")
+        if content is None:
+            return
+        content.addWidget(hline())
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 14, 0, 0)
+        folder = game.texture_pack_folder(self.cfg)
+        self.texture_folder_button = QPushButton("Open textures folder")
+        self.texture_folder_button.setToolTip(str(folder))
+        self.texture_folder_button.clicked.connect(self._open_texture_folder)
+        row.addWidget(self.texture_folder_button)
+        self.texture_page_button = QPushButton("Texture packs page…")
+        self.texture_page_button.setToolTip("Add, order and turn packs on or off, and make an HD pack "
+                                            "from your dump.")
+        self.texture_page_button.clicked.connect(self._show_texture_packs)
+        row.addWidget(self.texture_page_button)
+        row.addStretch(1)
+        content.addLayout(row)
+
+    def _show_texture_packs(self):
+        from .window import TEXTURE_PACKS_PAGE_ID
+        show = getattr(self.window, "show_page", None)
+        if show is not None:
+            self.flush()
+            show(TEXTURE_PACKS_PAGE_ID)
+
+    def _open_texture_folder(self):
+        folder = game.texture_pack_folder(self.cfg)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Texture packs", f"Could not create {folder}: {e}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     # --- graphics card (#52) --------------------------------------------------------
     def _gpu_block(self, lay):
