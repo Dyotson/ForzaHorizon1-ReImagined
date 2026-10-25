@@ -173,6 +173,12 @@ The underlying stock screen retains native dispatcher and datasource ownership;
 its presentation and the parent pause presentation are suppressed only after
 the dedicated component donors validate, then restored on teardown.
 
+The launcher's TU4 build automatically prepares tuning aliases together with
+the pause donors in `runtime/update-native`. Enabling Car Tuning and restarting
+selects that overlay; players do not need to prepare aliases by hand. With both
+native options disabled, launch selects the unmodified `runtime/update`.
+
+For a standalone developer reproduction,
 `tools/native_tuning_assets.py ORIGINAL_FH1_TU4 --output NEW_PRIVATE_DIRECTORY`
 prepares 22 independent aliases of the player's pristine FH1 garage triplet.
 It checks the original archive hash and TU4 executable identity, copies opaque

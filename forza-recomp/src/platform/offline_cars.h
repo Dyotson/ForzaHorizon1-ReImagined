@@ -4,6 +4,9 @@
 
 #include "guest_addr.h"
 #include "guest_memory.h"
+#include "pause_car_access.h"
+#include "native_pause_pages.h"
+#include "../kernel/live.h"
 #include <rex/ppc/func.h>
 #include <rex/ppc/context.h>
 #include <cstdint>
@@ -21,11 +24,40 @@ inline constexpr uint32_t kMyCarsScreen = 0xAF;
 inline bool pending = false;
 inline uint32_t pending_context = 0;
 inline uint32_t active_screen = 0;
+inline pause_car_access::ReloadIntent reload_intent;
 
 inline uint32_t ReadWord(uint8_t* base, uint32_t address) {
   const auto* p = GuestPtr(base, address);
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
          uint32_t(p[2]) << 8 | p[3];
+}
+
+inline bool Available(uint8_t* base, uint32_t parent_screen) {
+#if FORZA_TU4
+  if (!base || !parent_screen || ReadWord(base, parent_screen) != 0x82061F94) return false;
+  uint32_t presence = 0, region = 0;
+  const bool known = LiveLocalActivity(presence, region);
+  return pause_car_access::Allowed(known, presence, region, NetworkOn(),
+                                   LiveCurrentSession().has_value());
+#else
+  return false;
+#endif
+}
+
+inline void ClearReload(uint8_t* base) {
+  reload_intent.Clear();
+#if FORZA_TU4
+  if (base) GuestPtr(base, 0x833F6CA4)[0] = 0;
+#endif
+}
+inline void BeforeTransition(uint8_t* base, menu::PauseAction action) {
+  if (action != menu::PauseAction::ChangeCar) ClearReload(base);
+}
+inline void PrepareResume(uint8_t* base, uint32_t screen) {
+#if FORZA_TU4
+  const auto owner = ReadWord(base, screen + 0x10C);
+  GuestPtr(base, 0x833F6CA4)[0] = reload_intent.Resume(owner, Available(base, screen)) ? 1 : 0;
+#endif
 }
 
 // Uses the game's screen manager and caller context, exactly as the native
@@ -38,7 +70,7 @@ inline uint32_t ReadWord(uint8_t* base, uint32_t address) {
 inline bool Open(const PPCContext& context, uint8_t* base,
                  uint32_t parent_screen) {
 #if FORZA_TU4
-  if (!parent_screen) return false;
+  if (!Available(base, parent_screen)) return false;
   const uint32_t parent_context = ReadWord(base, parent_screen + 0x10C);
   if (!parent_context) return false;
   auto ctx = context;

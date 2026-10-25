@@ -270,7 +270,7 @@ void ChildOwnershipAndInputPolicy() {
 }
 
 void DefaultPausePages() {
-  const PauseCapabilities all{true,true,true,true,true,true,true,true,true,true,true,true,false};
+  const PauseCapabilities all{true,true,true,true,true,true,true,true,true,true,true,true,false,true};
   const auto pages = MakePausePages(all);
   Controller menu;
   menu.SetPages(pages);
@@ -390,6 +390,13 @@ void DefaultPausePages() {
   assert(menu.ChangePage(1) && menu.page_id() == "settings");
   assert(menu.ChangePage(-1) && menu.page_id() == "social");
   assert(menu.ChangePage(-1) && menu.page_id() == "home");
+  // Map remains a stock online action; it must never unlock car changes.
+  auto online = all;
+  online.change_car = false;
+  menu.SetPages(MakePausePages(online));
+  assert(menu.FocusTile("world_map"));
+  assert(!menu.FocusTile("my_cars") && !menu.SelectPage("cars"));
+  menu.SetPages(gated_pages);
   menu.FocusTile("settings");
   assert(menu.Activate() == "settings_page");
   assert(FindPauseAction(*menu.Activate()) == PauseAction::SettingsPage);
@@ -397,7 +404,8 @@ void DefaultPausePages() {
   assert(!menu.SelectPage("cars"));
   assert(menu.SelectPage("settings"));
 
-  const PauseCapabilities destinations_locked{true, true, true, false, false};
+  auto destinations_locked = all;
+  destinations_locked.garage = destinations_locked.autoshow = destinations_locked.car_tuning = false;
   menu.SetPages(MakePausePages(destinations_locked));
   assert(menu.SelectPage("cars"));
   assert(menu.focused_tile_id() == "change_car");

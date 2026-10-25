@@ -3,6 +3,7 @@ import json
 import os
 import runpy
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -43,7 +44,8 @@ class NativeMenuInstall(unittest.TestCase):
         for name in (*builder.TU_EXECUTABLES, "media.zip"):
             (self.tu / name).write_bytes(("stock " + name).encode())
         self.original = snapshot(self.tu)
-        self.target = builder.runtime_dir(self.root) / "update"
+        self.stock = builder.runtime_dir(self.root) / "update"
+        self.target = builder.runtime_dir(self.root) / "update-native"
         self.target.mkdir(parents=True)
         (self.target / "previous.txt").write_text("previous complete install")
         self.script = self.root / "project" / "tools" / "native_menu_scene.py"
@@ -72,6 +74,7 @@ class NativeMenuInstall(unittest.TestCase):
                     mock.patch.object(builder, "run", side_effect=self.prepare) as run:
                 self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
                 self.assertEqual("--run-script" in run.call_args.args[0], frozen)
+                self.assertEqual(snapshot(self.stock), self.original)
                 installed = snapshot(self.target)
                 self.assertEqual(installed["media.zip"], b"prepared synthetic resources")
                 self.assertNotIn("previous.txt", installed)
@@ -90,7 +93,8 @@ class NativeMenuInstall(unittest.TestCase):
 
         with mock.patch.object(builder, "run", side_effect=fail):
             self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
-        self.assertEqual(snapshot(self.target), self.original)
+        self.assertEqual(snapshot(self.stock), self.original)
+        self.assertFalse(self.target.exists())
         self.assertEqual(snapshot(self.tu), self.original)
         self.assertTrue(any("Native menu unavailable" in line and "stock FH1" in line
                             for line in self.rep.lines))
@@ -102,7 +106,8 @@ class NativeMenuInstall(unittest.TestCase):
 
         with mock.patch.object(builder, "run", side_effect=incomplete):
             self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
-        self.assertEqual(snapshot(self.target), self.original)
+        self.assertEqual(snapshot(self.stock), self.original)
+        self.assertFalse(self.target.exists())
 
     def test_preparation_uses_resolved_workspace_for_aliased_root(self):
         (self.root / "lexical-parent").mkdir()
@@ -119,14 +124,16 @@ class NativeMenuInstall(unittest.TestCase):
                 (output / "native-menu-provenance.json").write_text(report)
             with self.subTest(report=report), mock.patch.object(builder, "run", side_effect=invalid):
                 self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
-                self.assertEqual(snapshot(self.target), self.original)
+                self.assertEqual(snapshot(self.stock), self.original)
+                self.assertFalse(self.target.exists())
 
     def test_missing_tools_fall_back_without_launching_python(self):
         with mock.patch.object(builder, "native_menu_script", return_value=None), \
                 mock.patch.object(builder, "run") as run:
             self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
             run.assert_not_called()
-        self.assertEqual(snapshot(self.target), self.original)
+        self.assertEqual(snapshot(self.stock), self.original)
+        self.assertFalse(self.target.exists())
 
     def test_base_game_removes_old_update_without_preparation(self):
         with mock.patch.object(builder, "native_menu_script") as script, \
@@ -149,14 +156,14 @@ class NativeMenuInstall(unittest.TestCase):
         previous = snapshot(self.target)
         self.rep.cancel = True
         with self.assertRaises(builder.Cancelled):
-            builder._publish_runtime_update(self.root, self.tu, self.rep)
+            builder._publish_runtime_update(self.root, self.tu, self.rep, "update-native")
         self.assertEqual(snapshot(self.target), previous)
 
     def test_copy_failure_preserves_installed_update(self):
         previous = snapshot(self.target)
         with mock.patch.object(builder.shutil, "copytree", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
-                builder._publish_runtime_update(self.root, self.tu, self.rep)
+                builder._publish_runtime_update(self.root, self.tu, self.rep, "update-native")
         self.assertEqual(snapshot(self.target), previous)
 
     def test_publish_failure_restores_previous_update(self):
@@ -170,7 +177,7 @@ class NativeMenuInstall(unittest.TestCase):
 
         with mock.patch.object(builder.os, "replace", side_effect=fail_new):
             with self.assertRaises(OSError):
-                builder._publish_runtime_update(self.root, self.tu, self.rep)
+                builder._publish_runtime_update(self.root, self.tu, self.rep, "update-native")
         self.assertEqual(snapshot(self.target), previous)
 
     def test_failed_rollback_retains_previous_update_for_recovery(self):
@@ -184,7 +191,7 @@ class NativeMenuInstall(unittest.TestCase):
 
         with mock.patch.object(builder.os, "replace", side_effect=fail_new_and_restore):
             with self.assertRaisesRegex(builder.BuildError, "preserved at"):
-                builder._publish_runtime_update(self.root, self.tu, self.rep)
+                builder._publish_runtime_update(self.root, self.tu, self.rep, "update-native")
         backups = list(self.target.parent.glob(".update-install-*/previous"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(snapshot(backups[0]), previous)
@@ -193,7 +200,7 @@ class NativeMenuInstall(unittest.TestCase):
         previous = snapshot(self.target)
         for source in (self.target, self.target.parent, self.root):
             with self.subTest(source=source), self.assertRaises(builder.BuildError):
-                builder._publish_runtime_update(self.root, source, self.rep)
+                builder._publish_runtime_update(self.root, source, self.rep, "update-native")
         self.assertEqual(snapshot(self.target), previous)
 
     def test_source_cannot_contain_temporary_build_workspace(self):
@@ -201,14 +208,49 @@ class NativeMenuInstall(unittest.TestCase):
             builder.stage_runtime_update(self.opts, self.rep, builder.build_dir(self.root))
         run.assert_not_called()
 
-    def test_output_must_remain_in_data_root(self):
+    def link(self, link, target):
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError as error:
+            if os.name == "nt":
+                result = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(link), str(target)],
+                                        capture_output=True, text=True)
+                if result.returncode == 0:
+                    return
+                error = f"{error}; junction creation: {result.stdout} {result.stderr}"
+            self.skipTest(f"Directory symlinks unavailable: {error}")
+
+    def test_linked_runtime_and_build_are_supported(self):
         with tempfile.TemporaryDirectory() as outside:
             external = Path(outside)
-            (external / "keep").write_text("untouched")
-            with mock.patch.object(builder, "runtime_dir", return_value=external):
-                with self.assertRaises(builder.BuildError):
-                    builder._publish_runtime_update(self.root, self.tu, self.rep)
-            self.assertEqual((external / "keep").read_text(), "untouched")
+            runtime = self.target.parent
+            shutil.move(runtime, external / "runtime")
+            self.link(runtime, external / "runtime")
+            (external / "build").mkdir()
+            self.link(builder.build_dir(self.root), external / "build")
+            with mock.patch.object(builder, "run", side_effect=self.prepare):
+                self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+            self.assertEqual(snapshot(self.stock), self.original)
+            self.assertEqual((self.target / "media.zip").read_bytes(), b"prepared synthetic resources")
+
+    def test_update_child_links_are_rejected_without_touching_target(self):
+        for name in ("update", "update-native"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as outside:
+                external = Path(outside)
+                (external / "keep").write_text("untouched")
+                target = self.target.parent / name
+                if target.exists():
+                    shutil.rmtree(target)
+                self.link(target, external)
+                try:
+                    with self.assertRaises(builder.BuildError):
+                        builder._publish_runtime_update(self.root, self.tu, self.rep, name)
+                    self.assertEqual((external / "keep").read_text(), "untouched")
+                finally:
+                    if target.is_symlink():
+                        target.unlink()
+                    else:
+                        target.rmdir()  # Remove the junction itself, never its contents.
 
 
 class NativeMenuDistribution(unittest.TestCase):

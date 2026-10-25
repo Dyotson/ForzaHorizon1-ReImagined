@@ -511,7 +511,7 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
 
 # --- Advanced --------------------------------------------------------------------------
 add("forza_native_pause", "Native pause menu (experimental)", "Advanced", "bool", False,
-    "Use Home, Cars and Settings pages. Requires FH1 Title Update 4 and menu resources "
+    "Use Home, Cars, Social and Settings pages. Requires FH1 Title Update 4 and menu resources "
     "prepared by the launcher during a build. The original pause menu remains available "
     "if these resources are missing. Applies on the next game launch.", "Menu", restart=True)
 add("forza_car_tuning", "Native car tuning (experimental)", "Advanced", "bool", False,

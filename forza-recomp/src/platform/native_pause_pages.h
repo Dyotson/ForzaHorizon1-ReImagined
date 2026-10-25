@@ -77,6 +77,7 @@ struct PauseCapabilities {
   bool leave_session = false;
   bool session_more = false;
   bool end_free_roam = false;
+  bool change_car = false;
 };
 
 inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool social_help=false,
@@ -84,7 +85,7 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool
   std::vector<Page> pages{
       {"home", "HOME", {
           {"world_map", "WORLD MAP", {64, 166, 560, 282}, "world_map", true, caps.world_map},
-          {"my_cars", "MY CARS", {640, 166, 280, 282}, "change_car", true, caps.world_map},
+          {"my_cars", "MY CARS", {640, 166, 280, 282}, "change_car", true, caps.change_car},
           {"photo_mode", "PHOTO MODE", {936, 166, 280, 133}, "photo_mode", true, caps.photo_mode},
           {"my_profile", "MY PROFILE", {936, 315, 280, 133}, "my_profile", true, caps.my_profile},
           {"festival_progress", "FESTIVAL PROGRESS", {64, 464, 560, 106}, "festival_progress"},
@@ -92,11 +93,11 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool
       }},
       {"cars", "CARS", {
           {"current_car", "CURRENT CAR", {64, 166, 560, 404}, ""},
-          {"change_car", "CHANGE CAR", {640, 166, 280, 194}, "change_car", true, caps.world_map},
+          {"change_car", "CHANGE CAR", {640, 166, 280, 194}, "change_car", true, caps.change_car},
           {"car_tuning", "TUNE CAR", {936, 166, 280, 194}, "car_tuning", true, caps.world_map && caps.car_tuning},
           {"garage", "GO TO GARAGE", {640, 376, 280, 194}, "garage", true, caps.world_map && caps.garage},
           {"autoshow", "GO TO AUTOSHOW", {936, 376, 280, 194}, "autoshow", true, caps.world_map && caps.autoshow},
-      }, true, caps.world_map},
+      }, true, caps.change_car},
       {"social", "SOCIAL", {
           {"friends", "FRIENDS", {64, 166, 560, 282}, "friends"},
           {"free_roam", "HORIZON WORLD", {640, 166, 280, 194}, "free_roam", true, caps.free_roam},

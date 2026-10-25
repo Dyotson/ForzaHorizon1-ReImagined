@@ -18,8 +18,10 @@ int main(){
   assert(!InteractiveSession(0x4,42)); // Stats-only session is not a playable party.
   assert(JoinState(0x23)==0x13);
   assert(JoinState(0x823)==0x113);
-  assert(JoinState(0x2D)==0x113);
-  assert(!JoinState(0x223)&&!JoinState(0x22D));
+  assert(!JoinState(0x2D) && !JoinState(0x2C));
+  assert(!JoinState(0x223) && !JoinState(0x22D));
+  assert(!JoinState(0x423) && !JoinState(0xC23)); // No join in progress.
+  assert(!JoinState(0xA23) && !JoinState(0xE23)); // Both disabled/private.
   const Car car{123,437,4,"Lancer Evolution X GSR"};
   std::vector<uint8_t> extra{8,0,2,0,0,3,1,2,3};Append(extra,car);
   assert(Read(extra)&&*Read(extra)==car);

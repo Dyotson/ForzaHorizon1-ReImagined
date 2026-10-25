@@ -10,6 +10,8 @@
 #include <rex/ppc/func.h>
 #include <rex/system/kernel_state.h>
 #include <initializer_list>
+#include <array>
+#include <optional>
 
 extern "C" REX_FUNC(__imp__sub_827B3D28);
 extern "C" REX_FUNC(__imp__sub_828B6998);
@@ -168,9 +170,13 @@ bool Available(const PPCContext& context, uint8_t* base, Destination destination
   const bool enabled = component && (native.Call(0x826BAAC8, {component}) & 0xFF);
   const auto activity = enabled ? native.Activity(destination) : 0;
   const bool available = activity && GuestPtr(base, activity)[8];
-  if (!available)
-    REXLOG_INFO("Festival travel: {} unavailable (component {:08X}, enabled {}, activity {:08X})",
-                Name(destination), component, enabled, activity);
+  static std::array<std::optional<bool>, 2> previous;
+  auto& last = previous[static_cast<unsigned>(destination)];
+  if (last != available) {
+    REXLOG_INFO("Festival travel: {} {} (component {:08X}, enabled {}, activity {:08X})",
+                Name(destination), available ? "available" : "unavailable", component, enabled, activity);
+    last = available;
+  }
   return available;
 }
 

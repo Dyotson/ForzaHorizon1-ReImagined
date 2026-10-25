@@ -689,13 +689,15 @@ def _scoped_path(parent: Path, child: Path) -> Path:
     return child
 
 
-def _publish_runtime_update(root: Path, source: Path | None, rep: Reporter):
-    """Copy completely before replacing the old update; retain it if copying/publishing fails."""
-    rt = _scoped_path(root, runtime_dir(root))
+def _publish_runtime_update(root: Path, source: Path | None, rep: Reporter, name="update"):
+    """Copy completely before replacing the old update; retain it if publishing fails."""
+    if name not in ("update", "update-native"):
+        raise BuildError("Unsupported runtime update destination.")
+    rt = runtime_dir(root).resolve()  # build/runtime may be linked to another drive.
     rt.mkdir(parents=True, exist_ok=True)
-    target = _scoped_path(rt, rt / "update")
-    if target != rt / "update":
-        raise BuildError("runtime/update must be a regular directory, not a directory link.")
+    target = _scoped_path(rt, rt / name)
+    if target != rt / name:
+        raise BuildError(f"runtime/{name} must be a regular directory, not a directory link.")
     if source is not None:
         source = source.resolve()
         if source.is_relative_to(rt) or rt.is_relative_to(source):
@@ -733,17 +735,20 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
     The preparation tool only sees a new private output directory. Its source TU is also
     the codegen input and is never modified. Return whether native resources were installed.
     """
-    if tu is None:
-        _publish_runtime_update(opts.root, None, rep)
-        return False
-    work = _scoped_path(opts.root, build_dir(opts.root))
-    if work.is_relative_to(tu.resolve()):
+    work = build_dir(opts.root).resolve()
+    if tu is not None and work.is_relative_to(tu.resolve()):
         raise BuildError("The source title update must not contain the build workspace.")
+    # Always install the unmodified update. Restart-only options select the
+    # independent prepared overlay at launch, without requiring a rebuild.
+    _publish_runtime_update(opts.root, tu, rep)
+    if tu is None:
+        _publish_runtime_update(opts.root, None, rep, "update-native")
+        return False
     work.mkdir(parents=True, exist_ok=True)
     script = native_menu_script()
     if script is None:
         rep.log("Native menu unavailable: preparation tools are missing; installing the stock FH1 update.")
-        _publish_runtime_update(opts.root, tu, rep)
+        _publish_runtime_update(opts.root, None, rep, "update-native")
         return False
     with tempfile.TemporaryDirectory(prefix="native-menu-", dir=work) as directory:
         prepared = Path(directory) / "overlay"
@@ -762,9 +767,9 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
                 raise BuildError("Preparation produced an unrecognized resource manifest")
         except (BuildError, OSError, ValueError) as error:
             rep.log(f"Native menu unavailable: {error}; installing the stock FH1 update.")
-            _publish_runtime_update(opts.root, tu, rep)
+            _publish_runtime_update(opts.root, None, rep, "update-native")
             return False
-        _publish_runtime_update(opts.root, prepared, rep)
+        _publish_runtime_update(opts.root, prepared, rep, "update-native")
     rep.log("Installed native menu resources prepared from FH1; no other game files are needed.")
     return True
 

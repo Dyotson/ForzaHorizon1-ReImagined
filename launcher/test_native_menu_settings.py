@@ -1,11 +1,12 @@
 """The experimental native pause menu uses the ordinary launcher setting/TOML path."""
 from pathlib import Path
+from unittest import mock
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from forza_launcher import config, schema  # noqa: E402
+from forza_launcher import config, schema, game  # noqa: E402
 
 
 class NativeMenuSettings(unittest.TestCase):
@@ -44,6 +45,40 @@ class NativeMenuSettings(unittest.TestCase):
         self.cfg.save()
         restored = config.Config(self.path)
         self.assertIs(config.parse_toml(config.render_toml(restored))[setting.key], True)
+
+    def test_restart_toggles_select_stock_or_prepared_overlay_without_rebuild(self):
+        folder = Path(self.temp.name) / "runtime"
+        install = game.GameInstall(folder, folder / game.EXE)
+        for name in ("update", "update-native"):
+            (folder / name).mkdir(parents=True)
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            for pause, tuning in ((False, False), (True, False), (False, True), (True, True), (False, False)):
+                with self.subTest(pause=pause, tuning=tuning):
+                    self.cfg.settings.update(forza_native_pause=pause, forza_car_tuning=tuning)
+                    chosen = game.update_data_root(self.cfg, install, config.render_toml(self.cfg))
+                    self.assertEqual(chosen.name, "update-native" if pause or tuning else "update")
+            (folder / "update-native").rmdir()
+            self.cfg.settings["forza_native_pause"] = True
+            self.assertEqual(game.update_data_root(self.cfg, install, config.render_toml(self.cfg)).name, "update")
+
+    def test_cli_and_environment_disable_override_enabled_toml(self):
+        text = "forza_native_pause = true\n"
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            self.assertTrue(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_env"] = "REX_FORZA_NATIVE_PAUSE=false"
+            self.assertFalse(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_args"] = "--forza_native_pause=true"
+            self.assertTrue(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_args"] = "--forza_native_pause=false"
+            self.assertFalse(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_args"] = "--forza_native_pause false"
+            self.assertTrue(game.native_update_requested(self.cfg, text)) # Bare flag, positional value.
+            self.cfg.advanced["extra_args"] = "--no-forza_native_pause"
+            self.assertFalse(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_args"] = "--no-forza_native_pause=true"
+            self.assertFalse(game.native_update_requested(self.cfg, text))
+            self.cfg.advanced["extra_args"] = "--no-forza_native_pause=false"
+            self.assertTrue(game.native_update_requested(self.cfg, text))
 
     def test_import_is_managed_setting_and_disabling_restores_default(self):
         config.import_toml(self.cfg, "forza_native_pause = true\n")

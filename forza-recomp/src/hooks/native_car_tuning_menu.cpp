@@ -7,6 +7,7 @@
 
 #if FORZA_TU4
 #include "../platform/guest_memory.h"
+#include "../platform/offline_cars.h"
 #include "../platform/native_tuning_components.h"
 #include "../platform/native_tuning_assets.h"
 #include "../platform/car_tuning_library.h"
@@ -97,12 +98,8 @@ class UI {
 };
 
 Access AccessFor(uint8_t* base, uint32_t parent) {
-  uint32_t presence = 0, region = 0;
   const bool paused = base && parent && Read(base, parent) == 0x82061F94;
-  const bool free_roam = forza::LiveLocalActivity(presence, region) && presence == 1 &&
-                         // The title also constructs a host game object during offline play.
-                         // NetworkOn is the runtime virtual-network gate, not the host role.
-                         region == 0 && !forza::NetworkOn();
+  const bool free_roam = offline_cars::Available(base, parent);
   // BeginNative independently matches current owned garage ID, profile car ID,
   // live-car model ID, and actual live-car definition before granting access.
   return {paused, free_roam, true};

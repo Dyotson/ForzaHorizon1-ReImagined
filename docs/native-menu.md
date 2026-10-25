@@ -14,6 +14,42 @@ comes from the standalone implementation merged in #363; this feature adds only
 the parent visibility bridge needed to enter and return from the Cars tile.
 Bucket List is excluded. The feature remains opt-in.
 
+### Review corrections - 2026-10-25
+
+The launcher now publishes two independent overlays: `runtime/update` contains
+the unmodified FH1 TU4 files; `runtime/update-native` contains prepared resources
+and the offline reload flow. Launch selects the prepared overlay only when
+`forza_native_pause` or `forza_car_tuning` is enabled, honoring environment and
+command-line overrides. Turning both off and restarting selects stock resources
+without rebuilding. Failed preparation removes stale prepared output and leaves
+the complete stock overlay available. Build/runtime directory links are allowed;
+links on the individual update publication targets are rejected.
+
+MY CARS and the Cars page require known Colorado free roam, virtual networking
+off and no current Live session. Capabilities, activation and the native garage
+Open helper re-check this gate; a stock World Map action cannot unlock it.
+Tuning uses the same offline gate. Changing cars records host-side intent scoped
+to the pause owner. Only native Resume consumes it and sets the guest reload
+byte. Other transitions, confirmed exits and teardown clear it. Resume also
+re-checks network/session state and rejects a mismatched owner or stale guest flag.
+
+Presence advertising again requires the stock USES_PRESENCE flag. A peer-network
+flag alone does not advertise a joinable session; join-in-progress-disabled and
+presence-join-disabled sessions are excluded. Session membership display remains
+separate. Travel availability logs only when its state changes. The duplicated
+macOS 720p entry is removed. macOS TU4 CI now compiles the feature-enabled host;
+the focused workflow runs live-connection and native-car lifecycle tests and
+tracks their headers, launcher staging, and the LZX decoder.
+
+Focused synthetic checks and TU0/TU4 source compilation pass. The Windows test
+environment cannot create directory symlinks/junctions, so those cases are
+reported as skipped locally and remain enabled in Linux CI. The car adapter
+harness compiles the actual Open helper and selection hooks with mocked native
+calls, covering online state changes, deferred one-shot Resume, Map/Photo/
+Horizon World/leave/settings cleanup, owner mismatch, no-op selection and stale
+flags. These checks do not establish rendering or actual-game lifecycle behavior
+for this revision; the production runtime evidence below predates these fixes.
+
 ### Current-main integration and production build - 2026-10-25
 
 Integrated main `048b553` in signed merge `79c0669`, then main `a8288c0` in signed
@@ -111,9 +147,10 @@ shoulder navigation, full-map entry/return, settled tuning simulation and return
 with Tune Car selected, and resume/reopen. No tuning changes were applied. The
 new hook and affected sources pass seven TU4 syntax checks, 19 focused CTests,
 62 launcher tests and two base/disabled-build stub tests. The private runtime
-uses a symbol-only alias for the original transform body alongside the previously
-documented keyboard bridge and silent audio fixture; a clean production link is
-still unqualified. Screenshots are attached to the draft PR, outside the repo.
+used private transform/keyboard aliases and a silent audio fixture at that early
+checkpoint. The later uninstrumented production build and runtime validation in
+the 2026-10-25 sections above supersede that limitation. Screenshots are attached
+to the PR, outside the repo.
 
 The pause strip has Home, Cars, Social and Settings. The four native
 tab presentations scroll to keep the selected logical tab visible. Social uses a larger
@@ -170,9 +207,10 @@ Car model/name, class and PI come from the bound native car presentation, rather
 than an estimated performance calculation. XSessionJoin/Leave maintain the member
 XUID list independently of the server roster.
 
-Gameplay sessions without USES_PRESENCE also count: FH1 deletes its presence party
-when entering a world or race. These peer sessions are advertised to friends only,
-subject to native join-via-presence permission. Unique member XUIDs supply the
+Gameplay sessions without USES_PRESENCE also count for the membership display:
+FH1 deletes its presence party when entering a world or race. These peer sessions
+are not advertised as joinable without USES_PRESENCE. Presence advertising also
+rejects join-in-progress-disabled sessions. Unique member XUIDs supply the
 displayed population (native slot counters can receive duplicate joins). The loaded
 PlayerBar car supplies metadata, rather than the garage's cached single-player car.
 Metadata is refreshed while pause is open and scoped to the current session ID;
@@ -387,10 +425,12 @@ child restores the previous page and focused tile, even when FH1 recreates the
 pause screen. Resuming and then opening pause again starts on Home.
 
 The launcher prepares resources from its freshly applied FH1 TU4 update during
-installation. Unsupported or modified input leaves the stock update available
-and logs why native menu preparation was unavailable. A complete update is
-published only after preparation and validation succeed. The original update
-and the player's input files remain unchanged.
+installation. It publishes unmodified files to `runtime/update` and prepared
+files to `runtime/update-native`; only an enabled native pause/tuning option
+selects the latter on launch. Unsupported or modified input removes stale
+prepared output, leaves stock available, and logs why preparation was unavailable.
+Each overlay is published only after its copy is complete. Original input files
+remain unchanged.
 
 Before requesting donors, the runtime checks the mounted update archive for all
 36 required, nonempty scene members. Missing, incomplete or unsupported archives
@@ -425,7 +465,7 @@ game scene is committed to the repository.
 3. Bind additional data separately from layout. The map adapter accepts an
    image rectangle; the car card keeps native names, units and performance data.
 4. Validate the renderer's capacity before transferring ownership from stock
-   controls. The first FH1 backend has six tile slots and three tab slots; the
+   controls. The first FH1 backend has six tile slots and four tab slots; the
    controller itself supports arbitrary counts. Expanding this backend requires
    additional donor aliases, matching slot/tab definitions, and memory/render
    validation. An unsupported layout must retain the stock menu.

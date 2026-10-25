@@ -53,11 +53,9 @@ extern "C" REX_FUNC(sub_82789108) {
   if (!standalone) return;
   const uint32_t after = CurrentCar(ctx, base, screen);
   if (before != UINT32_MAX && after != UINT32_MAX && before != after) {
-    // CShowGarageScreen's normal done handler (82A0D05C..82A0D08C)
-    // requests a garage reload when the selected car changed. Preserve that
-    // behavior when the parent is pause rather than the festival state.
-    auto call = ctx;
-    rex::runtime::ResolveIndirectFunction(0x829B9958)(call, base);
+    // Hold this intent outside guest memory. Only native Resume may publish
+    // the reload byte; map/photo/online/quit exits must never inherit it.
+    reload_intent.Changed(ReadWord(base, screen + 0x10C));
     REXLOG_INFO("Pause cars: selected garage car {} -> {}", before, after);
   }
 }

@@ -12,10 +12,10 @@ inline bool InteractiveSession(uint32_t flags, uint64_t id) {
   return id && (flags & (0x2u | 0x20u));
 }
 inline uint32_t JoinState(uint32_t flags) {
-  if (!(flags & (0x2u | 0x20u)) || (flags & 0x200u)) return 0;
-  // Gameplay sessions omit USES_PRESENCE after retiring the party. Expose
-  // these to friends only; preserve native presence privacy when supplied.
-  return 0x13u | ((!(flags & 0x2u) || (flags & 0x800u)) ? 0x100u : 0);
+  // Advertising requires the stock USES_PRESENCE bit. A peer-network session
+  // alone (including Find Game's 0x2D) is not an invitation to join.
+  if (!(flags & 0x2u) || (flags & (0x200u | 0x400u))) return 0;
+  return 0x13u | ((flags & 0x800u) ? 0x100u : 0);
 }
 struct Car {
   uint32_t model = 0;

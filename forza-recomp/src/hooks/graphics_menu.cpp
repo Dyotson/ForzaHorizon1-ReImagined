@@ -370,9 +370,6 @@ void Snapshot() {
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
   };
-#ifdef __APPLE__
-  settings[0].choices.insert(settings[0].choices.begin(), {"720p", "1280 x 720"});
-#endif
   auto &modes = settings[1].choices;
 #ifdef _WIN32
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan" &&

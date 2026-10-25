@@ -178,7 +178,8 @@ menu::PauseCapabilities Capabilities(Native& ui) {
           LiveConnected(), online_entry, online_entry,
           LiveConnected() && session.has_value() && !(session->flags & 0x400),
           LiveConnected() && session.has_value() && LeaveAction(ui.base).has_value(),
-          session&&session->members.size()>5,state.end_free_roam};
+          session&&session->members.size()>5,state.end_free_roam,
+          ActionAvailable(ui.base,2)&&offline_cars::Available(ui.base,state.screen)};
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -820,8 +821,11 @@ void Resume(Native& ui) {
   // the pause's deferred destructor runs. Release our extra presentations now
   // so their textures do not overlap that load in the front-end GPU heap.
   Release(ui, true);
-  if (!fh1_pause_actions::Resume(ui.ctx, ui.base, screen))
+  offline_cars::PrepareResume(ui.base, screen);
+  if (!fh1_pause_actions::Resume(ui.ctx, ui.base, screen)) {
+    offline_cars::ClearReload(ui.base);
     AfterBind(ui.ctx, ui.base, screen);
+  }
 }
 void SocialSession(Native& ui,bool show) {
   state.social_session=show;state.social_help=false;
@@ -873,10 +877,12 @@ void Activate(Native& ui, const std::string& id) {
       (*action == menu::PauseAction::CreateGame && !caps.create_game)) return;
   if(*action==menu::PauseAction::LeaveSession&&!caps.leave_session)return;
   if (*action == menu::PauseAction::TuneCar && !caps.car_tuning) return;
+  if (*action == menu::PauseAction::ChangeCar && !caps.change_car) return;
   if ((*action == menu::PauseAction::WorldMap || *action == menu::PauseAction::ChangeCar ||
        *action == menu::PauseAction::Garage || *action == menu::PauseAction::Autoshow) && !caps.world_map)
     return;
   const auto screen = state.screen;
+  offline_cars::BeforeTransition(ui.base, *action);
   return_bookmark = ReturnBookmark{Read(ui.base, screen + 0x10c),
       state.controller.page_id().value_or("home"),
       state.controller.focused_tile_id().value_or(""),state.social_help,state.social_return,
@@ -1013,11 +1019,13 @@ bool BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
   // The original result handler ends the online activity and invokes done.
   // Release the composition before that transition can load gameplay UI.
   return_bookmark.reset();
+  offline_cars::ClearReload(base);
   Native ui(ctx,base);if(ui.scratch)Release(ui,true);
   return false;
 }
 void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (screen != state.screen) return;
+  offline_cars::ClearReload(base);
   Native ui(ctx, base);
   if (ui.scratch) Release(ui, false);
 }
@@ -1032,6 +1040,7 @@ void AfterBind(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   }
   Native ui(ctx, base);
   if (!ui.scratch || !screen) return;
+  offline_cars::reload_intent.Bind(Read(base, screen + 0x10C));
   if (state.screen) Release(ui, true);
   state.screen = screen;
   state.engine = Read(base, screen + 8);
