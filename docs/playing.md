@@ -33,6 +33,20 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   and quick presses end on the last station picked. The new station then starts about
   0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
   (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
+- **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
+  `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
+  their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20
+  m more a place) they brake and corner toward the best values, and 10-25 m behind they get
+  their skill's best braking and cornering. `ai_rubber_banding = "off"` (launcher: Gameplay,
+  CPU drivers, Rubber banding: Off) races every CPU driver at its own skill wherever you are,
+  in single-player races and free roam. Online races (Horizon World events, Co-op Festival
+  rounds) keep the game's AI on every console. The difficulty (the skill rows), the post-race
+  skill adjustment and two boosts in the game's code (by grid place at the start, and for a
+  Nemesis rival) stay the game's. Measured with `FORZA_AI_TRACE=1` on Recaro Rush (FR02,
+  Medium: skills 66-73, rows 8-9) with the player standing on the grid: Game kept every CPU
+  driver in the torque cut (down to 0.19 of their torque) and the first reached the finish,
+  about 5 km on, after 182 s; Off had no cut, and six of seven finished after 150-159 s.
+  Details in `src/hooks/ai_catchup.cpp`.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Mouse cursor:** the game hides it after three seconds without movement and shows it
