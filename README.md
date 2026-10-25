@@ -27,7 +27,7 @@ The original PowerPC executable is statically recompiled to C++ with the
 
 - **Single player, Title Update 4 and DLC.** The whole festival, Horizon Rally, the 1000 Club and all 23 DLC packages. [`docs/dlc.md`](docs/dlc.md)
 - **Online through Forza Live.** Horizon World, friends, leaderboards and Rivals, on a public server or your own. [`docs/online_vision.md`](docs/online_vision.md)
-- **Co-op campaign.** Friends race the festival's events together, and every career advances. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Co-op campaign.** Friends race festival events together; the launcher applies eligible career results after the game closes. [`docs/coop_campaign.md`](docs/coop_campaign.md)
 - **Mods and HD texture packs.** [`docs/modding.md`](docs/modding.md) · [`docs/texture_packs.md`](docs/texture_packs.md)
 - **A frame rate you set.** 30 fps is the original; the setting goes up to 240 on a PC that can hold it.
 
@@ -64,7 +64,7 @@ Captured from the recompiled game and its launcher.
 ## What you can play
 
 - **Single player, Title Update 4 and DLC.** TU4 is the default when you give the launcher your update; Horizon Rally and the 1000 Club need it. All 23 DLC packages count as installed. [`docs/dlc.md`](docs/dlc.md)
-- **Co-op Festival** (Multiplayer > Find Game). The host types `/event FR05` in chat, everyone races that event, and each player's career advances. A loaner car is lent if you have none that fits. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Co-op Festival** (Multiplayer > Find Game). The host types `/event FR05` in chat and everyone races that event. Start through the launcher: it applies eligible career results after the game closes. A loaner car is lent if you have none that fits. [`docs/coop_campaign.md`](docs/coop_campaign.md)
 - **Mods.** The **Mods** page: **Add mod...**, on or off, load order. [`docs/modding.md`](docs/modding.md)
 - **HD texture packs** (Vulkan). Add a community pack, or **Make HD pack** with a local AI upscaler. Packs are compressed. [`docs/texture_packs.md`](docs/texture_packs.md)
 - **Controls.** Keyboard and mouse, gamepad, or a wheel with force feedback (Logitech G29, G920 and G923 tested). DualSense adaptive triggers are optional. [`docs/playing.md`](docs/playing.md)
