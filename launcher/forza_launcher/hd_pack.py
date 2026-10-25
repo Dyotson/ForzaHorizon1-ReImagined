@@ -252,6 +252,7 @@ def plan(cfg, scale: int) -> Plan:
     dump, pack = dump_dir(cfg), pack_dir(cfg)
     index = read_index(dump)
     left_out = read_left_out(pack)
+    same_scale = existing_scale(cfg) in (None, scale)
     p.dumped = len(index)
     for fp, (game_format, w, h, file_format) in sorted(index.items()):
         if fp in left_out:
@@ -271,7 +272,7 @@ def plan(cfg, scale: int) -> Plan:
             p.skipped["without a .png in the dump"] += 1
             continue
         p.out_pixels += size[0] * size[1]
-        if (pack / f"{fp}.png").is_file():
+        if same_scale and (pack / f"{fp}.png").is_file():
             p.done += 1
         else:
             p.todo.append(Item(fp, w, h, *size))

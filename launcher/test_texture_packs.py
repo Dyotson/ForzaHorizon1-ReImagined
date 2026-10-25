@@ -462,6 +462,31 @@ class TexturePacksPageTests(unittest.TestCase):
         self.page.refresh()
         self.assertIn("integrated", self.page.hd_warning.text())
 
+    def test_completed_hd_pack_can_switch_scales_through_confirmation(self):
+        dump = self.dir / "dump"
+        dump.mkdir()
+        (dump / "index.tsv").write_text(f"{FP[0]}\tk_DXT1\t64x64\t1\tBC1\n")
+        (dump / f"{FP[0]}.png").write_bytes(png())
+        self.cfg.d["specs"]["values"] = {"gpu_name": "Card", "vram_gb": 12, "integrated": False}
+        make_pack(self.dir, "hd-pack", {f"{FP[0]}.png": png()}, "scale = 2\n")
+        for old, new in ((2, 4), (4, 2)):
+            with self.subTest(old=old, new=new):
+                (self.dir / "hd-pack" / "pack.toml").write_text(f"scale = {old}\n")
+                self.page.scale.setCurrentIndex(self.page.scale.findData(old))
+                self.page.refresh()
+                self.assertFalse(self.page.make_button.isEnabled())  # same scale is complete
+                self.page.scale.setCurrentIndex(self.page.scale.findData(new))
+                self.page.refresh()
+                self.assertTrue(self.page.make_button.isEnabled())
+                self.assertEqual(len(self.page.plan.todo), 1)
+                self.assertEqual(self.page.plan.done, 0)
+                with patch.object(self.page, "_confirm", return_value=False) as confirm:
+                    self.page.make_button.click()
+                confirm.assert_called_once()
+                self.assertIn(f"made at {old}x", confirm.call_args.args[1])
+                self.assertIn(f"at {new}x", confirm.call_args.args[1])
+                self.assertTrue((self.dir / "hd-pack" / f"{FP[0]}.png").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
