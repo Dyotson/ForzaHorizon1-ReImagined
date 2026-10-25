@@ -214,8 +214,9 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
 add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
     "Softer, smoother edges on the shadows of trees, cars and scenery: Soft filters each shadow "
-    "over a 1.5 times wider area (no measurable cost), Softer twice as wide with a wider blur "
-    "(about 0.5 ms per frame at 2560x1440). Console is the game's own filter. Also in the "
+    "over a 1.5 times wider area, Softer twice as wide with a wider blur. Measured on an RX 9060 XT: "
+    "no measurable increase for Soft, about 0.5 ms per frame for Softer at 2560x1440; other GPUs may differ. "
+    "Console is the game's own filter. Also in the "
     "in-game Graphics screen, where it applies without a restart.", "World detail",
     choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
 # Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
