@@ -707,6 +707,48 @@ it never applies there. The in-game Graphics menu saves every value it shows, so
 the last start (kept in `launcher.json` under `power`) are not taken from it as the player's choice. The shader
 prebuild plans with the player's own settings. Tests: `launcher/test_power.py` (fake sysfs).
 
+### Game language (#434)
+
+Profile > Identity > **Game language** (`game_language`, a launcher setting never written to
+`forza.toml`) sets the game's Language ID (`user_language`) and Country ID (`user_country`)
+together. Automatic (the default) leaves both IDs as they are, so a saved Language ID or
+Country ID keeps working; a choice overrides them when `forza.toml` is written
+(`forza_launcher/languages.py`).
+
+How the game picks its text: the Xbox dashboard has twelve languages, so the game combines two
+settings. `XGetLanguage` (XC_LANGUAGE, 1 to 12) and `XGetLocale` (XC_COUNTRY mapped to one of 38
+locales) index a table in the game (tag such as `hu-hu`); the tags are reduced to a short one and
+the short one picks the string table `game:\media\stringtables\<folder>.zip`. Only English
+(Language ID 1) lets the country choose among Hungarian, Czech, Dutch, Danish, Finnish,
+Norwegian and Swedish; every other Language ID gives its one language, whatever the country (the
+country then only tells Spanish Spain from Latin America and the Chinese regions apart). Chinese
+(Language ID 8 or 10) opens `CHT` for every country, mainland China included; Slovak and Greek
+countries with Language ID 1 are not tested.
+
+| Game language | Table | Language ID | Country ID |
+|---|---|---|---|
+| English | `EN` | 1 | 103 (United States; any country without a language of its own) |
+| English (United Kingdom) | `GB` | 1 | 35 (United Kingdom) |
+| Japanese, German, French, Italian, Korean, Polish, Russian | `JP` `DE` `FR` `IT` `KO` `PL` `RU` | 2, 3, 4, 6, 7, 11, 12 | yours |
+| Portuguese (Brazil) | `BR` | 9 | yours |
+| Spanish (Spain) | `ES` | 5 | 31 (Spain; the Americas give Latin American) |
+| Spanish (Latin America) | `MX` | 5 | 71 (Mexico) |
+| Chinese (Traditional) | `CHT` | 8 | 101 (Taiwan) |
+| Czech | `CZ` | 1 | 23 |
+| Hungarian | `HU` | 1 | 42 |
+| Dutch | `NL` | 1 | 74 |
+| Danish | `DA` | 1 | 25 |
+| Finnish | `FI` | 1 | 32 |
+| Norwegian | `NB` | 1 | 75 |
+| Swedish | `SV` | 1 | 90 |
+
+The disc also holds `DEV` and `LOC` (development tables) and no table for Chinese (Simplified),
+Slovak or Greek. The name list in the game also has the Russian voice sets `ERU`, `DRU`, `BRU`,
+`ARU`, which are not string tables. The game's own two IDs, by hand: `user_language = 1` and
+`user_country = 42` is Hungarian. Tested in the game: every row above was run and the folder the game opens
+checked in its log; Hungarian, Czech and Dutch were also checked on screen (the text of the
+missing-content message after the intro is in that language).
+
 ### GPU choice (#52)
 
 Many glitches depend on the graphics card, so Settings > Display starts with **Graphics card**: NVIDIA, AMD, Intel,
