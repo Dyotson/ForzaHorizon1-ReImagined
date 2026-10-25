@@ -672,10 +672,11 @@ class SettingsPage(QWidget):
         p = gpu.preset(vendor)
         apply_ = force_apply
         if not force_apply and p is not None:
+            names = [schema.BY_KEY[k].label for k in gpu.settings_for(vendor)
+                     if k in schema.BY_KEY and schema.BY_KEY[k].applies()]
             apply_ = QMessageBox.question(
                 self, "Graphics card", f"Use the recommended settings for {p.label} now?\n\n{p.summary}\n\n"
-                "This changes the backend, render scale, upscaling filter and frame rate; every other "
-                "setting stays as it is.") == QMessageBox.Yes
+                f"This changes {', '.join(names)}; every other setting stays as it is.") == QMessageBox.Yes
         self.cfg.set_gpu_vendor(vendor, apply_)
         if self.cfg.settings.get("fh1_upscaler", "off") != "off":
             self.set_value("fh1_upscaler", self.cfg.settings["fh1_upscaler"])
@@ -728,7 +729,10 @@ class SettingsPage(QWidget):
         root.addWidget(self.banner)
 
     def _refresh_banner(self):
-        self.banner.setVisible(self.cfg.specs_banner_due())
+        due = self.cfg.specs_banner_due()
+        if due:
+            self.banner_text.setText(self.cfg.specs_banner_text())
+        self.banner.setVisible(due)
 
     def _use_recommended(self):
         changed = self.cfg.use_recommended()
