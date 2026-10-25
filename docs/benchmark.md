@@ -33,8 +33,9 @@ covers extended-path reuse and UNC path conversion without accessing a network s
 This validates the setup failure path; a complete benchmark run still needs a game retest.
 
 The #405 screenshot shows the same ordinary-path hard-link failure, and its attached
-log records TU4 and 21 DLC packages despite the report form saying none. That capture
-predates #399; it does not establish a separate no-DLC failure.
+log records TU4 and 21 DLC packages despite the report form saying none. The log has
+no timezone or game commit, so its timestamp cannot establish whether the installed
+binary contained #399. It does not establish a separate no-DLC failure.
 
 Closing setup with B and reopening it needs a separate confirmation press. Input is
 only polled while the dialog is visible, so remembering the previous screen alone
