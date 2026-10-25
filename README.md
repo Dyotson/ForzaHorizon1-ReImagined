@@ -57,7 +57,7 @@ Captured from the recompiled game and its launcher.
 | | |
 |---|---|
 | ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
-| ![Co-op Festival lobby](site/images/coop-lobby.webp)<br>Co-op Festival lobby, two players | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
+| ![Co-op Festival race](site/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
 | ![Original and HD 2x textures](site/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](site/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
 | ![Mods page](site/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](site/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
 
