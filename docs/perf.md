@@ -1250,8 +1250,8 @@ itself shows 144, the display's). Mean [min-max] over the runs:
   not move.
 - Separate whole runs (on, off, alternating) agreed where no other job ran (race 4.43 against 5.10-5.13 ms a
   frame, free roam 3.26-3.29 against 3.55), but most of them shared the machine and are left out.
-- On a Deck (2-2.5 times this time per instruction, above) that is about 0.8-0.9 ms of a race frame on the thread
-  the frame waits for.
+- Extrapolating to a Deck (2-2.5 times this time per instruction, above) suggests about 0.8-0.9 ms of a race
+  frame on the thread the frame waits for. This is an estimate, not a measurement on a Deck.
 
 **Change 2: SDK patch 0341, the memory watch walk.** A write to guest memory (a resolve on the command
 processor, a CPU write fault on a game thread) tests every watch node of its 4 MB buckets: about 40 nodes a
