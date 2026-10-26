@@ -248,16 +248,20 @@ The pinned r2 runtime does not include it: a maintainer must publish a new SDK r
 this branch can pin the implementation. An older runtime logs a warning once if disconnect
 detection is requested and still supports focus auto-pause.
 
-Validation (Windows x64, 2026-10-26): `tools/tests/auto-pause` runs the event policy,
-the SDK's real device assignment with a fixture driver, and the production pause
-poller against mapped guest-world flags. It checks an active pad lost while the keyboard
-remains connected, idle spare removal, reconnect, manual START, already paused, loading,
-rewind and an inaccessible cached world. XR regression cases suppress focus events without
-deferring them until the session ends, while retaining disconnect events. These inject events:
-live Alt-Tab, physical USB/Bluetooth unplug, wheel, multiplayer and headset checks remain pending.
-Changed poller, telemetry and input hooks compile for disc and TU4. The SDK fixture used the
-current input-system translation unit in a private relink with older compatible runtime objects;
-it does not establish a full current SDK build or runtime qualification.
+Validation (Windows x64, 2026-10-26): `tools/tests/auto-pause` runs the event policy and
+production pause poller against mapped guest-world flags, including manual START, paused,
+loading, rewind and inaccessible-world guards. A separate process uses real symbol discovery
+against pinned r2: the missing export must retain focus auto-pause without manufacturing a
+disconnect event. XR cases consume focus events, including a pending pulse, without deferring
+them until the session ends; supported-bridge cases retain disconnect events in VR.
+
+The actual SDK device-assignment fixture now lives in ReIGlue PR #3, where it is unconditional
+in the SDK build workflow. It covers active pad loss with keyboard still connected, idle spare
+removal, reconnect and synthetic removal. The local SDK fixture used the current input-system
+translation unit in a private relink with older compatible runtime objects; it does not
+establish a full current SDK build or runtime qualification. Changed client poller, telemetry
+and input hooks compile for disc and TU4; changed XR code compiles against verified r2 headers.
+Live Alt-Tab, physical USB/Bluetooth unplug, wheel, multiplayer and headset checks remain pending.
 
 ## Keyboard and mouse
 

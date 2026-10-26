@@ -4,6 +4,9 @@
 #include "../src/platform/auto_pause.cpp"
 #include <cassert>
 #include <cstdio>
+#ifdef FORZA_AUTO_PAUSE_LEGACY_SDK
+#include "../src/platform/sdk_import.cpp"
+#endif
 
 namespace {
 uint32_t sequence = 0;
@@ -13,9 +16,11 @@ uint32_t Sequence(uint32_t) { return sequence; }
 namespace forza::xr {
 bool SessionRunning() { return xr_running; }
 }
+#ifndef FORZA_AUTO_PAUSE_LEGACY_SDK
 namespace forza {
 void* SdkSymbol(const char*) { return reinterpret_cast<void*>(Sequence); }
 }
+#endif
 int main() {
   using namespace forza;
   auto* base = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x110000,
@@ -30,6 +35,30 @@ int main() {
   REXCVAR_SET(forza_pause_on_focus_loss, true);
   REXCVAR_SET(forza_pause_on_controller_disconnect, true);
   assert(!auto_pause::Poll(base, 0, 15));
+#ifdef FORZA_AUTO_PAUSE_LEGACY_SDK
+  // This executable runs in a fresh process against the actual pinned r2 DLL. Its missing
+  // optional export must leave focus working and must never manufacture a disconnect event.
+  assert(!SdkSymbol("ForzaInputDisconnectSequence"));
+  ++sequence;
+  assert(!auto_pause::Poll(base, 0, 15));
+  ++auto_pause::focus_losses;
+  assert(auto_pause::Poll(base, 0, 15));
+  auto_pause::Cancel();
+  REXCVAR_SET(forza_pause_on_focus_loss, false);
+  ++auto_pause::focus_losses;
+  ++sequence;
+  assert(!auto_pause::Poll(base, 0, 15));
+  REXCVAR_SET(forza_pause_on_focus_loss, true);
+  xr_running = true;
+  ++auto_pause::focus_losses;
+  assert(!auto_pause::Poll(base, 0, 15));
+  xr_running = false;
+  assert(!auto_pause::Poll(base, 0, 15));
+  auto_pause::World(0);
+  VirtualFree(base, 0, MEM_RELEASE);
+  std::fprintf(stderr, "legacy SDK auto-pause: actual missing export, focus, disconnect fallback and XR guards pass\n");
+  return 0;
+#endif
   xr_running = true;
   ++auto_pause::focus_losses;
   assert(!auto_pause::Poll(base, 0, 15));  // VR consumes focus loss without pausing
