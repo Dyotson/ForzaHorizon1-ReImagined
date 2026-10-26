@@ -112,8 +112,9 @@ manifest and 121-patch manifest matched.
 **Revised in-game validation is pending a reserved game slot.** The retained
 checkpoint dde9469 had actual Stock/40/90 parked cockpit, native Save/Back/restart,
 rewind/replay smoke and identity-head-pose captures on an RTX 5060 Ti. Those
-captures do not validate this new accessor, dynamic speed or blend path. The PR
-must remain draft until the revised path and five-row native layout are tested.
+captures do not validate this new accessor, dynamic speed or blend path. The revised path and five-row native layout still need runtime qualification.
+The PR is available for source review; that does not establish runtime or
+headset acceptance.
 All prior runs used offline copied profiles, hard limits and unchanged source
 profile hashes. Captures, game data, caches and build products remain outside Git.
 
