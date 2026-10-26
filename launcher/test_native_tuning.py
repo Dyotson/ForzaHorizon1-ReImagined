@@ -283,6 +283,9 @@ class NativeTuningDistribution(unittest.TestCase):
         self.project = self.root / "project"
         (self.project / "forza-recomp").mkdir(parents=True)
         (self.project / "forza-recomp" / "CMakeLists.txt").write_text("synthetic sources")
+        # Release staging requires the initialized local-server payload.
+        (self.project / "server").mkdir()
+        (self.project / "server" / "forza_live_server.py").write_text("# synthetic server\n")
         for name in builder.NATIVE_TUNING_FILES:
             path = self.project / "tools" / name
             path.parent.mkdir(parents=True, exist_ok=True)
