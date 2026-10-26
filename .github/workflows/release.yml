@@ -219,7 +219,7 @@ jobs:
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics" \
             tools/test_frame_cost.cpp -o "$RUNNER_TEMP/frame-cost-test"
           "$RUNNER_TEMP/frame-cost-test"
-          # #333: VR true stereo's decisions (patch 0396).
+          # #333: VR true stereo's decisions (ReIGlue 0396).
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics" \
             tools/test_vr_stereo.cpp -o "$RUNNER_TEMP/vr-stereo-test"
           "$RUNNER_TEMP/vr-stereo-test"

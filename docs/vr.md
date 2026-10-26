@@ -232,9 +232,9 @@ Built on top of the study (plan step (a)1 and the head-tracking part of (a)2). C
 `src/platform/xr.{h,cpp}` (loader, instance, session, the OpenXR thread),
 `src/platform/xr_math.h` (poses and fields of view), `src/platform/xr_frame_tags.h` (frame
 pairing), the camera hooks in `src/hooks/vr_head_pose.cpp` (and the viewport query's in
-`src/hooks/ultrawide_projection.cpp`), SDK patches 0390, 0391 and 0392
-([sdk_patches.md](sdk_patches.md)), the launcher's `forza_launcher/vr.py`. Version 2 (below,
-[after the first headset test](#version-2-after-the-first-headset-test)) changed the cockpit's
+`src/hooks/ultrawide_projection.cpp`), ReIGlue commits 0390, 0391 and 0392
+([the SDK side](#the-sdk-side-reiglue-0390-0397)), the launcher's `forza_launcher/vr.py`. Version 2
+(below, [after the first headset test](#version-2-after-the-first-headset-test)) changed the cockpit's
 field of view, the camera physics, pad focus, the screen size and the latency estimate. The OpenXR headers
 are vendored (`thirdparty/openxr`, OpenXR-SDK 1.1.62, Apache-2.0 or MIT); the loader is opened at
 run time, never linked.
@@ -251,9 +251,9 @@ run time, never linked.
 | `vr_head_back_limit_cm`, `vr_head_side_limit_cm`, `vr_head_up_limit_cm` | 15, 18, 6 | Cockpit: the eye's room round where it was recentred (version 4: an ellipse on the floor and a dome over it; 100: no limit) |
 | `vr_exposure_speed` | 0.02 | Cockpit: how fast the exposure adapts while the head pose drives the camera, a factor of the game's rate |
 | `vr_cull_scale` | true | Cockpit: the object size cull as for the in-car camera's own field of view |
-| `vr_sharpen` | 0.5 | Cockpit: sharpening of the headset's picture, 0 to 1 (SDK patch 0395) |
-| `vr_stereo` | off | Cockpit: `depth` makes each eye from the picture and its depth (version 3; SDK patch 0394) |
-| `vr_hud` | true | Cockpit: the HUD on its own panel in front of the seat (SDK patch 0393) |
+| `vr_sharpen` | 0.5 | Cockpit: sharpening of the headset's picture, 0 to 1 (ReIGlue 0395) |
+| `vr_stereo` | off | Cockpit: `depth` makes each eye from the picture and its depth (version 3; ReIGlue 0394) |
+| `vr_hud` | true | Cockpit: the HUD on its own panel in front of the seat (ReIGlue 0393) |
 | `vr_screen_width`, `vr_screen_distance` | 2.2, 2.5 | The virtual screen in metres (47 degrees wide; version 1: 3.2 m, 65 degrees) |
 | `vr_runtime_timeout` | 20 | Seconds to wait for the runtime at start |
 | `vr_refresh_rate` | 0 | The headset's refresh rate: 0 matches it to the game's frame rate (72 fps: 72 Hz; [version 6](#72-hz)), a number asks for that rate, -1 leaves it to the runtime |
@@ -290,11 +290,11 @@ run time, never linked.
   (`libopenxr_loader.so.1` / `openxr_loader.dll`), no runtime installed or active, the runtime
   did not start (its server not running), no answer within `vr_runtime_timeout` (WiVRn's
   `xrCreateInstance` waits until a headset connects, so the probe runs on its own thread), no
-  headset, a runtime without `XR_KHR_vulkan_enable2`, an SDK without patches 0390/0391, a
+  headset, a runtime without `XR_KHR_vulkan_enable2`, an SDK without ReIGlue 0390/0391, a
   renderer other than Vulkan, a Vulkan device not created through the runtime, a failed session,
   a lost session (the game goes on flat from there).
 - **Pads without focus:** while the session runs, pads and wheels keep working when the desktop
-  window has no focus (patch 0392); the keyboard still needs the focus.
+  window has no focus (ReIGlue 0392); the keyboard still needs the focus.
 - Not done: stereo, the HUD quad, motion blur and depth of field (still on: no clean switch
   found yet, below), the guest vblank locked to the headset (patch C), D3D12.
 
@@ -304,11 +304,11 @@ run time, never linked.
    the loader and, on a thread it waits for up to `vr_runtime_timeout`, creates the instance
    (`XR_KHR_vulkan_enable2`, `XR_KHR_convert_timespec_time` or the Win32 counterpart), finds the
    head-mounted display and reads its Vulkan requirements. Then it registers the Vulkan creation
-   hooks (patch 0390): the runtime creates the `VkInstance` (`xrCreateVulkanInstanceKHR`), picks
+   hooks (ReIGlue 0390): the runtime creates the `VkInstance` (`xrCreateVulkanInstanceKHR`), picks
    the physical device (`xrGetVulkanGraphicsDevice2KHR`) and creates the `VkDevice`
    (`xrCreateVulkanDeviceKHR`), each with the extensions it needs on top of the SDK's.
 2. `OnCreateDialogs` (the provider exists): `xr::Start` checks that the device is the one the
-   runtime made, turns on the guest output export (patch 0391) and starts the "Forza OpenXR"
+   runtime made, turns on the guest output export (ReIGlue 0391) and starts the "Forza OpenXR"
    thread: session on graphics queue 0 of the game's device, `LOCAL` and `VIEW` spaces, an 8-bit
    sRGB swapchain the size of the guest output, then the frame loop: `xrWaitFrame`,
    `xrBeginFrame`, the newest guest output if there is a new one, `xrEndFrame`. The device's queue
@@ -318,14 +318,14 @@ run time, never linked.
    copied bit for bit into the sRGB swapchain image (a blit into sRGB would encode the gamma a
    second time). Barriers as the presenter's own guest output capture: the guest output leaves and
    returns to `SHADER_READ_ONLY` in the fragment shader stage, so a later refresh of the same
-   image waits for the copy (same queue). The frame is held (patch 0391) until the copy's fence.
+   image waits for the copy (same queue). The frame is held (ReIGlue 0391) until the copy's fence.
 4. Frame pairing (`xr_frame_tags.h`): the view hook (main loop thread) asks for the head pose
    predicted for now plus the measured latency (camera built to picture shown, an average of 5 to
    100 ms), poses the matrix and remembers its 64 bytes with a new tag. On the render thread the
    hook on `CPresentationCamera::SetViewTransform` (`sub_823EB7A0`, TU4 `sub_8241B860`; the matrix
    lands at camera + 16) finds the tag by the bytes; VdSwap writes the frame's tag into the swap
    packet (one more dword in `PM4_XE_SWAP`, which a stock command processor skips); the command
-   processor hands it to the presenter with the guest output (patch 0391); the OpenXR thread looks
+   processor hands it to the presenter with the guest output (ReIGlue 0391); the OpenXR thread looks
    the pose and field of view up. The render thread also swaps frames without a new view (it draws
    the camera's last view again), so the tag stays with the render-side camera until it gets an
    unposed matrix (another camera). A tag more than 300 ms old at display time means the game
@@ -405,7 +405,7 @@ They do not qualify a physical headset or comfort.
   pitch and roll, recentring, seat height, the covering field of view, the latency estimate),
   `tests/xr_frame_tags_test.cpp` (tags, matrix matching, the swap tagger, layer choice, the swap
   packet), `tests/vr_head_pose_math_test.cpp`; all three run in CI.
-- **Windows:** the game's and the patched SDK's changed sources compile for Windows (syntax
+- **Windows:** the game's and ReIGlue's changed sources compile for Windows (syntax
   check with the cross toolchain); not run.
 
 Only the headset can tell: WiVRn creating the Vulkan instance and device for the game's device
@@ -413,6 +413,27 @@ and its session starting; the screen's size and sharpness; the colours; smoothne
 headset's rate with the game at 30 fps; whether holding the queue lock in `xrEndFrame` stalls the
 game (`xrEndFrame max` in the 10 s line); how far the head prediction is off and whether the
 5 degree margin hides the picture's edge when the head turns; the HUD's place; comfort.
+
+### The SDK side (ReIGlue 0390-0397)
+
+The SDK changes VR needs are commits 0390-0397 of
+[ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's fork of the ReXGlue SDK, from
+tag `fh1-0.10.0.24-r2` on (`REIGLUE_TAG` in `tools/build_rexglue_sdk.sh`). Each commit's message
+says what it changes and why (the same text as their rows in [sdk_patches.md](sdk_patches.md));
+ReIGlue's `docs/reiglue/commits.md` lists them as Forza-specific, area VR. The game looks them up at
+run time (C exports of the runtime and the GPU plugin) and plays flat, or without the missing part,
+when they are not there.
+
+| # | What |
+| --- | --- |
+| 0390 | Vulkan created through the OpenXR runtime: instance, physical device and device hooks |
+| 0391 | The guest output for a second consumer, with a frame tag from the swap packet |
+| 0392 | Pads and wheels without window focus |
+| 0393 | The scene before the HUD and the HUD alone, with each frame |
+| 0394 | Both eyes from the scene and its depth (depth stereo) |
+| 0395 | The headset's picture sharpened (contrast-adaptive) |
+| 0396 | True stereo: the scene's commands executed once per eye |
+| 0397 | When each guest output frame was published |
 
 ### Packaging
 
@@ -443,7 +464,7 @@ game (`xrEndFrame max` in the 10 s line); how far the head prediction is off and
 
 ## Testing on a Quest 3 with WiVRn
 
-1. **Build** this branch: the SDK overlay with patches 0390, 0391 and 0392
+1. **Build** this branch: the SDK overlay from ReIGlue `fh1-0.10.0.24-r2`, which has 0390-0397
    (`tools/build_rexglue_sdk.sh`, which also builds the OpenXR loader) and the game as usual, or
    let the launcher build it. `libopenxr_loader.so.1` is also installed on this PC
    (`/usr/lib64`), so the loader is there either way.
@@ -495,7 +516,7 @@ first time but was not playable. What was reported, what caused it and what chan
 | --- | --- | --- |
 | h. Camera shake at high speed, very nauseating | The in-car camera's `CameraPhysics.xml` layers (`DriverCam`, 51 layers): Simplex and Perlin noise on the camera's yaw, pitch, roll and position driven by `SpeedMPH`, collision jolts, surface bumps | Camera physics off for the head-posed camera (below) |
 | i. The camera "changes angles a lot" | The same layers: G-force lean and tilt (`Gs_Lateral` turns the view 0.35 degrees per g toward the corner and rolls it 1.3, `Gs_Longitudinal` pitches it and moves the eye), slip, a constant 1.1 degree pitch, and 8 degrees more field of view at speed. All of it on top of the head pose | Same |
-| a. The pad stops working once in the headset | The SDK gives a neutral pad while the window lacks focus (`ReXApp`'s input active callback); the desktop window loses it when the player looks at the headset (`Window lost focus` in the log) | SDK patch 0392: pads and wheels work without focus while the session runs; the keyboard stays focus-bound |
+| a. The pad stops working once in the headset | The SDK gives a neutral pad while the window lacks focus (`ReXApp`'s input active callback); the desktop window loses it when the player looks at the headset (`Window lost focus` in the log) | ReIGlue 0392: pads and wheels work without focus while the session runs; the keyboard stays focus-bound |
 | b. Very blurry | The cockpit view was 120 degrees tall, so 144 wide at 16:9, for eyes that see 108 x 99 together: 69 % of the picture's pixels were outside both eyes, 7.3 pixels per degree in the middle | The view covers exactly the eyes plus the 5 degree margin: 123 x 109 degrees around an axis 5.5 degrees down, with its own projection aspect: 12.0 x 9.0 pixels per degree in the middle at render scale 2, 62 % of the pixels inside the eyes (the rest is the margin) |
 | b. Cockpit latency 70-95 ms against 40 on the screen | The 40 was never measured: the estimate starts at 40 ms and only cockpit frames (tagged with the time their camera was built) measure it. The 70-95 ms is the game's own pipeline plus WiVRn's; ours was the prediction, capped at 50 ms, 30 ms short | Predicted as measured up to 100 ms; the latency is split into the game's and the runtime's part in the 10 s line and the trace; `latency -` without cockpit frames |
 | d. Looking back about 180 degrees "changes the position" | Turning round moves the head back (the eyes pivot round the neck, the shoulders turn). The driver's seat is about 20-25 cm behind the game's eye point (the test save's Koenigsegg): from about 15 cm back the near plane cuts through the seat and the view lands inside it, which looks like another camera. The camera itself stays `CCamDriver`, posed (trace) | The eye stops 8 cm behind where it was recentred (`vr_head_back_limit_cm`) |
@@ -562,13 +583,13 @@ the eye views match the game's picture at every pose of the standard sequence (s
 
 ### Pads without window focus (a)
 
-Patch 0392 adds `rex::input::SetPadsWithoutFocus` (C export `rexinput_SetPadsWithoutFocus`).
+ReIGlue 0392 adds `rex::input::SetPadsWithoutFocus` (C export `rexinput_SetPadsWithoutFocus`).
 The OpenXR thread turns it on when the session begins (`Input: pads and wheels work while the
 window has no focus`) and off when it stops or is destroyed (`... need the window's focus
 again`). It also sets SDL's background joystick events hint (SDL ignores presses while no window
 has keyboard focus; the wheel driver sets the same hint when `wheel_mode` is on, the default).
 The keyboard and mouse driver checks the focus itself, so typing in another window does not
-drive the car. Without the patch the game logs that the pad needs the focus (click the game
+drive the car. Without it the game logs that the pad needs the focus (click the game
 window before putting the headset on). Not checked with a real pad in a headset session: the
 emulator runs drive through the test FIFO, which does not go through the SDK's drivers.
 
@@ -667,9 +688,9 @@ what changed:
 | Report | Cause | Change |
 | --- | --- | --- |
 | 1. Turning the head about 90 degrees to see a mirror or a window "changes to another camera", very nauseating | Not a camera switch: the trace has `CCamDriver`, posed, look 0 throughout. The eyes turn round the neck: at 60-80 degrees the trace has the head 6-12 cm aside and 7-10 cm back. In the test car the driver's eye is a few centimetres under the roof, which slopes down to the sides and to the back: 7 cm aside and 8 cm back toward the driver's door (or 10 cm up) the eye leaves the cabin through the roof, the roof and the pillar vanish and the view looks like an outside camera's | The eye is held in half an ellipsoid round where it was recentred (10 cm aside, 8 back, 6 up; forward and down free), eased toward its surface; the head-tracked view's near plane is 2 cm instead of the camera's 10 |
-| 2. The pause menu, speed trap notices and skill points cannot be read in the cockpit | Menus and the HUD were drawn into the 123 x 109 degree cockpit picture: the pause menu runs off the eyes, the HUD sits at their outer edges | Paused or in a menu, the in-car view is not head-posed and the picture is on the screen; while driving the HUD is on its own panel in front of the seat (SDK patch 0393) |
+| 2. The pause menu, speed trap notices and skill points cannot be read in the cockpit | Menus and the HUD were drawn into the 123 x 109 degree cockpit picture: the pause menu runs off the eyes, the HUD sits at their outer edges | Paused or in a menu, the in-car view is not head-posed and the picture is on the screen; while driving the HUD is on its own panel in front of the seat (ReIGlue 0393) |
 | 3. Hard to see what is ahead; sharper on a monitor | The 123 x 109 degree view gets 12.0 x 9.0 pixels per degree at render scale 2 (a monitor's 62 degree in-car view about twice that) | The launcher's VR picture preset draws more rows than columns (below); measured on the RX 9060 XT, only 2 x 2 holds 72 fps |
-| 4. No depth | Both eyes got the same picture | Each eye made from the picture and its depth (SDK patch 0394, `vr_stereo`; off by default since version 4) |
+| 4. No depth | Both eyes got the same picture | Each eye made from the picture and its depth (ReIGlue 0394, `vr_stereo`; off by default since version 4) |
 
 ### The eye stays in the cabin (1)
 
@@ -711,7 +732,7 @@ Back in the game the cockpit returns within the gate's three frames. Log: `VR: t
 menu: the picture is on the screen` / `VR: the game runs again: the in-car view follows the head`; the
 trace says `shows screen (paused or menu)`.
 
-**The HUD's own panel (SDK patch 0393).** The scene/HUD split per frame, as planned (patch B): the HDR
+**The HUD's own panel (ReIGlue 0393).** The scene/HUD split per frame, as planned (patch B): the HDR
 path already copies the front buffer just before its first HUD draw (`CaptureHdrScene`, the 1280-pitch
 `2_10_10_10` composite before the first `2_10_10_10_AS_10_10_10_10` draw); with the VR flag it does so
 with HDR off too. In the swap refresher, after the guest output's own gamma pass, the same gamma pipeline
@@ -750,7 +771,7 @@ MSAA 2 x 3 is no cheaper (18.1 ms): the cost is the pixels' shading.
 
 ### Depth stereo (4)
 
-SDK patch 0394 ([sdk_patches.md](sdk_patches.md)): the main view's depth pre-pass, decoded to view
+ReIGlue 0394 ([the SDK side](#the-sdk-side-reiglue-0390-0397)): the main view's depth pre-pass, decoded to view
 distance at the frame's first sun shadow pass, moves each scene pixel by its disparity for each eye
 (half the headset's eye distance times the focal length over the distance, capped at
 `vr_stereo_max_shift`, 3 % of the width), the nearest winning; the holes beside near objects are
@@ -768,7 +789,7 @@ gone, smoother; "a lot more to go":
 | --- | --- | --- |
 | 1. Looking around the car, the camera moves and the lighting of the whole car moves | The lighting: the game's eye adaptation measures the whole picture, so with the cockpit's wide view a turn toward a bright window or the dark footwell re-exposes the cabin, at 72 fps within a fraction of a second (measured: a 45 degree turn makes the cabin 28 % brighter or 17 % darker in about a second). The camera: version 3's eye box held the eye 2-4 cm short of the head at every look toward a door or a mirror, so the cabin moved with the head | Exposure adapts 50 times slower in the head-tracked view (`vr_exposure_speed` 0.02: the same turn changes it by about a tenth); the eye is 4 cm lower (`vr_seat_height_cm` -4) and follows the head 1:1 aside and back (eased only beyond 15 and 13 cm), only how far it may go up is limited near the roof's slopes |
 | 2. Cars pop in right in front; draw distance bad | The renderer's object size cull uses the view's field of view: the cockpit's 109 degrees made every object 2.3 times smaller on the picture than the in-car camera's 62, so cars, signs and posts were dropped at 1/2.3 of their distance (41 items a frame standing at the festival, 9 with the fix), and small objects' shadows too | The cull runs with the in-car camera's own factor in the VR cockpit (`vr_cull_scale`): a drivatar's car 60-80 m away behind the guard rail, missing before, is drawn |
-| 2. Still blurry | Mostly the stream: WiVRn encoded each eye at 1472 x 1536 (0.71 of the headset's 2064 x 2162 on each axis) with H.264 8-bit at 24.6 Mbit/s (its server log); the game's picture gives 12.0 x 9.0 pixels per degree and nothing sharpens it for the headset | The headset's picture is sharpened (SDK patch 0395, `vr_sharpen` 0.5, no measurable GPU time); WiVRn settings below |
+| 2. Still blurry | Mostly the stream: WiVRn encoded each eye at 1472 x 1536 (0.71 of the headset's 2064 x 2162 on each axis) with H.264 8-bit at 24.6 Mbit/s (its server log); the game's picture gives 12.0 x 9.0 pixels per degree and nothing sharpens it for the headset | The headset's picture is sharpened (ReIGlue 0395, `vr_sharpen` 0.5, no measurable GPU time); WiVRn settings below |
 | 3. Depth stereo full of artifacts | The depth warp's filled edges and its wrong depth for glass, particles and the HUD-less transparencies | Off by default (`vr_stereo` off; `depth` stays an option); true stereo: evaluated, plan below |
 | 4. The emulator does not look like the headset | `scratchpad/xremu` had 1000 x 1080 eyes, no video stream and no lens | `scratchpad/xremu2` (the Quest 3's eyes at full size, captures at full size, a WiVRn stream and lens model), `scratchpad/questcap` (records the headset's own picture over USB) |
 
@@ -780,7 +801,7 @@ New settings (cvars; the launcher's Seat height default follows):
 | `vr_head_side_limit_cm`, `vr_head_back_limit_cm`, `vr_head_up_limit_cm` | 18, 15, 6 (were 10, 8, 6) | The eye's room: an ellipse on the floor, a dome over it (below) |
 | `vr_exposure_speed` | 0.02 | How fast the exposure adapts while the head pose drives the camera, a factor of the game's own rate |
 | `vr_cull_scale` | true | The size cull of the main and shadow views as for the in-car camera's field of view |
-| `vr_sharpen` | 0.5 | Contrast-adaptive sharpening of the headset's picture, 0 to 1 (patch 0395) |
+| `vr_sharpen` | 0.5 | Contrast-adaptive sharpening of the headset's picture, 0 to 1 (ReIGlue 0395) |
 | `vr_stereo` | off (was depth) | `depth`: version 3's depth stereo |
 
 ### What moves when looking around (1)
@@ -883,8 +904,8 @@ the weakest.
 
 What version 4 changes on the PC side, without GPU cost that matters:
 
-- **Sharpening for the headset** (SDK patch 0395, [sdk_patches.md](sdk_patches.md)): the desktop
-  window's FSR/CAS present effect never reached the headset (the cockpit gets patch 0393's scene
+- **Sharpening for the headset** (ReIGlue 0395, [the SDK side](#the-sdk-side-reiglue-0390-0397)): the desktop
+  window's FSR/CAS present effect never reached the headset (the cockpit gets ReIGlue 0393's scene
   layer). A contrast-adaptive sharpening pass (after AMD FidelityFX CAS) runs on the scene layer
   after the HUD is recovered and before stereo and the hand-over, `vr_sharpen` 0.5. It costs
   no measurable GPU time (11.21 ms a frame with it, 11.23 without, at 2 x 2 in the cockpit).
@@ -939,9 +960,9 @@ the v4 cockpit takes 11.2 ms of GPU a frame (81 % of the 13.9 ms at 72 fps; 71.9
 | Alternate eyes on alternate frames | 1x | 1x | No: each eye at 36 Hz, the scenery moves 0.4 m at 100 km/h between the eyes' frames (false depth) |
 | Per-eye replay inside the GPU emulation (the scene's draws recorded once, executed twice into per-eye render targets with a per-eye clip-space shift) | About 1x (+ the second submission's recording) | Per-eye frusta at the same pixels per degree need 1541 x 1231 per eye, 3.8 million pixels in all against today's 3.7: the pixels cost about the same, the vertex work and the draws' fixed cost double | The way to go: about 1.3-1.5x the scene's GPU time, which 2 x 2 at 72 fps has room for only with MSAA off |
 
-The plan for the per-eye replay (SDK work, patches after 0395):
+The plan for the per-eye replay (SDK work, commits after 0395):
 
-1. **The scene's range**: the main scene's draws are the ones patch 0394's depth capture and the
+1. **The scene's range**: the main scene's draws are the ones ReIGlue 0394's depth capture and the
    DLSS path already identify (`z_enable`, `zfunc` not Always, not window-space, the 1280-pitch
    colour target; the first draw after the depth pre-pass resolve at the frame's first sun shadow
    pass, `Fh1VrDepthBeforeDraw`), up to the resolve of the main colour target before
@@ -954,8 +975,8 @@ The plan for the per-eye replay (SDK work, patches after 0395):
    asymmetric frustum as an NDC scale and offset, from a push constant; the shader's cache key is
    unchanged. Full-screen and window-space draws get no offset.
 4. **Post-processing once per eye** from each eye's resolve (bloom, tone mapping; their constants
-   are the same), the HUD once (patch 0393 already separates it), then each eye to its half of the
-   projection layer, as patch 0394's halves.
+   are the same), the HUD once (ReIGlue 0393 already separates it), then each eye to its half of the
+   projection layer, as ReIGlue 0394's halves.
 5. **The camera hook** draws the union of the eyes as today (the cull, the LODs and the shadows for
    both), so the game-side state stays single.
 
@@ -1039,7 +1060,7 @@ default; `depth` (version 3's) and `off` (one picture, version 4) stay.
 | GPU a frame (RX 9060 XT, render scale 2, standing at the festival) | 11.3 ms | 11.7 ms | 13.2 ms (scene MSAA off), 14.7 ms (2x MSAA) |
 | 72 fps | Yes | Yes | With the scene's MSAA off |
 
-### How it works (SDK patch 0396)
+### How it works (ReIGlue 0396)
 
 **Per-eye replay inside the GPU emulation**, version 4's plan, built at the command level instead
 of the Vulkan level. The command processor executes the guest's PM4 commands for a frame once, as
@@ -1057,7 +1078,7 @@ side of the game, the render thread and the guest's command buffers run once.
   MSAA; one tile without MSAA), post-processing, the minimap, the composite into the front buffer and
   the HUD. The segment is the scene's clear (a window-space rectangle writing depth, 640 x 4x MSAA)
   and its first draw (colour and reversed depth on that depth buffer) up to the first
-  `2_10_10_10_AS_10_10_10_10` draw into the front buffer after the composite (patch 0393's
+  `2_10_10_10_AS_10_10_10_10` draw into the front buffer after the composite (ReIGlue 0393's
   pre-HUD point). Everything before it is drawn once.
 - **The eye's offset**: the scene's 3D draws (depth-tested on the scene's depth buffer, a projected
   position, the 16:9 viewport) take `P00 x d` from the clip-space x of every vertex, `d` half the
@@ -1083,7 +1104,7 @@ side of the game, the render thread and the guest's command buffers run once.
   the left eye 0-80 %, the right 20-100 %; `xr_math.h` `EyePictureRange`, `vr_stereo_eye_parts`).
 - **The layers**: the left eye's composite is copied before the second pass; at the swap it goes
   through the same gamma ramp and sharpening as the scene layer, and both eyes go side by side in
-  patch 0394's stereo layer; the projection layer gives each eye its half at its eye's pose (version
+  ReIGlue 0394's stereo layer; the projection layer gives each eye its half at its eye's pose (version
   3's path). The HUD panel and the virtual screen are unchanged (the HUD is recovered from the right
   eye's picture). The game asks for true stereo only while the cockpit is shown, so menus and the
   screen cost one picture.
@@ -1221,7 +1242,7 @@ application's wake-up from when its previous frame's GPU work finished, which he
 
 Now, when the headset's frame finds no new game frame although one is due (the last one came about a
 headset frame ago), it waits for it, at most `vr_frame_wait` (4 ms; it needs to know when each frame
-was published, SDK patch 0397). Measured, four 20 s windows on and off in the same session: 68-71
+was published, ReIGlue 0397). Measured, four 20 s windows on and off in the same session: 68-71
 frames shown a second against 56-62, frames passed over 15-35 in 10 s against 100-163; about 17-43
 headset frames a second waited, 2 ms on average, and 95 % found their frame. The latency did not
 change. The 10 s line shows it: `frames ready N ms (least N) before taken, N passed over, waited for N

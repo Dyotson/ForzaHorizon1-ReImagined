@@ -186,7 +186,7 @@ inline CockpitFrustum CoverEyes(const Fov eyes[2], const Quat eye_rotation[2], f
   return f;
 }
 
-// True stereo (SDK patch 0396): the part of the cockpit picture (fractions of its width, left to
+// True stereo (ReIGlue 0396): the part of the cockpit picture (fractions of its width, left to
 // right) that an eye's field of view covers, `margin` radians wider on each side. Each eye is
 // drawn only there (about 70 % of the picture for a Quest 3's eyes); the cockpit picture covers
 // both eyes and the margin. Unlike CoverEyes the eye is not centred: its own frustum, seen from

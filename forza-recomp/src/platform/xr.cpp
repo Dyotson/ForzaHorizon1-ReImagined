@@ -97,7 +97,7 @@ REXCVAR_DEFINE_INT32(vr_runtime_timeout, 20, "VR",
 REXCVAR_DEFINE_DOUBLE(vr_screen_width, 2.2, "VR", "Virtual screen width, metres").range(0.5, 20);
 REXCVAR_DEFINE_DOUBLE(vr_screen_distance, 2.5, "VR", "Virtual screen distance, metres")
     .range(0.5, 20);
-// The HUD's own panel in the cockpit (needs SDK patch 0393): 0.9 m wide 1 m ahead, its middle 14
+// The HUD's own panel in the cockpit (needs ReIGlue 0393): 0.9 m wide 1 m ahead, its middle 14
 // degrees below the eyes: 48 x 27 degrees, the HUD's 1280 pixels at 27 per degree; its top edge
 // sits just under the horizon, the speedometer and map 24 degrees down in its corners.
 REXCVAR_DEFINE_BOOL(vr_hud, true, "VR",
@@ -110,9 +110,9 @@ REXCVAR_DEFINE_DOUBLE(vr_hud_distance, 1.0, "VR", "Cockpit: the HUD panel's dist
 REXCVAR_DEFINE_DOUBLE(vr_hud_pitch, -14.0, "VR",
                       "Cockpit: the HUD panel's direction from the eyes, degrees (negative: below)")
     .range(-60, 30);
-// Stereo. true (SDK patch 0396, the default since version 5): the game's main view is drawn
+// Stereo. true (ReIGlue 0396, the default since version 5): the game's main view is drawn
 // for each eye from the same frame, each from its own eye point (the frame's commands executed
-// twice in the GPU emulation): real depth. depth (patch 0394, version 3): each eye made from the
+// twice in the GPU emulation): real depth. depth (ReIGlue 0394, version 3): each eye made from the
 // one picture and its depth pre-pass, shifted by the disparity of each pixel's distance, the
 // holes beside near objects filled from the background ("full of artifacts" in the third
 // headset test). off: both eyes see the same picture (version 2).
@@ -132,7 +132,7 @@ REXCVAR_DEFINE_DOUBLE(vr_stereo_max_shift, 3.0, "VR",
                       "width (nearer than that is drawn at that depth)")
     .range(0.5, 10)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-// SDK patch 0395: contrast-adaptive sharpening of the cockpit's picture before the headset gets it
+// ReIGlue 0395: contrast-adaptive sharpening of the cockpit's picture before the headset gets it
 // (the desktop window's FSR/CAS present effect works on the window's picture only).
 REXCVAR_DEFINE_DOUBLE(vr_sharpen, 0.5, "VR",
                       "Cockpit: sharpening of the head-tracked picture, 0 (off) to 1 (strongest)")
@@ -174,7 +174,7 @@ namespace {
 
 using rex::ui::vulkan::VulkanDevice;
 
-// SDK patch 0390 (src/ui/vulkan/vulkan_creation_hooks.h in the SDK) and 0391
+// ReIGlue 0390 (src/ui/vulkan/vulkan_creation_hooks.h in the SDK) and 0391
 // (src/ui/vulkan/vulkan_presenter.cpp): no public header, the same layouts here.
 extern "C" {
 struct RexVulkanCreationHooks {
@@ -196,7 +196,7 @@ struct RexGuestOutputFrame {
   uint32_t height;
   VkImage image;
   VkImageView view;
-  // Patch 0393: the frame's VR layers, all A2B10G10R10 in SHADER_READ_ONLY_OPTIMAL like `image`
+  // ReIGlue 0393: the frame's VR layers, all A2B10G10R10 in SHADER_READ_ONLY_OPTIMAL like `image`
   // except the HUD (R8G8B8A8_UNORM, unpremultiplied colour and its coverage); held with the frame.
   struct Layers {
     uint32_t layers;  // kLayerScene, kLayerHud, kLayerStereo
@@ -205,19 +205,19 @@ struct RexGuestOutputFrame {
     uint32_t hud_width, hud_height;
     VkImage hud;  // the HUD alone at 1280 x 720
     uint32_t stereo_width, stereo_height;
-    VkImage stereo;  // both eyes side by side (patch 0394)
+    VkImage stereo;  // both eyes side by side (ReIGlue 0394)
   } vr;
-  int64_t ready_ns;  // patch 0397: when the frame was published, steady clock (0: not told)
+  int64_t ready_ns;  // ReIGlue 0397: when the frame was published, steady clock (0: not told)
 };
 }
 constexpr uint32_t kExportFrames = 1, kExportLayers = 2, kExportStereo = 4;  // rexui_SetGuestOutputExport
-constexpr uint32_t kExportTrueStereo = 8;  // patch 0396
+constexpr uint32_t kExportTrueStereo = 8;  // ReIGlue 0396
 constexpr uint32_t kLayerScene = 1, kLayerHud = 2, kLayerStereo = 4;
 using SetVulkanCreationHooksFn = void (*)(const RexVulkanCreationHooks*);
-using SetPadsWithoutFocusFn = void (*)(int);  // patch 0392 (src/input/input_system.cpp)
-using SetGuestOutputStereoFn = void (*)(float, float);  // patch 0393 (vulkan_presenter.cpp)
-using SetGuestOutputTrueStereoFn = void (*)(float, float);  // patch 0396: eye distance, P00
-using SetGuestOutputTrueStereoEyesFn = void (*)(const float*);  // patch 0396: each eye's part
+using SetPadsWithoutFocusFn = void (*)(int);  // ReIGlue 0392 (src/input/input_system.cpp)
+using SetGuestOutputStereoFn = void (*)(float, float);  // ReIGlue 0393 (vulkan_presenter.cpp)
+using SetGuestOutputTrueStereoFn = void (*)(float, float);  // ReIGlue 0396: eye distance, P00
+using SetGuestOutputTrueStereoEyesFn = void (*)(const float*);  // ReIGlue 0396: each eye's part
 using SetGuestOutputExportFn = void (*)(int);
 using AcquireGuestOutputFrameFn = int (*)(RexGuestOutputFrame*, uint64_t);
 using ReleaseGuestOutputFrameFn = void (*)(uint32_t);
@@ -353,7 +353,7 @@ struct State {
   SetPadsWithoutFocusFn set_pads_without_focus = nullptr;
   SetGuestOutputStereoFn set_stereo = nullptr;
   bool stereo = false;  // vr_stereo depth or true was asked for and the SDK can do it
-  // Patch 0396: true stereo; the export flags without it and whether they carry it now (only
+  // ReIGlue 0396: true stereo; the export flags without it and whether they carry it now (only
   // while the cockpit is shown: menus and the screen get one picture).
   SetGuestOutputTrueStereoFn set_true_stereo = nullptr;
   SetGuestOutputTrueStereoEyesFn set_true_stereo_eyes = nullptr;
@@ -385,7 +385,7 @@ struct State {
 
   // The swapchain for the game's picture, sized as the guest output.
   Target picture;  // the game's picture: the screen, or the cockpit (the scene without the HUD)
-  Target hud;  // the HUD alone (SDK patch 0393), on its panel in the cockpit
+  Target hud;  // the HUD alone (ReIGlue 0393), on its panel in the cockpit
   bool hud_shown = false;  // the last cockpit picture came with its HUD in `hud`
   bool layers_logged = false;
   CopySlot slots[3];
@@ -433,7 +433,7 @@ struct State {
   SwapTagger swap_tagger;
   std::atomic<uint32_t> next_tag{1};
 
-  // Frame timing (vr_frame_wait; SDK patch 0397 tells when each game frame was published).
+  // Frame timing (vr_frame_wait; ReIGlue 0397 tells when each game frame was published).
   int64_t frame_wait_ns = 0;  // the longest a headset frame waits for a game frame due; 0: never
   int64_t stat_slack_min = INT64_MAX, stat_slack_sum = 0, stat_waited_ns = 0;
   uint32_t stat_slack_n = 0, stat_skips = 0, stat_waits = 0, stat_waits_found = 0;
@@ -518,7 +518,7 @@ void FlatBeforeHooks(const std::string& why) {
   g.mode = Mode::kOff;
 }
 
-// --- Vulkan creation through the runtime (SDK patch 0390) ------------------------------------
+// --- Vulkan creation through the runtime (ReIGlue 0390) ------------------------------------
 
 VkResult HookCreateInstance(void*, PFN_vkGetInstanceProcAddr gipa, const VkInstanceCreateInfo* info,
                             VkInstance* out) {
@@ -965,7 +965,7 @@ void RecordCopy(VkCommandBuffer cb, Target& t, VkImage source, uint32_t width, u
 // or more is scaled down on the way with a linear filter to its 1280 x 720 (per axis, so a picture
 // drawn at other scales across and up keeps its 16:9): the screen covers about 1,000 of the
 // headset's pixels across, and the runtime samples its layers without mipmaps, so a full
-// 2560-pixel picture would shimmer. For the cockpit, with the VR layers (SDK patch 0393), the
+// 2560-pixel picture would shimmer. For the cockpit, with the VR layers (ReIGlue 0393), the
 // scene before the HUD goes to the picture and the HUD alone to its own swapchain.
 bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
   if (g.stop) return false;
@@ -978,7 +978,7 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
     if (g.stop) return false;
     layers = with_hud = false;
   }
-  // Patch 0394: both eyes side by side, made from the scene and its depth.
+  // ReIGlue 0394: both eyes side by side, made from the scene and its depth.
   const bool stereo = layers && g.stereo && (frame.vr.layers & kLayerStereo) &&
                       frame.vr.stereo != VK_NULL_HANDLE && frame.vr.stereo_width == 2 * frame.width &&
                       frame.vr.stereo_height == frame.height;
@@ -1169,7 +1169,7 @@ bool CreateSession() {
 }
 
 // While a session runs the player looks at the headset and the desktop window usually has no
-// focus: pads and wheels keep working then (patch 0392; the keyboard stays focus-bound).
+// focus: pads and wheels keep working then (ReIGlue 0392; the keyboard stays focus-bound).
 void PadsWithoutFocus(bool on) {
   if (g.set_pads_without_focus) g.set_pads_without_focus(on ? 1 : 0);
 }
@@ -1362,7 +1362,7 @@ void LogStats() {
 }
 
 float StereoMaxShift() { return float(REXCVAR_GET(vr_stereo_max_shift)) / 100.0f; }
-// Patch 0396: the cockpit view's projection scale in x (the game's P00).
+// ReIGlue 0396: the cockpit view's projection scale in x (the game's P00).
 float TrueStereoP00(const CockpitFrustum& f) { return 1.0f / std::tan(f.HalfHorizontal()); }
 
 HeadBox Box() {
@@ -1541,7 +1541,7 @@ bool Frame() {
                 std::fabs(f.pitch - g.frustum.pitch) > 0.005f || std::fabs(f.yaw - g.frustum.yaw) > 0.005f;
       if (changed) g.frustum = f;
     }
-    // Patch 0396: the eyes' offset in clip space needs the cockpit view's P00; each eye is drawn
+    // ReIGlue 0396: the eyes' offset in clip space needs the cockpit view's P00; each eye is drawn
     // across its part of the picture.
     if (g.true_stereo && f.vertical > 0 && std::fabs(TrueStereoP00(f) - g.true_stereo_p00) > 1e-4f) {
       g.true_stereo_p00 = TrueStereoP00(f);
@@ -1595,7 +1595,7 @@ bool Frame() {
   }
   g.cockpit_active = !g.stop && g.mode == Mode::kCockpit && g.origin_set && !menu &&
                      (g.state == XR_SESSION_STATE_VISIBLE || g.state == XR_SESSION_STATE_FOCUSED);
-  // Patch 0396: the game draws each eye only while the cockpit is shown (the screen and the menus
+  // ReIGlue 0396: the game draws each eye only while the cockpit is shown (the screen and the menus
   // get one picture, at the GPU cost of one).
   const bool want_true_stereo = g.cockpit_active && !StereoOffTest();
   if (g.true_stereo && want_true_stereo != g.export_true_stereo && g.set_export) {
@@ -1677,7 +1677,7 @@ bool Frame() {
   if (layer == Layer::kProjection) {
     // Mono: both eyes get the picture as drawn from the head pose (turned to the drawn axis) and
     // the field of view it was rendered with.
-    // With depth stereo (SDK patch 0394) each eye gets its half of the picture, made for that eye
+    // With depth stereo (ReIGlue 0394) each eye gets its half of the picture, made for that eye
     // (the head's pose moved half the eye distance along its x axis).
     const Fov fov = g.shown_tag.frustum.ImageFov();
     for (int i = 0; i < 2; ++i) {
@@ -2021,7 +2021,7 @@ void Prepare() {
   auto set_hooks =
       reinterpret_cast<SetVulkanCreationHooksFn>(forza::SdkSymbol("rexui_SetVulkanCreationHooks"));
   if (!set_hooks || !forza::SdkSymbol("rexui_AcquireGuestOutputFrame")) {
-    FlatBeforeHooks("this SDK build has no OpenXR support (patches 0390 and 0391)");
+    FlatBeforeHooks("this SDK build has no OpenXR support (ReIGlue 0390 and 0391)");
     return;
   }
   RexVulkanCreationHooks hooks{};
@@ -2057,22 +2057,23 @@ void Start(rex::system::IGraphicsSystem* graphics) {
   g.release_frame =
       reinterpret_cast<ReleaseGuestOutputFrameFn>(forza::SdkSymbol("rexui_ReleaseGuestOutputFrame"));
   if (!g.set_export || !g.acquire_frame || !g.release_frame) {
-    REXLOG_WARN("VR: this SDK build cannot hand the picture to OpenXR (patch 0391) - playing flat");
+    REXLOG_WARN(
+        "VR: this SDK build cannot hand the picture to OpenXR (ReIGlue 0391) - playing flat");
     return;
   }
   g.set_pads_without_focus =
       reinterpret_cast<SetPadsWithoutFocusFn>(forza::SdkSymbol("rexinput_SetPadsWithoutFocus"));
   if (!g.set_pads_without_focus) {
-    REXLOG_WARN("VR: this SDK build drops pad input while the game window has no focus (patch 0392): "
-                "click the game window before putting the headset on");
+    REXLOG_WARN("VR: this SDK build drops pad input while the game window has no focus "
+                "(ReIGlue 0392): click the game window before putting the headset on");
   }
   g.trace = REXCVAR_GET(vr_trace);
   g.device = device;
-  // Patch 0393's layers for the cockpit's HUD panel: the scene without the HUD and the HUD alone
+  // ReIGlue 0393's layers for the cockpit's HUD panel: the scene without the HUD and the HUD alone
   // (an SDK without it ignores the flag: the HUD stays in the picture).
   uint32_t flags = kExportFrames;
   if (g.mode == Mode::kCockpit && REXCVAR_GET(vr_hud)) flags |= kExportLayers;
-  // Patch 0394's depth stereo builds on the scene without the HUD, so it brings the HUD panel.
+  // ReIGlue 0394's depth stereo builds on the scene without the HUD, so it brings the HUD panel.
   g.set_stereo = reinterpret_cast<SetGuestOutputStereoFn>(forza::SdkSymbol("rexui_SetGuestOutputStereo"));
   if (g.mode == Mode::kCockpit && REXCVAR_GET(vr_stereo) == "depth") {
     if (g.set_stereo) {
@@ -2080,10 +2081,10 @@ void Start(rex::system::IGraphicsSystem* graphics) {
       flags |= kExportLayers | kExportStereo;
       g.set_stereo(g.ipd, StereoMaxShift());
     } else {
-      REXLOG_WARN("VR: this SDK build cannot make the eyes from the depth (patch 0394): mono");
+      REXLOG_WARN("VR: this SDK build cannot make the eyes from the depth (ReIGlue 0394): mono");
     }
   }
-  // Patch 0396's true stereo also builds on the layers (the eyes come with the scene layer).
+  // ReIGlue 0396's true stereo also builds on the layers (the eyes come with the scene layer).
   g.set_true_stereo = reinterpret_cast<SetGuestOutputTrueStereoFn>(
       forza::SdkSymbol("rexui_SetGuestOutputTrueStereo"));
   g.set_true_stereo_eyes = reinterpret_cast<SetGuestOutputTrueStereoEyesFn>(
@@ -2094,19 +2095,19 @@ void Start(rex::system::IGraphicsSystem* graphics) {
       flags |= kExportLayers;
       REXLOG_INFO("VR: true stereo: the game draws each eye from its own point");
     } else {
-      REXLOG_WARN("VR: this SDK build cannot draw each eye (patch 0396): mono");
+      REXLOG_WARN("VR: this SDK build cannot draw each eye (ReIGlue 0396): mono");
     }
   }
-  // vr_frame_wait needs patch 0397's publish times (without them nothing waits).
+  // vr_frame_wait needs ReIGlue 0397's publish times (without them nothing waits).
   g.frame_wait_ns = int64_t(REXCVAR_GET(vr_frame_wait) * 1e6);
-  // Patch 0395: the scene layer sharpened (an SDK without it ignores this: no sharpening).
+  // ReIGlue 0395: the scene layer sharpened (an SDK without it ignores this: no sharpening).
   if (g.mode == Mode::kCockpit && (flags & kExportLayers) && REXCVAR_GET(vr_sharpen) > 0) {
     using SetSharpenFn = void (*)(float);
     if (auto set_sharpen = reinterpret_cast<SetSharpenFn>(forza::SdkSymbol("rexui_SetGuestOutputSharpen"))) {
       set_sharpen(float(REXCVAR_GET(vr_sharpen)));
       REXLOG_INFO("VR: the cockpit's picture is sharpened ({:.2f}) for the headset", REXCVAR_GET(vr_sharpen));
     } else {
-      REXLOG_WARN("VR: this SDK build cannot sharpen the cockpit's picture (patch 0395)");
+      REXLOG_WARN("VR: this SDK build cannot sharpen the cockpit's picture (ReIGlue 0395)");
     }
   }
   g.export_flags = flags;

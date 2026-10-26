@@ -7,6 +7,10 @@
 > out the ReIGlue tag it pins (`REIGLUE_TAG`) and no longer applies `patches/rexglue-sdk/`;
 > the folder and this page stay for reference for now. New SDK changes go to ReIGlue
 > (CONTRIBUTING.md).
+>
+> 0390-0397 (VR, #333) were written as patches on the VR branch and became ReIGlue commits
+> with the same numbers (tag `fh1-0.10.0.24-r2`; [vr.md](vr.md#the-sdk-side-reiglue-0390-0397)).
+> They have no file in `patches/rexglue-sdk/`; their rows below are their commit messages.
 
 `patches/rexglue-sdk/` holds this project's patches to the ReXGlue SDK (nightly 0.10.0.24,
 commit `bd833a2`); `tools/build_rexglue_sdk.sh` applies them to the clone

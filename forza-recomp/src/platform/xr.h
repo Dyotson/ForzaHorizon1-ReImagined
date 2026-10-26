@@ -11,10 +11,10 @@
 //   middle, and a projection aspect that need not be the picture's), its camera physics (shake,
 //   G-force lean, speed field of view) off. Mono: both eyes see the same image. Other cameras,
 //   menus and loading stay on the screen. Pads keep working while the desktop window has no
-//   focus (SDK patch 0392).
+//   focus (ReIGlue 0392).
 //
-// The OpenXR runtime creates the Vulkan instance and device and picks the GPU (SDK patch 0390);
-// the newest guest output reaches this thread with the tag of the frame it shows (SDK patch
+// The OpenXR runtime creates the Vulkan instance and device and picks the GPU (ReIGlue 0390);
+// the newest guest output reaches this thread with the tag of the frame it shows (ReIGlue
 // 0391). Any failure (no loader, no runtime, no headset, a lost session) logs one line that
 // starts with "VR:" and the game goes on flat.
 #pragma once

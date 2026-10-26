@@ -1,7 +1,7 @@
-// VR true stereo's decisions (patch 0396, #333): src/graphics/fh1_vr_stereo.h of the patched SDK
+// VR true stereo's decisions (ReIGlue 0396, #333): src/graphics/fh1_vr_stereo.h of the ReIGlue
 // source. The draws are the cockpit frame's as FORZA_GPU_FRAME_TRACE recorded them (TU4, free
 // roam, render scale 2, 2x MSAA).
-// Build with the patched SDK source's src/graphics on the include path:
+// Build with the ReIGlue source's src/graphics on the include path:
 //   c++ -std=c++17 -I ~/rexglue-sdk-src-forza/sdk/src/graphics tools/test_vr_stereo.cpp
 #include "fh1_vr_stereo.h"
 

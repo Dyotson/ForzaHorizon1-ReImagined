@@ -37,8 +37,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
-REIGLUE_TAG=fh1-0.10.0.24-r1  # ReIGlue on SDK_COMMIT (its docs/reiglue/commits.md lists the changes)
-REIGLUE_COMMIT=53624002cdad6fbf3264fb1a619fd61c5855de7c  # immutable target of REIGLUE_TAG
+# r2 adds the VR commits 0390-0397 (#333). The tag comes with the ReIGlue pull request that adds
+# them (https://github.com/FH1-ReImagined/ReIGlue/pull/1), on its last commit, REIGLUE_COMMIT.
+REIGLUE_TAG=fh1-0.10.0.24-r2  # ReIGlue on SDK_COMMIT (its docs/reiglue/commits.md lists the changes)
+REIGLUE_COMMIT=317216e8d66d766bd13abdb672975458f30ca576  # immutable target of REIGLUE_TAG
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"

@@ -111,7 +111,7 @@ void TestSwapPacket() {
   Check(tagged[7] == 0xC0046400u && tagged[12] == 0x12345678, "five dwords, the tag last");
   for (int i = 0; i < 64; ++i)
     if (i != 7 && i != 12) Check(tagged[i] == packet[i], "nothing else changes");
-  // A command processor without patch 0391 reads 4 dwords and skips count - 4: the tag.
+  // A command processor without ReIGlue 0391 reads 4 dwords and skips count - 4: the tag.
   const uint32_t count = ((tagged[7] >> 16) & 0x3FFF) + 1;
   Check(count == 5 && 8 + count == 13, "the next packet starts after the tag");
   uint32_t other[64];

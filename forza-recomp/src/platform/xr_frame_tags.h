@@ -6,7 +6,7 @@
 // a new tag. The render thread later hands that matrix to the render-side camera (the hook on
 // CPresentationCamera::SetViewTransform finds the tag by the matrix's bytes) and swaps the frame
 // (the VdSwap hook writes the tag into the swap packet). The GPU plugin hands the tag on with the
-// guest output image (SDK patch 0391), and the OpenXR thread looks the tag up here: the pose and
+// guest output image (ReIGlue 0391), and the OpenXR thread looks the tag up here: the pose and
 // field of view that image was drawn with go into the projection layer.
 #pragma once
 
@@ -119,7 +119,7 @@ inline Layer ChooseLayer(bool have_image, bool cockpit_mode, const FrameTag* tag
 // The swap packet VdSwap writes (64 dwords): a type-0 packet of 7 dwords setting the frontbuffer
 // fetch constant, then the type-3 XE_SWAP packet (header, 'SWAP', address, width, height) and
 // type-2 fillers. A tag goes in the first filler and the XE_SWAP packet grows by one dword: the
-// SDK without patch 0391 skips it, with it the command processor reads it. Values are host
+// SDK without ReIGlue 0391 skips it, with it the command processor reads it. Values are host
 // order; `dwords` holds them as the guest stores them is up to the caller.
 constexpr uint32_t kXeSwapHeader = (3u << 30) | ((4u - 1) << 16) | (0x64u << 8);
 constexpr uint32_t kXeSwapTaggedHeader = (3u << 30) | ((5u - 1) << 16) | (0x64u << 8);
