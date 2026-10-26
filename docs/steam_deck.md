@@ -2,7 +2,7 @@
 
 How to install and set up the game on a Steam Deck, and what to expect (#140, #45). We have no Deck:
 what is marked *untested* was checked on a desktop PC only (below); reports from Deck owners are welcome
-in [#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45).
+in [#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45).
 
 ## Install: the Flatpak
 
@@ -11,7 +11,7 @@ C++ headers, and the launcher says so (#135). The Flatpak brings its own compile
 
 1. Switch to **Desktop Mode** (Steam button, **Power**, **Switch to Desktop**).
 2. Download `ForzaHorizon1-ReImagined-x86_64.flatpak` from the
-   [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest).
+   [latest release](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/releases/latest).
 3. Install it. Either open the file in Dolphin (Discover opens it; choose **Install**), or in Konsole:
 
    ```sh
