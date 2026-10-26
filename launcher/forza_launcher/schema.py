@@ -484,6 +484,11 @@ add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
     "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
     "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
 
+add("skip_startup_movies", "Skip startup videos", "Gameplay", "bool", False,
+    "Skips the videos at the start (Microsoft Studios, Dolby, Playground Games, about 45 s) "
+    "and goes to the title screen. The in-game videos (the festival intro, the 1000 Club "
+    "introduction) still play. Applies on the next game launch.", "Startup", restart=True)
+
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
