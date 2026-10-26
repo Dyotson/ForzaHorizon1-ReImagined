@@ -34,7 +34,7 @@ REXCVAR_DEFINE_BOOL(forza_native_pause,false,"Interface","Fixture option");
 namespace {
 using forza::fh1_menu_widgets::Read;
 using forza::fh1_menu_widgets::Write;
-constexpr uint32_t screen=0x100,parameter=0x1000,source=0x2000,profile=0x4000,volume=0x5000,unload=0x6000;
+constexpr uint32_t screen=0x100,parameter=0x1000,source=0x2000,profile=0x4000,volume=0x5000,unload=0x6000,result=0x7400,popup=0x7800;
 std::map<uint32_t,std::u16string> text;
 std::map<uint32_t,int> refs;
 std::vector<uint32_t> captured_refs;
@@ -51,6 +51,7 @@ void Setup(){
   Write(memory.data(),screen,0x82061F94);Write(memory.data(),screen+0x10c,1);Write(memory.data(),screen+0x1f8,0x1234);Write(memory.data(),0xe000,0x3000);
   Write(memory.data(),profile+28,volume);Write(memory.data(),volume,0x82026A8C);memory[volume+80]=1;Write(memory.data(),unload,0x8209CC80);
   Write(memory.data(),0xf000,0xdead);
+  Write(memory.data(),result,0x82033168);Write(memory.data(),popup+156,screen);Write(memory.data(),popup+164,parameter);
   for(unsigned i=0;i<2;++i){Write(memory.data(),source+i*44,i);Write(memory.data(),source+i*44+4,i);Write(memory.data(),source+i*44+8,0x8000+i*16);text[0x8000+i*16]=i?u"CANCEL":u"EXIT SINGLE PLAYER";refs[0x8000+i*16]=1;}
   forza::native_quit::Cancel();
 }
@@ -113,22 +114,36 @@ int main(){
  online=true;assert(!Open(ctx,base,screen,1)&&constructors==0);online=false;
  for(auto choice:{0u,1u,2u}){
   Setup();install();open();assert((captured_ids==std::vector<uint32_t>{0,1,2}));assert((captured_buttons==std::vector<uint32_t>{0,1,2}));assert((captured_labels==std::vector<std::u16string>{u"QUIT TO MAIN MENU",u"CANCEL",u"QUIT TO DESKTOP"}));assert(vector_destroyed==1);ExpectReferences();
-  ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r6.u32=parameter;Write(base,parameter+12,choice);assert(Choice(ctx,base)==(choice==2));assert(requests==0);
-  if(choice==2){const auto saved=ctx;const auto clone=MainMenuResult(ctx,base,parameter);assert(clone&&clone!=parameter);assert(constructors==2);assert(Read(base,clone+12)==0&&Read(base,parameter+12)==2);assert(Read(base,clone+24)!=Read(base,parameter+24));assert(ctx.r3.u64==saved.r3.u64&&ctx.r6.u64==saved.r6.u64&&ctx.r7.u64==saved.r7.u64&&ctx.r8.u64==saved.r8.u64);ReleaseResult(ctx,base,clone);assert(!boxes.contains(clone));assert(ctx.r6.u64==saved.r6.u64);heap.fail=true;assert(!MainMenuResult(ctx,base,parameter));assert(Read(base,parameter+12)==2);heap.fail=false;}
+  ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r5.u32=popup;ctx.r6.u32=result;Write(base,result+12,choice);assert(Choice(ctx,base)==(choice==2));assert(requests==0);
+  if(choice==2){const auto saved=ctx;const auto clone=MainMenuResult(ctx,base,result);assert(clone&&clone!=result);assert(constructors==1);assert(Read(base,clone+12)==0&&Read(base,result+12)==2);for(unsigned offset:{0u,4u,8u})assert(Read(base,clone+offset)==Read(base,result+offset));assert(ctx.r3.u64==saved.r3.u64&&ctx.r6.u64==saved.r6.u64&&ctx.r7.u64==saved.r7.u64&&ctx.r8.u64==saved.r8.u64);const auto freed=heap.frees;ReleaseResult(ctx,base,clone);assert(heap.frees==freed+1);assert(ctx.r6.u64==saved.r6.u64);heap.fail=true;assert(!MainMenuResult(ctx,base,result));assert(Read(base,result+12)==2);heap.fail=false;}
  }
- for(auto fail:{1u,2u}){Setup();install();if(fail==1)heap.fail=true;else reserve_fail=true;open();assert(captured_ids.size()==2);ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r6.u32=parameter;Write(base,parameter+12,2);assert(!Choice(ctx,base));}
+ for(auto fail:{1u,2u}){Setup();install();if(fail==1)heap.fail=true;else reserve_fail=true;open();assert(captured_ids.size()==2);ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r5.u32=popup;ctx.r6.u32=result;Write(base,result+12,2);assert(!Choice(ctx,base));}
  // Every partial native TextRef/vector construction failure must release the
  // references already copied and retain the original two-choice dialog.
  for(unsigned fail=1;fail<=6;++fail){Setup();install();heap.fail_at=fail;open();assert(captured_ids.size()==2);DestroyBox();}
  for(auto choice:{0u,1u,2u,99u})for(bool allocation_failure:{false,true}){
-  Setup();install();open();ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r6.u32=parameter;ctx.r7.u64=0x12345678;ctx.r8.u64=0xabcdef01;Write(base,parameter+12,choice);heap.fail=allocation_failure;
-  unsigned forwards=0;WithChoice(ctx,base,[&]{++forwards;assert(ctx.r3.u32==screen&&ctx.r4.u32==2&&ctx.r7.u64==0x12345678&&ctx.r8.u64==0xabcdef01);if(choice==2&&!allocation_failure){assert(ctx.r6.u32!=parameter&&Read(base,ctx.r6.u32+12)==0);}else assert(ctx.r6.u32==parameter&&Read(base,parameter+12)==choice);ctx.r3.u64=0x1122334455667788;});
-  assert(forwards==1&&ctx.r6.u32==parameter&&Read(base,parameter+12)==choice&&ctx.r3.u64==0x1122334455667788);assert(boxes.size()==1);
+  Setup();install();open();ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r5.u32=popup;ctx.r6.u32=result;ctx.r7.u64=0x12345678;ctx.r8.u64=0xabcdef01;Write(base,result+12,choice);heap.fail=allocation_failure;
+  unsigned forwards=0;WithChoice(ctx,base,[&]{++forwards;assert(ctx.r3.u32==screen&&ctx.r4.u32==2&&ctx.r7.u64==0x12345678&&ctx.r8.u64==0xabcdef01);if(choice==2&&!allocation_failure){assert(ctx.r6.u32!=result&&Read(base,ctx.r6.u32+12)==0);}else assert(ctx.r6.u32==result&&Read(base,result+12)==choice);ctx.r3.u64=0x1122334455667788;});
+  assert(forwards==1&&ctx.r6.u32==result&&Read(base,result+12)==choice&&ctx.r3.u64==0x1122334455667788);assert(boxes.size()==1);
  }
- // Foreign event/parameter/screen must forward unchanged without cloning.
- for(unsigned foreign=0;foreign<3;++foreign){Setup();install();open();ctx.r3.u32=foreign==0?screen+4:screen;ctx.r4.u32=foreign==1?18:2;ctx.r6.u32=foreign==2?0x7000:parameter;Write(base,ctx.r6.u32+12,2);const auto pointer=ctx.r6.u32;unsigned forwards=0;WithChoice(ctx,base,[&]{++forwards;assert(ctx.r6.u32==pointer);});assert(forwards==1&&constructors==1);}
+ // A Result has no Params identity. Only its live popup's native parent and
+ // retained Params establish lineage; foreign same-event results stay intact.
+ for(unsigned foreign=0;foreign<7;++foreign){
+  Setup();install();open();ctx.r3.u32=foreign==0?screen+4:screen;ctx.r4.u32=foreign==1?18:2;ctx.r5.u32=popup;ctx.r6.u32=foreign==2?0x7000:foreign==5?parameter:result;
+  if(foreign==3)Write(base,popup+156,screen+4);
+  if(foreign==4)Write(base,popup+164,parameter+40);
+  if(foreign==6)Cancel();
+  Write(base,ctx.r6.u32+12,2);const auto pointer=ctx.r6.u32;unsigned forwards=0;
+  WithChoice(ctx,base,[&]{++forwards;assert(ctx.r6.u32==pointer);});assert(forwards==1&&constructors==1);
+ }
+ // Fully initialize the native 16-byte POD and preserve both auxiliary words.
+ Setup();install();open();ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r5.u32=popup;ctx.r6.u32=result;
+ Write(base,result+4,0x12345678);Write(base,result+8,0x87654321);Write(base,result+12,2);
+ ctx.r6.u64=0x1234000000000000ull|result;const auto full_result_register=ctx.r6.u64;
+ WithChoice(ctx,base,[&]{assert(ctx.r6.u32!=result&&ctx.r6.u64==ctx.r6.u32);assert(Read(base,ctx.r6.u32)==0x82033168);assert(Read(base,ctx.r6.u32+4)==0x12345678);assert(Read(base,ctx.r6.u32+8)==0x87654321);assert(Read(base,ctx.r6.u32+12)==0);ctx.r6.u64=0xabcdef1234567890ull;});
+ assert(ctx.r6.u64==full_result_register&&Read(base,result+12)==2);
  for(auto status:{0u,996u,997u,5u,4318u}){
-  Setup();install();open();ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r6.u32=parameter;Write(base,parameter+12,2);assert(Choice(ctx,base));prior_status=status;
+  Setup();install();open();ctx.r3.u32=screen;ctx.r4.u32=2;ctx.r5.u32=popup;ctx.r6.u32=result;Write(base,result+12,2);assert(Choice(ctx,base));prior_status=status;
   ctx.r3.u32=unload;sub_82A3DB58(ctx,base);ctx.r3.u32=0x3000;ctx.r4.s32=-1;ctx.r5.u32=1;sub_827041C8(ctx,base);
   const auto before=requests;Write(base,0xa000+0x10c,1);Write(base,0xa000+0x260,12);Write(base,0xa000+0x174,0xb000);Title(ctx,base,0xa000);assert(requests==before+(status==0));
   if(status==0){assert(Consume(requested));assert(!Consume(requested));}

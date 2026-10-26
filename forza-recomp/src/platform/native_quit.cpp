@@ -79,42 +79,37 @@ bool Open(PPCContext& ctx,uint8_t* base,uint32_t screen,uint32_t owner){
   return HasDialog();
 }
 bool Choice(PPCContext& ctx,uint8_t* base){
-  if(!ctx.r6.u32||ctx.r4.u32!=2)return false;
+  // 82F28AD0 forwards a distinct 16-byte stack Result, not the 40-byte
+  // MessageBoxParams. r5 is the live child popup: its parent and retained
+  // Params identify the owned request without retaining a stack pointer.
+  if(!ctx.r5.u32||!ctx.r6.u32||ctx.r4.u32!=2||
+     Read(base,ctx.r6.u32)!=0x82033168||Read(base,ctx.r5.u32+156)!=ctx.r3.u32)return false;
   std::lock_guard lock(mutex);
   if(!Enabled()||!Offline()){flow.Cancel();return false;}
-  return flow.Choose(ctx.r3.u32,ctx.r6.u32,Read(base,ctx.r6.u32+12));
+  return flow.Choose(ctx.r3.u32,Read(base,ctx.r5.u32+164),Read(base,ctx.r6.u32+12));
 }
 uint32_t MainMenuResult(PPCContext& ctx,uint8_t* base,uint32_t original){
-  if(!original||Read(base,original)!=0x82036984||Read(base,original+4)!=2)return 0;
-  const auto begin=Read(base,original+24),end=Read(base,original+28);
-  if(!begin||end<begin||end-begin!=132)return 0;
-  PPCContext native=ctx;
-  native.r3.u64=40;
-  rex::runtime::ResolveIndirectFunction(0x824265C8)(native,base);
-  const auto object=native.r3.u32;
+  if(!original||Read(base,original)!=0x82033168)return 0;
+  const auto object=REX_KERNEL_MEMORY()->SystemHeapAlloc(16);
   if(!object)return 0;
-  // Construct a real native result with owned string/vector references. Its
-  // constructor initializes choice+12 to zero, the original Main Menu answer.
-  native.r3.u64=object;native.r4.u64=2;
-  native.r5.u64=original+16;native.r6.u64=original+20;
-  native.r7.u64=begin;native.r8.u64=end;
-  __imp__sub_82681628(native,base);
-  return native.r3.u32;
+  // Native 827F2B90 initializes these four POD words; 827F2C98 owns no
+  // references. Preserve every field and map only the selection to Main Menu.
+  for(unsigned offset=0;offset<16;offset+=4)Write(base,object+offset,Read(base,original+offset));
+  Write(base,object+12,0);
+  return object;
 }
-void ReleaseResult(PPCContext& ctx,uint8_t* base,uint32_t result){
-  if(!result)return;
-  fh1_pause_actions::detail::Native native(ctx,base);
-  native.Call(Read(base,Read(base,result)),{result,1});
+void ReleaseResult(PPCContext&,uint8_t*,uint32_t result){
+  if(result)REX_KERNEL_MEMORY()->SystemHeapFree(result);
 }
 void WithChoice(PPCContext& ctx,uint8_t* base,const std::function<void()>& handler){
-  const auto original=ctx.r6.u32;
+  const auto original=ctx.r6.u64;
   const bool desktop=Choice(ctx,base);
-  const auto mapped=desktop?MainMenuResult(ctx,base,original):0;
-  if(mapped)ctx.r6.u32=mapped;
+  const auto mapped=desktop?MainMenuResult(ctx,base,uint32_t(original)):0;
+  if(mapped)ctx.r6.u64=mapped;
   else if(desktop)Cancel();
   handler();
   if(mapped)ReleaseResult(ctx,base,mapped);
-  if(desktop)ctx.r6.u32=original;
+  if(desktop)ctx.r6.u64=original;
 }
 void Title(PPCContext&,uint8_t* base,uint32_t screen){
   std::function<void(uint64_t)> request;std::optional<uint64_t> generation;
