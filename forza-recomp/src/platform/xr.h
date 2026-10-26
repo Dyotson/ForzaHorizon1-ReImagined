@@ -2,12 +2,16 @@
 // window, which keeps showing the game.
 //
 // vr_mode = off (default): nothing here runs and no OpenXR library is loaded.
-// vr_mode = screen: the game's picture on a virtual screen (an OpenXR quad layer, 3.2 x 1.8 m
-//   at 2.5 m in front of the seat), redrawn at the headset's rate.
+// vr_mode = screen: the game's picture on a virtual screen (an OpenXR quad layer, 2.2 x 1.24 m
+//   at 2.5 m in front of the seat: 47 degrees wide), redrawn at the headset's rate.
 // vr_mode = cockpit: as screen, but in the in-car view the head pose turns and moves the camera
 //   inside the car (hooks/vr_head_pose.cpp) and the picture becomes a projection layer drawn
 //   for the pose it was rendered with (the runtime reprojects head motion between game frames).
-//   Mono: both eyes see the same image. Other cameras, menus and loading stay on the screen.
+//   The game draws exactly the eyes' fields of view plus a margin (an axis pitched to their
+//   middle, and a projection aspect that need not be the picture's), its camera physics (shake,
+//   G-force lean, speed field of view) off. Mono: both eyes see the same image. Other cameras,
+//   menus and loading stay on the screen. Pads keep working while the desktop window has no
+//   focus (SDK patch 0392).
 //
 // The OpenXR runtime creates the Vulkan instance and device and picks the GPU (SDK patch 0390);
 // the newest guest output reaches this thread with the tag of the frame it shows (SDK patch
@@ -38,8 +42,9 @@ void Shutdown();
 // Cockpit mode with a running session: the camera hook takes its pose from the headset.
 bool CockpitActive();
 // Main loop thread, for each in-car view built: the head transform (recentred, with the seat
-// offset) and the vertical field of view to draw with, and a new frame tag. False: no pose.
-bool CockpitView(vr::HeadTransform& head, float& vertical_fov, uint32_t& tag);
+// offset, turned to the drawn axis), the vertical field of view and the projection aspect to draw
+// with, and a new frame tag. False: no pose.
+bool CockpitView(vr::HeadTransform& head, float& vertical_fov, float& aspect, uint32_t& tag);
 // Main loop thread: the posed view matrix (64 guest bytes) that carries `tag`.
 void RememberPosedView(uint32_t tag, const uint8_t matrix[64]);
 // Render thread: a view matrix reached the render-side camera (CPresentationCamera at guest
@@ -48,6 +53,18 @@ void OnRenderView(uint32_t camera, const uint8_t matrix[64]);
 // Render thread, at VdSwap after the SDK wrote the swap packet at guest address `packet`:
 // puts the tag of the frame being swapped into it.
 void TagSwap(uint8_t* base, uint32_t packet);
+
+// vr_trace: main loop thread, each view the game builds while a session runs: the active camera
+// (its vtable and a static name, "?" when unknown; for the in-car camera also its look-around
+// angle, radians) and whether the head pose went into it. The OpenXR thread logs it with the head
+// pose about 10 times a second.
+bool Tracing();
+void NoteView(uint32_t camera_vtable, const char* camera_name, float look_angle, bool posed);
+
+// Camera hooks (hooks/vr_head_pose.cpp): the projection aspect the VR cockpit draws with while a
+// posed view is handed over on the calling thread, else 0. The viewport query's hook
+// (hooks/ultrawide_projection.cpp) answers with it.
+float PosedViewAspect();
 
 // Recentres the cockpit view and the screen on where the head is now.
 void Recenter();

@@ -61,6 +61,11 @@ REXCVAR_DEFINE_STRING(vr_recenter_key, "Home", "VR",
                       "Key that recentres the VR view on the head (both sticks held for a second "
                       "do the same)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_DOUBLE(vr_head_back_limit_cm, 8.0, "VR",
+                      "Cockpit: how far the eye may move back from where it was recentred, cm; "
+                      "turning round moves the head back, and further back the eye would enter "
+                      "the seat (100: no limit)")
+    .range(0, 100);
 REXCVAR_DEFINE_DOUBLE(vr_fov_margin, 5.0, "VR",
                       "Cockpit mode: degrees drawn beyond the headset's field of view on each side, "
                       "so reprojection between game frames does not show the image's edge")
@@ -70,9 +75,17 @@ REXCVAR_DEFINE_INT32(vr_runtime_timeout, 20, "VR",
                      "Seconds to wait for the OpenXR runtime at start before playing flat")
     .range(1, 300)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_DOUBLE(vr_screen_width, 3.2, "VR", "Virtual screen width, metres").range(0.5, 20);
+// 2.2 m at 2.5 m: 47 degrees wide, 27 tall. The corners are 24 degrees from the middle, within
+// an eye turn without turning the head, like a cinema screen from its recommended seats (THX:
+// 36-40 degrees). Version 1's 3.2 m filled 65 degrees: menus and the HUD's corners needed head
+// turns.
+REXCVAR_DEFINE_DOUBLE(vr_screen_width, 2.2, "VR", "Virtual screen width, metres").range(0.5, 20);
 REXCVAR_DEFINE_DOUBLE(vr_screen_distance, 2.5, "VR", "Virtual screen distance, metres")
     .range(0.5, 20);
+REXCVAR_DEFINE_BOOL(vr_trace, false, "VR",
+                    "Log the head pose, the game camera, the field of view drawn and the latency "
+                    "about 10 times a second (lines \"VR trace:\")")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace forza::xr {
 namespace {
@@ -104,6 +117,7 @@ struct RexGuestOutputFrame {
 };
 }
 using SetVulkanCreationHooksFn = void (*)(const RexVulkanCreationHooks*);
+using SetPadsWithoutFocusFn = void (*)(int);  // patch 0392 (src/input/input_system.cpp)
 using SetGuestOutputExportFn = void (*)(int);
 using AcquireGuestOutputFrameFn = int (*)(RexGuestOutputFrame*, uint64_t);
 using ReleaseGuestOutputFrameFn = void (*)(uint32_t);
@@ -218,6 +232,7 @@ struct State {
   SetGuestOutputExportFn set_export = nullptr;
   AcquireGuestOutputFrameFn acquire_frame = nullptr;
   ReleaseGuestOutputFrameFn release_frame = nullptr;
+  SetPadsWithoutFocusFn set_pads_without_focus = nullptr;
 
   // The session (OpenXR thread; the spaces are also read by CockpitView under pose_mutex).
   VulkanDevice* device = nullptr;
@@ -247,17 +262,35 @@ struct State {
   bool have_image = false;  // a copy was released into the swapchain
   uint64_t last_serial = 0;
   FrameTag shown_tag;  // the tag of the picture in the swapchain (id 0: untagged)
+  XrExtent2Di shown_extent{};  // the picture's part of the swapchain image (smaller for the screen)
+  bool linear_blit = false;  // the guest output's format can be filtered: the screen is downscaled
 
   // Cockpit state shared with the camera hooks.
   std::atomic<bool> cockpit_active{false};
-  std::atomic<float> cockpit_fov{0};  // radians, vertical, what the game draws with
   std::atomic<bool> recenter{true};
-  std::mutex pose_mutex;  // the spaces while CockpitView locates, the origin
+  std::mutex pose_mutex;  // the spaces while CockpitView locates, the origin, the frustum
   Pose origin;
   bool origin_set = false;
+  CockpitFrustum frustum;  // what the game draws the cockpit with (vertical 0: not known yet)
   std::atomic<int64_t> wait_display_time{0}, wait_period{0}, wait_steady_ns{0};
-  LatencyEstimate latency{40'000'000, 5'000'000, 50'000'000};  // OpenXR thread only
+  // Camera built to picture shown: the head pose is predicted that far ahead. A streamed headset
+  // (WiVRn) shows a picture 70-95 ms after the game built its camera, so the cap is 100 ms.
+  LatencyEstimate latency{40'000'000, 5'000'000, 100'000'000};  // OpenXR thread only
   std::atomic<int64_t> latency_ns{40'000'000};
+  // The last cockpit frame's latency in two parts: camera built to the picture reaching the OpenXR
+  // thread (the game's own pipeline), and from there to its display time (the runtime's).
+  std::atomic<int64_t> last_game_ns{0}, last_runtime_ns{0};
+  int64_t stat_game_ns = 0, stat_runtime_ns = 0;  // sums over the stats window
+  uint32_t stat_latency_samples = 0;
+
+  // vr_trace: what the camera hook saw last (main loop thread), logged by the OpenXR thread.
+  std::atomic<bool> trace{false};
+  std::atomic<uint32_t> trace_camera{0};
+  std::atomic<const char*> trace_camera_name{nullptr};
+  std::atomic<float> trace_look{0};
+  std::atomic<bool> trace_posed{false};
+  std::atomic<int64_t> trace_view_ns{0};  // steady clock of the last view built
+  int64_t trace_next_ns = 0;
 
   std::mutex tags_mutex;
   TagRing<64> tags;
@@ -540,6 +573,26 @@ void DestroySwapchain() {
   g.have_image = false;
 }
 
+// The cockpit view's size and its pixel density in the middle of the picture (the guest output's
+// size: 16:9 at the render scale), once both are known.
+void LogCockpitView() {
+  if (g.mode != Mode::kCockpit || !g.width || !g.height) return;
+  CockpitFrustum f;
+  {
+    std::lock_guard lock(g.pose_mutex);
+    f = g.frustum;
+  }
+  if (f.vertical <= 0) return;
+  constexpr float kToDeg = 57.29578f;
+  REXLOG_INFO("VR: the cockpit view is drawn {:.0f} deg wide x {:.0f} tall around an axis {:.1f} deg "
+              "{} and {:.1f} {} of the head; at {}x{} that is {:.1f} x {:.1f} pixels per degree in the "
+              "middle",
+              2 * f.HalfHorizontal() * kToDeg, f.vertical * kToDeg, std::fabs(f.pitch) * kToDeg,
+              f.pitch < 0 ? "down" : "up", std::fabs(f.yaw) * kToDeg, f.yaw < 0 ? "right" : "left",
+              g.width, g.height, CentrePixelsPerDegree(float(g.width), f.HalfHorizontal()),
+              CentrePixelsPerDegree(float(g.height), f.vertical / 2));
+}
+
 bool CreateSwapchain(uint32_t width, uint32_t height) {
   DestroySwapchain();
   XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
@@ -607,6 +660,7 @@ bool CreateSwapchain(uint32_t width, uint32_t height) {
   g.height = height;
   REXLOG_INFO("VR: swapchain {}x{}, format {}, {} images", width, height, g.swapchain_format,
               g.swapchain_images.size());
+  LogCockpitView();
   return true;
 }
 
@@ -625,8 +679,11 @@ VkImageMemoryBarrier Barrier(VkImage image, VkAccessFlags src, VkAccessFlags dst
 }
 
 // Copies a guest output into the next swapchain image and releases it to the runtime. The frame's
-// hold is dropped when the copy's fence signals.
-bool CopyFrame(const RexGuestOutputFrame& frame) {
+// hold is dropped when the copy's fence signals. For the screen a picture drawn at render scale 2
+// or more is halved (or more) on the way with a linear filter: the screen covers about 1,000 of
+// the headset's pixels across, and the runtime samples its layers without mipmaps, so a full
+// 2560-pixel picture would shimmer.
+bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
   if (frame.width != g.width || frame.height != g.height) {
     if (frame.width == g.failed_width && frame.height == g.failed_height) return false;
     if (!CreateSwapchain(frame.width, frame.height)) {
@@ -662,6 +719,8 @@ bool CopyFrame(const RexGuestOutputFrame& frame) {
   begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   g.vk.BeginCommandBuffer(slot.buffer, &begin);
   const VkImage target = g.swapchain_images[index];
+  const uint32_t divisor = for_screen && g.linear_blit ? std::max(1u, frame.width / 1280) : 1;
+  const uint32_t out_width = std::max(1u, g.width / divisor), out_height = std::max(1u, g.height / divisor);
   // As the presenter's own guest output capture: the guest output leaves and returns to
   // SHADER_READ_ONLY in the fragment shader stage, which later refreshes wait for.
   VkImageMemoryBarrier to_copy[2] = {
@@ -676,9 +735,10 @@ bool CopyFrame(const RexGuestOutputFrame& frame) {
   blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
   blit.srcOffsets[1] = {int32_t(frame.width), int32_t(frame.height), 1};
   blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-  blit.dstOffsets[1] = {int32_t(g.width), int32_t(g.height), 1};
+  blit.dstOffsets[1] = {int32_t(out_width), int32_t(out_height), 1};
   g.vk.CmdBlitImage(slot.buffer, frame.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g.staging,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                    divisor > 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
   VkImageMemoryBarrier after_blit[3] = {
       Barrier(frame.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
@@ -693,7 +753,7 @@ bool CopyFrame(const RexGuestOutputFrame& frame) {
   VkImageCopy copy{};
   copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
   copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-  copy.extent = {g.width, g.height, 1};
+  copy.extent = {out_width, out_height, 1};
   g.vk.CmdCopyImage(slot.buffer, g.staging, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
   // Swapchain images go back to the runtime in COLOR_ATTACHMENT_OPTIMAL (XR_KHR_vulkan_enable2).
@@ -724,6 +784,7 @@ bool CopyFrame(const RexGuestOutputFrame& frame) {
   slot.hold = frame.handle;
   slot.busy = true;
   g.have_image = true;
+  g.shown_extent = {int32_t(out_width), int32_t(out_height)};
   ++g.stat_copies;
   return true;
 }
@@ -765,6 +826,7 @@ bool ChooseFormats() {
     REXLOG_WARN("VR: the GPU cannot blit the game's picture to an 8-bit image");
     return false;
   }
+  g.linear_blit = (source.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
   uint32_t modes = 0;
   g.xr.EnumerateEnvironmentBlendModes(g.instance, g.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
                                       0, &modes, nullptr);
@@ -826,8 +888,15 @@ bool CreateSession() {
   return true;
 }
 
+// While a session runs the player looks at the headset and the desktop window usually has no
+// focus: pads and wheels keep working then (patch 0392; the keyboard stays focus-bound).
+void PadsWithoutFocus(bool on) {
+  if (g.set_pads_without_focus) g.set_pads_without_focus(on ? 1 : 0);
+}
+
 void DestroySession() {
   g.cockpit_active = false;
+  PadsWithoutFocus(false);
   {
     std::lock_guard lock(g.pose_mutex);  // no CockpitView is locating now
     if (g.session != XR_NULL_HANDLE) DestroySwapchain();
@@ -883,9 +952,11 @@ bool PollEvents() {
           g.running = true;
           g.recenter = true;
           g.stat_since = std::chrono::steady_clock::now();
+          PadsWithoutFocus(true);
         } else if (g.state == XR_SESSION_STATE_STOPPING) {
           g.cockpit_active = false;
           g.running = false;
+          PadsWithoutFocus(false);
           g.xr.EndSession(g.session);
         } else if (g.state == XR_SESSION_STATE_EXITING || g.state == XR_SESSION_STATE_LOSS_PENDING) {
           return false;
@@ -913,16 +984,72 @@ void LogStats() {
   if (seconds < 10) return;
   const uint32_t swaps = g.stat_swaps.exchange(0), tagged = g.stat_tagged_swaps.exchange(0);
   const uint32_t extra = g.stat_extra_views.exchange(0), repeat = g.stat_repeat_views.exchange(0);
+  // Latency is measured on cockpit frames only (a tagged picture has the time its camera was
+  // built): without any in this window there is nothing to report.
+  std::string latency = "latency -";
+  if (g.stat_latency_samples) {
+    const double n = g.stat_latency_samples;
+    latency = fmt::format("latency {:.1f} ms (game {:.1f} + runtime {:.1f}; predicting {:.1f})",
+                          g.latency.Raw() / 1e6, g.stat_game_ns / n / 1e6,
+                          g.stat_runtime_ns / n / 1e6, g.latency.Value() / 1e6);
+  }
   REXLOG_INFO(
       "VR: {:.0f} Hz headset, {:.1f} game frames/s copied; shown as cockpit {} / screen {} "
-      "frames; swaps tagged {}/{} (dropped views {}, repeated {}); latency {:.1f} ms (predicting "
-      "{:.1f}); cockpit FOV {:.0f} deg; xrEndFrame max {:.1f} ms",
+      "frames; swaps tagged {}/{} (dropped views {}, repeated {}); {}; xrEndFrame max {:.1f} ms",
       g.stat_frames / seconds, g.stat_copies / seconds, g.stat_projection, g.stat_quad, tagged,
-      swaps, extra, repeat, g.latency.Raw() / 1e6, g.latency.Value() / 1e6,
-      g.cockpit_fov.load() * 57.2958f, g.stat_end_frame_max_ns / 1e6);
+      swaps, extra, repeat, latency, g.stat_end_frame_max_ns / 1e6);
   g.stat_frames = g.stat_projection = g.stat_quad = g.stat_copies = 0;
   g.stat_end_frame_max_ns = 0;
+  g.stat_game_ns = g.stat_runtime_ns = 0;
+  g.stat_latency_samples = 0;
   g.stat_since = now;
+}
+
+// vr_trace, about 10 times a second: the head relative to the recentred pose (yaw left, pitch up,
+// roll left in degrees; x right, y up, z forward in cm, as the game's camera takes them), the
+// game camera and whether the head pose went into it, what the headset shows, the field of view
+// the shown picture was drawn with, and the last cockpit frame's latency.
+void Trace(XrTime display_time, Layer layer) {
+  const int64_t now = SteadyNs();
+  if (now < g.trace_next_ns) return;
+  g.trace_next_ns = now + 100'000'000;
+  std::string head = "head not tracked";
+  {
+    std::lock_guard lock(g.pose_mutex);
+    Pose located;
+    if (g.origin_set && LocateHead(display_time, located)) {
+      const Pose rel = Relative(g.origin, located);
+      float yaw, pitch, roll;
+      YawPitchRoll(rel.q, yaw, pitch, roll);
+      // + 0.0f: no "-0" in the log.
+      head = fmt::format("head yaw {:.0f} pitch {:.0f} roll {:.0f} deg, x {:.1f} y {:.1f} z {:.1f} cm",
+                         std::round(yaw * 57.2958f) + 0.0f, std::round(pitch * 57.2958f) + 0.0f,
+                         std::round(roll * 57.2958f) + 0.0f, std::round(rel.p.x * 1000) / 10 + 0.0f,
+                         std::round(rel.p.y * 1000) / 10 + 0.0f, std::round(-rel.p.z * 1000) / 10 + 0.0f);
+    }
+  }
+  const int64_t view_age = now - g.trace_view_ns.load();
+  std::string camera;
+  if (!g.trace_view_ns.load() || view_age > 500'000'000) {
+    camera = "no game view";
+  } else {
+    const char* name = g.trace_camera_name.load();
+    camera = fmt::format("camera {} {:08X} look {:.0f} deg, {}", name ? name : "?", g.trace_camera.load(),
+                         std::round(g.trace_look.load() * 57.2958f) + 0.0f,
+                         g.trace_posed.load() ? "posed" : "not posed");
+  }
+  std::string shown = layer == Layer::kProjection ? "cockpit" : layer == Layer::kQuad ? "screen" : "nothing";
+  if (layer == Layer::kProjection) {
+    const CockpitFrustum& f = g.shown_tag.frustum;
+    shown += fmt::format(" {:.0f}x{:.0f} deg pitch {:.1f}", 2 * f.HalfHorizontal() * 57.2958f,
+                         f.vertical * 57.2958f, f.pitch * 57.2958f);
+  }
+  const int64_t game_ns = g.last_game_ns.load(), runtime_ns = g.last_runtime_ns.load();
+  const std::string latency =
+      game_ns || runtime_ns ? fmt::format("latency {:.0f} ms (game {:.0f} + runtime {:.0f})",
+                                          (game_ns + runtime_ns) / 1e6, game_ns / 1e6, runtime_ns / 1e6)
+                            : "latency -";
+  REXLOG_INFO("VR trace: {}; {}; shows {}; {}", head, camera, shown, latency);
 }
 
 // One headset frame: wait, take the newest game picture, submit the layer.
@@ -948,29 +1075,40 @@ bool Frame() {
   }
   ++g.stat_frames;
 
-  // The eyes' fields of view: what the cockpit view has to cover.
+  // The eyes' fields of view and orientations relative to the head: what the cockpit view has
+  // to cover.
   XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};
   locate.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
   locate.displayTime = frame_state.predictedDisplayTime;
-  locate.space = g.local;
+  locate.space = g.view;
   XrViewState view_state{XR_TYPE_VIEW_STATE};
   XrView eyes[2] = {{XR_TYPE_VIEW}, {XR_TYPE_VIEW}};
   uint32_t eye_count = 0;
-  if (XR_SUCCEEDED(g.xr.LocateViews(g.session, &locate, &view_state, 2, &eye_count, eyes)) &&
+  if (g.mode == Mode::kCockpit &&
+      XR_SUCCEEDED(g.xr.LocateViews(g.session, &locate, &view_state, 2, &eye_count, eyes)) &&
       eye_count == 2) {
     const Fov fovs[2] = {
         {eyes[0].fov.angleLeft, eyes[0].fov.angleRight, eyes[0].fov.angleUp, eyes[0].fov.angleDown},
         {eyes[1].fov.angleLeft, eyes[1].fov.angleRight, eyes[1].fov.angleUp, eyes[1].fov.angleDown}};
-    const float aspect = g.width && g.height ? float(g.width) / float(g.height) : 16.0f / 9.0f;
+    const bool oriented = view_state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT;
+    const Quat rotation[2] = {oriented ? ToPose(eyes[0].pose).q : Quat{},
+                              oriented ? ToPose(eyes[1].pose).q : Quat{}};
     const float margin = float(REXCVAR_GET(vr_fov_margin)) * 3.14159265f / 180.0f;
-    const float fov = CoverVerticalFov(fovs, aspect, margin, 2.2f);
-    if (std::fabs(fov - g.cockpit_fov.load()) > 0.01f) {
-      REXLOG_INFO("VR: eye fields of view L {:.0f}/{:.0f}/{:.0f}/{:.0f}, R {:.0f}/{:.0f}/{:.0f}/{:.0f} "
-                  "deg; the cockpit view is drawn at {:.0f} deg vertical",
+    const CockpitFrustum f = CoverEyes(fovs, rotation, margin, 1.5f, 2.2f);
+    bool changed;
+    {
+      std::lock_guard lock(g.pose_mutex);
+      changed = std::fabs(f.vertical - g.frustum.vertical) > 0.005f ||
+                std::fabs(f.aspect - g.frustum.aspect) > 0.005f ||
+                std::fabs(f.pitch - g.frustum.pitch) > 0.005f || std::fabs(f.yaw - g.frustum.yaw) > 0.005f;
+      if (changed) g.frustum = f;
+    }
+    if (changed) {
+      REXLOG_INFO("VR: eye fields of view L {:.0f}/{:.0f}/{:.0f}/{:.0f}, R {:.0f}/{:.0f}/{:.0f}/{:.0f} deg",
                   fovs[0].left * 57.2958f, fovs[0].right * 57.2958f, fovs[0].up * 57.2958f,
                   fovs[0].down * 57.2958f, fovs[1].left * 57.2958f, fovs[1].right * 57.2958f,
-                  fovs[1].up * 57.2958f, fovs[1].down * 57.2958f, fov * 57.2958f);
-      g.cockpit_fov = fov;
+                  fovs[1].up * 57.2958f, fovs[1].down * 57.2958f);
+      LogCockpitView();
     }
   }
 
@@ -993,16 +1131,27 @@ bool Frame() {
     RexGuestOutputFrame frame{sizeof(RexGuestOutputFrame)};
     if (g.acquire_frame(&frame, g.last_serial)) {
       g.last_serial = frame.serial;
-      if (CopyFrame(frame)) {
-        FrameTag tag;
-        {
-          std::lock_guard lock(g.tags_mutex);
-          if (const FrameTag* found = g.tags.Find(frame.tag)) tag = *found;
-        }
+      FrameTag tag;
+      {
+        std::lock_guard lock(g.tags_mutex);
+        if (const FrameTag* found = g.tags.Find(frame.tag)) tag = *found;
+      }
+      const bool cockpit = ChooseLayer(true, g.mode == Mode::kCockpit, tag.id ? &tag : nullptr,
+                                       frame_state.predictedDisplayTime) == Layer::kProjection;
+      if (CopyFrame(frame, !cockpit)) {
         if (tag.id && tag.id != g.shown_tag.id &&
             frame_state.predictedDisplayTime - tag.build_time <= kMaxTagAgeNs) {
+          // Built to shown, and its two parts: built to here (the game's frames in flight, the
+          // render thread, the GPU, this thread's pick-up) and here to the display time (the
+          // runtime's compositor and, for WiVRn, encoding, the network and the headset).
+          const int64_t now = NowXrTime();
           g.latency.Add(frame_state.predictedDisplayTime - tag.build_time);
           g.latency_ns = g.latency.Value();
+          g.last_game_ns = now - tag.build_time;
+          g.last_runtime_ns = frame_state.predictedDisplayTime - now;
+          g.stat_game_ns += now - tag.build_time;
+          g.stat_runtime_ns += frame_state.predictedDisplayTime - now;
+          ++g.stat_latency_samples;
         }
         g.shown_tag = tag;
       } else {
@@ -1018,15 +1167,16 @@ bool Frame() {
   XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
   const XrCompositionLayerBaseHeader* layers[1] = {};
   uint32_t layer_count = 0;
-  const XrRect2Di rect{{0, 0}, {int32_t(g.width), int32_t(g.height)}};
+  const XrRect2Di rect{{0, 0}, g.shown_extent};
   const Layer layer = frame_state.shouldRender
                           ? ChooseLayer(g.have_image, g.mode == Mode::kCockpit,
                                         g.shown_tag.id ? &g.shown_tag : nullptr,
                                         frame_state.predictedDisplayTime)
                           : Layer::kNone;
   if (layer == Layer::kProjection) {
-    // Mono: both eyes get the picture as drawn from the head pose it was rendered for.
-    const Fov fov = SymmetricFov(g.shown_tag.vertical_fov, float(g.width) / float(g.height));
+    // Mono: both eyes get the picture as drawn from the head pose (turned to the drawn axis) and
+    // the field of view it was rendered with.
+    const Fov fov = g.shown_tag.frustum.ImageFov();
     for (auto& view : views) {
       view.pose = ToXr(g.shown_tag.head);
       view.fov = {fov.left, fov.right, fov.up, fov.down};
@@ -1049,7 +1199,7 @@ bool Frame() {
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
     quad.subImage = {g.swapchain, rect, 0};
     quad.pose = ToXr(Compose(origin, {Quat{}, Vec3{0, 0, -distance}}));
-    quad.size = {width, width * float(g.height) / float(g.width)};
+    quad.size = {width, width * float(g.shown_extent.height) / float(std::max(g.shown_extent.width, 1))};
     layers[layer_count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad);
     ++g.stat_quad;
   }
@@ -1070,6 +1220,7 @@ bool Frame() {
   }
   g.frame_failures = 0;
   LogStats();
+  if (g.trace) Trace(frame_state.predictedDisplayTime, layer);
   return true;
 }
 
@@ -1352,6 +1503,13 @@ void Start(rex::system::IGraphicsSystem* graphics) {
     REXLOG_WARN("VR: this SDK build cannot hand the picture to OpenXR (patch 0391) - playing flat");
     return;
   }
+  g.set_pads_without_focus =
+      reinterpret_cast<SetPadsWithoutFocusFn>(forza::SdkSymbol("rexinput_SetPadsWithoutFocus"));
+  if (!g.set_pads_without_focus) {
+    REXLOG_WARN("VR: this SDK build drops pad input while the game window has no focus (patch 0392): "
+                "click the game window before putting the headset on");
+  }
+  g.trace = REXCVAR_GET(vr_trace);
   g.device = device;
   g.set_export(1);
   if (const std::string key = REXCVAR_GET(vr_recenter_key); !key.empty()) {
@@ -1380,28 +1538,44 @@ void Shutdown() {
 
 bool CockpitActive() { return g.cockpit_active.load(std::memory_order_relaxed); }
 
-bool CockpitView(vr::HeadTransform& head, float& vertical_fov, uint32_t& tag) {
+bool CockpitView(vr::HeadTransform& head, float& vertical_fov, float& aspect, uint32_t& tag) {
   if (!CockpitActive()) return false;
   FrameTag t;
   {
     std::lock_guard lock(g.pose_mutex);
-    if (g.local == XR_NULL_HANDLE || !g.origin_set) return false;
+    if (g.local == XR_NULL_HANDLE || !g.origin_set || g.frustum.vertical <= 0) return false;
+    t.frustum = g.frustum;
     t.build_time = NowXrTime();
     t.target_time = t.build_time + g.latency_ns.load();
-    if (!LocateHead(t.target_time, t.head)) return false;
-    head = ToGameHead(Relative(g.origin, t.head), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
+    Pose located;
+    if (!LocateHead(t.target_time, located)) return false;
+    // The camera looks along the frustum's axis: the head turned by its offset, in the game (the
+    // recentred head) and in the layer (the head in LOCAL) alike, from the eye held in front of
+    // the seat.
+    const Pose rel = LimitBack(Relative(g.origin, located), float(REXCVAR_GET(vr_head_back_limit_cm)) / 100.0f);
+    t.head = TurnView(Compose(g.origin, rel), t.frustum);
+    head = ToGameHead(TurnView(rel, t.frustum), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
   }
-  t.vertical_fov = g.cockpit_fov.load();
-  if (t.vertical_fov <= 0) return false;
   t.id = g.next_tag.fetch_add(1);
   if (!t.id) t.id = g.next_tag.fetch_add(1);
   {
     std::lock_guard lock(g.tags_mutex);
     g.tags.Put(t);
   }
-  vertical_fov = t.vertical_fov;
+  vertical_fov = t.frustum.vertical;
+  aspect = t.frustum.aspect;
   tag = t.id;
   return true;
+}
+
+bool Tracing() { return g.trace.load(std::memory_order_relaxed); }
+
+void NoteView(uint32_t camera_vtable, const char* camera_name, float look_angle, bool posed) {
+  g.trace_camera.store(camera_vtable, std::memory_order_relaxed);
+  g.trace_camera_name.store(camera_name, std::memory_order_relaxed);
+  g.trace_look.store(look_angle, std::memory_order_relaxed);
+  g.trace_posed.store(posed, std::memory_order_relaxed);
+  g.trace_view_ns.store(SteadyNs(), std::memory_order_relaxed);
 }
 
 void RememberPosedView(uint32_t tag, const uint8_t matrix[64]) {

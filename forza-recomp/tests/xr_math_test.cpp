@@ -91,36 +91,133 @@ void TestYawOnlyKeepsHeading() {
   Check(Near(f.y, 0) && Near(std::atan2(-f.x, -f.z), -70 * kDeg), "heading without the roll");
 }
 
-void TestCoverFov() {
-  // Quest 3-like eyes: about 52/43 degrees out/in, 48 up, 52 down.
-  const Fov eyes[2] = {{-52 * kDeg, 43 * kDeg, 48 * kDeg, -52 * kDeg},
-                       {-43 * kDeg, 52 * kDeg, 48 * kDeg, -52 * kDeg}};
-  const float v = CoverVerticalFov(eyes, 16.0f / 9.0f, 5 * kDeg, 2.2f);
-  Check(Near(v, 2 * 57 * kDeg, 1e-3f), "vertical: the larger half-angle plus the margin");
-  const Fov drawn = SymmetricFov(v, 16.0f / 9.0f);
-  Check(drawn.right >= 57 * kDeg && Near(drawn.up, 57 * kDeg, 1e-3f) && Near(drawn.left, -drawn.right),
-        "the drawn 16:9 image covers both eyes and the margin");
-  // A tall image: the horizontal need decides.
-  const float tall = CoverVerticalFov(eyes, 0.5f, 0, 3.0f);
-  Check(Near(std::atan(std::tan(tall / 2) * 0.5f), 52 * kDeg, 1e-3f), "horizontal decides at 1:2");
-  // The cap.
-  Check(Near(CoverVerticalFov(eyes, 16.0f / 9.0f, 30 * kDeg, 1.5f), 1.5f), "capped");
+// The Quest 3's eyes as WiVRn reported them (left, right, up, down in degrees).
+const Fov kQuest3[2] = {{-54 * kDeg, 40 * kDeg, 44 * kDeg, -55 * kDeg},
+                        {-40 * kDeg, 54 * kDeg, 44 * kDeg, -55 * kDeg}};
+const Quat kParallel[2] = {{}, {}};
+
+// Every corner of both eyes' frusta lies inside the drawn frustum, with `margin` to spare.
+bool Covers(const CockpitFrustum& f, const Fov eyes[2], const Quat rot[2], float margin) {
+  const Quat to_axis = Conj(f.Offset());
+  const float th = std::tan(f.HalfHorizontal() - margin + 1e-4f), tv = std::tan(f.vertical / 2 - margin + 1e-4f);
+  for (int i = 0; i < 2; ++i)
+    for (float h : {eyes[i].left, eyes[i].right})
+      for (float v : {eyes[i].up, eyes[i].down}) {
+        const Vec3 d = Rotate(Mul(to_axis, rot[i]), {std::tan(h), std::tan(v), -1});
+        if (-d.z <= 0 || std::fabs(d.x) / -d.z > th || std::fabs(d.y) / -d.z > tv) return false;
+      }
+  return true;
 }
 
-void TestSymmetricFov() {
-  const Fov f = SymmetricFov(62 * kDeg, 16.0f / 9.0f);
-  Check(Near(f.up, 31 * kDeg) && Near(f.down, -31 * kDeg), "vertical halves");
-  Check(Near(std::tan(f.right), std::tan(31 * kDeg) * 16.0f / 9.0f), "horizontal from the aspect");
+void TestCoverQuest3() {
+  const CockpitFrustum f = CoverEyes(kQuest3, kParallel, 5 * kDeg, 1.5f, 2.2f);
+  Check(Near(f.yaw, 0) && Near(f.pitch, -5.5f * kDeg), "axis pitched to the middle of 44 up and 55 down");
+  Check(Covers(f, kQuest3, kParallel, 5 * kDeg), "both eyes and the margin inside");
+  Check(Near(f.vertical, 109 * kDeg, 0.2f * kDeg), "109 degrees tall (version 1: 120)");
+  Check(Near(f.HalfHorizontal(), 61.7f * kDeg, 0.2f * kDeg), "123 degrees wide (version 1: 144)");
+  // Centre pixel density at render scale 2 (2560x1440): version 1 drew 120 degrees tall at 16:9.
+  const CockpitFrustum v1 = SymmetricCover(kQuest3, 16.0f / 9.0f, 5 * kDeg, 2.2f);
+  Check(Near(v1.vertical, 120 * kDeg, 1e-3f) && Near(v1.aspect, 16.0f / 9.0f), "version 1: 120 degrees at 16:9");
+  const float v1_h = CentrePixelsPerDegree(2560, v1.HalfHorizontal());
+  const float v1_v = CentrePixelsPerDegree(1440, v1.vertical / 2);
+  const float h = CentrePixelsPerDegree(2560, f.HalfHorizontal());
+  const float v = CentrePixelsPerDegree(1440, f.vertical / 2);
+  Check(Near(v1_h, 7.26f, 0.02f) && Near(v1_v, 7.26f, 0.02f), "version 1: 7.3 pixels per degree");
+  Check(Near(h, 12.0f, 0.05f) && Near(v, 8.96f, 0.05f), "now: 12.0 across, 9.0 up");
+  // No margin: exactly the eyes' extent.
+  const CockpitFrustum tight = CoverEyes(kQuest3, kParallel, 0, 1.5f, 2.2f);
+  Check(Covers(tight, kQuest3, kParallel, 0) && tight.vertical < f.vertical, "without a margin");
+}
+
+void TestCoverCantedAndCapped() {
+  // Displays canted 10 degrees outward (the left eye turned left), and a headset that sees more
+  // to the left: the axis follows, the corners stay covered.
+  const Fov eyes[2] = {{-50 * kDeg, 45 * kDeg, 45 * kDeg, -45 * kDeg},
+                       {-45 * kDeg, 50 * kDeg, 45 * kDeg, -45 * kDeg}};
+  const Quat canted[2] = {AxisY(10 * kDeg), AxisY(-10 * kDeg)};
+  const CockpitFrustum f = CoverEyes(eyes, canted, 3 * kDeg, 1.5f, 2.2f);
+  Check(Near(f.yaw, 0) && Near(f.pitch, 0), "symmetric canted displays: straight axis");
+  Check(Covers(f, eyes, canted, 3 * kDeg), "canted eyes covered");
+  Check(Near(f.HalfHorizontal(), 63 * kDeg, 1e-3f), "canting widens the union: 60 plus the margin");
+  const Fov lopsided[2] = {{-60 * kDeg, 30 * kDeg, 40 * kDeg, -40 * kDeg},
+                           {-50 * kDeg, 40 * kDeg, 40 * kDeg, -40 * kDeg}};
+  const CockpitFrustum g = CoverEyes(lopsided, kParallel, 2 * kDeg, 1.5f, 2.2f);
+  Check(Near(g.yaw, 10 * kDeg), "turned left to the middle of -60 and 40");
+  Check(Covers(g, lopsided, kParallel, 2 * kDeg), "lopsided eyes covered");
+  // Caps: half-angles below 86 degrees and the height.
+  const CockpitFrustum wide = CoverEyes(kQuest3, kParallel, 30 * kDeg, 1.5f, 2.2f);
+  Check(wide.HalfHorizontal() <= 1.5f + 1e-4f && wide.vertical <= 2.2f + 1e-4f, "capped");
+}
+
+void TestTurnedView() {
+  // The drawn view is the head turned by the frustum's offset, the same in OpenXR (the layer's
+  // pose) and in the game (the camera): for a head looking 30 degrees left, the axis pitched
+  // 5.5 down equals the test pose (30, -5.5, 0).
+  CockpitFrustum f;
+  f.pitch = -5.5f * kDeg;
+  const Pose head{AxisY(30 * kDeg), {0.05f, 0, 0}};
+  const Pose turned = TurnView(head, f);
+  float expected[3][3];
+  forza::vr::HeadRotation({30, -5.5f, 0}, expected);
+  Check(SameRotation(ToGameHead(turned, 0).r, expected), "turned view = yaw then the axis pitch");
+  Check(Near(turned.p.x, 0.05f), "position unchanged");
+  const Fov fov = f.ImageFov();
+  Check(Near(fov.left, -fov.right) && Near(fov.up, -fov.down), "the picture is symmetric about the axis");
+}
+
+void TestBackLimit() {
+  // Turned round with the head 20 cm back (+z): the eye stops 8 cm back; forward, sideways and
+  // up are free.
+  const Pose back{AxisY(180 * kDeg), {0.05f, 0.03f, 0.20f}};
+  const Pose held = LimitBack(back, 0.08f);
+  Check(Near(held.p.z, 0.08f) && Near(held.p.x, 0.05f) && Near(held.p.y, 0.03f), "held 8 cm back");
+  const auto h = ToGameHead(held, 0);
+  Check(Near(h.t[2], -0.08f), "the game's eye 8 cm behind the driver's point");
+  const Pose forward{{}, {0, 0, -0.3f}};
+  Check(Near(LimitBack(forward, 0.08f).p.z, -0.3f), "leaning forward is not limited");
+  // In LOCAL the held pose is the origin composed with it.
+  const Pose origin{AxisY(30 * kDeg), {0.1f, 1.2f, 0.4f}};
+  const Pose located = Compose(origin, back);
+  const Pose shown = Compose(origin, LimitBack(Relative(origin, located), 0.08f));
+  const Vec3 d{shown.p.x - located.p.x, shown.p.y - located.p.y, shown.p.z - located.p.z};
+  const Vec3 along = Rotate(Conj(origin.q), d);
+  Check(Near(along.x, 0) && Near(along.y, 0) && Near(along.z, -0.12f), "moved 12 cm forward along the recentred axis");
+}
+
+void TestYawPitchRoll() {
+  const float cases[][3] = {{0, 0, 0}, {35, -10, 5}, {-120, 20, -15}, {179, 0, 0}, {-179, 5, 0}};
+  for (const auto& c : cases) {
+    const Quat q = Mul(Mul(AxisY(c[0] * kDeg), AxisX(c[1] * kDeg)), AxisZ(c[2] * kDeg));
+    float y, p, r;
+    YawPitchRoll(q, y, p, r);
+    Check(Near(y, c[0] * kDeg, 1e-3f) && Near(p, c[1] * kDeg, 1e-3f) && Near(r, c[2] * kDeg, 1e-3f),
+          "yaw, pitch and roll back from the quaternion");
+  }
+  // Looking straight back: 180 degrees either way, the same view.
+  const auto back = ToGameHead({AxisY(180 * kDeg), {}}, 0);
+  const auto back2 = ToGameHead({AxisY(-180 * kDeg), {}}, 0);
+  Check(SameRotation(back.r, back2.r), "180 and -180 are the same view");
+  const float forward[3] = {0, 0, 1};
+  float out[3];
+  HeadToCamera(back, forward, out);
+  Check(Near(out[0], 0) && Near(out[2], -1), "looking back sees the car's rear");
+  // A quaternion and its negation (both describe one rotation; runtimes return either).
+  const Quat q = AxisY(178 * kDeg);
+  const Quat neg{-q.x, -q.y, -q.z, -q.w};
+  Check(SameRotation(ToGameHead({q, {}}, 0).r, ToGameHead({neg, {}}, 0).r), "q and -q");
 }
 
 void TestLatency() {
-  LatencyEstimate l(40'000'000, 5'000'000, 50'000'000);
+  LatencyEstimate l(40'000'000, 5'000'000, 100'000'000);
   for (int i = 0; i < 100; ++i) l.Add(20'000'000);
   Check(std::llabs(l.Value() - 20'000'000) < 100'000, "converges");
+  // The Quest 3 over WiVRn measured 70-95 ms: predicted as measured (version 1 stopped at 50).
+  for (int i = 0; i < 100; ++i) l.Add(82'000'000);
+  Check(std::llabs(l.Value() - 82'000'000) < 100'000, "follows a streamed headset's latency");
   for (int i = 0; i < 100; ++i) l.Add(300'000'000);
-  Check(l.Value() == 50'000'000, "capped at 50 ms");
+  Check(l.Value() == 100'000'000, "capped at 100 ms");
   l.Add(-5);
-  Check(l.Value() == 50'000'000, "ignores negative samples");
+  Check(l.Value() == 100'000'000, "ignores negative samples");
 }
 }  // namespace
 
@@ -130,8 +227,11 @@ int main() {
   TestPositionAndSeat();
   TestRecentre();
   TestYawOnlyKeepsHeading();
-  TestCoverFov();
-  TestSymmetricFov();
+  TestCoverQuest3();
+  TestCoverCantedAndCapped();
+  TestTurnedView();
+  TestYawPitchRoll();
+  TestBackLimit();
   TestLatency();
   if (failures) return 1;
   std::printf("xr_math_test: ok\n");

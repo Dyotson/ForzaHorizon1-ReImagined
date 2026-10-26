@@ -369,6 +369,12 @@ jobs:
           cmake --build "$RUNNER_TEMP/sdk-filesystem" --parallel 2
           ctest --test-dir "$RUNNER_TEMP/sdk-filesystem" --output-on-failure
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
+          # The OpenXR loader for the VR setting (docs/vr.md, "Packaging"; pinned in pins.py): the
+          # launcher copies every DLL of bin/ next to forza.exe. The game opens it only with VR on.
+          python launcher/packaging/ci_fetch.py openxr-loader-windows "$RUNNER_TEMP/openxr"
+          cp "$RUNNER_TEMP/openxr/x64/bin/openxr_loader.dll" "$PREFIX/bin/"
+          mkdir -p "$PREFIX/share/licenses/openxr-loader"
+          cp "$RUNNER_TEMP/openxr/share/doc/openxr/LICENSE" "$PREFIX/share/licenses/openxr-loader/LICENSE.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
       - if: failure()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,66 @@
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+index 81b6e5c..4c5c19c 100644
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -109,4 +109,10 @@ class InputSystem : public system::IInputSystem {
+ /// In tool mode, only the NOP driver is added.
+ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode);
+ 
++/// Patch 0392: pads and wheels keep working while the window lacks focus (a client that shows
++/// the game somewhere else, such as a VR headset, turns this on). Keyboard and mouse stay
++/// focus-bound. Also exported as the C function rexinput_SetPadsWithoutFocus.
++void SetPadsWithoutFocus(bool on);
++bool PadsWithoutFocus();
++
+ }  // namespace rex::input
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 52bc327..b4b6dc6 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -554,6 +554,21 @@ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
+   return input;
+ }
+ 
++namespace {
++std::atomic<bool> pads_without_focus{false};
++}  // namespace
++
++void SetPadsWithoutFocus(bool on) {
++  // SDL drops joystick presses while no window has keyboard focus unless this hint is set (the
++  // wheel driver sets it too). The focus check of the active callback still applies when off.
++  if (on) SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++  if (pads_without_focus.exchange(on) != on)
++    REXLOG_INFO("Input: pads and wheels {}", on ? "work while the window has no focus"
++                                                : "need the window's focus again");
++}
++
++bool PadsWithoutFocus() { return pads_without_focus.load(std::memory_order_relaxed); }
++
+ }  // namespace rex::input
+ 
+ // Dynamically discovered by the opt-in FH1 bridge, so older runtimes remain
+@@ -570,3 +585,9 @@ extern "C" FORZA_TRIGGER_EXPORT int ForzaInputTriggerRumble(
+   auto* input = dynamic_cast<rex::input::InputSystem*>(kernel->emulator()->input_system());
+   return input ? input->SetTriggerRumble(user_mask & 15u, left, right, duration) : 0;
+ }
++
++// Patch 0392: found at run time by the game (its OpenXR session), so the game still starts on a
++// runtime without it.
++extern "C" FORZA_TRIGGER_EXPORT void rexinput_SetPadsWithoutFocus(int on) {
++  rex::input::SetPadsWithoutFocus(on != 0);
++}
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index 9ff54e8..8dbdd5f 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -248,7 +248,9 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+ 
+   if (auto* input_sys = static_cast<rex::input::InputSystem*>(runtime_->input_system())) {
+     input_sys->SetActiveCallback([this]() {
+-      if (window_ && !window_->HasFocus())
++      // Patch 0392: pads may stay active without focus (the keyboard and mouse driver checks
++      // the focus itself).
++      if (window_ && !window_->HasFocus() && !rex::input::PadsWithoutFocus())
+         return false;
+       if (!imgui_drawer_ ||
+           (!debug_overlay_ && !console_overlay_ && !settings_overlay_ && !achievements_overlay_))

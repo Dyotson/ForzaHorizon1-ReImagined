@@ -81,6 +81,13 @@ cmake -S "$SRC" -B "$SRC/out/build/win-cross" -G Ninja -DCMAKE_BUILD_TYPE=Releas
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/cmake/windows-clang.cmake" > /dev/null
 ninja -C "$SRC/out/build/win-cross" -j "$JOBS"
 cmake --install "$SRC/out/build/win-cross" > /dev/null
+# The OpenXR loader for the VR setting (docs/vr.md, "Packaging"), as the release workflow adds it.
+openxr_tmp="$(mktemp -d)"
+python3 "$ROOT/launcher/packaging/ci_fetch.py" openxr-loader-windows "$openxr_tmp" > /dev/null
+cp "$openxr_tmp/x64/bin/openxr_loader.dll" "$PREFIX/bin/"
+mkdir -p "$PREFIX/share/licenses/openxr-loader"
+cp "$openxr_tmp/share/doc/openxr/LICENSE" "$PREFIX/share/licenses/openxr-loader/LICENSE.txt"
+rm -rf "${openxr_tmp:?}"
 fi
 [ "$STEP" = --sdk-only ] && exit 0
 
@@ -115,6 +122,9 @@ fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/xiso_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 mkdir -p "$DIST/server"
 cp "$ROOT"/server/*.py "$DIST/server/"
+if [ -f "$PREFIX/share/licenses/openxr-loader/LICENSE.txt" ]; then
+    cp "$PREFIX/share/licenses/openxr-loader/LICENSE.txt" "$DIST/licenses/OpenXR-loader.txt"
+fi
 if [ -f "$PREFIX/share/licenses/smaa/LICENSE.txt" ]; then
     cp "$PREFIX/share/licenses/smaa/LICENSE.txt" "$DIST/licenses/SMAA.txt"
 fi

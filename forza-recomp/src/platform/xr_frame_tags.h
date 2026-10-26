@@ -21,8 +21,8 @@ namespace forza::xr {
 
 struct FrameTag {
   uint32_t id = 0;  // 0: no tag
-  Pose head;  // the head pose in LOCAL space the view was posed with (before recentring)
-  float vertical_fov = 0;  // radians, what the game drew with
+  Pose head;  // the drawn view's pose in LOCAL space: the head turned by the frustum's offset
+  CockpitFrustum frustum;  // what the game drew with (vertical 0: nothing)
   int64_t build_time = 0;  // XrTime when the camera hook ran
   int64_t target_time = 0;  // XrTime the pose was predicted for
 };
@@ -111,7 +111,7 @@ constexpr int64_t kMaxTagAgeNs = 300'000'000;
 // screen.
 inline Layer ChooseLayer(bool have_image, bool cockpit_mode, const FrameTag* tag, int64_t display_time) {
   if (!have_image) return Layer::kNone;
-  const bool cockpit = cockpit_mode && tag && tag->vertical_fov > 0 &&
+  const bool cockpit = cockpit_mode && tag && tag->frustum.vertical > 0 &&
                        display_time - tag->build_time <= kMaxTagAgeNs;
   return cockpit ? Layer::kProjection : Layer::kQuad;
 }

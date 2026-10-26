@@ -1,4 +1,4 @@
-"""The "VR headset (OpenXR)" setting (vr_mode, docs/vr.md, #333): what a start needs besides the cvar.
+"""The "VR headset (experimental)" setting (vr_mode, docs/vr.md, #333): what a start needs besides the cvar.
 
 The game opens the OpenXR loader only when vr_mode is not off. The loader finds the runtime from
 the active_runtime.json the runtime installs (WiVRn, Monado and SteamVR write

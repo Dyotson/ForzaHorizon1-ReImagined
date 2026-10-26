@@ -1,4 +1,4 @@
-"""The "VR headset (OpenXR)" setting (#333): the cvar, the launch arguments and the Flatpak runtime path."""
+"""The "VR headset (experimental)" setting (#333): the cvar, the launch arguments and the Flatpak runtime path."""
 from pathlib import Path
 import re
 import sys
@@ -19,9 +19,12 @@ class VrSettingTest(unittest.TestCase):
 
     def test_setting(self):
         setting = schema.BY_KEY["vr_mode"]
-        self.assertEqual(setting.label, "VR headset (OpenXR)")
+        # Marked experimental in its label, its section and the first words of its help.
+        self.assertEqual(setting.label, "VR headset (experimental)")
         self.assertEqual((setting.group, setting.section, setting.kind, setting.default),
-                         ("Display", "VR", "choice", "off"))
+                         ("Display", "VR (experimental)", "choice", "off"))
+        self.assertTrue(setting.help.startswith("Experimental"))
+        self.assertEqual(schema.BY_KEY["vr_seat_height_cm"].section, "VR (experimental)")
         self.assertEqual(setting.choices, [("off", "Off"), ("screen", "Virtual screen"), ("cockpit", "Cockpit")])
         self.assertTrue(setting.restart)
         for runtime in ("WiVRn", "Monado", "SteamVR", "Meta Quest Link", "Virtual Desktop"):
