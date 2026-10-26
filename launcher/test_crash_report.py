@@ -131,7 +131,7 @@ Authorization: Bearer private-unquoted
         self.assertEqual(query["body"], [body])
         self.assertEqual(query["title"], ["Crash: test & check"])
         self.assertEqual(query["labels"], ["bug"])
-        self.assertTrue(url.startswith("https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/new?"))
+        self.assertTrue(url.startswith("https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/new?"))
         self.assertIsNone(crash_report.issue_url("Crash", "日本語" * 5000))
 
 
