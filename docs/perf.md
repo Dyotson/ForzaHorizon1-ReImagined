@@ -1178,7 +1178,8 @@ Forza Live server, audio muted, a warm scratch shader cache, the low tier (`--fr
 held. Other jobs shared the machine during parts of the day (game runs that ignored the lock, a decompiler, a
 busy wait): every run records the other games and how busy the CPUs were besides the game
 (`tools/thread_stats.py report --cpus`), and runs with another game or more than 45% of a core of other load on
-CPUs 0-3 (70% on all eight) were run again; they are not in the tables.
+CPUs 0-3 (70% on all eight) were run again; they are not in the tables. (Its "race" was the car standing at the spawn point:
+the 1000 Club intro took the sign-up inputs; see round 3 below.)
 
 **Where the time goes** (four cores, 30 fps; % of the command processor's CPU samples by the function that was
 running, inlined code counted in its caller; race 4.92 ms a frame, 3,040 draws, 1.62 ms per 1,000 draws; free
@@ -1298,6 +1299,97 @@ cache misses cost more (#274's i7-8700K checks 2,800-6,600 nodes a frame, a Deck
   here. Most of their per-draw work went into the descriptor, sampler and texture binding steps (here #179 and
   #192); their render target memo, keyed on a register epoch, hit 50-62% of the draws, 0340's key (the render
   target registers only) 95%.
+
+## The command processor per draw, round 3 (#45, 2026-10-25)
+
+Round 2 (above) left the register writes (14-15 % of the command processor), the packet parsing
+(8 %), the shader and pipeline state (6-7 %) and `IssueDraw`'s calls into the runtime library
+(about 2 %). This round takes those, still outside #179 and #192.
+
+Method: as round 2 (the same TU4 game build; the SDK series of main 673c1b8, with 0350, built
+with `-gline-tables-only`; scratch XDG dirs and `--user_data_root`, a local Forza Live server,
+audio muted, the low tier, four cores with `taskset` or all eight), with one difference: the
+save. **The `race` scenario never reached the race:** with the user's Xenia save, TU4 plays the
+1000 Club introduction video (about 45 s) the first time free roam loads signed in to Forza Live,
+and then holds the car at the spawn point until the 1000 Club tutorial is done. Every run copies
+the save afresh, so every run played it: the scenario's sign-up inputs (X, A, A, X) went into the
+video and its "race" was the car standing at the spawn point (about 3,000 draws a frame, the
+figures of round 2's race rows and of the first runs here, "Spawn" below); its free roam began
+with about 15 s of the video. The runs below copy a save made once past the intro and the
+tutorial (`scratchpad/golden-save-tu4`, its README says how): the race runs (5,000-5,600 draws
+a frame, 7 ms of command processor a frame at 30 fps on four cores) and free roam drives for the
+whole 90 s (2,900 draws a frame).
+
+**What a draw costs in packets** (race, temporary counters, not committed): 14.7 type-0 packets
+with 203 registers (8.0 ranges of render state registers, 3 registers each and 90 % of the
+values unchanged; 4.4 float constant ranges of 32 registers; 2.3 fetch constant ranges; 1.1
+packets that write one register repeatedly), 8.8 type-3 packets (4.5 `SET_BIN_MASK_LO/HI`, 1.1
+`IM_LOAD` of 143 dwords, 1.0 draw, 0.85 `LOAD_ALU_CONSTANT`, 0.7 `SET_CONSTANT` and
+`SET_CONSTANT2` of registers, 0.26 indirect buffers) and 13 padding words in 6 runs. 39 % of the
+draws follow no change of any render state register.
+
+**Changes** (`docs/sdk_patches.md` has the details):
+
+- **0360**, register ranges in the packet loop (`gpu_plain_register_ranges`, default on): a
+  range made only of render state registers the Vulkan backend just stores is stored by the
+  packet loop from the ring, without the two virtual calls (`WriteRegisterRangeFromRing`,
+  `WriteRegistersFromMem`) and the backend's sorting of the range; a range inside the ring no
+  longer divides for its read offset.
+- **0361**, no calls into the runtime library for one instruction: `GetVulkanDevice` keeps the
+  device pointer instead of calling the virtual `provider()`; `rex::bit_scan_forward`, `tzcnt`
+  and `lzcnt` are inline in the GPU plugin. No setting (no behaviour change):
+  `tools/test_inline_bit_scans.cpp` checks every 32-bit value and 2^28 random 64-bit values
+  against the runtime's functions.
+- **0362**, the last translation of each shader (`gpu_shader_translation_memo`, default on;
+  `..._verify` also looks it up and logs a difference): a draw that asks a shader for the same
+  modification as the draw before skips the map lookup.
+
+Checks: a race and free roam with `gpu_shader_translation_memo_verify`, no difference; the paused
+scene (pause menu over free roam, the same frames) with 0360 and 0362 on, switched off in the
+running game and on again: the shots are identical.
+
+**Measured**, 0360 and 0362 together, switched in the running game every 2 s (race, spawn) or
+5 s (free roam) as in round 2 (the cvars' storage written through `/proc/PID/mem`, the first
+0.3 s of each window left out), 0361 on in both states. The BENCH lock held; the user's desktop
+and other agents' builds kept 10-35 % of a core busy on CPUs 0-3 and 50-90 % on all eight, so
+the limits of round 2 were 45 % and 100 %. Command processor CPU per 1,000 draws, mean [min-max]
+over the runs; "paired" compares each on window with its neighbouring off windows:
+
+| Scene | Cores, cap | Runs | off | on | change | paired | fps off / on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Race | 4, 30 fps | 2 | 1.355 [1.334-1.375] | 1.317 [1.308-1.326] | -2.7 % [-4.9, -0.6] | -2.4 % | 30 / 30 |
+| Free roam | 4, 30 fps | 2 | 1.504 [1.484-1.525] | 1.460 [1.441-1.479] | -3.0 % [-3.0, -2.9] | -2.8 % | 30 / 30 |
+| Race | 4, 240 fps | 1 | 1.296 | 1.282 | -1.1 % | -1.2 % | 114.7 / 118.7 |
+| Free roam | 4, 240 fps | 1 | 1.388 | 1.359 | -2.1 % | -2.1 % | 201.7 / 203.6 |
+| Race | 8, 30 fps | 1 | 1.403 | 1.331 | -5.1 % | -4.6 % | 30 / 30 |
+| Free roam | 8, 30 fps | 1 | 1.513 | 1.484 | -1.9 % | -2.1 % | 30 / 30 |
+| Spawn (standing) | 4, 30 fps | 1 | 1.429 | 1.392 | -2.6 % | -2.5 % | 30 / 30 |
+| Spawn (standing) | 4, 240 fps | 1 | 1.349 | 1.309 | -3.0 % | -2.9 % | 178.1 / 185.2 |
+| Spawn (standing) | 8, 30 fps | 1 | 1.460 | 1.452 | -0.5 % | -0.6 % | 30 / 30 |
+
+- 0360 and 0362 take 2-3 % off the command processor's CPU per draw (about 0.04 ms per 1,000
+  draws here; 0.2 ms of a 5,300-draw race frame). The race moves from window to window (draws
+  a frame differ by 10 % between neighbouring windows), so its single runs scatter (-0.6 to
+  -5.1 %); the standing scene and free roam agree on 2-3 %. Uncapped on four cores the guest's
+  frame rate rose 3.5-4 % where the command processor bounds it (race, spawn), not in free roam.
+- 0361 was not measured on its own: in the profiles before it, `bit_scan_forward` and
+  `provider()` were 2.2-2.3 % of the command processor's samples, now gone from the plugin's
+  imports; expect about that.
+- Fewer runs than planned (1-2 per configuration instead of 3): the round was cut short.
+
+**Left** (outside #179 and #192):
+
+- Each of 0360 and 0362 on its own, 0361 against main (whole runs alternating, the standing
+  scene), and three runs per configuration: the harness has the plans (`stand`/`standab`
+  scenarios); not run.
+- The register writes left are mostly the float constants (5 ranges, 170 registers a draw, the
+  copy itself) and the stream itself: the packet loop's first read of each packet, where
+  reading the game's command buffer stalls, is about 2 % of the command processor here; on a CPU with a small cache or slow memory (BC-250's GDDR6, a Deck) that
+  share is probably larger. Not tried: prefetching the ring ahead.
+- `IM_LOAD`'s memo compares the shader's 143 dwords with guest memory on every load (1.1 a
+  draw); the pipeline description (`GetCurrentStateDescription`, about 1 %) is still built for
+  every draw.
+- System constants, viewport and dynamic state (5-6 %) as round 2 left them.
 
 ## One-pass scene: `scene_msaa` (#45, 2026-10-23)
 
