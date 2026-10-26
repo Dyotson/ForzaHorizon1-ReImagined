@@ -22,15 +22,18 @@
 // (FORZA_FRAMEDUMP_TRIGGER). In either mode the game sees a connected, centred
 // controller between presses instead of a disconnected one. "SCENE:<name>" lines label
 // the frame statistics (RECOMP_PERF, src/debug/frame_stats.cpp); "PROF:START" and
-// "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp).
+// "PROF:STOP" run the CPU sampler (src/debug/cpu_profile.cpp); "SAY:<text>" says <text> in
+// World chat (live_friends.cpp; the Co-op Festival's /event in scripted tests).
 
 #include "input_caps.h"
+#include "live.h"
 
 #include "../platform/guest_memory.h"
 #include "../platform/benchmark.h"
 
 #include "../platform/telemetry.h"
 #include "../platform/wheel_bridge.h"
+#include "../platform/xr.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -182,6 +185,12 @@ void ReadFifo(std::string path, std::vector<Press>* schedule,
     }
     if (line.rfind("SCENE:", 0) == 0) {  // frame statistics label (debug/frame_stats.cpp)
       forza::perf::SetScene(line.substr(6));
+      line.clear();
+      continue;
+    }
+    if (line.rfind("SAY:", 0) == 0) {  // a World chat line, as typed (live_friends.cpp)
+      forza::LiveChatSay(2, line.substr(4));
+      REXLOG_INFO("FORZA_AUTOPRESS_FIFO: t={:.2f}s {}", now, line);
       line.clear();
       continue;
     }
@@ -390,6 +399,7 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       state.buttons = buttons;
     }
   }
+  if (user == 0) forza::xr::OnPad(state.buttons);  // VR: both sticks held recentre
   if (user == 0) forza::telemetry::Input(true, state.triggers[0], state.triggers[1], state.buttons, state.sticks[0]);
   if (buffer) {
     // The packet number changes whenever the state does.

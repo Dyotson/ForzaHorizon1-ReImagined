@@ -4,7 +4,7 @@
   ForzaHorizon1-ReImagined/
     forza-launcher(.exe) + _internal/      the launcher
     project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
-    server/                                the Forza Live server
+    server/                                the Forza Live server (the server/ submodule, FH1-ReImagined/forza-live)
     sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
     licenses/, README.txt
   (Linux also: install.sh, uninstall.sh, forza-reimagined.desktop, forza-reimagined.png)
@@ -25,7 +25,7 @@ sys.path.insert(0, str(HERE.parent))
 from forza_launcher import builder  # noqa: E402
 
 README = """Forza Horizon 1: ReImagined - launcher
-https://github.com/Dyotson/ForzaHorizon1-ReImagined
+https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 
 This package contains the launcher, the project's source code and the patched ReXGlue SDK
 pieces. It contains NO game code and NO game data. Open the launcher, point it at your own copy
@@ -61,6 +61,12 @@ def main():
         copy(REPO / "forza-recomp" / rel, stage / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, stage / "project" / "tools" / "cmake" / f.name)
+    for resource in builder.NATIVE_MENU_FILES:
+        copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
+    for resource in builder.NATIVE_TUNING_FILES:
+        copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
+    if not (REPO / "server" / "forza_live_server.py").is_file():
+        sys.exit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
             copy(f, stage / "server" / f.name)

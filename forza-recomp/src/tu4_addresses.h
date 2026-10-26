@@ -6,6 +6,12 @@
 
 #include <cstdint>
 
+#define sub_823F37D0 sub_82423808  // check
+#define __imp__sub_823F37D0 __imp__sub_82423808
+#define sub_82447400 sub_82476AC0
+#define __imp__sub_82447400 __imp__sub_82476AC0
+#define sub_82447CA8 sub_82477368
+#define __imp__sub_82447CA8 __imp__sub_82477368
 #define sub_82D4DE30 sub_82E100B0
 #define __imp__sub_82D4DE30 __imp__sub_82E100B0
 #define sub_823E40D8 sub_82414068
@@ -13,6 +19,8 @@
 
 #define sub_823E22C8 sub_82412260
 #define __imp__sub_823E22C8 __imp__sub_82412260
+#define sub_823EB7A0 sub_8241B860  // check
+#define __imp__sub_823EB7A0 __imp__sub_8241B860
 #define sub_823ED888 sub_8241D948  // check
 #define __imp__sub_823ED888 __imp__sub_8241D948
 #define sub_823FD208 sub_8242D1A0
@@ -41,6 +49,8 @@
 #define __imp__sub_825581E8 __imp__sub_825CBBD8
 #define sub_8255DE80 sub_825D2528
 #define __imp__sub_8255DE80 __imp__sub_825D2528
+#define sub_82568BD8 sub_825DEDD8
+#define __imp__sub_82568BD8 __imp__sub_825DEDD8
 #define sub_825723B0 sub_825E7B40
 #define __imp__sub_825723B0 __imp__sub_825E7B40
 #define sub_82573660 sub_825E8608
@@ -61,6 +71,10 @@
 #define __imp__sub_825F5AA8 __imp__sub_82699E48
 #define sub_82647B78 sub_826EFFC8
 #define __imp__sub_82647B78 __imp__sub_826EFFC8
+#define sub_8284EF98 sub_828FF268
+#define __imp__sub_8284EF98 __imp__sub_828FF268
+#define sub_82853DD0 sub_82904110
+#define __imp__sub_82853DD0 __imp__sub_82904110
 #define sub_82862170 sub_829128B8
 #define __imp__sub_82862170 __imp__sub_829128B8
 #define sub_82862CD0 sub_82913530
@@ -155,6 +169,8 @@
 #define __imp__sub_82CF7278 __imp__sub_82DB8C18
 #define sub_82D3DB00 sub_82DFFC48
 #define __imp__sub_82D3DB00 __imp__sub_82DFFC48
+#define sub_82DCF1C0 sub_82E91040
+#define __imp__sub_82DCF1C0 __imp__sub_82E91040
 #define sub_82DD9D58 sub_82E9C3B8
 #define __imp__sub_82DD9D58 __imp__sub_82E9C3B8
 #define sub_82DF7BB0 sub_82EB9DF0  // check
@@ -165,8 +181,17 @@
 namespace forza {
 constexpr uint32_t Tu4Address(uint32_t a) {
   switch (a) {
+    case 0x82075444: return 0x8208576C;  // data
+    case 0x8207552C: return 0x82085854;  // data
+    case 0x820755AC: return 0x820858D4;  // data
+    case 0x8207562C: return 0x82085954;  // data
     case 0x82075CD4: return 0x82085FFC;  // data
+    case 0x82075D54: return 0x8208607C;  // data
     case 0x82075DD4: return 0x820860FC;  // data
+    case 0x82075E54: return 0x8208617C;  // data
+    case 0x82075ED4: return 0x820861FC;  // data
+    case 0x82075F54: return 0x8208627C;  // data
+    case 0x82075FD4: return 0x820862FC;  // data
     case 0x823E9288: return 0x82419338;  // code
     case 0x823EDB08: return 0x8241DBC8;  // code  // check
     case 0x82586D80: return 0x825FCDF8;  // code

@@ -234,15 +234,21 @@ int main() {
   CHECK(p::AllocatorBlockBytes(15 * kGB) == 256 * kMB);
   CHECK(p::AllocatorBlockBytes(0) == 256 * kMB);
 
-  // Shares of the budget: textures to 80 %, render targets and guest memory to 95 %.
+  // Shares of a heap's budget: 80 % is 388.8 MB of 486 MB, 95 % 461.7 MB, 50 % 243 MB; the
+  // defaults (#268, a device lost with the carve-out 94 % full) keep textures out of
+  // device-local memory and the rest at half the budget.
   {
-    const uint64_t budget = 486 * kMB;  // 80 %: 388.8 MB, 95 %: 461.7 MB
-    CHECK(p::Fits(p::Kind::kTexture, 300 * kMB, 64 * kMB, budget));
-    CHECK(!p::Fits(p::Kind::kTexture, 330 * kMB, 64 * kMB, budget));
-    CHECK(p::Fits(p::Kind::kHot, 330 * kMB, 64 * kMB, budget));
-    CHECK(p::Fits(p::Kind::kHot, 440 * kMB, 16 * kMB, budget));
-    CHECK(!p::Fits(p::Kind::kHot, 450 * kMB, 16 * kMB, budget));
-    CHECK(p::Fits(p::Kind::kTexture, 100 * kGB, 1 * kGB, 0));  // no budget known
+    const uint64_t budget = 486 * kMB;
+    CHECK(p::Fits(80, 300 * kMB, 64 * kMB, budget));
+    CHECK(!p::Fits(80, 330 * kMB, 64 * kMB, budget));
+    CHECK(p::Fits(95, 330 * kMB, 64 * kMB, budget));
+    CHECK(p::Fits(95, 440 * kMB, 16 * kMB, budget));
+    CHECK(!p::Fits(95, 450 * kMB, 16 * kMB, budget));
+    CHECK(p::Fits(80, 100 * kGB, 1 * kGB, 0));  // no budget known
+    CHECK(p::kTexturePercent == 0 && p::kHotPercent == 50);
+    CHECK(!p::Fits(p::kTexturePercent, 0, 1, budget));
+    CHECK(p::Fits(p::kHotPercent, 200 * kMB, 43 * kMB, budget));
+    CHECK(!p::Fits(p::kHotPercent, 200 * kMB, 44 * kMB, budget));
   }
 
   // Each device-local heap against its own budget (the review case: heap 0 full, heap 2
@@ -250,9 +256,10 @@ int main() {
   {
     const p::Layout l = p::Describe(VegaApuWindows());
     const p::HeapUse u = Use3(240 * kMB, 243 * kMB, 900 * kMB, 6 * kGB, 10 * kMB, 243 * kMB);
-    CHECK(p::FittingHeaps(l, p::Kind::kHot, u, 16 * kMB, false) == 0b100);
+    CHECK(p::FittingHeaps(l, 95, u, 16 * kMB, false) == 0b100);
     // A texture counts VMA's 32 MB block of a 256 MB heap: 10 + 32 MB fits 80 % of 243 MB.
-    CHECK(p::FittingHeaps(l, p::Kind::kTexture, u, 1 * kMB, true) == 0b100);
+    CHECK(p::FittingHeaps(l, 80, u, 1 * kMB, true) == 0b100);
+    CHECK(p::FittingHeaps(l, 0, u, 1 * kMB, true) == 0);
     CHECK(!p::HeapOverBudget(l, u));
     CHECK(p::HeapOverBudget(l, Use3(243 * kMB, 243 * kMB, 0, 6 * kGB, 0, 243 * kMB)));
     // The order: the host-visible device-local heap, system memory, then heap 0.
@@ -278,9 +285,10 @@ int main() {
     CHECK(p::LowestType(0b1000) == 3 && p::LowestType(0) == UINT32_MAX);
   }
 
-  // A session on the Vega APU: textures, render targets and guest memory pages arrive; each
-  // device-local heap stays within its hot share (plus one allocation), textures stop at 80 %
-  // of each heap, the host-visible heap is used, and everything is placed somewhere.
+  // A session on the Vega APU with the default shares: textures, render targets and guest
+  // memory pages arrive; textures all go to system memory, each device-local heap stays within
+  // half its budget (plus one allocation), the host-visible heap is used, and everything is
+  // placed somewhere.
   {
     const p::Layout l = p::Describe(VegaApuWindows());
     p::HeapUse u = Use3(60 * kMB, 243 * kMB, 0, 6 * kGB, 4 * kMB, 243 * kMB);  // the driver's own
@@ -290,8 +298,8 @@ int main() {
     for (int i = 0; i < 600; ++i) {
       const bool texture = i % 3 != 0;
       const uint64_t size = texture ? 6 * kMB : (i % 2 ? 16 * kMB : 4 * kMB);
-      const p::Kind kind = texture ? p::Kind::kTexture : p::Kind::kHot;
-      const p::Order o = p::Choose(l, 0xFF, p::FittingHeaps(l, kind, u, size, texture));
+      const uint32_t percent = texture ? p::kTexturePercent : p::kHotPercent;
+      const p::Order o = p::Choose(l, 0xFF, p::FittingHeaps(l, percent, u, size, texture));
       CHECK(o.count > 0);
       const uint32_t type = p::LowestType(o.masks[0]);
       const uint32_t heap = type == 0 ? 0 : type == 2 ? 2 : 1;
@@ -303,6 +311,7 @@ int main() {
             texture_room[heap] += block;
           }
           texture_room[heap] -= size;
+          CHECK(false);  // textures stay out of device-local memory
         } else {
           u.usage[heap] += size;
         }
@@ -315,8 +324,9 @@ int main() {
         CHECK(u.usage[h] * 100 <= u.budget[h] * p::kHotPercent + 16 * kMB * 100);
       }
     }
-    CHECK(moved_textures > 0 && moved_hot > 0 && used_heap2);
+    CHECK(moved_textures == 400 && moved_hot > 0 && used_heap2);
     CHECK(!p::HeapOverBudget(l, u));
+    CHECK(u.usage[0] + u.usage[2] <= 243 * kMB + 16 * kMB);
   }
   std::puts("memory placement: ok");
   return 0;

@@ -78,6 +78,22 @@ It did not reproduce the public online AMD report or establish #232 coverage.
 The 22 October integration retains #184's atomic destination publication and
 cache pin gate alongside these atomic load/unload takes. Both ownership
 regressions and the synthetic hook audit remain enabled in release CI.
-No new game test or runtime soak was performed for this integration. Keep the
-fix in draft pending reporter-specific reproduction and sustained validation;
+No new game test or runtime soak was performed for that integration.
 #182 and the later `82DDA118` streamed-block failure remain unconfirmed.
+
+## Current-main review preparation (26 October)
+
+The branch now integrates main `b560528` (including the ReIGlue SDK migration,
+VR and garage-capacity changes). The atomic ownership implementation and hook
+addresses are unchanged. Both actual hook sources compile for disc and TU4
+against the canonical ReIGlue headers. Both ownership regressions pass, including
+10,000 competing takes, 10,000 reader/two-writer races and 10,000
+publication/unload races. All six synthetic hook-audit tests pass; a read-only
+audit of the original disc and TU4 images independently confirms all 19 unload
+sites per executable. The PR diff against current main passes whitespace checks.
+
+This prepares the bounded ownership correction for source review. It is not
+current-head gameplay qualification: no full host rebuild, game boot, runtime
+soak, online AMD reproduction or new sanitizer run was performed in this pass.
+The historical runtime and sanitizer evidence above retains its original scope.
+Do not close #83, #182 or #232 as reproduced and resolved on this evidence alone.

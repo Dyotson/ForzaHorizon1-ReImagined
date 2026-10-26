@@ -27,6 +27,17 @@ $exe = Join-Path $app "forza-launcher.exe"
 Check (Test-Path $exe) "forza-launcher.exe in $app"
 Check (Test-Path (Join-Path $app "project\forza-recomp\CMakeLists.txt")) "project sources installed"
 Check (Test-Path (Join-Path $app "sdk-overlay\rexglue-overlay-windows-amd64.tar.gz")) "SDK overlay installed"
+$manifestPath = Join-Path $app "windows-build-manifest.json"
+Check (Test-Path $manifestPath) "Windows payload manifest installed"
+if ((Test-Path $manifestPath) -and (Test-Path $exe)) {
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $launcherFiles = @($manifest.files | Where-Object { $_.path -eq 'forza-launcher.exe' })
+    Check ($manifest.schema -eq 1 -and $manifest.source_commit -match '^[0-9a-fA-F]{40}$') "manifest build provenance"
+    Check ($launcherFiles.Count -eq 1) "manifest identifies the launcher once"
+    if ($launcherFiles.Count -eq 1) {
+        Check ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -eq $launcherFiles[0].sha256) "installed launcher matches payload manifest"
+    }
+}
 Check (Test-Path $start) "Start menu shortcut"
 Check (Test-Path $desktop) "desktop shortcut"
 Check (Test-Path $uninstKey) "uninstall entry in the registry"

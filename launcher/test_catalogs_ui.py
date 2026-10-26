@@ -54,6 +54,15 @@ class CatalogUITests(unittest.TestCase):
         if self.page.busy():
             self.page.cancel_task()
             self.wait_done()
+        # Showing the photo gallery starts its folder scan (a QThread child of the page), and
+        # the window defers its close until the scan ends. Deleting the window before that
+        # destroys a running QThread, which aborts the process (seen on the Windows runner).
+        self.win.gallery.shutdown()
+        deadline = time.monotonic()+10
+        while self.win.gallery.task is not None and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.005)
+        self.assertIsNone(self.win.gallery.task, 'Gallery scan did not finish')
         self.win.close()
         self.win.deleteLater()
         self.app.processEvents()

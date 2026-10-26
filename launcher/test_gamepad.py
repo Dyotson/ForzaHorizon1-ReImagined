@@ -162,10 +162,21 @@ class NavigationTests(unittest.TestCase):
         self.backend.read.return_value = State(1)
         self.nav = Navigation(self.win, self.backend)
         self.addCleanup(self.nav.close)
+        self.addCleanup(self.wait_for_gallery)
         self.win.show()
         self.win.activateWindow()
         self.app.processEvents()
         self.nav.focus(self.win.play.play)
+
+    def wait_for_gallery(self):
+        # A test that passes the photo gallery starts its folder scan (a QThread child of the
+        # page): let it end before the window can go, or a running QThread is destroyed.
+        import time
+        self.win.gallery.shutdown()
+        deadline = time.monotonic() + 10
+        while self.win.gallery.task is not None and time.monotonic() < deadline:
+            self.app.processEvents()
+            time.sleep(.005)
 
     def press(self, button):
         self.nav.dispatch(button, self.win)
@@ -219,6 +230,79 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(self.win.stack.currentIndex(), 0)
         self.assertIs(self.app.focusWidget(), self.win.play.play)
         self.assertTrue(self.win.isVisible())
+
+    def test_shoulders_visit_every_page_in_sidebar_order(self):
+        # Designs (id 7) and Mods (id 8) included: the stack index of a page is its id.
+        buttons = sorted(self.win.navs.buttons(), key=lambda b: b.parentWidget().layout().indexOf(b))
+        pages = [self.win._pages[self.win.navs.id(b)] for b in buttons]
+        for page_id, page in self.win._pages.items():
+            self.assertEqual(self.win.stack.indexOf(page), page_id)
+        seen = [self.win.stack.currentWidget()]
+        for _ in pages[1:]:
+            self.press("next")
+            seen.append(self.win.stack.currentWidget())
+        self.assertEqual(seen, pages)
+        self.press("next")
+        self.assertIs(self.win.stack.currentWidget(), pages[0])
+        backwards = []
+        for _ in pages:
+            self.press("previous")
+            backwards.append(self.win.stack.currentWidget())
+        self.assertEqual(backwards, pages[::-1])
+
+    def test_mods_page_works_with_a_controller(self):
+        from forza_launcher import mods
+        from forza_launcher.ui.window import MODS_PAGE_ID
+        folder = mods.mods_dir(self.win.cfg) / "Pad" / "media"
+        folder.mkdir(parents=True)
+        (folder / "a.xml").write_text("a")
+        self.win.show_page(MODS_PAGE_ID)
+        page = self.win.mods
+        page.refresh()
+        self.app.processEvents()
+        # Down walks the page's controls: Add mod..., the list, the order buttons.
+        reached = set()
+        self.nav.focus(page.add_button)
+        for _ in range(12):
+            reached.add(self.app.focusWidget())
+            self.press("down")
+        self.assertTrue({page.add_button, page.table, page.refresh_button} <= reached)
+        with patch.object(page, "add_dialog") as dialog:
+            self.nav.focus(page.add_button)
+            self.press("accept")
+        dialog.assert_called_once()
+        # A on the selected mod turns it off and on.
+        self.nav.focus(page.table)
+        page.table.selectRow(0)
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["mods"]["disabled"], ["Pad"])
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["mods"]["disabled"], [])
+
+    def test_texture_packs_page_works_with_a_controller(self):
+        from forza_launcher import texture_packs
+        from forza_launcher.ui.window import TEXTURE_PACKS_PAGE_ID
+        folder = texture_packs.textures_dir(self.win.cfg) / "Pad"
+        folder.mkdir(parents=True)
+        (folder / "0123456789abcdef.png").write_bytes(
+            b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x08\0\0\0\x08\x08\x06\0\0\0" + b"\0" * 16)
+        self.win.show_page(TEXTURE_PACKS_PAGE_ID)
+        page = self.win.texture_packs
+        self.app.processEvents()
+        # Down walks the page's controls: the switches, Add pack..., the list, Make HD pack.
+        reached = set()
+        self.nav.focus(page.switches["texture_replace"])
+        for _ in range(16):
+            reached.add(self.app.focusWidget())
+            self.press("down")
+        self.assertTrue({page.switches["texture_dump"], page.add_button, page.table, page.scale} <= reached)
+        # A on the selected pack turns it off and on.
+        self.nav.focus(page.table)
+        page.table.selectRow(0)
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["texture_packs"]["disabled"], ["Pad"])
+        self.press("accept")
+        self.assertEqual(self.win.cfg.d["texture_packs"]["disabled"], [])
 
     def test_focus_skips_disabled_hidden_controls_and_scrolls(self):
         from PySide6.QtWidgets import QScrollArea, QPushButton

@@ -29,6 +29,8 @@ cp "$BUILD/forza" "$DIST/"
 cp "$BUILD/forza-telemetry.json" "$DIST/"
 for module in "${MODULES[@]}"; do cp "$BUILD/$module" "$DIST/"; done
 cp -L "$SDK/lib/librexruntime.so" "$SDK/lib/librexgpu-xenos.so" "$DIST/"
+# The OpenXR loader for the VR setting, when the overlay has one (docs/vr.md, "Packaging").
+[ -f "$SDK/lib/libopenxr_loader.so.1" ] && cp -L "$SDK/lib/libopenxr_loader.so.1" "$DIST/"
 # The plugin comes out of the SDK's build tree, whose runpath points into that tree.
 if command -v patchelf > /dev/null; then
     patchelf --set-rpath '$ORIGIN' "$DIST/librexgpu-xenos.so"

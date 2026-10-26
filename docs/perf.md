@@ -12,6 +12,13 @@ and reconstructs to 4K. 1080p Quality renders 720p directly and reconstructs to
 [Native DLSS](native_dlss.md) for the dimension table and validation limits.
 These launch checks are not a matched performance benchmark.
 
+## Co-op stall and sunrise FPS report (#444, 2026-10-25)
+
+I inspected both attached logs: they are successive snapshots of the same
+session. Sustained low FPS precedes the multi-second GPU fence waits, and the
+longer attachment shows recovery. The runtime cause remains unresolved.
+[Evidence, timeline and effective startup settings](issue-444-investigation.md).
+
 ## Native NVIDIA reconstruction, 2026-10-15 (before review fixes)
 
 These measurements predate the scene/HUD shader-cache correction. They are
@@ -117,8 +124,13 @@ using 1.5-2.5 cores. Rules:
 - `tools/perf_scenario.sh` records other game processes, the load average and free memory
   at the start and end and prints `status=CONTENDED` when another game ran or the
   1-minute load average was above 2. Contended results are not baselines.
-- Intro videos are skipped through the input FIFO, and each scene is only labelled once
+- The boot videos are skipped with `--skip_startup_movies=true`, which `tools/live_session.sh`,
+  `tools/run_forza.sh` and so `tools/perf_scenario.sh` pass by default (`FORZA_SKIP_MOVIES=false`
+  plays them; a flag after the script's arguments wins). The in-game videos (the festival
+  intro) are still skipped through the input FIFO, and each scene is only labelled once
   it is reached.
+  The tools emit one startup flag (the last explicit startup option wins over the
+  environment), and the scenario's boot input sequence follows that same effective value.
 
 ## Results
 
@@ -428,6 +440,63 @@ a few half-second holds while loading. They go away once the cache is kept, so a
 is not kept (a folder Windows blocks or OneDrive holds, a driver cache that is cleared) means
 stutter every session. `--vulkan_async_skip_incomplete_frames=false` shows those frames
 instead (objects whose pipeline is not ready are missing for a frame or two).
+
+## Pipelines built ahead of their draws (#378, 2026-10-24)
+
+With an empty cache the command processor met new pipelines one draw at a time. With asynchronous
+creation (the default) each new one cost it a placeholder pipeline, built on its own thread before the
+next draw (the placeholder is never drawn with: the draw is skipped and the frame held), and the real
+one was queued; with synchronous creation (*Compile shaders in the background* off, or
+`sync_pipeline_creation` around a car's picture) it built each one itself, one after another. SDK
+patch 0270 (the idea is ReGPU's `GpuLookahead`, MIT) walks, at such a draw, the commands the game has
+already queued behind it, works out their pipelines and starts all the missing ones together on the
+creation threads, without placeholders; with synchronous creation the draw then waits
+once for the whole set. The log sums it up every 10 s while pipelines are built (`Pipelines: ...`).
+
+Ryzen 7 7800X3D, RX 9060 XT (RADV), Linux, TU4 build, 30 fps, the race scenario of
+`tools/perf_scenario.sh` (boot, title, main menu, loading into free roam, the festival race at the spawn,
+26 s of it) with a fresh copy of the Xenia save, `BENCH_LOCK` held, no other game running (one run
+started at load 2.8). Cold: empty `--cache_root` and `MESA_SHADER_CACHE_DIR`; warm: copies of the
+cache and Mesa cache of a cold run with the lookahead. Frames from the title on (the boot's warm-up
+not counted); "shown" are the presented frames (`RECOMP_PERF`), "CP thread" the command processor's
+own pipeline time (placeholders, synchronous creation and waits, `fh1_frame_cost_csv`), slow frames
+the 0180 warnings:
+
+| Creation, cache | Lookahead | Pipelines (built ahead / drawn) | Placeholders | CP thread | Draws skipped | Frames held | Slow frames | Shown frames >= 50 / >= 100 ms | Time in them | Worst |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| async, cold | off | 399 | 339 | 831 ms | 2051 | 80 | 17 | 54 / 9 | 4.92 s | 402 ms |
+| async, cold | off | 408 | 348 | 851 ms | 2040 | 84 | 22 | 62 / 9 | 5.42 s | 501 ms |
+| async, cold | on | 397 (324 / 323) | 70 | 315 ms | 2272 | 78 | 15 | 50 / 9 | 4.50 s | 434 ms |
+| async, cold | on | 400 (326 / 325) | 71 | 323 ms | 2428 | 77 | 17 | 53 / 10 | 4.58 s | 402 ms |
+| async, cold | on, past waits | 402 (332 / 330) | 67 | 328 ms | 1834 | 76 | 16 | 56 / 9 | 4.60 s | 301 ms |
+| async, cold | on, past waits | 413 (337 / 335) | 72 | 393 ms | 2013 | 83 | 16 | 62 / 10 | 5.14 s | 316 ms |
+| sync, cold | off | 403 | 0 | 3057 ms | 0 | 0 | 29 | 34 / 11 | 3.65 s | 518 ms |
+| sync, cold | on | 402 (343 / 343) | 0 | 1351 ms | 0 | 0 | 19 | 21 / 2 | 1.41 s | 133 ms |
+| sync, cold | on, past waits | 401 (345 / 345) | 0 | 1293 ms | 0 | 0 | 16 | 18 / 3 | 1.22 s | 134 ms |
+| async, warm | off | 409 (396 stored) | 13 | 102 ms | 121 | 10 | 11 | 21 / 0 | 1.33 s | 78 ms |
+| async, warm | on | 409 (396 stored; 11 / 10) | 2 | 100 ms | 69 | 5 | 12 | 16 / 0 | 0.99 s | 83 ms |
+
+- **The guesses are right.** 99.4-100 % of the pipelines built ahead were drawn with (the rest are
+  stored only if a draw uses them, so a wrong guess never reaches the cache); about 80 % of a cold run's
+  pipelines were built ahead. No GPU errors in any run, and the race screenshots of both settings show the
+  same scene.
+- **Synchronous creation** gains the most: the command processor's pipeline time falls from 3.1 s to
+  1.3-1.4 s (its own pipelines plus about 85 waits for a whole set, 0.77 s), slow frames from 29 to 16-19,
+  shown frames of 100 ms or more from 11 to 2-3 and the worst from 518 to 134 ms (loading into free roam).
+  The game's own frames (guest) of 100 ms or more: 10 to 3.
+- **Asynchronous creation**: the placeholders the command processor builds fall from about 340 to 70 and
+  its pipeline time from 0.84 s to 0.32 s, so it no longer stalls on them (the slow frames where it spent
+  10 ms or more on shaders and pipelines: 11 to 3). The frames held while pipelines are built barely
+  change (77-84): a pipeline started a few milliseconds before its draw is still not ready for that frame.
+  With the lookahead, synchronous creation now holds the screen less than asynchronous creation does
+  (1.2-1.4 s in frames of 50 ms or more against 4.5-4.6 s), as each held frame of the asynchronous mode
+  waits for its pipelines anyway.
+- **Warm cache**: no change beyond noise (a few pipelines the stored set lacks were built ahead).
+- **Cost**: about 115 walks a cold run, 8,000-12,000 packets each, 1.2-1.4 ms on average (140-175 ms in all,
+  most of it translating the shaders the draws would translate anyway). Most walks stop at a wait for a
+  value the game has not written yet (`WAIT_REG_MEM`), usually the end of the queued frame;
+  `vulkan_pipeline_lookahead_past_waits` (hidden) goes on past it to the write pointer: as accurate in
+  these runs, a little more built ahead, and no clear gain, so it stays off.
 
 ## Steam Deck approximation (#45)
 
@@ -1096,6 +1165,237 @@ another job on CPUs 0-3.)
 - On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
   with the performance overlay, would show how much of the gap they close.
 
+## The command processor per draw, outside the bindings (#45, 2026-10-25)
+
+The command processor is the thread a frame waits for on a Deck and on 4-core CPUs (above). Sean's drafts #179
+(dynamic constant descriptors) and #192 (reuse of texture and sampler bindings) work on `UpdateBindings`,
+`RequestTextures` and the samplers; this looks at the rest of its time per draw.
+
+Method: the TU4 game build of main (048b553) with the SDK series of a8288c0 built with `-gline-tables-only` (the
+same code, so samples see inlined functions), the user's Xenia save in a scratch `--user_data_root`, the local
+Forza Live server, audio muted, a warm scratch shader cache, the low tier (`--frame_rate=30 --resolution_scale=1
+--present_effect=fsr`), the inputs of `tools/perf_scenario.sh race` (the 8-car festival race, 26 s) and `freeroam`
+(90 s of driving). Four cores: every game thread on CPUs 0-3 (`taskset`, as `PERF_CPUSET=0-3`), the samplers on
+4-7; all cores: no `taskset`. The command processor's CPU and draws per frame come from 0180's
+`fh1_frame_cost_csv` over the scene; hot functions from `PERF_CPUPROF=1` symbolized with their inlined frames
+(`llvm-symbolizer --inlining`); call stacks from `eu-stack -1 -i` a few hundred times a run (at
+`--frame_rate=240`, so the thread is busy); repeat rates from temporary counters (not committed). BENCH lock
+held. Other jobs shared the machine during parts of the day (game runs that ignored the lock, a decompiler, a
+busy wait): every run records the other games and how busy the CPUs were besides the game
+(`tools/thread_stats.py report --cpus`), and runs with another game or more than 45% of a core of other load on
+CPUs 0-3 (70% on all eight) were run again; they are not in the tables. (Its "race" was the car standing at the spawn point:
+the 1000 Club intro took the sign-up inputs; see round 3 below.)
+
+**Where the time goes** (four cores, 30 fps; % of the command processor's CPU samples by the function that was
+running, inlined code counted in its caller; race 4.92 ms a frame, 3,040 draws, 1.62 ms per 1,000 draws; free
+roam 3.44 ms, 2,060 draws, 1.67 ms):
+
+| Area | Race | Free roam | What |
+| --- | --- | --- | --- |
+| Bindings, textures, samplers (#179, #192) | 28.4% | 27.8% | `UpdateBindings`, `RequestTextures`, sampler lookups, the driver's `vkUpdateDescriptorSets` |
+| Register writes | 14.4% | 15.0% | `WriteRegistersFromMem` (constants and render state), `WriteRegisterRangeFromRing`, `copy_and_swap` (0140 already) |
+| Render target setup | 8.6% | 7.6% | `RenderTargetCache::Update`: the EDRAM ownership walk (`ChangeOwnership`, a `std::map`), render target lookups, the sort of the bases, `PerformTransfersAndResolveClears`, the render pass key and framebuffer |
+| Packet parsing | 8.2% | 8.3% | `ExecutePacket`, `ExecutePacketType3`, `ExecuteIndirectBuffer` |
+| Shader and pipeline state | 7.2% | 6.1% | `PM4_IM_LOAD`'s memo (0140: a `memcmp` of the microcode), translation lookups, `GetCurrentStateDescription`, the pipeline map |
+| `IssueDraw` itself | 6.3% | 5.8% | among it `GetVulkanDevice` (a virtual `provider()` call, 0.8%) and `rex::bit_scan_forward` (1.4%: a call into the runtime library for one instruction) |
+| System constants, viewport, dynamic state | 6.3% | 5.7% | `UpdateSystemConstantValues`, `GetHostViewportInfo`, `UpdateDynamicState` |
+| Shared memory and memory watches | 6.0% | 6.8% | `RequestRanges` (vertex and index data), `mprotect`, `FireWatches` |
+| `memcpy`, `memcmp` (callers above) | 5.4% | 6.0% | |
+| Sync, command recording, barriers, submission | 5.1% | 6.4% | `sched_yield`, futex wakes, `DeferredCommandBuffer`, `EndSubmission` |
+| Primitive processing | 0.8% | 1.0% | `PrimitiveProcessor::Process` |
+
+How often a draw repeats the one before (race, temporary counters): 95% of the draws have the render target
+registers of the previous draw with nothing touching the render targets in between (and then the full setup
+finds no transfer, no barrier and the same render pass); only 4.6% change no render state register at all, the
+system constants change in 70%, and 60% use the previous draw's pipeline. So caching everything until any
+register changes (as Pinyon Shift's register epoch does) would rarely hit here; the render target setup can be
+kept almost always.
+
+**Change 1: SDK patch 0340, the render target setup of the previous draw.** `VulkanRenderTargetCache::Update`
+keeps the previous draw's result when the inputs the common `Update` reads are the same
+(`RenderTargetCache::GetUpdateInputs`: rasterization, depth and stencil use, the color mask, `RB_SURFACE_INFO`,
+`RB_DEPTH_INFO`, the four `RB_COLOR_INFO`, the clamp setting and the height `DrawExtentEstimator` gives), nothing
+changed the cache since (`update_state_generation`: every `ChangeOwnership` call, a new render target, a reset of
+the accumulated bindings, a clear or trim) and the bound render targets are still in their draw layout and
+access (a resolve or a dump moves them out; then a barrier is due). Such a draw owns its EDRAM ranges already: the
+full update would find no transfer, the same render pass and framebuffer and no barrier, so only the transfer
+lists are cleared. Setting `vulkan_render_target_update_reuse` (default on); `..._verify` still runs the full
+update for a reused draw and logs a difference in the ownership map, the bindings, the render pass, the
+framebuffer, the commands or the barriers recorded; once a minute the log says how many draws reused it
+(`Render target update reuse: N of M draws`). In a race and in free roam 94.6-94.8% of the draws reuse it
+(menus and loading 56-78%).
+
+- Verified: a race and free roam with `vulkan_render_target_update_reuse_verify`, every reused draw checked
+  against its full update: no difference.
+- Pixel check: the pause menu in free roam redraws the whole scene every frame (2,940-3,040 draws) and the
+  picture stands still (two shots 3 s apart identical). Shots with the setting on, then switched off in the
+  running game (its storage written through `/proc/PID/mem`), then on again: identical.
+
+**Measured.** Other jobs kept loading the machine through the day, so the A/B runs switch the setting in the
+running game, alternating within the scene (every 2 s in the race, 5 s in free roam, every 5 s on the pause menu;
+the setting's storage written through `/proc/PID/mem`; the first 0.3-0.5 s of each window left out), three runs per
+configuration starting with either state, the BENCH lock held, other load besides the game 6-23% of a core on
+CPUs 0-3 in all but one run. The command processor's CPU per frame and per 1,000 draws over each state's windows;
+the frame rate and p99 from the command processor's frame intervals (at 240 the guest's frame rate; the window
+itself shows 144, the display's). Mean [min-max] over the runs:
+
+| Scene | Cores, cap | 0340 | ms a frame | ms per 1,000 draws | draws a frame | fps | p99 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Race | 4, 30 fps | off | 4.99 [4.83-5.19] | 1.644 [1.626-1.681] | 3,032 | 30.0 | 34.1 |
+| Race | 4, 30 fps | on | 4.62 [4.49-4.81] | 1.522 [1.508-1.547] | 3,037 | 30.0 | 34.1 |
+| Free roam | 4, 30 fps | off | 3.50 [3.27-3.61] | 1.688 [1.677-1.709] | 2,071 | 30.0 | 34.2 |
+| Free roam | 4, 30 fps | on | 3.16 [3.04-3.34] | 1.579 [1.566-1.589] | 2,001 | 30.0 | 34.1 |
+| Race | 4, 240 fps | off | 4.78 [4.73-4.81] | 1.586 [1.572-1.609] | 3,016 | 158.4 [158.0-159.1] | 8.3 [8.0-8.4] |
+| Race | 4, 240 fps | on | 4.44 [4.39-4.47] | 1.467 [1.454-1.491] | 3,023 | 165.1 [164.1-166.9] | 7.8 [7.6-8.1] |
+| Race | 8, 30 fps | off | 4.99 [4.92-5.11] | 1.636 [1.635-1.637] | 3,047 | 30.0 | 33.8 |
+| Race | 8, 30 fps | on | 4.62 [4.55-4.71] | 1.517 [1.514-1.521] | 3,043 | 30.0 | 33.8 |
+| Free roam | 8, 30 fps | off | 3.52 [3.27-3.71] | 1.693 [1.671-1.712] | 2,080 | 30.0 | 33.8 |
+| Free roam | 8, 30 fps | on | 3.19 [3.09-3.40] | 1.591 [1.568-1.613] | 2,010 | 30.0 | 33.8 |
+| Pause menu (same frames) | 4, 30 fps | off / on | 4.91 / 4.54 | 1.637 / 1.518 | 2,994 | 30.0 | |
+| Pause menu (same frames) | 8, 30 fps | off / on | 5.06 / 4.69 | 1.691 / 1.567 | 2,994 | 30.0 | |
+
+- The command processor needs 7.3-7.5% less CPU per 1,000 draws in the race (four or eight cores, capped or not),
+  6.0-6.4% less in free roam and 7.3% in the paused scene, whose frames are the same: about 0.12 ms per 1,000
+  draws, 0.37 ms of a race frame here. Free roam's per-frame figures move with the scenery each window shows;
+  per 1,000 draws they do not.
+- Uncapped on four cores, the race runs 4.2% faster (158 to 165 fps) and its p99 is 0.5 ms shorter: the
+  command processor is what that frame rate waits for. At 30 fps the frame rate is capped and the frame times do
+  not move.
+- Separate whole runs (on, off, alternating) agreed where no other job ran (race 4.43 against 5.10-5.13 ms a
+  frame, free roam 3.26-3.29 against 3.55), but most of them shared the machine and are left out.
+- Extrapolating to a Deck (2-2.5 times this time per instruction, above) suggests about 0.8-0.9 ms of a race
+  frame on the thread the frame waits for. This is an estimate, not a measurement on a Deck.
+
+**Change 2: SDK patch 0341, the memory watch walk.** A write to guest memory (a resolve on the command
+processor, a CPU write fault on a game thread) tests every watch node of its 4 MB buckets: about 40 nodes a
+write, 3,700 a frame in free roam here, 2,800-6,600 in the minute lines of an i7-8700K's log (#274), each a
+dependent load of the node and of its range, under the global lock the game's write faults also take. The nodes
+now hold their range's pages, and `gpu_memory_watch_bucket_log2` sets the bucket size (18-22, log2 bytes; 22, the
+old 4 MB, is the default). The same ranges fire. Free roam, nodes checked a frame (the minute lines) and the
+watches' nodes:
+
+| `gpu_memory_watch_bucket_log2` | Nodes checked a frame | Watch nodes | `FireWatches` + `WatchMemoryRange`, CP samples |
+| --- | --- | --- | --- |
+| 22 (4 MB, before) | 3,670 | 875 | 0.8% |
+| 20 (1 MB) | 2,628 | 932 | 0.6% |
+| 18 (256 KB) | 1,027 | 958-966 | 0.6% |
+
+Race on four cores at 30 fps, separate runs alternating (the setting is read at start; 0340 on in both): 22 gave
+1.506 and 1.501 ms per 1,000 draws, 18 gave 1.510, 1.500 and 1.513 (a first 22 run that shared the machine with
+another game, 1.585, left out), with 3,667-3,698 against 1,028-1,030 nodes checked a frame and 735-749 against
+939-949 watch nodes. On this CPU the walk is 0.5-0.8% of the command processor and the difference is inside the
+spread, so the default stays 22; the nodes' own pages (no change in behaviour) are always on. Worth a test where
+cache misses cost more (#274's i7-8700K checks 2,800-6,600 nodes a frame, a Deck): `gpu_memory_watch_bucket_log2 =
+18` and the minute line's `memory watch nodes checked` and `us a draw`.
+
+**Left** (outside #179 and #192):
+
+- `IssueDraw` and its helpers call `GetVulkanDevice()` (a virtual `provider()` call) several times a draw, and
+  `rex::bit_scan_forward` / `tzcnt` are calls into the runtime library through the PLT for one instruction each:
+  together about 2% of the command processor, gone with a cached device pointer and inline bit scans in the
+  plugin (no behaviour change, so nothing to switch).
+- Register writes (14-15%) are mostly the copies themselves after 0140; packet parsing 8%.
+- Shader and pipeline state (6-7%): 0140's `PM4_IM_LOAD` memo compares the microcode with `memcmp` for every
+  load; a translation lookup per shader per draw could keep the shader's last modification; 40% of the draws
+  hash their pipeline description for the map.
+- The system constants change in 70% of the draws, and 95% of the draws follow a change of some render state
+  register, so a cache that holds until any register changes (Pinyon Shift's register epoch,
+  `docs/PERFORMANCE_BACKLOG.md` in that project; its notes were read, nothing from them run) would rarely hold
+  here. Most of their per-draw work went into the descriptor, sampler and texture binding steps (here #179 and
+  #192); their render target memo, keyed on a register epoch, hit 50-62% of the draws, 0340's key (the render
+  target registers only) 95%.
+
+## The command processor per draw, round 3 (#45, 2026-10-25)
+
+Round 2 (above) left the register writes (14-15 % of the command processor), the packet parsing
+(8 %), the shader and pipeline state (6-7 %) and `IssueDraw`'s calls into the runtime library
+(about 2 %). This round takes those, still outside #179 and #192.
+
+Method: as round 2 (the same TU4 game build; the SDK series of main 673c1b8, with 0350, built
+with `-gline-tables-only`; scratch XDG dirs and `--user_data_root`, a local Forza Live server,
+audio muted, the low tier, four cores with `taskset` or all eight), with one difference: the
+save. **The `race` scenario never reached the race:** with the user's Xenia save, TU4 plays the
+1000 Club introduction video (about 45 s) the first time free roam loads signed in to Forza Live,
+and then holds the car at the spawn point until the 1000 Club tutorial is done. Every run copies
+the save afresh, so every run played it: the scenario's sign-up inputs (X, A, A, X) went into the
+video and its "race" was the car standing at the spawn point (about 3,000 draws a frame, the
+figures of round 2's race rows and of the first runs here, "Spawn" below); its free roam began
+with about 15 s of the video. The runs below copy a save made once past the intro and the
+tutorial (`scratchpad/golden-save-tu4`, its README says how): the race runs (5,000-5,600 draws
+a frame, 7 ms of command processor a frame at 30 fps on four cores) and free roam drives for the
+whole 90 s (2,900 draws a frame).
+
+**What a draw costs in packets** (race, temporary counters, not committed): 14.7 type-0 packets
+with 203 registers (8.0 ranges of render state registers, 3 registers each and 90 % of the
+values unchanged; 4.4 float constant ranges of 32 registers; 2.3 fetch constant ranges; 1.1
+packets that write one register repeatedly), 8.8 type-3 packets (4.5 `SET_BIN_MASK_LO/HI`, 1.1
+`IM_LOAD` of 143 dwords, 1.0 draw, 0.85 `LOAD_ALU_CONSTANT`, 0.7 `SET_CONSTANT` and
+`SET_CONSTANT2` of registers, 0.26 indirect buffers) and 13 padding words in 6 runs. 39 % of the
+draws follow no change of any render state register.
+
+**Changes** (`docs/sdk_patches.md` has the details):
+
+- **0360**, register ranges in the packet loop (`gpu_plain_register_ranges`, default on): a
+  range made only of render state registers the Vulkan backend just stores is stored by the
+  packet loop from the ring, without the two virtual calls (`WriteRegisterRangeFromRing`,
+  `WriteRegistersFromMem`) and the backend's sorting of the range; a range inside the ring no
+  longer divides for its read offset.
+- **0361**, no calls into the runtime library for one instruction: `GetVulkanDevice` keeps the
+  device pointer instead of calling the virtual `provider()`; `rex::bit_scan_forward`, `tzcnt`
+  and `lzcnt` are inline in the GPU plugin. No setting (no behaviour change):
+  `tools/test_inline_bit_scans.cpp` checks every 32-bit value and 2^28 random 64-bit values
+  against the runtime's functions.
+- **0362**, the last translation of each shader (`gpu_shader_translation_memo`, default on;
+  `..._verify` also looks it up and logs a difference): a draw that asks a shader for the same
+  modification as the draw before skips the map lookup.
+
+Checks: a race and free roam with `gpu_shader_translation_memo_verify`, no difference; the paused
+scene (pause menu over free roam, the same frames) with 0360 and 0362 on, switched off in the
+running game and on again: the shots are identical.
+
+**Measured**, 0360 and 0362 together, switched in the running game every 2 s (race, spawn) or
+5 s (free roam) as in round 2 (the cvars' storage written through `/proc/PID/mem`, the first
+0.3 s of each window left out), 0361 on in both states. The BENCH lock held; the user's desktop
+and other agents' builds kept 10-35 % of a core busy on CPUs 0-3 and 50-90 % on all eight, so
+the limits of round 2 were 45 % and 100 %. Command processor CPU per 1,000 draws, mean [min-max]
+over the runs; "paired" compares each on window with its neighbouring off windows:
+
+| Scene | Cores, cap | Runs | off | on | change | paired | fps off / on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Race | 4, 30 fps | 2 | 1.355 [1.334-1.375] | 1.317 [1.308-1.326] | -2.7 % [-4.9, -0.6] | -2.4 % | 30 / 30 |
+| Free roam | 4, 30 fps | 2 | 1.504 [1.484-1.525] | 1.460 [1.441-1.479] | -3.0 % [-3.0, -2.9] | -2.8 % | 30 / 30 |
+| Race | 4, 240 fps | 1 | 1.296 | 1.282 | -1.1 % | -1.2 % | 114.7 / 118.7 |
+| Free roam | 4, 240 fps | 1 | 1.388 | 1.359 | -2.1 % | -2.1 % | 201.7 / 203.6 |
+| Race | 8, 30 fps | 1 | 1.403 | 1.331 | -5.1 % | -4.6 % | 30 / 30 |
+| Free roam | 8, 30 fps | 1 | 1.513 | 1.484 | -1.9 % | -2.1 % | 30 / 30 |
+| Spawn (standing) | 4, 30 fps | 1 | 1.429 | 1.392 | -2.6 % | -2.5 % | 30 / 30 |
+| Spawn (standing) | 4, 240 fps | 1 | 1.349 | 1.309 | -3.0 % | -2.9 % | 178.1 / 185.2 |
+| Spawn (standing) | 8, 30 fps | 1 | 1.460 | 1.452 | -0.5 % | -0.6 % | 30 / 30 |
+
+- 0360 and 0362 take 2-3 % off the command processor's CPU per draw (about 0.04 ms per 1,000
+  draws here; 0.2 ms of a 5,300-draw race frame). The race moves from window to window (draws
+  a frame differ by 10 % between neighbouring windows), so its single runs scatter (-0.6 to
+  -5.1 %); the standing scene and free roam agree on 2-3 %. Uncapped on four cores the guest's
+  frame rate rose 3.5-4 % where the command processor bounds it (race, spawn), not in free roam.
+- 0361 was not measured on its own: in the profiles before it, `bit_scan_forward` and
+  `provider()` were 2.2-2.3 % of the command processor's samples, now gone from the plugin's
+  imports; expect about that.
+- Fewer runs than planned (1-2 per configuration instead of 3): the round was cut short.
+
+**Left** (outside #179 and #192):
+
+- Each of 0360 and 0362 on its own, 0361 against main (whole runs alternating, the standing
+  scene), and three runs per configuration: the harness has the plans (`stand`/`standab`
+  scenarios); not run.
+- The register writes left are mostly the float constants (5 ranges, 170 registers a draw, the
+  copy itself) and the stream itself: the packet loop's first read of each packet, where
+  reading the game's command buffer stalls, is about 2 % of the command processor here; on a CPU with a small cache or slow memory (BC-250's GDDR6, a Deck) that
+  share is probably larger. Not tried: prefetching the ring ahead.
+- `IM_LOAD`'s memo compares the shader's 143 dwords with guest memory on every load (1.1 a
+  draw); the pipeline description (`GetCurrentStateDescription`, about 1 %) is still built for
+  every draw.
+- System constants, viewport and dynamic state (5-6 %) as round 2 left them.
+
 ## One-pass scene: `scene_msaa` (#45, 2026-10-23)
 
 The three EDRAM tiles above are most of the command processor's time. The game can render
@@ -1114,28 +1414,59 @@ counts with gdb:
   for two, 5 for one), and the game records lists for pass 4 only: in a one-pass race every pass-5
   call found no list (68,000 a second, against 87,000 calls with a list in pass 4 tiled).
 - `sub_82466418` has a second path, chosen by its last argument: `sub_82EAF3B0` draws the same items
-  directly, without recorded lists. Taking it for passes 3 and 5 when they have no list brings the
-  world back. Replaying pass 4's lists instead does not work: they hold the tiled layout and
-  drew the sky into the bottom of the screen.
+  directly, without recorded lists. 0.1.32 took it for passes 3 and 5 without a list, which brought
+  the road and terrain back but not everything: the procedural models
+  (`proceduralGeometry::CProceduralModels`, trees, concrete barriers: `sub_82447B70`, the pass in
+  its ninth argument) draw from the same kind of lists and have no direct path, and the track skips
+  instanced items for which `sub_82EAC930` finds no list of the pass. Players saw trees and barriers
+  vanish as they drove past in the Recaro Rush races with `off` (#268); in the benchmark race the
+  concrete barriers on both sides of the road were missing.
+- Pass 4's lists as they are cannot be replayed in a pass of two tiles or one. Their PM4 packets
+  (dumped from the game): each starts, per tile, with a bin mask and a predicated SET_CONSTANT of
+  PA_SC_WINDOW_OFFSET and the window scissor (rows 0, -256, -512), repeated before the first draw
+  and at the end, and its first draw sets the render target of a 1280x256 tile with 4x MSAA
+  (RB_SURFACE_INFO, RB_COLOR_INFO, and RB_DEPTH_INFO with the depth at EDRAM tile 1024) and
+  PA_SC_AA_CONFIG. Replayed in one pass, the window moved up (the sky drawn into the bottom of the
+  screen) and the items and everything after them went into the tiled EDRAM layout (the road and
+  terrain gone). D3D marks such lists (command buffer flag 0x800: recorded with tiling rectangles;
+  the shadow, reflection and split-screen passes' lists have none) and flushes all pending state
+  before it runs one (`sub_824469B0`), so the scene's own window and render target are already set
+  when a list starts.
 
 **Change** (`src/hooks/scene_tiling.cpp`, `src/platform/scene_tiling.h`, launcher Display >
 Picture > "Scene anti-aliasing (MSAA)"): `scene_msaa = game` (default) keeps the game's 4x MSAA in
 three tiles; `2x` lowers the 4x scenario to the game's two-tile 2x MSAA one; `off` lowers 4x and 2x
 to its one-pass scenario without MSAA. The scenario is lowered right after the game reads it from
-the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`); the track draws
-passes 3 and 5 directly when they have no recorded list (those passes are never reached with the
-game's own scenarios in free roam and races, so `game` is unchanged). Disc build:
-`sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`. `forza-recomp/tests/scene_tiling_test.cpp` checks the
-scenario choice and the pass rule.
+the XML (`sub_82E40028`, for the setting whose name function is `sub_82E42F98`). Passes 3 and 5
+draw pass 4's lists: `sub_82EAC930` finds them, `sub_82466418` draws them with its list path
+(`sub_82466560`) after its own work, the procedural models are given pass 4, and when a pass's view
+changes (`sub_82EADC80`: its lists are fixed up again) pass 4 is reset with it. When a list
+recorded for the tiles runs for pass 3 or 5 (`sub_824467A8`, which hands it to D3D's
+RunCommandBuffer), its window and scissor writes, render target and MSAA config become NOPs of the
+same length, and they are put back (the headers are kept per list) before it runs for another
+pass: the game reads all its scenarios' `TilingScenario` values at startup (0, 1 and 4) and uses
+the current screen's, so a list can run for pass 4 later in the session (changing the values in
+free roam switched the tiling from the next frame; a race after that drew as in `game`). The
+list's first window write being a NOP marks it as done (one loaded again at the same address
+has its packets back). The direct path is not used any more. Pass 4, the game's 4x scenario, is
+unchanged. Disc build: `sub_82D7DD68`, `sub_82D80DD8`, `sub_82436468`, `sub_824365B0`,
+`sub_82DEA700`, `sub_82417BC0`, `sub_82DEBA08`, `sub_824167F8`.
+`forza-recomp/tests/scene_tiling_test.cpp` checks the scenario choice, the pass rule and which
+packets of a list are skipped.
 
-**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark's race start
-and race, free roam at the spawn in the chase camera, the driver (cockpit) camera standing and after
-6 s of driving, in each mode: the track, terrain, barriers, signs, gantries, trees, crowd and cars
-are all there in `2x` and `off`, as in `game`; the edges are more jagged without MSAA. The same race
-moment differs only by the AI cars' positions.
+**Screenshots** (TU4, scratch copy of the Xenia save, kept out of Git): the benchmark race every 2 s
+from its start, and an 18.8 km free-roam loop south of the festival (County Route 203 from the save's
+spawn, Routes 28, 29 and 4, the Montano Plains outpost by the Recaro Rush races, the festival's
+outer loop; `tools/nav_route.py`, driven by `tools/autodrive.py`) with a screenshot every 240 m,
+in each mode. With the direct path of 0.1.32 the concrete barriers along the benchmark race were
+missing in `off`; now the track, terrain, barriers, guard rails, fences, signs, trees, crowd and
+cars are there in `2x` and `off` as in `game` at each point, also where the two tiles meet in
+`2x`; the edges are more jagged without MSAA. Shots of the same point differ by the traffic, the
+time of day and where the car is.
 
-**Measured** (benchmark as in the 4-core section, the same build with patch 0140, two runs per mode
-and configuration, alternating, BENCH lock held, no other game; ms per frame):
+**Measured** with the direct path of 0.1.32, when `2x` and `off` lacked the procedural models and
+some track items (benchmark as in the 4-core section, the same build with patch 0140, two runs per
+mode and configuration, alternating, BENCH lock held, no other game; ms per frame):
 
 | Configuration | scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1146,16 +1477,165 @@ and configuration, alternating, BENCH lock held, no other game; ms per frame):
 | 4 cores, 30 fps | 2x | 30.0 | 26.9 [26.6-27.2] | 5.85 [5.39-6.31] | 4.07 | 22.9 | 7.5 |
 | 4 cores, 30 fps | off | 30.0 | 27.3 [27.3-27.3] | 4.86 [4.75-4.97] | 4.04 | 21.6 | 6.9 |
 
-- `off`: the command processor needs 29% less time a frame (6.86 to 4.86 ms at 30 fps), the Vulkan
-  submission thread 0.3 ms less, the GPU 14% less at 30 fps (16% uncapped); uncapped the benchmark
-  runs 24% faster (115 to 142 fps) with a 1% low 18% higher. The render thread does 0.45-0.65 ms more,
-  drawing the track items directly instead of running recorded lists.
-- `2x`: two tiles instead of three: the command processor 15% less (but between runs more spread),
-  the GPU 6% less at 30 fps, 21% more fps uncapped.
+With pass 4's lists for those passes (2026-10-24, main after 0.1.32 with the change, 4 cores,
+uncapped, two runs per mode alternating, BENCH lock held, no other game; `2x` one run, a second
+was dropped when other games started):
+
+| scene_msaa | fps | 1% low fps | Command processor | Render thread | All threads | GPU (RX 9060 XT) |
+| --- | --- | --- | --- | --- | --- | --- |
+| game | 119.5 [116.6-122.4] | 78.2 [76.0-80.3] | 6.82 [6.66-6.97] | 3.45 | 17.5 | 5.7 |
+| off, 0.1.32 (direct path) | 156.3 [154.1-158.4] | 98.3 [98.0-98.5] | 4.55 [4.45-4.64] | 3.84 | 14.6 | 4.8 |
+| off | 137.4 [134.8-139.9] | 91.0 [90.2-91.7] | 5.38 [5.30-5.46] | 3.42 | 15.4 | 4.9 |
+| 2x | 143.4 | 87.8 | 5.70 | 3.33 | 15.6 | 5.2 |
+
+- `off`: the command processor needs 21% less time a frame than `game` (6.82 to 5.38 ms), the GPU
+  13% less, and the benchmark runs 15% faster with a 1% low 16% higher. The 0.1.32 figures were
+  better because the trees, barriers and part of the track were not drawn at all; drawing them
+  costs the command processor 0.8 ms a frame, and running their lists again instead of the direct
+  path saves the render thread 0.4 ms. The first table's `off` and `2x` rows are of that build.
+- `2x`: two tiles instead of three: the command processor 16% less than `game`, the GPU 8% less.
 - On a Deck, where the frame waits on the command processor's chain (above), the command processor's
-  2 ms a frame at 5 GHz is about 4-5 ms of a Deck frame.
+  1.4 ms a frame at 5 GHz is about 3 ms of a Deck frame.
 - Not tested yet: with the FSR 3, DLSS and SMAA scene paths (they look for the game's scene and HUD
   targets), ultrawide, render scale above 1, photo mode, Windows and a Deck. It stays off by default.
+
+## Scene resolution below 720p: `scene_resolution` (#347, 2026-10-24)
+
+**Status: experimental** (launcher Display > Picture, "3D scene resolution").
+`scene_resolution = "540"` draws the 3D scene and
+its effects at 960x540 under the 720p HUD. Free roam, the pause menu, the map, photo mode, car
+select, the event screens and races (loads, restarts, a full race, rewind, photo mode, the
+replay) render correctly with no GPU errors. Loading a race crashed until the textures kept their
+720p memory (below). Default `"720"` changes nothing (the hooks pass through).
+
+The idea: render scale starts at 1 (the game's 1280x720). For integrated graphics that cannot hold
+the frame rate (#263 Iris Xe, #268 Vega), draw the scene smaller and let the game's tonemap scale it
+onto its 720p front buffer; the HUD, text and menus are drawn on that front buffer at 720p as
+before, and the SDK's upscaling filter (FSR 1) takes the 720p picture to the window. Game hooks only
+(`src/hooks/scene_resolution.cpp`, `src/platform/scene_resolution.h`), no SDK change: the SDK's
+render target cache scales by whole numbers only, so a fractional scale there would mean
+fractional EDRAM tiles, resolves and texture coordinates for some passes and not others (the
+ultrawide path, `docs/ultrawide.md`, gave up on fractional heights for that reason).
+
+**How the game sizes its scene** (disc addresses; TU4 ones in the hook file):
+
+- The render scenario (`TilingScenario`, `src/platform/scene_tiling.h`) is an entry of a table at
+  `0x832A4860` (TU4 `0x833901F8`), 0x4D0 bytes each: name, width, height, MSAA, tile count and the
+  EDRAM tiles as rectangles. All five are 1280x720: "1280x720 4xMSAA Horizontal Split" (three
+  tiles), "2xMSAA" (two), "1xMSAA No Split", "Largest 2xMSAA No Split" (one 1120x584 tile, chosen
+  by no XML) and split screen (a 1280x368 tile per player). `sub_82C3F374` makes each scenario's
+  surfaces from it (`sub_82C3F2E8`: full size and tile size; colour, 8888, depth), the scenario
+  switch (`sub_82C3F548`) writes its size into the D3D presentation parameters, and the scene's
+  passes take their sizes from it. `UITilingScenario` (2 in every XML) is the menus' one.
+- The screen textures come from a table of 41 entries at `0x832295B0` (TU4 `0x8330C830`, 0x2C
+  bytes): a flag, then width and height as divisors of a hard-coded 1280x720 (`WorldRender`,
+  `ScratchBuffer`, `ShadowMask`, `WorldDepth`, `Bloom`, the post chain's `Shared` buffers, the
+  `FrontBuffer_0/1` the HUD is drawn on and VdSwap presents, `MapRender`), or absolute sizes
+  (shadow maps, cube map, a 640x360 half-size buffer). `sub_8257C220` copies it into the
+  renderer's slots (its r3 + 0x1A0, 0x34 bytes each: the entry, then its memory size and
+  address), makes the headers of the D3D textures that follow the slots (r3 + 0x9F4, 0x34 bytes
+  each, in table order) and adds up their memory.
+- The textures share memory. An entry whose +0x1C is 0x29 has memory of its own; any other value
+  is the entry whose memory it lies in, at its start or right after it (+0x20). So most `Shared`
+  buffers lie in `ScratchBuffer` or the front buffers, `MapRender` (1280x720) and two `Shared`
+  textures in `WorldDepth`, and three 1024x1024 depth targets (12 MB) start in `ScratchBuffer` and
+  cover the textures after it. `sub_82482E70` allocates one block for
+  the memory pools and these textures, and the game's file heap comes right after it;
+  `sub_8257C428` places the textures and lends parts of the block to other users with 720p sizes
+  written in the code (0x384000 = 1280x720x4 from `WorldRender`, for example).
+- The world view (`sub_82444E60`) draws with the view's viewport (+0x1A8), 0,0,1280,720, placed
+  at (surface - viewport): with a smaller surface the scene moved off it.
+- The post-processing quad (`sub_823E5628`) maps a rectangle in screen pixels to its source texture
+  texel for texel; the tonemap (the screen in two halves) names 720p rectangles.
+
+**What it does** (found with RenderDoc captures and call logs, `qrenderdoc --python`):
+
+1. Scenario 3 becomes one pass at 960x540 with the most MSAA that fits the 10 MB of EDRAM: 2x
+   (`scene_msaa = off` gives none), and the full-screen scenarios 0-2 are replaced by it (the
+   scenario hook of `scene_tiling.cpp`; the track draws its one-tile pass directly, as with
+   `scene_msaa = off`). The game's own tiled path at 960x540 (three tiles of 192 lines) left the
+   first tile blank.
+2. The scene's screen textures get 960x540 (the divided ones 960/d and 540/d rounded up to 32, as
+   the game rounds); the front buffers and `MapRender` stay 720p. They keep their 720p memory: the
+   header function (`sub_82A40F28`, TU4 `sub_82AFE678`, which returns the memory size) is called
+   with the 720p size first, for the size, then with the scene's, for the header. The block lies
+   exactly as at 720p. Changing only the scenario drew the scene but resolved it into 1280x720
+   textures ("Resolve region 0 <= x < 1280 is outside the surface pitch 960"); changing the menus'
+   scenario too broke the HUD.
+3. The world view's 1280x720 viewport is 960x540 while it is drawn, and back afterwards (the
+   HUD's projected name tags read it). Without this the scene was empty: RenderDoc showed a
+   degenerate host viewport.
+4. A post-processing rectangle ending at x = 1280 or y = 720 over a 960x540 source is scaled to it:
+   the tonemap stretches the scene over the 720p front buffer (bilinear). Without it the scene was
+   drawn texel for texel in the top-left 960x540 with the edges smeared.
+5. Scenario 3's full-size 2:10:10:10 surface stays 1280x720: the render target manager's
+   full-screen filters (fades and blurs on loads and camera cuts, `sub_82C3E310`..`sub_82C3EA60`)
+   draw there and resolve into the 720p front buffers; at 960 their resolves were refused (60 a
+   second for 9 s after loading free roam, 7 at each camera change).
+6. A 1280x720 post-processing pass (`sub_824426B8`) into one of the scene's textures is drawn at
+   960x540. On menu screens and loads the render target manager's full-screen filter
+   (`sub_82C3E310`, from `sub_82586170`) copies the last 720p front buffer this way into the
+   `Shared` 2:10:10:10 texture in `WorldDepth`.
+7. The D3D device keeps a 1280x720 back buffer (it is made with the first scenario's size).
+
+It stays at 720p with the SDK's scene reconstruction (`fh1_upscaler`: FSR 3, DLSS, SMAA), separate
+scene anti-aliasing or ultrawide gameplay, which find the scene by its 720p targets (logged).
+
+**The race-load crash (fixed).** With the first version, signing up for the festival race at the
+spawn and starting it crashed while the race loaded (3 of 3): a null read in the pool of 1028-byte
+stream buffers (`sub_82D78310`, TU4 `sub_82E3A2E8`, returning to `82E3CBA8`): its free list ended
+early. A temporary hook that walked the list found it cut within 50 ms of the pool's set-up for the
+race, with 2:10:10:10 pixels (`C0100401`: dark, full alpha) in the links of free buffers 130 to 560.
+The pool lies in the file heap right after the screen texture block, which the 540p sizes had made
+6.5 MB smaller. The full-screen filter's 1280x720 pass (item 6) resolved into the 960x540 `Shared`
+texture in `WorldDepth`, the second-to-last texture of the block, and ran past the block's end into
+the pool (`readback_resolve = some` copies resolved data back into guest memory). Item 6 was meant
+to stop that pass but looked for the texture among the renderer's slots instead of the D3D textures
+after them, so it never applied. The smaller memory also put `MapRender` (1280x720 in a 960x540
+`WorldDepth`) past the block's end, and the three 1024x1024 depth targets over `CSMBuffer`, which a
+race draws in the same frames. Fixed by keeping every texture's 720p memory (item 2) and finding the
+D3D textures in item 6. Earlier attempts: 720p sizes for `sub_82A40F28` alone gave 720p headers
+(garbled picture); patching the texture objects after `sub_8257C220` (720p memory, 540p sizes) did
+not crash, but in some states the scene came out 1:1 in the lower right 960x540 of a 720p target.
+
+**360p** (640x360, 4x MSAA in one pass) came out magnified with blown-out rectangles and magenta,
+and after about 10 s of driving the render thread looped in the allocator's list walk
+(`sub_82D78490`): the same kind of corruption, sooner. The game has textures of its own at 640x360
+that a 640x360 scene collides with. Not offered, and not tried again with the 720p memory.
+
+**Measured** (TU4 on this PC's RX 9060 XT, RADV; a copy of the Xenia save, warm scratch shader
+cache, offline, audio muted, 1920x1080 window with FSR 1; BENCH lock held, no other game; GPU-side
+plugin from the 2026-10-23 overlay). Each run: free roam, 20 s standing at the spawn, then 15 s at
+full throttle; guest fps from the `RECOMP_PERF` CSV, GPU time from the game's DRM client
+(`drm-engine-gfx` in fdinfo). A GPU-limited PC is emulated with render scale 3 uncapped (9 host
+pixels per guest pixel, the GPU 99% busy): the per-pixel work grows as on a GPU 9 times weaker,
+the per-draw work does not. Two runs each at scale 3, alternating; mean of standing / driving:
+
+| Render scale, frame rate | Scene | MSAA | fps (stand / drive) | GPU ms a frame | GPU busy |
+| --- | --- | --- | --- | --- | --- |
+| 3, uncapped | 720p | 4x, three tiles (game) | 34.9 / 35.0 | 28.4 / 28.3 | 99% |
+| 3, uncapped | 540p | 2x, one pass | 50.3 / 50.5 | 19.6 / 19.6 | 99% |
+| 3, uncapped | 720p | none (`scene_msaa = off`) | 42.1 / 42.5 | 23.5 / 23.3 | 99% |
+| 3, uncapped | 540p | none (`scene_msaa = off`) | 54.1 / 53.4 | 18.3 / 18.5 | 99% |
+| 1, uncapped | 720p | 4x, three tiles | 144.9 / 158.3 | 5.64 / 5.20 | 82% |
+| 1, uncapped | 540p | 2x, one pass | 203.0 / 210.3 | 4.06 / 3.94 | 83% |
+| 1, 30 fps | 720p | 4x, three tiles | 30.0 / 30.0 | 6.86 / 5.93 | 21% / 18% |
+| 1, 30 fps | 540p | 2x, one pass | 30.0 / 30.1 | 6.16 / 6.76 | 18% / 20% |
+
+- GPU-limited: 540p gives +44% fps (35 to 50) and 31% less GPU time a frame, of which the smaller
+  scene alone (both without MSAA) is +28% fps and 22% less GPU time; the rest is 2x MSAA in one
+  pass instead of 4x in three tiles. The HUD, post-processing at 720p and the FSR 1 pass do not
+  shrink.
+- At render scale 1 uncapped the frame rate rises 33-40% (145-158 to 203-210 fps).
+- At 30 fps the GPU clocks down with the load, so its time a frame says nothing here (an integrated
+  GPU that cannot hold 30 is the case above).
+- Not measured on a real integrated GPU (none here; this PC's CPU graphics are off) or a Steam Deck,
+  which is limited by the command processor's per-draw work (#45): one pass instead of three tiles
+  also takes most of the tiles' CPU work away (as `scene_msaa = off` does), which may help it more
+  than the pixels.
+- Screenshots (scratch, not in Git): 720p and 540p side by side at the spawn, driving, bumper and
+  cockpit cameras, pause menu, map, photo mode, event and car select screens: the scene is slightly
+  softer, the HUD text is the same.
 
 ## Flush pending Vulkan shader-cache writes before waiting (#49)
 
@@ -1541,3 +2021,79 @@ up and the clocks down, the same session with the Deck kept cooler (a cooler roo
 confirm heat; if the GPU memory is full, the same session with the BIOS UMA frame buffer at 4 GB, or with
 `texture_cache_memory_limit_soft = 192` in `forza.toml` (a smaller texture cache: unused textures go after 30 s
 once it holds 192 MB), would tell whether memory placement is the cause.
+
+
+## HDD write amplification (#443)
+
+The issue attachment `forzalog.zip` contains a 150,249,543-byte `forza.log`,
+2026-10-25 20:27:05.214 through 21:08:21.135 (timestamps as logged). Counting
+records by severity yields 1,197,547 lines, including 1,193,642 debug records:
+896,546 XMA unknown-register messages and 125,297 PRESENT messages. The SDK
+uses synchronous spdlog loggers and a buffered basic file sink; its default
+flush threshold is info, with periodic flush disabled. Debug records do not
+individually force a flush. The log does not record actual filesystem write
+calls, flush settings or disk queue occupancy, so bytes and message counts
+cannot establish the physical HDD workload. The maintainer has already asked
+for an info-level retest; that result remains necessary.
+
+Independently, the log records 22 successful driver-cache saves totaling
+11,795,138,021 bytes (11.8 GB), retaining 252 pipelines in files between
+536,063,947 and 536,204,779 bytes. Fourteen successive saves have the same byte
+count as their predecessor. Equal lengths alone do not prove equal contents.
+Source inspection identifies a redundant-write path: adding any pipeline
+increments the global driver-cache generation, including pipelines omitted by
+the 512 MiB retained-subset budget. The next storage-thread save rewrites the
+whole retained subset even when none of its entries changed. Writes use a
+temporary file, stream flush and atomic replacement; on Windows replacement
+uses MOVEFILE_WRITE_THROUGH. They are separate from debug log writes.
+
+Patch 0342 compares the retained subset with the last successful save before
+opening a temporary file. It compares identity, destination, ordered keys,
+fresh sizes and immutable payloads (byte comparison if a pointer changed, even
+when checksums match). Weak references avoid extending payload lifetimes.
+Unchanged subsets acknowledge the captured generation without I/O. Failed
+writes retain the successful snapshot and retry later. Startup/reset begins
+with no snapshot; the on-disk format and restart reads are unchanged, as are
+0320's 512 MiB cap, smaller-entry packing and atomic replacement. Only the
+serialized storage writer uses the state; startup saves precede its creation,
+shutdown joins it before the final save/reset, and pipeline producers still
+publish under the existing mutex. A newer generation remains dirty when a
+save acknowledges an older captured generation.
+
+The log selects a GTX 1650 with about 4 GB device-local memory, although the
+report lists an RTX 5060 (both are enumerated). At minute 40 it reports about
+1541 MB device-local of a 3557 MB budget, 245 MB system GPU memory, 384 MB
+textures, 572 MB render targets, 32 MB readback buffers and 273+360 MB guest
+memory. Readback stalls occur in some windows, but these records do not show
+exhausted VRAM or measure host process memory/paging. Streaming can compete
+with the writes on an HDD; the log does not measure those disk reads. There
+is no disk trace or controlled game reproduction establishing which events
+caused the reporter's hitches. This change fixes the demonstrated redundant
+save path; it does not claim the entire issue is resolved.
+
+Validation on Windows: `tools/test_driver_pipeline_cache.cpp` compiled against
+an isolated SDK snapshot at bd833a2ab69d305f99ddf57418fc38ffec8af93d with all 124
+public patches applied. It passes bounded omitted-only additions, same-size
+changes, forced checksum collision, changed key/metadata, displaced entries,
+smaller-entry packing, separately loaded identical data, destination/identity
+changes, reset, weak payload lifetime, failed replacement/retry and concurrent
+readers, plus the existing corruption, replacement and six-start reuse model.
+A negative control disabling the unchanged fast path fails the omitted-only
+assertion. A private harness compiled the exact patched
+`SaveDriverPipelineCache` body and passed generation acknowledgement/no-write
+and denied Windows replacement/retry checks. Initial validation did not include
+a full GPU plugin/game build, HDD trace or game run.
+
+
+Follow-up Windows build validation: a private reconstruction of the pinned SDK
+plus all 124 public patches, with exact local gitlink copies and the carried
+SDL patches, configured with Clang 23.1.3, Vulkan/D3D12, DLSS, FSR3, Tracy and
+performance counters enabled. The three affected Vulkan translation units
+compiled first. The remaining `rexgpu-xenos` target then compiled and linked
+with ordinary Ninja `-j1 -k1` in 361 seconds, within a 20-minute limit. The
+matching `rexruntime.dll` linked too; the Ninja graph and all 1369 tracked SDK
+source hashes were unchanged. Static AMD64 PE inspection found the required
+`rex_gpu_abi_version` and `rex_gpu_create` exports plus the two existing GPU
+selection hints, and the plugin imports `rexruntime.dll`. Its DLSS capability
+manifest matches its SHA-256. No DLL was loaded, no shared prefix installed,
+and no game, persistence/restart reuse or HDD stutter validation was performed.

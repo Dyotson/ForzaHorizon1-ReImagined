@@ -9,10 +9,10 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
-from . import gamertag, power
+from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "VR", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -33,6 +33,7 @@ class Setting:
     step: float = 1
     platform: str = ""  # "linux" or "windows": shown only there
     restart: bool = False
+    max_length: int | None = None  # optional string input limit
     legacy: dict = field(default_factory=dict)  # value an older version offered -> the one it became
 
     def applies(self) -> bool:
@@ -56,14 +57,16 @@ add("frame_rate", "Frame rate", "Display", "fps", 30,
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
     "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
     "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
-    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60).", "Frame rate")
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60, and on a Steam Deck with its "
+    "screen at 40 Hz or 80 Hz; Match display picks 40 there).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
 add("battery_saver", "Battery saver", "Display", "choice", "off",
-    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off), the "
-    "lightest settings, without changing yours: they apply again at the next start on mains "
-    "power. Auto applies it when a Steam Deck runs on its battery as the game starts.",
+    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off) and Scene "
+    "anti-aliasing Off, the lightest settings, without changing yours: they apply again at the next "
+    "start on mains power. A frame rate of 20 or 40 (for a screen at 40 Hz) stays. Auto applies it "
+    "when a Steam Deck runs on its battery as the game starts.",
     "Frame rate", choices=list(power.MODES), platform="linux", restart=True)
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
@@ -120,6 +123,14 @@ add("resolution_scale", "Render scale", "Display", "int", 1,
     "Draws at 1x to 8x the guest resolution. 1 with FSR 1 is the fast default; 2 is real extra detail "
     "for about 40% fewer fps; above 2 is experimental (flicker on NVIDIA, issue #47).", "Picture",
     lo=1, hi=8, restart=True)
+add("scene_resolution", "3D scene resolution", "Display", "choice", "720",
+    "For integrated graphics that can't hold the frame rate: 540p draws the 3D scene at 960x540 "
+    "(about half the pixels) and scales it to 720p; the HUD, text and menus stay at 720p, and the "
+    "upscaling filter (AMD FSR 1 is the sharpest) takes the picture to the window. It saves GPU time "
+    "only: a PC limited by its CPU (Steam Deck) gets nothing. The scene is drawn in one pass with 2x "
+    "MSAA (Scene anti-aliasing Off removes it). Not with AMD FSR 3, NVIDIA DLSS, a separate "
+    "anti-aliasing method or Ultrawide gameplay, which keep 720p.", "Picture",
+    choices=[("720", "720p (game)"), ("540", "540p")], restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
     choices=[(-1, "Game default"), (0, "Off"), (1, "1x"), (2, "2x"), (3, "4x"), (4, "8x"),
@@ -175,8 +186,8 @@ add("present_dither", "Output dithering", "Display", "bool", False,
 add("scene_msaa", "Scene anti-aliasing (MSAA)", "Display", "choice", "game",
     "The game draws the 3D scene with 4x MSAA in three parts, which costs the most CPU time on "
     "4-core PCs and the Steam Deck. 2x draws it in two parts with 2x MSAA, as the game does for "
-    "its largest races. Off draws it in one pass without MSAA: about half the GPU emulation's "
-    "work and less GPU time, with more jagged edges.", "Picture",
+    "its largest races. Off draws it in one pass without MSAA: about a fifth less CPU time in "
+    "the GPU emulation and less GPU time, with more jagged edges.", "Picture",
     choices=[("game", "4x (game)"), ("2x", "2x"), ("off", "Off (fastest)")], restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
@@ -191,6 +202,45 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+add("world_shadow_detail", "Shadow detail", "Display", "choice", "console",
+    "How far away small objects (trees on a hillside, posts, rocks, bushes) still cast a shadow. "
+    "Console is the game's own range; High casts them 3 times as far, Ultra 10 times. A few "
+    "hundred more shadow draws a frame; see docs/graphics-detail.md for the measured cost.",
+    "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_texture_detail", "Distant texture detail", "Display", "choice", "console",
+    "Sharper terrain, road and scenery textures in the distance (the track's texture LOD bias: "
+    "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
+    "shimmer slightly on fine patterns.", "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
+    "Softer, smoother edges on the shadows of trees, cars and scenery: Soft filters each shadow "
+    "over a 1.5 times wider area, Softer twice as wide with a wider blur. Measured on an RX 9060 XT: "
+    "no measurable increase for Soft, about 0.5 ms per frame for Softer at 2560x1440; other GPUs may differ. "
+    "Console is the game's own filter. Also in the "
+    "in-game Graphics screen, where it applies without a restart.", "World detail",
+    choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
+add("world_ambient_occlusion", "Ambient occlusion", "Display", "choice", "off",
+    "Darker sunlight where surfaces meet: under cars, along curbs and rails, at the foot of walls "
+    "and in creases of the ground (screen-space ambient occlusion on the world's sunlight; the cars "
+    "and trees keep their own shading). Low or High strength, the same cost: about 0.5 ms "
+    "per frame at 2560x1440 on an RX 9060 XT, nothing measurable under a 60 fps cap; other GPUs "
+    "may differ. Off is the game's lighting. Vulkan only. Also in the in-game Graphics screen, "
+    "where it applies without a restart.", "World detail",
+    choices=[("off", "Off"), ("low", "Low"), ("high", "High")])
+# Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
+# --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
+add("texture_dump", "Dump textures", "Display", "bool", False,
+    "Save each texture the game loads, once, to textures/dump in the game's data folder, named "
+    "by its fingerprint: a .dds and a .png to look at. A replacement must have the same name. "
+    "Takes disk space (about 200 MB for the first race) and a little time as textures "
+    "load. The files are the game's art: never share them.", "Texture packs",
+    restart=True)
+add("texture_replace", "Use texture packs", "Display", "bool", False,
+    "Draw textures from the .dds and .png files in the textures folder (and folders inside it) "
+    "instead of the game's: higher resolution, same aspect ratio, named like the dumped "
+    "texture. Uses graphics memory, not the game's. Vulkan only.", "Texture packs",
+    restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
@@ -216,6 +266,21 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
     "Show a calibration strip over the picture. Turn off when finished. "
     "An SDR screenshot cannot show the physical brightness.", "HDR",
     choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
+
+# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333). Launcher-only: the values
+# go to the game as arguments of "Play in VR" (vr.py), so Play always starts flat.
+add("vr_mode", "Mode", "VR", "choice", "cockpit",
+    "Cockpit puts you in the driver's seat and turns the in-car camera with your head. "
+    "Big screen shows the game on a screen in front of you, in any camera.", "VR (experimental)",
+    choices=[("cockpit", "Cockpit (recommended)"), ("screen", "Big screen")])
+add("vr_picture", "Sharpness", "VR", "choice", "game",
+    "How sharp the cockpit looks. Higher is clearer but needs a stronger graphics card; "
+    "if the headset stutters, go back a step.", "VR (experimental)",
+    choices=[("game", "Standard"), ("sharp", "Sharp (needs a stronger graphics card)"),
+             ("sharpest", "Sharpest (needs a much stronger graphics card)")])
+add("vr_seat_height_cm", "Seat height (cm)", "VR", "float", -4.0,
+    "Raises or lowers your eye in the cockpit. Lower it if your head pokes through the roof.",
+    "VR (experimental)", lo=-30, hi=30, step=1)
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
@@ -418,10 +483,38 @@ for _k, _label, _default in KEYBINDS:
         "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
 
+# --- Gameplay --------------------------------------------------------------------------
+add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
+    "Game: as the game shipped, a CPU driver ahead of you eases off (the weaker ones down to "
+    "a fifth of their power) and one behind you brakes and corners better to catch up. Off: "
+    "every CPU driver races at its own skill wherever you are, so the faster car pulls away "
+    "on the straights and the better-handling one in the corners; the difficulty still sets "
+    "how good they are. Single-player races and free roam only: online races and Co-op "
+    "Festival rounds always play as shipped.",
+    "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
+
+add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
+    "Add Car Tuning to the stock pause menu for your owned car in Colorado free roam. "
+    "Requires Settings > Online > Sign in to Xbox LIVE: off, including when playing solo while signed in to Forza Live. "
+    "Supports named setups "
+    "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
+    "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
+
+add("skip_startup_movies", "Skip startup videos", "Gameplay", "bool", False,
+    "Skips the videos at the start (Microsoft Studios, Dolby, Playground Games, about 45 s) "
+    "and goes to the title screen. The in-game videos (the festival intro, the 1000 Club "
+    "introduction) still play. Applies on the next game launch.", "Startup", restart=True)
+
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
+add("radio_station_switch", "Station changes", "Audio", "choice", "game",
+    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
+    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
+    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
+    "0.25 s fades for player changes; quick presses end on the last station picked.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
 
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
@@ -450,8 +543,9 @@ add("world_challenges", "Head-to-head challenges", "Online", "bool", True,
 add("world_event_wait_seconds", "Event lobby wait (s)", "Online", "int", 30,
     "How long the wait lobby before an event lasts.", "Horizon World", lo=0, hi=600)
 add("world_event_cpu_with_peers", "AI drivers in multi-player world events", "Online", "bool",
-    True, "Only the Horizon World events the server starts; playlist and custom races have no AI "
-    "drivers, as on the Xbox 360. Off: only a solo event gets them.", "Horizon World")
+    True, "Horizon World events and the Co-op Festival's /event races (also alone on This PC); "
+    "playlist and custom races have no AI drivers, as on the Xbox 360. Off: only a solo event "
+    "gets them.", "Horizon World")
 add("world_event_cpu_ready", "Do not wait for AI after events", "Online", "bool", True,
     "The results screen returns to the lobby without waiting for them.", "Horizon World")
 add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
@@ -460,10 +554,17 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
     "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
-    "Identity")
+    "Identity", max_length=15)
+add("game_language", "Game language", "Profile", "choice", "",
+    "The language of the game's menus and text. Automatic uses the Language ID and Country ID "
+    "below (English, United States by default). Any other choice sets both for you; Hungarian, "
+    "Czech, Dutch, Danish, Finnish, Norwegian and Swedish pick English with their country, as "
+    "the game does. A language that has no Country ID of its own uses yours.", "Identity",
+    choices=languages.CHOICES, restart=True)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
-    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
+    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian. "
+    "Used when Game language is Automatic.",
     "Identity", lo=0, hi=20)
 add("user_country", "Country ID", "Profile", "int", 103, "Xbox country code.", "Identity",
     lo=0, hi=300)
@@ -471,6 +572,10 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
+add("forza_native_pause", "Native pause menu (experimental)", "Advanced", "bool", False,
+    "Use Home, Cars, Social and Settings pages. Requires FH1 Title Update 4 and menu resources "
+    "prepared by the launcher during a build. The original pause menu remains available "
+    "if these resources are missing. Applies on the next game launch.", "Menu", restart=True)
 add("log_level", "Log level", "Advanced", "choice", "info",
     "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
     "lower the frame rate a lot (#174).", "Log",
@@ -581,6 +686,7 @@ def coerce(setting, value):
                 if str(c) == str(value):
                     return c
             return setting.default
-        return str(value)
+        text = str(value)
+        return text[:setting.max_length] if setting.max_length is not None else text
     except (TypeError, ValueError):
         return setting.default

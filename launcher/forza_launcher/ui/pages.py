@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
-               shader_prebuild)
+               shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -51,6 +51,7 @@ def human_time(seconds):
 class PlayPage(QWidget):
     goto_setup = Signal()
     play_requested = Signal()
+    play_vr_requested = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -66,6 +67,16 @@ class PlayPage(QWidget):
         self.warn.hide()
         lay.addWidget(self.warn)
 
+        self.tuning_notice = label("Native car tuning is enabled, but its resources are missing. "
+                                   "Open Setup and press Build with Title Update 4 selected.", "warn")
+        self.tuning_notice.hide()
+        lay.addWidget(self.tuning_notice)
+        self.tuning_setup = QPushButton("Open Setup → Build")
+        self.tuning_setup.setObjectName("link")
+        self.tuning_setup.clicked.connect(self.goto_setup.emit)
+        self.tuning_setup.hide()
+        lay.addWidget(self.tuning_setup, 0, Qt.AlignLeft)
+
         c, cl = card()
         self.r_files = StatusRow("Game files")
         self.r_build = StatusRow("Game")
@@ -80,6 +91,12 @@ class PlayPage(QWidget):
         self.play.setCursor(Qt.PointingHandCursor)
         self.play.clicked.connect(self._clicked)
         row.addWidget(self.play)
+        self.play_vr = QPushButton("Play in VR")
+        self.play_vr.setCursor(Qt.PointingHandCursor)
+        self.play_vr.setToolTip("Experimental: starts the game in your VR headset.")
+        self.play_vr.clicked.connect(self.play_vr_requested.emit)
+        self.play_vr.hide()
+        row.addWidget(self.play_vr)
         self.stop = QPushButton("Stop")
         self.stop.clicked.connect(window.stop_game)
         self.stop.hide()
@@ -89,6 +106,15 @@ class PlayPage(QWidget):
         logs.clicked.connect(lambda: open_folder(cfg.data_home()))
         row.addWidget(logs)
         lay.addLayout(row)
+        self.vr_note = label("VR is experimental: it is playable, but expect rough edges. "
+                             "Take a break if you feel motion sickness.", "warn")
+        self.vr_note.hide()
+        lay.addWidget(self.vr_note)
+        launcher_logs = QPushButton("Open launcher log folder")
+        launcher_logs.setObjectName("link")
+        launcher_logs.setToolTip("Open the folder containing launcher.log (launcher errors and tracebacks).")
+        launcher_logs.clicked.connect(lambda: open_folder(paths.launcher_log().parent))
+        lay.addWidget(launcher_logs, 0, Qt.AlignLeft)
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
@@ -133,6 +159,9 @@ class PlayPage(QWidget):
         self.r_files.set(files_ok, files_msg)
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
+        tuning_needs_build = install is not None and game.native_tuning_needs_build(cfg, install)
+        self.tuning_notice.setVisible(tuning_needs_build)
+        self.tuning_setup.setVisible(tuning_needs_build)
         if install is not None:
             self.r_build.set(True if state != "stale" else None,
                              f"{game.game_version(install)}" +
@@ -187,6 +216,9 @@ class PlayPage(QWidget):
             else:
                 self.mode = "setup"
                 self.play.setText("Set up the game")
+        self.play_vr.setVisible(self.mode == "play" and self.play.isEnabled() and ready
+                                and vr.detect() is not None)
+        self.vr_note.setVisible(self.play_vr.isVisibleTo(self))
         if not self._keep_warn:
             self.warn.setVisible(False)
 
@@ -308,6 +340,7 @@ class SetupPage(QWidget):
         self.task = None
         self._probes = {}   # key -> Probe running off the GUI thread (#124)
         self._probe_done = set()   # keys already probed: an answer that cannot be cached is not asked again
+        self._dlc_snapshot = None
         self._dlc_error = None     # (folder, message) of a DLC folder that cannot be read
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
@@ -406,7 +439,7 @@ class SetupPage(QWidget):
 
         # 3. DLC ------------------------------------------------------------------------
         self.c2 = StepCard(3, "DLC",
-                           "The folder with your DLC: packages (4D5309C9/00000002), or a Xenia content folder (or its "
+                           "The folder with your DLC: packages (4D5309C9/00000002), .zip archives of them, or a Xenia content folder (or its "
                            "00000002 folder). They are installed for the game to find; you can add more later. "
                            "Without DLC the extra cars and events are missing.")
         row, self.dlc, _ = path_row("Folder of DLC", None, self._pick_dlc)
@@ -598,7 +631,12 @@ class SetupPage(QWidget):
         d = self.dlc.text().strip()
         warning = ""
         if d:
-            got = installer.dlc_cached(d)
+            snapshot, got = installer.dlc_snapshot(d)
+            if snapshot != self._dlc_snapshot:
+                # A folder can change while its worker scans, including delayed
+                # Windows directory metadata. Permit a fresh probe for that state.
+                self._probe_done.discard("dlc:" + d)
+                self._dlc_snapshot = snapshot
             if self._dlc_error and self._dlc_error[0] == d:
                 self.dlclist.setText(self._dlc_error[1])
             elif got is None:
@@ -653,9 +691,9 @@ class SetupPage(QWidget):
     def _dlc_text(found, skipped):
         txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
                (" ..." if len(found) > 12 else "")) if found else (
-            "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
+            "No DLC found in this folder or its subfolders. Pick the folder of your DLC packages, or a Xenia content folder.")
         if skipped:
-            txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
+            txt += (f"  Skipped {len(skipped)} item(s) that are not usable DLC: " +
                     ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
         return txt
 
@@ -1064,6 +1102,7 @@ class SetupPage(QWidget):
         key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3",
                id(self.msg4): "msg4"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
+        warn = ok and bool(getattr(self.task, "warning", False))
         blocked = bool(getattr(self.task, "blocked", False))
         if blocked:
             self.cfg.advanced["blocked_root"] = str(self.cfg.data_home())
@@ -1080,7 +1119,7 @@ class SetupPage(QWidget):
                 self.build_details.set_expanded(True)
         else:
             self._msg.setText(message)
-            self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.MUTED};")
+            self._msg.setStyleSheet(f"color: {theme.ORANGE if warn else theme.OK if ok else theme.MUTED};")
         # keep the QThread object alive until its run() has really returned
         self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
@@ -1096,6 +1135,8 @@ class SetupPage(QWidget):
                 self.change_folder()
         elif failed:
             QMessageBox.warning(self, "Something went wrong", message)
+        elif warn:
+            QMessageBox.warning(self, "Damaged DLC", message)
 
     def _cancel(self):
         if self.task:
