@@ -1,0 +1,12 @@
+#version 450
+layout(local_size_x=1) in;
+layout(set=0,binding=0,std140) uniform C0 { uint value; } c0;
+layout(set=0,binding=1,std140) uniform C1 { uint value; } c1;
+layout(set=0,binding=2,std140) uniform C2 { uint value; } c2;
+layout(set=0,binding=3,std140) uniform C3 { uint value; } c3;
+layout(set=0,binding=4,std140) uniform C4 { uint value; } c4;
+layout(set=1,binding=0,std430) buffer Results { uint values[]; } results;
+layout(push_constant) uniform Index { uint index; } output_index;
+void main() {
+  results.values[output_index.index] = c0.value + c1.value + c2.value + c3.value + c4.value;
+}

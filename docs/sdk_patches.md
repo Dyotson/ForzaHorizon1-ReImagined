@@ -1,5 +1,9 @@
 # ReXGlue SDK patches we carry
 
+Experimental patch 0092 adds opt-in dynamic Vulkan guest uniform descriptors
+(`FORZA_VK_DYNAMIC_CONSTANTS=1`) with a bounded per-frame descriptor memo.
+The default path is unchanged. See [the experiment and validation](vulkan_dynamic_constants.md).
+
 `patches/rexglue-sdk/` holds this project's patches to the ReXGlue SDK (nightly 0.10.0.24,
 commit `bd833a2`); `tools/build_rexglue_sdk.sh` applies them to the clone
 `~/rexglue-sdk-src-forza` and installs the patched GPU plugin, runtime and codegen tool into
