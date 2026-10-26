@@ -23,7 +23,7 @@ void Matrix(uint8_t out[64], int seed) {
 
 void TestRing() {
   TagRing<4> ring;
-  for (uint32_t id = 1; id <= 6; ++id) ring.Put({id, {}, {0.1f * float(id), 1.0f}, int64_t(id), 0});
+  for (uint32_t id = 1; id <= 6; ++id) ring.Put({id, {}, {0.1f * float(id), 1.0f}, int64_t(id), 0, {}});
   Check(!ring.Find(1) && !ring.Find(2), "old tags are overwritten");
   Check(ring.Find(5) && ring.Find(5)->build_time == 5, "recent tags are found");
   Check(!ring.Find(0), "0 is no tag");
@@ -70,9 +70,9 @@ void TestPipeline() {
   uint8_t m1[64], m2[64];
   Matrix(m1, 11), Matrix(m2, 12);
   // Main loop: frames 1 and 2 are built before the render thread draws frame 1.
-  tags.Put({1, {{0, 0.1f, 0, 1}, {}}, {1.9f, 1.2f, 0, -0.1f}, 100, 140});
+  tags.Put({1, {{0, 0.1f, 0, 1}, {}}, {1.9f, 1.2f, 0, -0.1f}, 100, 140, {}});
   views.Remember(1, m1);
-  tags.Put({2, {{0, 0.2f, 0, 1}, {}}, {1.9f, 1.2f, 0, -0.1f}, 133, 173});
+  tags.Put({2, {{0, 0.2f, 0, 1}, {}}, {1.9f, 1.2f, 0, -0.1f}, 133, 173, {}});
   views.Remember(2, m2);
   // Render thread draws frame 1 and swaps it.
   tagger.OnView(0x40001000, views.Match(m1));

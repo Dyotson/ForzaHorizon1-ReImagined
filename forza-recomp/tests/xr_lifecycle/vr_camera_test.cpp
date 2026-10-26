@@ -16,6 +16,7 @@ void RememberPosedView(uint32_t, const uint8_t*) {}
 void OnRenderView(uint32_t, const uint8_t*) {}
 void NoteView(uint32_t, const char*, float, bool) {}
 void Recenter() {}
+void SetCockpitParallaxTest(int) {}
 }
 namespace forza::world_detail {
 void ScaleExposureAdaptation(uint8_t*, float scale) { exposure = scale; ++exposure_writes; }

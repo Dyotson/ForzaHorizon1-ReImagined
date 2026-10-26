@@ -25,6 +25,7 @@ struct FrameTag {
   CockpitFrustum frustum;  // what the game drew with (vertical 0: nothing)
   int64_t build_time = 0;  // XrTime when the camera hook ran
   int64_t target_time = 0;  // XrTime the pose was predicted for
+  vr::HeadTransform game;  // the head as the game's camera took it (camera space, the seat included)
 };
 
 // The last N tags by id.
@@ -88,6 +89,8 @@ class SwapTagger {
   }
   // Called at the swap: this frame's tag (0: none) and how many posed views arrived since the
   // last swap (more than one: the render thread dropped a frame; 0: it drew the last view again).
+  // The tag of the view the render thread draws now (0: none).
+  uint32_t Current() const { return current_; }
   uint32_t TakeForSwap(uint32_t* views = nullptr) {
     if (views) *views = views_;
     views_ = 0;

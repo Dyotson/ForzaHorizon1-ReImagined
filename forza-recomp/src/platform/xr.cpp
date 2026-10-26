@@ -59,19 +59,32 @@ REXCVAR_DEFINE_STRING(vr_mode, "off", "VR",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_DOUBLE(vr_seat_height_cm, -4.0, "VR",
                       "Cockpit mode: raises (positive) or lowers the eye from the driver's seat, cm "
-                      "(it counts toward vr_head_reach_cm)")
+                      "(-4: the game's driver's eye sits a few cm under the roof, and a head turned "
+                      "toward a door or the rear window would leave the cabin through it)")
     .range(-50, 50);
 REXCVAR_DEFINE_STRING(vr_recenter_key, "Home", "VR",
                       "Key that recentres the VR view on the head (both sticks held for a second "
                       "do the same)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-// How far the view may move from the in-car camera's own point (xr_math.h HeadBox): beyond 10 cm
-// the game draws the car where it really is instead of following the view, and the cabin jumps.
-REXCVAR_DEFINE_DOUBLE(vr_head_reach_cm, 9.0, "VR",
-                      "Cockpit: how far the eye may move from the in-car camera's own point, cm, the "
-                      "seat height included (eased toward it; the game redraws the car elsewhere "
-                      "past 10 cm, which looks like a jump to another camera; 100: no limit)")
-    .range(1, 100);
+// The eye's room around where it was recentred (xr_math.h HeadBox): an ellipse on the floor
+// beside and behind it, eased toward its edge, and a dome over it; forward and down are free.
+REXCVAR_DEFINE_DOUBLE(vr_head_back_limit_cm, 15.0, "VR",
+                      "Cockpit: how far the eye may move back from where it was recentred, cm "
+                      "(turning round moves the head back; 100: no limit)")
+    .range(0, 100);
+REXCVAR_DEFINE_DOUBLE(vr_head_side_limit_cm, 18.0, "VR",
+                      "Cockpit: how far the eye may move sideways, cm (turning the head toward a "
+                      "door moves it 8-12 cm aside; 100: no limit)")
+    .range(0, 100);
+REXCVAR_DEFINE_DOUBLE(vr_head_up_limit_cm, 6.0, "VR",
+                      "Cockpit: how far the eye may move up while near where it was recentred, cm; "
+                      "less the further it is aside or back, where the roof slopes down (100: no "
+                      "limit)")
+    .range(0, 100);
+// Version 8: the fallback of a cockpit that only turns (3 degrees of freedom).
+REXCVAR_DEFINE_BOOL(vr_head_position, true, "VR",
+                    "Cockpit: the eye follows the head's position (leaning moves it inside the car); "
+                    "off: it only turns, staying at the driver's seat (the whole view moves with a lean)");
 REXCVAR_DEFINE_DOUBLE(vr_fov_margin, 5.0, "VR",
                       "Cockpit mode: degrees drawn beyond the headset's field of view on each side, "
                       "so reprojection between game frames does not show the image's edge")
@@ -1356,8 +1369,17 @@ float StereoMaxShift() { return float(REXCVAR_GET(vr_stereo_max_shift)) / 100.0f
 // ReIGlue 0396: the cockpit view's projection scale in x (the game's P00).
 float TrueStereoP00(const CockpitFrustum& f) { return 1.0f / std::tan(f.HalfHorizontal()); }
 
-HeadBox Box() { return {float(REXCVAR_GET(vr_head_reach_cm)) / 100.0f}; }
-float SeatHeight() { return float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f; }
+HeadBox Box() {
+  return {float(REXCVAR_GET(vr_head_side_limit_cm)) / 100.0f,
+          float(REXCVAR_GET(vr_head_back_limit_cm)) / 100.0f,
+          float(REXCVAR_GET(vr_head_up_limit_cm)) / 100.0f};
+}
+
+// The recentred head held in the eye's room, or only turned (vr_head_position off).
+Pose HeldHead(const Pose& rel) {
+  if (!REXCVAR_GET(vr_head_position)) return {rel.q, {0, 0, 0}};
+  return LimitHead(rel, Box());
+}
 
 // The game's pause flag and menus (hooks/telemetry.cpp feeds the gate from the world update).
 bool GameMenuUp() {
@@ -1405,8 +1427,8 @@ void Trace(XrTime display_time, Layer layer) {
                      g.shown_tag.head.p.z - located.p.z};
         head += fmt::format(" (picture drawn {:.1f} cm away)", std::round(std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) * 1000) / 10);
       }
-      // Where the eye was held (vr_head_reach_cm), when that is not where the head is.
-      const Pose eye = LimitHead(rel, Box(), SeatHeight());
+      // Where the eye was held (the head box), when that is not where the head is.
+      const Pose eye = HeldHead(rel);
       if (std::fabs(eye.p.x - rel.p.x) + std::fabs(eye.p.y - rel.p.y) + std::fabs(eye.p.z - rel.p.z) > 0.005f)
         head += fmt::format(" (eye held at x {:.1f} y {:.1f} z {:.1f} cm)", std::round(eye.p.x * 1000) / 10 + 0.0f,
                             std::round(eye.p.y * 1000) / 10 + 0.0f, std::round(-eye.p.z * 1000) / 10 + 0.0f);
@@ -2141,13 +2163,14 @@ bool CockpitView(vr::HeadTransform& head, float& vertical_fov, float& aspect, ui
     // recentred head) and in the layer (the head in LOCAL) alike, from the eye held in front of
     // the seat.
     const Pose real = Relative(g.origin, located);
-    const Pose rel = LimitHead(real, Box(), SeatHeight());
+    const Pose rel = HeldHead(real);
     t.head = TurnView(Compose(g.origin, rel), t.frustum);
     // A test offset turns and moves the game's camera only: the layer keeps the real head's pose,
     // so the headset shows the turned view straight ahead (as the head would see it turned).
     vr::HeadPose test;
-    const Pose game = TestPoseOffset(test) ? LimitHead(AddOffset(real, FromHeadPose(test)), Box(), SeatHeight()) : rel;
-    head = ToGameHead(TurnView(game, t.frustum), SeatHeight());
+    const Pose game = TestPoseOffset(test) ? HeldHead(AddOffset(real, FromHeadPose(test))) : rel;
+    head = ToGameHead(TurnView(game, t.frustum), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
+    t.game = head;
   }
   t.id = g.next_tag.fetch_add(1);
   if (!t.id) t.id = g.next_tag.fetch_add(1);
@@ -2179,6 +2202,14 @@ void RememberPosedView(uint32_t tag, const uint8_t matrix[64]) {
 void OnRenderView(uint32_t camera, const uint8_t matrix[64]) {
   std::lock_guard lock(g.tags_mutex);
   g.swap_tagger.OnView(camera, g.views.Match(matrix));
+}
+
+bool RenderViewHead(vr::HeadTransform& head) {
+  std::lock_guard lock(g.tags_mutex);
+  const FrameTag* tag = g.tags.Find(g.swap_tagger.Current());
+  if (!tag) return false;
+  head = tag->game;
+  return true;
 }
 
 void TagSwap(uint8_t* base, uint32_t packet) {
