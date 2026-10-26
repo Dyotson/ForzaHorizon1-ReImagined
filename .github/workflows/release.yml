@@ -155,6 +155,15 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/mod_archive_test.cpp -o "$RUNNER_TEMP/mod-archive-test"
           "$RUNNER_TEMP/mod-archive-test"
+      - if: runner.os == 'Linux'
+        name: VR head pose, OpenXR maths and frame pairing
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror forza-recomp/tests/vr_head_pose_math_test.cpp -o "$RUNNER_TEMP/vr-head-pose-test"
+          "$RUNNER_TEMP/vr-head-pose-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_math_test.cpp -o "$RUNNER_TEMP/xr-math-test"
+          "$RUNNER_TEMP/xr-math-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_frame_tags_test.cpp -o "$RUNNER_TEMP/xr-frame-tags-test"
+          "$RUNNER_TEMP/xr-frame-tags-test"
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from ReIGlue,
   # the project's fork of the SDK, at the tag tools/build_rexglue_sdk.sh pins. Cached on that script.
@@ -378,6 +387,12 @@ jobs:
           cmake --build "$RUNNER_TEMP/sdk-filesystem" --parallel 2
           ctest --test-dir "$RUNNER_TEMP/sdk-filesystem" --output-on-failure
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
+          # The OpenXR loader for the VR setting (docs/vr.md, "Packaging"; pinned in pins.py): the
+          # launcher copies every DLL of bin/ next to forza.exe. The game opens it only with VR on.
+          python launcher/packaging/ci_fetch.py openxr-loader-windows "$RUNNER_TEMP/openxr"
+          cp "$RUNNER_TEMP/openxr/x64/bin/openxr_loader.dll" "$PREFIX/bin/"
+          mkdir -p "$PREFIX/share/licenses/openxr-loader"
+          cp "$RUNNER_TEMP/openxr/share/doc/openxr/LICENSE" "$PREFIX/share/licenses/openxr-loader/LICENSE.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
       - if: failure()
         uses: actions/upload-artifact@v4

@@ -658,6 +658,13 @@ Gameplay > Startup > **Skip startup videos** (`skip_startup_movies`, off by defa
 starts straight at the title screen, without the Microsoft Studios, Dolby and Playground Games
 videos (about 45 s). The game boots as after a restart of itself; the festival and 1000 Club
 videos inside the game still play. Applies on the next launch.
+
+Display > VR (experimental) > **VR headset (experimental)** (`vr_mode`: off, screen, cockpit;
+#333; marked experimental in its label, section and help) and **Seat height (cm)**
+(`vr_seat_height_cm`): Play adds `--gpu_backend=vulkan` on Windows, and
+inside the Flatpak names the host's `~/.config/openxr/1/active_runtime.json` in `XR_RUNTIME_JSON`
+(the sandbox's `XDG_CONFIG_HOME` is the app's own folder) (`vr.py`;
+[vr.md](vr.md#openxr-session-and-cockpit-milestones-1-and-2)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

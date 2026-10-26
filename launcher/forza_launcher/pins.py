@@ -36,6 +36,12 @@ DOWNLOADS = {
     "sdk-linux": (
         f"{_GH}/rexglue/rexglue-sdk/releases/download/{SDK_TAG}/rexglue-sdk-{SDK_VERSION}-dev.gbd833a2-linux-amd64.zip",
         "0a56565221a4e75f91fc71f787d9299a0d0298127b970c8a88a292f8d3a3befe", "zip"),
+    # The OpenXR loader for the VR setting on Windows (docs/vr.md, "Packaging"): Khronos'
+    # OpenXR-SDK-Source release 1.1.62 (Apache-2.0); x64/bin/openxr_loader.dll goes into the
+    # Windows SDK overlay's bin/, which the launcher copies next to forza.exe. CI only.
+    "openxr-loader-windows": (
+        f"{_GH}/KhronosGroup/OpenXR-SDK-Source/releases/download/release-1.1.62/openxr_loader_windows-1.1.62.zip",
+        "800ec772e2f9448a26ab9f579f4914d984346dd9d0d7c007841abe21d2c8ff2f", "zip"),
     # Make HD pack's upscaler (#384, hd_pack.py): Real-ESRGAN's ncnn-Vulkan build with its models,
     # from the official Real-ESRGAN v0.2.5.0 release (program MIT, models BSD-3-Clause). The
     # release predates GitHub's asset digests: the hashes match nixpkgs' realesrgan-ncnn-vulkan

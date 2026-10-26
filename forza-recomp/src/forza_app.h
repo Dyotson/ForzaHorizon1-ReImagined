@@ -15,6 +15,7 @@
 #include "platform/graphics_menu.h"
 #include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
+#include "platform/xr.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
 #include <rex/cvar.h>
@@ -76,6 +77,9 @@ class ForzaApp : public rex::ReXApp {
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    // VR (vr_mode): the OpenXR runtime must create the Vulkan instance and device, so it is set
+    // up before the GPU plugin makes its provider (src/platform/xr.h).
+    forza::xr::Prepare();
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
     }
@@ -97,6 +101,7 @@ class ForzaApp : public rex::ReXApp {
   // Friends/chat/invite overlays remain separate from native HUD notifications.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
+    forza::xr::Start(graphics_);  // VR: the session, once the device exists
     forza::InstallHud(drawer, app_context(), window());
     forza::InstallFriendsKey();
     cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
@@ -117,6 +122,7 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    forza::xr::Shutdown();
     cursor_idle_.reset();
     stall_watchdog_.Stop();
     resume_watcher_.Stop();
@@ -134,6 +140,7 @@ class ForzaApp : public rex::ReXApp {
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
     resume_watcher_.Stop();
+    forza::xr::Shutdown();  // ends the headset session before the SDK exits
     forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");

@@ -590,6 +590,8 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
                          for a in split_args(cfg.advanced.get("extra_args", "")))
     if texture_packs_used(cfg) and not extra_textures:  # a flag given twice confuses the game
         args.append(f"--texture_pack_root={texture_pack_folder(cfg)}")
+    from . import vr
+    vr.configure(cfg, env, args, notes)
     from . import antialiasing
     antialiasing.configure_runtime(cfg, env, args, write=write)
 

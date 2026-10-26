@@ -212,6 +212,35 @@ rm -f "$rpath_script"
 mv -f "$runtime_new" "$OVERLAY/lib/librexruntime.so"
 echo "patched runtime: $OVERLAY/lib/librexruntime.so"
 
+# The OpenXR loader for the VR setting (docs/vr.md, "Packaging"): Khronos' OpenXR-SDK at a pinned
+# release, Apache-2.0. The game opens it only when vr_mode is on; the launcher copies it next to
+# the game, so the Linux package and the Flatpak (whose runtime has no loader) carry it.
+OPENXR_VERSION=1.1.62
+OPENXR_SHA256=dcc7c89b6af5d0364447debfe1b0437713bcedd0e8c0c2819c75ec6f546b393d
+openxr_dir="$(dirname "$SRC")/openxr-sdk-$OPENXR_VERSION"
+if [ ! -f "$openxr_dir/build/src/loader/libopenxr_loader.so.$OPENXR_VERSION" ]; then
+    openxr_tar="$(dirname "$SRC")/openxr-sdk-$OPENXR_VERSION.tar.gz"
+    if [ ! -f "$openxr_tar" ]; then
+        curl -fsSL -o "$openxr_tar.part" \
+            "https://codeload.github.com/KhronosGroup/OpenXR-SDK/tar.gz/refs/tags/release-$OPENXR_VERSION"
+        mv "$openxr_tar.part" "$openxr_tar"
+    fi
+    echo "$OPENXR_SHA256  $openxr_tar" | sha256sum -c --quiet
+    rm -rf "${openxr_dir:?}" && mkdir -p "$openxr_dir"
+    tar -xzf "$openxr_tar" -C "$openxr_dir" --strip-components=1
+    # The SDK's own arguments: its CMake finds X11 (the default presentation backend) as the SDK did.
+    cmake -S "$openxr_dir" -B "$openxr_dir/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTS=OFF -DBUILD_API_LAYERS=OFF -DBUILD_CONFORMANCE_TESTS=OFF \
+        -DBUILD_WITH_SYSTEM_JSONCPP=OFF -DDYNAMIC_LOADER=ON ${cmake_args[@]+"${cmake_args[@]}"} > /dev/null
+    nice -n 15 cmake --build "$openxr_dir/build" --target openxr_loader --parallel "${REXSDK_JOBS:-4}"
+fi
+loader_new="$OVERLAY/lib/.libopenxr_loader.new"
+cp "$openxr_dir/build/src/loader/libopenxr_loader.so.$OPENXR_VERSION" "$loader_new"
+mv -f "$loader_new" "$OVERLAY/lib/libopenxr_loader.so.1"
+mkdir -p "$OVERLAY/fh1-licenses"
+cp "$openxr_dir/LICENSE" "$OVERLAY/fh1-licenses/OpenXR-SDK.txt"
+echo "OpenXR loader: $OVERLAY/lib/libopenxr_loader.so.1"
+
 # The codegen tool: ReIGlue changes the generated code too (0025: Xenon's dot-product
 # overflow). Older overlays linked bin/ to the nightly's; it is a directory now.
 [ -L "$OVERLAY/bin" ] && rm "$OVERLAY/bin"
