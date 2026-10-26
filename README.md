@@ -57,9 +57,9 @@ Captured from the recompiled game and its launcher.
 | | |
 |---|---|
 | ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
-| ![Co-op Festival race](site/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
-| ![Original and HD 2x textures](site/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](site/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
-| ![Mods page](site/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](site/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
+| ![Co-op Festival race](docs/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
+| ![Original and HD 2x textures](docs/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](docs/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
+| ![Mods page](docs/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](docs/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
 
 ## What you can play
 
@@ -195,6 +195,7 @@ Every card is an issue. Comment there to discuss an item or help with it.
 
 Questions, help with setup and online sessions: [Discord](https://discord.gg/yu7zScdcWw).
 Bugs and feature requests: [issues](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
+The website's source is in [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website).
 The bug report template asks for your OS, CPU, GPU and log.
 
 ## Legal

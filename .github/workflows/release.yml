@@ -17,7 +17,6 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - 'site/**'
       - 'screenshots/**'
       - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
