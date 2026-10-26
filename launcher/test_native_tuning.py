@@ -5,6 +5,7 @@ import os
 import runpy
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,7 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from forza_launcher import builder  # noqa: E402
+from forza_launcher import builder, tuning_status  # noqa: E402
 
 
 class Reporter(builder.Reporter):
@@ -99,6 +100,60 @@ class NativeTuningInstall(unittest.TestCase):
         self.assertEqual(snapshot(self.tu), self.original)
         self.assertTrue(any("Native car tuning unavailable" in line and "stock FH1" in line
                             for line in self.rep.lines))
+
+    def test_real_tool_error_survives_subprocess_and_is_saved_with_hash_details(self):
+        header = bytearray(64)
+        header[:4] = b"XEX2"
+        struct.pack_into(">I", header, 8, 64)
+        struct.pack_into(">I", header, 20, 1)
+        struct.pack_into(">II", header, 24, 0x40006, 32)
+        struct.pack_into(">I", header, 36, 0x40C)
+        struct.pack_into(">I", header, 44, 0x4D5309C9)
+        (self.tu / "default.xex").write_bytes(header)
+        original = snapshot(self.tu)
+        script = HERE.parent / "tools/native_tuning_assets.py"
+        with mock.patch.object(builder, "native_tuning_script", return_value=script):
+            self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        status = tuning_status.read(self.target.parent)
+        self.assertEqual(status["code"], "unsupported_archive")
+        self.assertIn("original", status["action"])
+        self.assertIn("expected SHA-256", status["detail"])
+        self.assertIn("actual", status["detail"])
+        self.assertEqual(snapshot(self.tu), original)
+        self.assertEqual(snapshot(self.stock), original)
+        self.assertFalse(self.target.exists())
+
+    def test_success_replaces_previous_failure_reason(self):
+        with mock.patch.object(builder, "native_tuning_script", return_value=None):
+            self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        self.assertEqual(tuning_status.read(self.target.parent)["code"], "missing_tools")
+        with mock.patch.object(builder, "run", side_effect=self.prepare):
+            self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        self.assertEqual(tuning_status.read(self.target.parent)["code"], "ready")
+
+    def test_unstructured_output_retains_failure_tail(self):
+        def fail(*args, on_line, **kwargs):
+            on_line("Required scene cannot be opened: example.bsg")
+            raise builder.BuildError("python failed (exit code 1); see log above")
+        with mock.patch.object(builder, "run", side_effect=fail):
+            self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        status = tuning_status.read(self.target.parent)
+        self.assertIn("example.bsg", status["detail"])
+        self.assertIn("another rebuild alone", status["action"])
+
+    def test_diagnostic_write_failure_does_not_break_stock_fallback(self):
+        with mock.patch.object(builder, "native_tuning_script", return_value=None), \
+                mock.patch.object(tuning_status, "write", side_effect=PermissionError("diagnostic denied")):
+            self.assertFalse(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+        self.assertEqual(snapshot(self.stock), self.original)
+        self.assertFalse(self.target.exists())
+        self.assertTrue(any("missing the tuning preparation tool" in line for line in self.rep.lines))
+
+    def test_unicode_error_survives_persisted_status_roundtrip(self):
+        value = tuning_status.failure("preparation_failed", "Cannot prepare tuning resources.",
+                                      "Send the build log.", "\U0001f680" * 4000)
+        tuning_status.write(self.target.parent, value)
+        self.assertEqual(tuning_status.read(self.target.parent), value)
 
     def test_incomplete_success_is_not_published(self):
         def incomplete(*args, **kwargs):
