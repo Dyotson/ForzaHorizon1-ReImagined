@@ -42,7 +42,9 @@ headset. Addresses are the disc executable's, with Title Update 4's in brackets.
   free to move aside and back, slow eye adaptation, the size cull as on a monitor (cars no longer
   pop in close ahead), the headset's picture sharpened, depth stereo off by default, a plan for
   true stereo, the headset's own picture recorded and an emulator closer to it
-  ([version 4](#version-4-after-the-third-headset-test)).
+  ([version 4](#version-4-after-the-third-headset-test)). Version 5: true stereo, the scene drawn
+  for each eye from its own point in the GPU emulation (72 fps on the RX 9060 XT with the scene's
+  MSAA off; [version 5](#version-5-true-stereo)).
 - **Recommended plan** (with the integration research, merged below): (a) an OpenXR session
   with a virtual screen, then the head-tracked mono cockpit (the prototype's hook fed by
   the headset, the HUD on a quad, the game at its own rate under the runtime's
@@ -254,6 +256,8 @@ run time, never linked.
 | `vr_hud` | true | Cockpit: the HUD on its own panel in front of the seat (SDK patch 0393) |
 | `vr_screen_width`, `vr_screen_distance` | 2.2, 2.5 | The virtual screen in metres (47 degrees wide; version 1: 3.2 m, 65 degrees) |
 | `vr_runtime_timeout` | 20 | Seconds to wait for the runtime at start |
+| `vr_refresh_rate` | 0 | The headset's refresh rate: 0 matches it to the game's frame rate (72 fps: 72 Hz; [version 6](#72-hz)), a number asks for that rate, -1 leaves it to the runtime |
+| `vr_frame_wait` | 4 | Milliseconds a headset frame may wait for a game frame that is due ([version 6](#every-game-frame-shown-once)) |
 | `vr_trace` | false | Logs the head pose, the game camera, the field of view and the latency about 10 times a second ([the trace](#the-trace-vr_trace)) |
 
 - **Virtual screen** (both modes): the newest game picture on an OpenXR quad layer 2.2 m wide
@@ -1018,8 +1022,287 @@ game's speed and at version 4's, each as the lenses show it and as the game drew
   the edges, continuity sideways and up; the test offset; the cull factor 0.184 for 62 against 109
   degrees), `world_detail_test` (the exposure factor), `xr_frame_tags_test`,
   `vr_head_pose_math_test`, the launcher's `test_vr.py` (the seat's new default).
-- **Not done**: the headset check with a light on (`hs_verify.sh`), true stereo (plan above), the
-  lens model fitted to a real screencap.
+- **Not done**: the headset check with a light on (`hs_verify.sh`), true stereo (plan above; built in
+  [version 5](#version-5-true-stereo)), the lens model fitted to a real screencap.
+
+## Version 5: true stereo
+
+The third test asked for depth without version 3's artifacts. Version 5 draws the scene for each eye
+from that eye's own point, from the same frame (no eye a frame late): the near cockpit moves between
+the eyes and the scenery does not, with nothing filled in or guessed. `vr_stereo` is now `true` by
+default; `depth` (version 3's) and `off` (one picture, version 4) stay.
+
+| | Version 4 (`off`) | Version 3 (`depth`) | Version 5 (`true`) |
+| --- | --- | --- | --- |
+| What each eye gets | The same picture | The one picture moved by each pixel's depth, holes filled from the background | The scene drawn again from the eye's point |
+| Near parts of the cockpit | Flat | Right where the depth is right; smeared edges, glass and particles wrong | Right everywhere |
+| GPU a frame (RX 9060 XT, render scale 2, standing at the festival) | 11.3 ms | 11.7 ms | 13.2 ms (scene MSAA off), 14.7 ms (2x MSAA) |
+| 72 fps | Yes | Yes | With the scene's MSAA off |
+
+### How it works (SDK patch 0396)
+
+**Per-eye replay inside the GPU emulation**, version 4's plan, built at the command level instead
+of the Vulkan level. The command processor executes the guest's PM4 commands for a frame once, as
+usual (the left eye), and keeps a copy of every packet from the scene's start to the first HUD draw;
+before that HUD draw it puts the register file (and the bound shaders and predication bins) back as
+they were at the scene's start and executes the copy again (the right eye), then puts back the HUD
+draw's state and continues. Because the second pass goes through the command processor's normal
+path, its render target ownership, texture loads, resolves and barriers stay consistent; the CPU
+side of the game, the render thread and the guest's command buffers run once.
+
+- **Where the segment starts and ends** (`src/graphics/fh1_vr_stereo.h`, from a traced frame,
+  `FORZA_GPU_FRAME_TRACE`): the cockpit frame is the HUD's render-to-texture, the four sun shadow
+  cascades, the 1280 x 720 view's depth pre-pass and the sun's shadow mask on it, the rear-view
+  mirror, sometimes a face of the reflection cube, then the scene in two predicated EDRAM tiles (2x
+  MSAA; one tile without MSAA), post-processing, the minimap, the composite into the front buffer and
+  the HUD. The segment is the scene's clear (a window-space rectangle writing depth, 640 x 4x MSAA)
+  and its first draw (colour and reversed depth on that depth buffer) up to the first
+  `2_10_10_10_AS_10_10_10_10` draw into the front buffer after the composite (patch 0393's
+  pre-HUD point). Everything before it is drawn once.
+- **The eye's offset**: the scene's 3D draws (depth-tested on the scene's depth buffer, a projected
+  position, the 16:9 viewport) take `P00 x d` from the clip-space x of every vertex, `d` half the
+  headset's eye distance, in a new system constant the translated vertex shaders subtract after the
+  guest's own shader (no shader cache key changes: it is zero for every other draw). The game draws
+  the main view mirrored across (its shadow passes' `c0.x` is `-P00`; post-processing turns the
+  picture back), measured and then read from those constants each frame: the left eye takes
+  `+P00 x d`.
+- **What stays the middle's**: the depth pre-pass, the sun's shadow mask and the occlusion are
+  drawn once from the middle. The scene's shaders find them at the screen position they compute
+  from the guest's position, which never sees the offset, so each eye's scene reads the shadow at
+  the right surface. (Offsetting them too put every surface's shadow lookup 30 pixels off in the
+  right eye: the whole wheel lit, `shots/before_mask_centred.png`.)
+- **Memory the frame reuses**: the second pass must see what the first saw. Its uploads of guest
+  memory are logged with their data during the first pass and repeated in order (a ring of per-object
+  data refilled within the frame otherwise gives the second pass later contents); other uploads are
+  skipped (the CPU may already be writing the next frame); `LOAD_ALU_CONSTANT` packets are logged as
+  the register values they loaded; a texture is loaded again only from memory the second pass itself
+  resolved (the frame reuses the shadow cascades' memory for the shadow mask and post-processing);
+  fences, interrupts, waits, occlusion queries and scratch-register writes are not repeated.
+- **Each eye's part of the picture**: the cockpit picture covers both eyes (123 x 109 degrees). Each
+  eye is drawn only across the columns its field of view and the 5 degree margin reach (a Quest 3:
+  the left eye 0-80 %, the right 20-100 %; `xr_math.h` `EyePictureRange`, `vr_stereo_eye_parts`).
+- **The layers**: the left eye's composite is copied before the second pass; at the swap it goes
+  through the same gamma ramp and sharpening as the scene layer, and both eyes go side by side in
+  patch 0394's stereo layer; the projection layer gives each eye its half at its eye's pose (version
+  3's path). The HUD panel and the virtual screen are unchanged (the HUD is recovered from the right
+  eye's picture). The game asks for true stereo only while the cockpit is shown, so menus and the
+  screen cost one picture.
+
+### Cost (RX 9060 XT, Ryzen 7 7800X3D, the cockpit at render scale 2, the benchmark lock held)
+
+`s333v5/bench_ab.sh` (standing at the festival) and `bench_drive.sh` (throttle held down the road):
+one session each, true stereo switched off and on every 15 s (8 s driving) with the test FIFO's
+`stereo 0|1`, the game's GPU time from DRM fdinfo and the command processor's from
+`fh1_frame_cost_csv`:
+
+| Setting | Mono: fps, GPU, command processor | True stereo: fps, GPU, command processor |
+| --- | --- | --- |
+| The user's (2x MSAA, ultra shadows, FSR present) | 72, 11.3 ms, 4.8 ms | 67, 14.7 ms, 7.5 ms |
+| Scene MSAA off | 72, 11.0 ms, 3.7 ms | **71.8, 13.2 ms (95 %), 5.8 ms** |
+| Scene MSAA off, driving | 72, 11.3 ms, 3.2 ms | **72, 13.3 ms (96 %), 5.2 ms** |
+| 2x MSAA, shadows high | 72, 11.4 ms | 66, 14.9 ms |
+| 2x MSAA, no present effect | 72, 11.3 ms | 67, 14.6 ms |
+
+The second eye costs 2.2 ms of GPU without MSAA and 3.4 ms with 2x MSAA, where the scene is drawn in
+two EDRAM tiles (each eye's vertex work and draws twice); drawing each eye only across its part of
+the picture saved 0.3 ms (15.1 to 14.8). On the way: the first version replayed from the shadow
+cascades (20.0 ms, 49 fps). The command processor's extra 2-3 ms are well inside the frame. **So
+true stereo holds 72 fps on this card with the scene's MSAA off** (`vr_test_v5.sh` sets it), with
+about half a millisecond to spare; with 2x MSAA it runs at 67 fps (two runs of each, `runs/final-*`).
+
+### Tested (version 5, emulated Quest 3)
+
+- **Parallax** (`scratchpad/xremu2`, Quest 3 eyes at 2064 x 2208, the test save's Aventador at the
+  festival): between the two eye views the far trees and road are 501-502 pixels apart (the eyes'
+  lopsided fields of view: 499 for a point at infinity), the gauges 587 (0.7 m away: 84 pixels of
+  disparity expected, 86 measured), the wheel's rim 656 (0.4 m). In the game's own picture (the right
+  eye) against true stereo switched off at the same moment: the gauges 32 pixels left, the trees 0,
+  the lighting and shadows the same (`shots/mono_vs_right.png`); with the eye offset set to 0
+  (`FORZA_VR_STEREO_SHIFT_SCALE=0`) the right eye's pass reproduces the picture.
+- **Look-around** (`poses.py run standard`: straight, yaw 45/90 both ways, 180, pitch 30 up and
+  down, roll 20, leans 15 cm right and left, 10 cm forward, 5 cm up; `shots/std/lr_sheet.png`):
+  both eyes consistent at every pose, no unrendered columns in any eye view; driving
+  (`shots/drive/lr_sheet.png`) and pause and resume (the screen gets one picture, the cockpit both
+  again within a frame).
+- **Real headset**: the session on WiVRn started; in the dark room the Quest reports no head
+  tracking (`head not tracked`), so nothing was captured. `s333v5/hs_verify_v5.sh` runs the check in
+  one go with a light on (the look-around, stereo off and on, the GPU time).
+- **Unit tests**: `tools/test_vr_stereo.cpp` (the segment's start and end on the traced frame's
+  draws, which draws take the offset, the offsets for 63 mm, the eyes' columns in the mirrored
+  view, the packets the second pass leaves out, LOAD_ALU_CONSTANT as registers; in CI with the SDK
+  tests), `xr_math_test` (each eye's part of the picture), `xr_lifecycle_test`.
+
+### Limits
+
+- **The desktop window** shows the right eye with the left fifth of the picture grey (not drawn for
+  that eye).
+- **Frames without the scene's structure** (no HUD draw after the composite, a render path that
+  clears the scene differently) are drawn once: the left eye's picture goes to both eyes for that
+  frame. The log counts them (`VR stereo: right eye replayed ... (N frames, M dropped)`).
+- **Effects drawn from the middle**: the rear-view mirror's picture, the shadow mask, the occlusion
+  and the sky (no depth test) are the same in both eyes; specular highlights use the middle's view
+  direction. At 3 cm none of these is visible as a depth error.
+- **Only the RX 9060 XT measured**; a slower GPU needs a lower render scale, and the command
+  processor's +2-3 ms matter on a slow CPU.
+- **Test aids**: `FORZA_GPU_FRAME_TRACE=<file>` (one frame's packets and draws when `<file>.trigger`
+  appears), `FORZA_VR_STEREO_SHIFT_SCALE` (scales the eye offset; 0 for an A/B of the two passes), the
+  test FIFO's `stereo 0|1` (true stereo off and back on).
+
+New settings (cvars):
+
+| cvar | Default | What |
+| --- | --- | --- |
+| `vr_stereo` | true (was off) | `true`: each eye drawn from its own point; `depth`: version 3's; `off`: one picture |
+| `vr_stereo_eye_parts` | true | True stereo draws each eye only across the part of the picture it sees |
+
+## Version 6: true stereo on the real headset
+
+Version 5's first check on the real headset (Quest 3 over WiVRn on Wi-Fi, this PC's RX 9060 XT,
+render scale 2, 72 fps, scene MSAA off, a still headset on the desk with a light on; the agents run
+it, `scratchpad/s333v6/hs_verify_v6.sh`) showed true stereo right in the lenses, but:
+
+| | Version 5 | Version 6 |
+| --- | --- | --- |
+| Game frame rate, true stereo | 53 fps | 71-72 fps (standing and driving) |
+| The headset's refresh rate | 90 Hz | 72 Hz (the game asks for it) |
+| Game frames shown, a second | 53 | 68-71 of 72 |
+| Latency, head pose to the lenses | 117-126 ms (game 50-52 + WiVRn 66-69) | 88-112 ms (game 37-50 + WiVRn 46-64) |
+| Key frames the headset asked for (a lost or late frame) | about 85 a minute | 1-2 a minute |
+| WiVRn's stream | H.264 8-bit, 24.6 Mbit/s an eye | HEVC 10-bit, 50 Mbit/s an eye |
+
+The game's GPU time with true stereo is 13.1-13.3 ms a frame (95 % of the 72 fps budget; one
+picture: 10.7-11.0 ms), WiVRn's compositing 3-4 % of the GPU, its encoder a quarter of the video
+engine (`status.txt` of each run: fps, the game's and WiVRn's GPU time from DRM fdinfo, the GPU's busy
+percentage, the stream's Mbit/s, the headset's own frame statistics from its log).
+
+### The game waited for WiVRn while holding the GPU queue
+
+The cause of the 53 fps was not the GPU being too slow: the GPU was 81 % busy. Monado's compositor
+(the one WiVRn runs) blocks in `xrEndFrame` until the GPU has finished the previous frame's work: it
+waits for that frame's semaphore before it takes the next. The game calls `xrEndFrame` holding the
+device's queue lock, as `XR_KHR_vulkan_enable2` asks (the runtime submits to the game's queue in it),
+and the game has one graphics queue for everything, so while the OpenXR thread waited, the GPU
+emulation could not submit: with true stereo `xrEndFrame` took 14 ms of every 14 ms frame (the new
+`xrWaitFrame`/`xrEndFrame` times in the 10 s line), the GPU ran dry between frames, frames came late,
+WiVRn's own frames came late (the headset showed up to 14 old frames a second and asked for new key
+frames), and its latency estimate grew.
+
+Version 6 waits for the previous frame first, without the lock: an empty submission with a fence
+after each `xrEndFrame` marks everything the runtime submitted in it, and the next frame waits for
+that fence before it takes the lock (`xr.cpp` `FinishEndFence`). `xrEndFrame` now takes 0.1 ms. On
+the same run, before and after: 56 to 71 fps, the game's GPU busy 83 to 93 %, latency 134-153 ms to
+71-90 ms, 60 key frames asked for in 93 s to 2. `FORZA_VR_LOCKED_END_FRAME=1` brings back version
+5's way (a test aid).
+
+### 72 Hz
+
+WiVRn runs a Quest 3 at the highest rate under 100 Hz, 90 Hz, unless its headset app is set to another.
+With the game at 72 fps that shows four frames of five for one refresh and the fifth for two: the world
+outside judders while the reprojected cabin does not, and WiVRn composites and streams 90 pictures a
+second instead of 72. The game now asks the runtime for the refresh rate that shows every frame the
+same number of times (`XR_FB_display_refresh_rate`, which WiVRn and Meta's runtime have):
+`vr_refresh_rate` 0 (the default) picks the lowest offered rate that is a whole multiple of the game's
+frame rate (72 fps: 72 Hz; 60 fps: 120; 30 fps: 90), else the lowest above it; a number asks for that
+rate; -1 leaves it to the runtime. The log says `VR: asked the headset for 72 Hz for 72 fps
+(72/80/90/120 offered; it ran at 90)` and `VR: the headset's refresh rate changed from 90 to 72 Hz`.
+WiVRn passes the request on to the headset whatever its app's refresh rate setting is; the headset
+stays at that rate until it next connects.
+
+### Every game frame shown once
+
+At 72 fps on a 72 Hz headset each headset frame should show a new game frame. With the fixes above
+it showed 56-62 a second: the OpenXR thread takes the newest finished frame when WiVRn wakes it, and
+both run every 13.9 ms (± 0.5 ms, measured), but the moment WiVRn wakes it settled right where game
+frames finish: one just in time, the next a fraction of a millisecond late (shown a frame later, the
+one before it twice, then two ready at once and one dropped). The game's part of the latency jumped
+between about 42 and 55 ms. Moving the game's own frame timer did not help (tried: 20 ms earlier in
+10 s, and the frames still finished at the moment they were taken), likely because Monado times an
+application's wake-up from when its previous frame's GPU work finished, which here is the game's.
+
+Now, when the headset's frame finds no new game frame although one is due (the last one came about a
+headset frame ago), it waits for it, at most `vr_frame_wait` (4 ms; it needs to know when each frame
+was published, SDK patch 0397). Measured, four 20 s windows on and off in the same session: 68-71
+frames shown a second against 56-62, frames passed over 15-35 in 10 s against 100-163; about 17-43
+headset frames a second waited, 2 ms on average, and 95 % found their frame. The latency did not
+change. The 10 s line shows it: `frames ready N ms (least N) before taken, N passed over, waited for N
+(N came, N ms a wait); taken every 13.9+-0.5 ms, published every 13.9+-0.5 ms`.
+
+### WiVRn's settings
+
+On the PC (`~/.var/app/io.github.wivrn.wivrn/config/wivrn/config.json` for the Flatpak, read again at
+each headset connection; the previous one is kept as `config.json.bak-20261026`):
+
+```json
+{
+  "bit-depth": 10,
+  "encoder": [
+    {"encoder": "vaapi", "codec": "h265", "options": {"b": "50000000"}},
+    {"encoder": "vaapi", "codec": "h265", "options": {"b": "50000000"}},
+    {"encoder": "vaapi", "codec": "h265"}
+  ],
+  ...
+}
+```
+
+- **Codec HEVC (H.265), 10-bit.** The RX 9060 XT encodes HEVC and AV1 in hardware (VA-API), and the
+  Quest 3 decodes both. Lens captures of the same view at 50 Mbit/s an eye: the trees and the road
+  through the windscreen visibly softer with H.264 than with HEVC or AV1 (a detail measure of the
+  left eye's middle, scratchpad `s333v6/tools/sharp.py`: 3.5 for H.264, 3.7-4.3 for HEVC and 4.3 for
+  AV1; it varies with the game's light between runs); AV1 no better than HEVC for twice the encoder
+  time (half the video engine against a quarter). 10-bit keeps the dark cabin and the sky from banding. The latency was the
+  same for all three within the runs' spread.
+- **Bit rate 50 Mbit/s an eye** (95-117 Mbit/s sent in all), from the 24.6 the headset app's default
+  50 Mbit/s total gave. The headset is on 5 GHz Wi-Fi 6 at 1200 Mbit/s link, the PC on wired gigabit
+  to the same router: no more lost frames than at 25 Mbit/s an eye (1-2 key frames asked for a minute;
+  25 Mbit/s an eye gave a little less detail, 4.1). The bit rate is normally set in the
+  headset app (Settings, Streaming, Bitrate); WiVRn's server cannot set it, so here the VA-API encoder's
+  own option overrides it (`"options": {"b": ...}`: WiVRn hands those to FFmpeg when it opens the
+  encoder, which takes its bit rate then). The third encoder is the passthrough's alpha, left alone.
+- **USB**: WiVRn can stream over the USB cable (adb, TCP only); it streams over Wi-Fi here and that
+  works, so it stays on Wi-Fi.
+- **The encoded size**, 1472 x 1536 an eye, comes from the headset app: its render resolution times
+  100 % less its "Foveated encoding" percentage (which keeps more of the middle; set to 30 % here, its
+  lowest without the app's extended settings, against a default of 50 %). Neither can be set from the
+  PC.
+
+**For players** (WiVRn's headset app and `config.json`): the refresh rate needs nothing now (the game
+asks for 72 Hz); codec HEVC (or AV1) with 10-bit on, if the GPU encodes them in hardware (WiVRn's
+server log lists the encoders it set up, as `vaapi (h265 10-bit)`); the bit rate as high as the link
+holds without the headset losing frames (100 Mbit/s on 5 GHz Wi-Fi in the same room worked here;
+WiVRn's dashboard can also connect over the USB cable); foveated encoding at its lowest (30 %).
+
+### What did not help
+
+- **A render scale under 2 across** (the ultrawide path's fractional width, `forza_native_width=2240`,
+  1.75 x 2): 12.7 ms against 13.3, but true stereo's eyes are made at the full 2560 and the picture
+  then is 2240, so they were not handed over (one picture for both eyes). An eighth fewer pixels saved
+  0.6 ms: the second eye's cost is mostly its 1,300 draws and their vertices, not its pixels. Not used.
+- **Cheaper settings** (shadows high, bilinear desktop window, 8x anisotropic filtering): true stereo
+  13.27 ms against 13.3; one picture 10.66 against 11.0. Not used.
+
+So the GPU has about 0.6 ms to spare at 72 fps with true stereo on this card (95 % busy, the whole
+GPU 97-99 % with WiVRn); the headset showed 0-8 old frames in 20 s in most measurements.
+
+### Tested (version 6, real Quest 3)
+
+`scratchpad/s333v6/hs_verify_v6.sh` (with `POSES=1 DRIVE=1 RECONNECT=1` for the final run, about
+4 minutes): the look-around (straight, 45 left, 60 right leaning, 90 left, 180, down 30), driving for
+20 s and one picture against true stereo, each with the lenses captured; all show the game. Final:
+stereo 71.2 fps standing (13.3 ms), 72.0 driving (13.0 ms), one picture 72.0 (11.0 ms); 68-72 frames
+shown a second; 2 key frames asked for in 162 s; latency 100-112 ms that run. Unit tests:
+`xr_math_test` (the refresh rate chosen for 72, 60, 30, 90, 144 and 75 fps on a Quest 3's rates and
+on 80/90/120/144), `xr_lifecycle_test` (the new fence and marker submission with the mocks).
+
+New settings (cvars):
+
+| cvar | Default | What |
+| --- | --- | --- |
+| `vr_refresh_rate` | 0 | The headset's refresh rate: 0 matches it to the game's frame rate, a number asks for that rate, -1 leaves it to the runtime |
+| `vr_frame_wait` | 4 | Milliseconds the headset's frame may wait for a game frame that is due, rather than show the last one again (0: never) |
+
+Test aids: the test FIFO's `framewait 0|1` (`vr_frame_wait` off and back), `recenter` (as the Home
+key: a headset lying still can relocalise after its display wakes, once by 134 degrees and 57 cm),
+`FORZA_VR_LOCKED_END_FRAME=1`.
 
 ## HUD and menus
 

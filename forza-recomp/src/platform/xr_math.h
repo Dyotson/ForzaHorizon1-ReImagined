@@ -186,6 +186,31 @@ inline CockpitFrustum CoverEyes(const Fov eyes[2], const Quat eye_rotation[2], f
   return f;
 }
 
+// True stereo (SDK patch 0396): the part of the cockpit picture (fractions of its width, left to
+// right) that an eye's field of view covers, `margin` radians wider on each side. Each eye is
+// drawn only there (about 70 % of the picture for a Quest 3's eyes); the cockpit picture covers
+// both eyes and the margin. Unlike CoverEyes the eye is not centred: its own frustum, seen from
+// the picture's axis.
+inline void EyePictureRange(const Fov& eye, const Quat& eye_rotation, const CockpitFrustum& f,
+                            float margin, float& lo, float& hi) {
+  const Quat to_axis = Mul(Conj(f.Offset()), eye_rotation);
+  float min_t = 1e9f, max_t = -1e9f;
+  for (float h : {eye.left, eye.right}) {
+    for (float v : {eye.up, eye.down}) {
+      const Vec3 d = Rotate(to_axis, {std::tan(h), std::tan(v), -1});
+      const float depth = std::max(-d.z, 1e-3f);
+      min_t = std::min(min_t, d.x / depth);
+      max_t = std::max(max_t, d.x / depth);
+    }
+  }
+  const float t = std::tan(f.HalfHorizontal());
+  const float limit = 1.5f;  // tangents beyond ~86 degrees: the picture's edge anyway
+  lo = std::clamp(0.5f + 0.5f * std::tan(std::clamp(std::atan(min_t) - margin, -limit, limit)) / t,
+                  0.0f, 1.0f);
+  hi = std::clamp(0.5f + 0.5f * std::tan(std::clamp(std::atan(max_t) + margin, -limit, limit)) / t,
+                  0.0f, 1.0f);
+}
+
 // The frustum version 1 drew, for comparison (docs/vr.md): a symmetric vertical field of view
 // covering the larger half-angle of either axis at the picture's own aspect.
 inline CockpitFrustum SymmetricCover(const Fov eyes[2], float picture_aspect, float margin,
@@ -300,6 +325,34 @@ inline void YawPitchRoll(const Quat& q, float& yaw, float& pitch, float& roll) {
   const Quat no_roll = Mul(AxisY(yaw), AxisX(pitch));
   const Vec3 up = Rotate(Mul(Conj(no_roll), q), {0, 1, 0});
   roll = std::atan2(-up.x, up.y);
+}
+
+// The headset refresh rate to ask for (XR_FB_display_refresh_rate), 0 for none. `requested` > 0:
+// the offered rate nearest to it. 0: one that shows every game frame for the same number of
+// refreshes, the lowest such (72 fps on a Quest 3's 72/80/90/120 Hz: 72; 60 fps: 120; 30: 90),
+// else the lowest rate at or above the frame rate, else the highest. A game frame held for one
+// refresh and the next for two (72 fps at 90 Hz: 4 of every 5 frames once, 1 twice) makes the
+// world outside judder while the reprojected cabin stays smooth (the third headset test).
+// requested < 0 or no frame rate: leave it to the runtime.
+inline float ChooseRefreshRate(const float* rates, uint32_t count, int frame_rate, int requested) {
+  if (requested < 0 || count == 0) return 0;
+  if (requested > 0) {
+    float best = rates[0];
+    for (uint32_t i = 1; i < count; ++i)
+      if (std::fabs(rates[i] - requested) < std::fabs(best - requested)) best = rates[i];
+    return best;
+  }
+  if (frame_rate <= 0) return 0;
+  float multiple = 0, above = 0, highest = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    const float r = rates[i];
+    highest = std::max(highest, r);
+    const float k = std::round(r / float(frame_rate));
+    if (k >= 1 && std::fabs(r - k * float(frame_rate)) < 0.5f && (multiple == 0 || r < multiple))
+      multiple = r;
+    if (r >= float(frame_rate) - 0.5f && (above == 0 || r < above)) above = r;
+  }
+  return multiple ? multiple : above ? above : highest;
 }
 
 // A latency estimate (ns): an exponential moving average of measured samples, clamped.

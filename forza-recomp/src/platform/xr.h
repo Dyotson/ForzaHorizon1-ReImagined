@@ -72,6 +72,10 @@ float PosedViewAspect();
 // the game's camera only (the projection layer keeps the real head), so a scripted look-around
 // shows in the headset as if the head had turned. False: none.
 bool TestPoseOffset(vr::HeadPose& offset);
+// Camera hooks: a test FIFO's "stereo 0" (VR true stereo off until "stereo 1"; a test aid).
+bool StereoOffTest();
+// Camera hooks: a test FIFO's "framewait 0" (vr_frame_wait off until "framewait 1"; a test aid).
+bool FrameWaitOffTest();
 
 // Camera hooks: the factor for the size cull of the views drawn from the camera (hooks/
 // vr_culling.cpp) while posed VR cockpit views are drawn: tan^2 of the in-car camera's own

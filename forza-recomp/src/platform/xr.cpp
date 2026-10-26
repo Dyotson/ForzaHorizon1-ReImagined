@@ -42,6 +42,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -108,15 +110,22 @@ REXCVAR_DEFINE_DOUBLE(vr_hud_distance, 1.0, "VR", "Cockpit: the HUD panel's dist
 REXCVAR_DEFINE_DOUBLE(vr_hud_pitch, -14.0, "VR",
                       "Cockpit: the HUD panel's direction from the eyes, degrees (negative: below)")
     .range(-60, 30);
-// Depth stereo (SDK patch 0394): each eye made from the one picture the game draws and its depth
-// pre-pass, shifted by the disparity of each pixel's distance, the holes beside near objects
-// filled from the background. Off (the default since version 4: the third headset test found it
-// "full of artifacts"): both eyes see the same picture (version 2).
-REXCVAR_DEFINE_STRING(vr_stereo, "off", "VR",
-                      "Cockpit: off (both eyes see the same picture: no depth) or depth (each eye "
-                      "made from the picture and its depth: approximate 3D, filled edges beside "
-                      "near objects)")
-    .allowed({"off", "depth"})
+// Stereo. true (SDK patch 0396, the default since version 5): the game's main view is drawn
+// for each eye from the same frame, each from its own eye point (the frame's commands executed
+// twice in the GPU emulation): real depth. depth (patch 0394, version 3): each eye made from the
+// one picture and its depth pre-pass, shifted by the disparity of each pixel's distance, the
+// holes beside near objects filled from the background ("full of artifacts" in the third
+// headset test). off: both eyes see the same picture (version 2).
+REXCVAR_DEFINE_STRING(vr_stereo, "true", "VR",
+                      "Cockpit: true (each eye drawn from its own point: real depth, about half "
+                      "again the GPU time), depth (each eye made from the picture and its depth: "
+                      "approximate, filled edges beside near objects) or off (both eyes see the "
+                      "same picture: no depth)")
+    .allowed({"off", "depth", "true"})
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(vr_stereo_eye_parts, true, "VR",
+                    "True stereo: draw each eye's scene only across the part of the picture that eye "
+                    "sees (about 70 %; less GPU time)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_DOUBLE(vr_stereo_max_shift, 3.0, "VR",
                       "Depth stereo: the most a pixel moves for an eye, percent of the picture's "
@@ -129,6 +138,32 @@ REXCVAR_DEFINE_DOUBLE(vr_sharpen, 0.5, "VR",
                       "Cockpit: sharpening of the head-tracked picture, 0 (off) to 1 (strongest)")
     .range(0, 1)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// Version 6: the headset at a refresh rate that shows every game frame equally long. WiVRn picks
+// the highest rate under 100 Hz (90 on a Quest 3) unless set in its headset app; 72 fps at 90 Hz
+// shows 4 frames of 5 for one refresh and the fifth for two, so the world outside judders, and the
+// runtime composites and streams 90 pictures a second for 72.
+REXCVAR_DEFINE_INT32(vr_refresh_rate, 0, "VR",
+                     "The headset's refresh rate in Hz: 0 matches it to the game's frame rate (72 "
+                     "fps: 72 Hz), -1 leaves it to the runtime and the headset's settings")
+    .range(-1, 240)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DECLARE(int32_t, frame_rate);  // src/main.cpp
+// Version 6: the headset's frame waits briefly for a game frame that is about to be finished. The
+// OpenXR thread takes the newest finished game frame at each headset frame; with the game at the
+// headset's rate the two meet at a moment WiVRn's frame timing settles on, and on the real headset
+// that was right where game frames finish: one just in time, the next a fraction of a millisecond
+// late, so that frame was shown a headset frame later, its predecessor twice, and two frames were
+// then ready at once (one dropped): 4 to 12 frames a second shown twice or not at all, and the
+// game's part of the latency jumping between about 42 and 55 ms. Moving the game's frame timer did
+// not help (tried: the frames still finished at the moment they were taken). Now a headset frame
+// that finds no new game frame while one is due (one headset period after the last) waits up to
+// this long for it.
+REXCVAR_DEFINE_DOUBLE(vr_frame_wait, 4.0, "VR",
+                      "Milliseconds the headset's frame may wait for a game frame that is about to be "
+                      "finished, rather than show the last one again (0: never)")
+    .range(0, 8)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DEFINE_BOOL(vr_trace, false, "VR",
                     "Log the head pose, the game camera, the field of view drawn and the latency "
                     "about 10 times a second (lines \"VR trace:\")")
@@ -172,13 +207,17 @@ struct RexGuestOutputFrame {
     uint32_t stereo_width, stereo_height;
     VkImage stereo;  // both eyes side by side (patch 0394)
   } vr;
+  int64_t ready_ns;  // patch 0397: when the frame was published, steady clock (0: not told)
 };
 }
 constexpr uint32_t kExportFrames = 1, kExportLayers = 2, kExportStereo = 4;  // rexui_SetGuestOutputExport
+constexpr uint32_t kExportTrueStereo = 8;  // patch 0396
 constexpr uint32_t kLayerScene = 1, kLayerHud = 2, kLayerStereo = 4;
 using SetVulkanCreationHooksFn = void (*)(const RexVulkanCreationHooks*);
 using SetPadsWithoutFocusFn = void (*)(int);  // patch 0392 (src/input/input_system.cpp)
 using SetGuestOutputStereoFn = void (*)(float, float);  // patch 0393 (vulkan_presenter.cpp)
+using SetGuestOutputTrueStereoFn = void (*)(float, float);  // patch 0396: eye distance, P00
+using SetGuestOutputTrueStereoEyesFn = void (*)(const float*);  // patch 0396: each eye's part
 using SetGuestOutputExportFn = void (*)(int);
 using AcquireGuestOutputFrameFn = int (*)(RexGuestOutputFrame*, uint64_t);
 using ReleaseGuestOutputFrameFn = void (*)(uint32_t);
@@ -226,6 +265,10 @@ struct Api {
   PFN_xrCreateVulkanInstanceKHR CreateVulkanInstanceKHR = nullptr;
   PFN_xrCreateVulkanDeviceKHR CreateVulkanDeviceKHR = nullptr;
   PFN_xrGetVulkanGraphicsDevice2KHR GetVulkanGraphicsDevice2KHR = nullptr;
+  // XR_FB_display_refresh_rate (optional; WiVRn, Meta's runtime): the headset's refresh rate.
+  PFN_xrEnumerateDisplayRefreshRatesFB EnumerateDisplayRefreshRatesFB = nullptr;
+  PFN_xrGetDisplayRefreshRateFB GetDisplayRefreshRateFB = nullptr;
+  PFN_xrRequestDisplayRefreshRateFB RequestDisplayRefreshRateFB = nullptr;
 #ifdef _WIN32
   PFN_xrConvertWin32PerformanceCounterToTimeKHR ConvertTime = nullptr;
 #else
@@ -309,7 +352,17 @@ struct State {
   ReleaseGuestOutputFrameFn release_frame = nullptr;
   SetPadsWithoutFocusFn set_pads_without_focus = nullptr;
   SetGuestOutputStereoFn set_stereo = nullptr;
-  bool stereo = false;  // vr_stereo depth was asked for and the SDK can do it
+  bool stereo = false;  // vr_stereo depth or true was asked for and the SDK can do it
+  // Patch 0396: true stereo; the export flags without it and whether they carry it now (only
+  // while the cockpit is shown: menus and the screen get one picture).
+  SetGuestOutputTrueStereoFn set_true_stereo = nullptr;
+  SetGuestOutputTrueStereoEyesFn set_true_stereo_eyes = nullptr;
+  float true_stereo_eye_x[4] = {0, 1, 0, 1};  // each eye's part of the picture handed to the SDK
+  bool true_stereo = false;
+  uint32_t export_flags = 0;
+  bool export_true_stereo = false;
+  int stereo_logged = -1;  // the cockpit's last logged picture: 1 each eye its own, 0 one
+  float true_stereo_p00 = 0;  // the cockpit frustum's P00 handed to the SDK
   float ipd = 0.064f;  // the eyes' distance (xrLocateViews), handed to the SDK for the eyes
   bool picture_stereo = false;  // the picture swapchain holds both eyes side by side
   float picture_ipd = 0.064f;  // the eye distance those eyes were made with
@@ -337,6 +390,11 @@ struct State {
   bool layers_logged = false;
   CopySlot slots[3];
   uint32_t next_slot = 0;
+  // Version 6: an empty submission after each xrEndFrame, so the next one can wait for the
+  // runtime's previous frame without the queue lock (EndFrame).
+  VkFence end_fence = VK_NULL_HANDLE;
+  bool end_fence_pending = false;
+  bool locked_end_frame = false;  // FORZA_VR_LOCKED_END_FRAME=1: version 5's way (A/B tests)
   uint64_t last_serial = 0;
   FrameTag shown_tag;  // the tag of the picture in the swapchain (id 0: untagged)
   bool linear_blit = false;  // the guest output's format can be filtered: the screen is downscaled
@@ -375,10 +433,20 @@ struct State {
   SwapTagger swap_tagger;
   std::atomic<uint32_t> next_tag{1};
 
+  // Frame timing (vr_frame_wait; SDK patch 0397 tells when each game frame was published).
+  int64_t frame_wait_ns = 0;  // the longest a headset frame waits for a game frame due; 0: never
+  int64_t stat_slack_min = INT64_MAX, stat_slack_sum = 0, stat_waited_ns = 0;
+  uint32_t stat_slack_n = 0, stat_skips = 0, stat_waits = 0, stat_waits_found = 0;
+  // How evenly frames are taken (each headset frame) and published (each game frame): the spread
+  // of the intervals, for the 10 s line.
+  int64_t last_pickup_ns = 0, last_ready_ns = 0;
+  double stat_pickup_sum = 0, stat_pickup_sq = 0, stat_ready_sum = 0, stat_ready_sq = 0;
+  uint32_t stat_pickup_n = 0, stat_ready_n = 0;
+
   // Statistics for the periodic log line.
   std::atomic<uint32_t> stat_swaps{0}, stat_tagged_swaps{0}, stat_extra_views{0}, stat_repeat_views{0};
   uint32_t stat_frames = 0, stat_projection = 0, stat_quad = 0, stat_hud = 0, stat_copies = 0;
-  int64_t stat_end_frame_max_ns = 0;
+  int64_t stat_end_frame_max_ns = 0, stat_end_frame_ns = 0, stat_wait_frame_ns = 0, stat_end_wait_ns = 0;
   std::chrono::steady_clock::time_point stat_since;
 };
 
@@ -610,6 +678,22 @@ bool CreateCopySlots() {
     VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     if (g.vk.CreateFence(device, &fence_info, nullptr, &slot.fence) != VK_SUCCESS) return false;
   }
+  VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+  if (g.vk.CreateFence(device, &fence_info, nullptr, &g.end_fence) != VK_SUCCESS) g.end_fence = VK_NULL_HANDLE;
+  const char* locked = std::getenv("FORZA_VR_LOCKED_END_FRAME");
+  g.locked_end_frame = locked && *locked == '1';
+  return true;
+}
+
+// Waits (up to `timeout_ns`) for the empty submission made after the last xrEndFrame; true once
+// it is done (or there is none).
+bool FinishEndFence(uint64_t timeout_ns) {
+  if (!g.end_fence_pending) return true;
+  const VkDevice device = g.device->device();
+  const VkResult waited = g.vk.WaitForFences(device, 1, &g.end_fence, VK_TRUE, timeout_ns);
+  if (waited != VK_SUCCESS && waited != VK_ERROR_DEVICE_LOST) return false;
+  if (waited == VK_ERROR_DEVICE_LOST || g.vk.ResetFences(device, 1, &g.end_fence) != VK_SUCCESS) g.stop = true;
+  g.end_fence_pending = false;
   return true;
 }
 
@@ -958,6 +1042,10 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
   }
   g.picture.have_image = true;
   g.picture.shown_extent = {int32_t(out_width), int32_t(out_height)};
+  if (g.true_stereo && layers && int(stereo) != g.stereo_logged) {
+    g.stereo_logged = int(stereo);
+    REXLOG_INFO("VR: {}", stereo ? "each eye gets its own picture" : "both eyes get one picture");
+  }
   g.picture_stereo = stereo;
   g.picture_ipd = g.ipd;
   if (hud_acquired) {
@@ -973,7 +1061,9 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
                 with_hud ? fmt::format("; the HUD is on its own panel ({}x{})", frame.vr.hud_width,
                                        frame.vr.hud_height)
                          : std::string(),
-                stereo ? "; each eye its own picture (depth stereo)" : "");
+                stereo ? (g.true_stereo ? "; each eye drawn from its own point (true stereo)"
+                                        : "; each eye its own picture (depth stereo)")
+                       : "");
   }
   ++g.stat_copies;
   return true;
@@ -1100,7 +1190,11 @@ bool DestroySession() {
   }
   g.session = XR_NULL_HANDLE;
   g.running = false;
+  if (!FinishEndFence(100'000'000)) return false;
+  if (g.end_fence) g.vk.DestroyFence(g.device->device(), g.end_fence, nullptr);
+  g.end_fence = VK_NULL_HANDLE;
   if (g.set_export) g.set_export(0);
+  g.export_true_stereo = false;
   for (CopySlot& slot : g.slots) {
     if (slot.fence) g.vk.DestroyFence(g.device->device(), slot.fence, nullptr);
     if (slot.pool) g.vk.DestroyCommandPool(g.device->device(), slot.pool, nullptr);
@@ -1134,6 +1228,36 @@ const char* StateName(XrSessionState s) {
 }
 
 // Handles the runtime's events; false when the session is over (exiting or lost).
+// XR_FB_display_refresh_rate: the rate ChooseRefreshRate gives for the game's frame rate.
+void RequestRefreshRate() {
+  if (!g.xr.EnumerateDisplayRefreshRatesFB || !g.xr.RequestDisplayRefreshRateFB) {
+    REXLOG_INFO("VR: the runtime cannot set the headset's refresh rate (no XR_FB_display_refresh_rate)");
+    return;
+  }
+  uint32_t count = 0;
+  if (XR_FAILED(g.xr.EnumerateDisplayRefreshRatesFB(g.session, 0, &count, nullptr)) || !count) return;
+  std::vector<float> rates(count);
+  if (XR_FAILED(g.xr.EnumerateDisplayRefreshRatesFB(g.session, count, &count, rates.data()))) return;
+  float current = 0;
+  if (g.xr.GetDisplayRefreshRateFB) g.xr.GetDisplayRefreshRateFB(g.session, &current);
+  std::string offered;
+  for (float r : rates) offered += fmt::format("{}{:.0f}", offered.empty() ? "" : "/", r);
+  const int requested = REXCVAR_GET(vr_refresh_rate);
+  const float rate = ChooseRefreshRate(rates.data(), count, REXCVAR_GET(frame_rate), requested);
+  if (rate <= 0) {
+    REXLOG_INFO("VR: the headset runs at {:.0f} Hz ({} offered; vr_refresh_rate -1 leaves it)", current, offered);
+    return;
+  }
+  if (std::fabs(rate - current) < 0.5f) {
+    REXLOG_INFO("VR: the headset runs at {:.0f} Hz ({} offered)", current, offered);
+    return;
+  }
+  const XrResult r = g.xr.RequestDisplayRefreshRateFB(g.session, rate);
+  REXLOG_INFO("VR: asked the headset for {:.0f} Hz for {} {} ({} offered; it ran at {:.0f}){}", rate,
+              requested > 0 ? requested : REXCVAR_GET(frame_rate), requested > 0 ? "Hz asked" : "fps",
+              offered, current, XR_FAILED(r) ? " - refused (" + ResultName(r) + ")" : std::string());
+}
+
 bool PollEvents() {
   XrEventDataBuffer event{XR_TYPE_EVENT_DATA_BUFFER};
   while (g.xr.PollEvent(g.instance, &event) == XR_SUCCESS) {
@@ -1152,6 +1276,7 @@ bool PollEvents() {
           }
           g.running = true;
           g.recenter = true;
+          RequestRefreshRate();
           g.stat_since = std::chrono::steady_clock::now();
           PadsWithoutFocus(true);
         } else if (g.state == XR_SESSION_STATE_STOPPING) {
@@ -1162,6 +1287,12 @@ bool PollEvents() {
         } else if (g.state == XR_SESSION_STATE_EXITING || g.state == XR_SESSION_STATE_LOSS_PENDING) {
           return false;
         }
+        break;
+      }
+      case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
+        const auto& changed = *reinterpret_cast<XrEventDataDisplayRefreshRateChangedFB*>(&event);
+        REXLOG_INFO("VR: the headset's refresh rate changed from {:.0f} to {:.0f} Hz",
+                    changed.fromDisplayRefreshRate, changed.toDisplayRefreshRate);
         break;
       }
       case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
@@ -1194,19 +1325,45 @@ void LogStats() {
                           g.latency.Raw() / 1e6, g.stat_game_ns / n / 1e6,
                           g.stat_runtime_ns / n / 1e6, g.latency.Value() / 1e6);
   }
+  if (g.stat_slack_n) {
+    latency += fmt::format("; frames ready {:.1f} ms (least {:.1f}) before taken, {} passed over, "
+                           "waited for {} ({} came, {:.1f} ms a wait)",
+                           g.stat_slack_sum / double(g.stat_slack_n) / 1e6, g.stat_slack_min / 1e6,
+                           g.stat_skips, g.stat_waits, g.stat_waits_found,
+                           g.stat_waits ? g.stat_waited_ns / double(g.stat_waits) / 1e6 : 0.0);
+  }
+  auto spread = [](double sum, double sq, uint32_t n) {
+    const double mean = sum / n;
+    return fmt::format("{:.1f}+-{:.1f}", mean, std::sqrt(std::max(0.0, sq / n - mean * mean)));
+  };
+  if (g.stat_pickup_n && g.stat_ready_n) {
+    latency += fmt::format("; taken every {} ms, published every {} ms",
+                           spread(g.stat_pickup_sum, g.stat_pickup_sq, g.stat_pickup_n),
+                           spread(g.stat_ready_sum, g.stat_ready_sq, g.stat_ready_n));
+  }
+  g.stat_pickup_sum = g.stat_pickup_sq = g.stat_ready_sum = g.stat_ready_sq = 0;
+  g.stat_pickup_n = g.stat_ready_n = 0;
+  g.stat_slack_min = INT64_MAX;
+  g.stat_slack_sum = g.stat_waited_ns = 0;
+  g.stat_slack_n = g.stat_skips = g.stat_waits = g.stat_waits_found = 0;
   REXLOG_INFO(
       "VR: {:.0f} Hz headset, {:.1f} game frames/s copied; shown as cockpit {} (HUD panel {}) / "
-      "screen {} frames; swaps tagged {}/{} (dropped views {}, repeated {}); {}; xrEndFrame max {:.1f} ms",
+      "screen {} frames; swaps tagged {}/{} (dropped views {}, repeated {}); {}; xrWaitFrame {:.1f} ms, "
+      "previous frame's GPU work {:.1f} ms, xrEndFrame {:.1f} ms (max {:.1f})",
       g.stat_frames / seconds, g.stat_copies / seconds, g.stat_projection, g.stat_hud, g.stat_quad,
-      tagged, swaps, extra, repeat, latency, g.stat_end_frame_max_ns / 1e6);
+      tagged, swaps, extra, repeat, latency, g.stat_wait_frame_ns / std::max(g.stat_frames, 1u) / 1e6,
+      g.stat_end_wait_ns / std::max(g.stat_frames, 1u) / 1e6,
+      g.stat_end_frame_ns / std::max(g.stat_frames, 1u) / 1e6, g.stat_end_frame_max_ns / 1e6);
   g.stat_frames = g.stat_projection = g.stat_quad = g.stat_hud = g.stat_copies = 0;
-  g.stat_end_frame_max_ns = 0;
+  g.stat_end_frame_max_ns = g.stat_end_frame_ns = g.stat_wait_frame_ns = g.stat_end_wait_ns = 0;
   g.stat_game_ns = g.stat_runtime_ns = 0;
   g.stat_latency_samples = 0;
   g.stat_since = now;
 }
 
 float StereoMaxShift() { return float(REXCVAR_GET(vr_stereo_max_shift)) / 100.0f; }
+// Patch 0396: the cockpit view's projection scale in x (the game's P00).
+float TrueStereoP00(const CockpitFrustum& f) { return 1.0f / std::tan(f.HalfHorizontal()); }
 
 HeadBox Box() {
   return {float(REXCVAR_GET(vr_head_side_limit_cm)) / 100.0f,
@@ -1295,10 +1452,36 @@ void Trace(XrTime display_time, Layer layer) {
 }
 
 // One headset frame: wait, take the newest game picture, submit the layer.
+// The newest game frame newer than the last one taken; with vr_frame_wait, when there is none yet
+// but one is due (the game publishes one each headset frame and the last came about a period ago),
+// waits up to vr_frame_wait for it, polling every quarter millisecond.
+bool AcquireNewest(RexGuestOutputFrame& frame, int64_t period_ns) {
+  if (g.acquire_frame(&frame, g.last_serial)) return true;
+  if (g.frame_wait_ns <= 0 || FrameWaitOffTest() || !g.last_ready_ns || period_ns <= 0) return false;
+  const int64_t start = SteadyNs();
+  const int64_t due = g.last_ready_ns + period_ns;
+  // Not due within the wait, or long overdue (the game is slower than the headset, loading).
+  if (due - start > g.frame_wait_ns || start - due > period_ns / 2) return false;
+  ++g.stat_waits;
+  bool found = false;
+  while (!g.stop && SteadyNs() - start < g.frame_wait_ns) {
+    std::this_thread::sleep_for(std::chrono::microseconds(250));
+    if (g.acquire_frame(&frame, g.last_serial)) {
+      found = true;
+      break;
+    }
+  }
+  g.stat_waited_ns += SteadyNs() - start;
+  g.stat_waits_found += found;
+  return found;
+}
+
 bool Frame() {
   XrFrameWaitInfo wait{XR_TYPE_FRAME_WAIT_INFO};
   XrFrameState frame_state{XR_TYPE_FRAME_STATE};
+  const int64_t wait_start = SteadyNs();
   XrResult r = g.xr.WaitFrame(g.session, &wait, &frame_state);
+  g.stat_wait_frame_ns += SteadyNs() - wait_start;
   if (XR_FAILED(r)) {
     if (!g.frame_failures++) REXLOG_WARN("VR: xrWaitFrame failed ({})", ResultName(r));
     return r != XR_ERROR_SESSION_LOST && r != XR_ERROR_INSTANCE_LOST;
@@ -1338,7 +1521,11 @@ bool Frame() {
       const float ipd = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
       if (ipd > 0.04f && ipd < 0.09f && std::fabs(ipd - g.ipd) > 0.0005f) {
         g.ipd = ipd;
-        g.set_stereo(ipd, StereoMaxShift());
+        if (g.true_stereo) {
+          if (g.true_stereo_p00 > 0) g.set_true_stereo(ipd, g.true_stereo_p00);
+        } else {
+          g.set_stereo(ipd, StereoMaxShift());
+        }
         REXLOG_INFO("VR: stereo with the headset's eye distance, {:.1f} mm", ipd * 1000);
       }
     }
@@ -1353,6 +1540,26 @@ bool Frame() {
                 std::fabs(f.aspect - g.frustum.aspect) > 0.005f ||
                 std::fabs(f.pitch - g.frustum.pitch) > 0.005f || std::fabs(f.yaw - g.frustum.yaw) > 0.005f;
       if (changed) g.frustum = f;
+    }
+    // Patch 0396: the eyes' offset in clip space needs the cockpit view's P00; each eye is drawn
+    // across its part of the picture.
+    if (g.true_stereo && f.vertical > 0 && std::fabs(TrueStereoP00(f) - g.true_stereo_p00) > 1e-4f) {
+      g.true_stereo_p00 = TrueStereoP00(f);
+      g.set_true_stereo(g.ipd, g.true_stereo_p00);
+    }
+    if (g.true_stereo && g.set_true_stereo_eyes && f.vertical > 0) {
+      float eye_x[4];
+      for (int i = 0; i < 2; ++i)
+        EyePictureRange(fovs[i], rotation[i], f, margin, eye_x[2 * i], eye_x[2 * i + 1]);
+      bool eyes_changed = false;
+      for (int i = 0; i < 4; ++i) eyes_changed |= std::fabs(eye_x[i] - g.true_stereo_eye_x[i]) > 0.002f;
+      if (eyes_changed) {
+        std::copy(eye_x, eye_x + 4, g.true_stereo_eye_x);
+        g.set_true_stereo_eyes(REXCVAR_GET(vr_stereo_eye_parts) ? eye_x : nullptr);
+        REXLOG_INFO("VR: true stereo draws the left eye across {:.0f}-{:.0f} % of the picture, the "
+                    "right eye across {:.0f}-{:.0f} %",
+                    eye_x[0] * 100, eye_x[1] * 100, eye_x[2] * 100, eye_x[3] * 100);
+      }
     }
     if (changed) {
       REXLOG_INFO("VR: eye fields of view L {:.0f}/{:.0f}/{:.0f}/{:.0f}, R {:.0f}/{:.0f}/{:.0f}/{:.0f} deg",
@@ -1388,11 +1595,42 @@ bool Frame() {
   }
   g.cockpit_active = !g.stop && g.mode == Mode::kCockpit && g.origin_set && !menu &&
                      (g.state == XR_SESSION_STATE_VISIBLE || g.state == XR_SESSION_STATE_FOCUSED);
+  // Patch 0396: the game draws each eye only while the cockpit is shown (the screen and the menus
+  // get one picture, at the GPU cost of one).
+  const bool want_true_stereo = g.cockpit_active && !StereoOffTest();
+  if (g.true_stereo && want_true_stereo != g.export_true_stereo && g.set_export) {
+    g.export_true_stereo = want_true_stereo;
+    g.set_export(int(g.export_flags | (g.export_true_stereo ? kExportTrueStereo : 0)));
+  }
 
   if (frame_state.shouldRender) {
+    const int64_t pickup_ns = SteadyNs();
+    if (g.last_pickup_ns) {
+      const double d = (pickup_ns - g.last_pickup_ns) / 1e6;
+      g.stat_pickup_sum += d;
+      g.stat_pickup_sq += d * d;
+      ++g.stat_pickup_n;
+    }
+    g.last_pickup_ns = pickup_ns;
     RexGuestOutputFrame frame{sizeof(RexGuestOutputFrame)};
-    if (g.acquire_frame(&frame, g.last_serial)) {
+    if (AcquireNewest(frame, frame_state.predictedDisplayPeriod)) {
+      const uint64_t skipped =
+          g.last_serial && frame.serial > g.last_serial + 1 ? frame.serial - g.last_serial - 1 : 0;
       g.last_serial = frame.serial;
+      if (frame.size >= offsetof(RexGuestOutputFrame, ready_ns) + sizeof(int64_t) && frame.ready_ns) {
+        if (g.last_ready_ns && !skipped) {
+          const double d = (frame.ready_ns - g.last_ready_ns) / 1e6;
+          g.stat_ready_sum += d;
+          g.stat_ready_sq += d * d;
+          ++g.stat_ready_n;
+        }
+        g.last_ready_ns = frame.ready_ns;
+        const int64_t slack_ns = pickup_ns - frame.ready_ns;  // negative: waited for it
+        g.stat_slack_min = std::min(g.stat_slack_min, slack_ns);
+        g.stat_slack_sum += slack_ns;
+        ++g.stat_slack_n;
+      }
+      g.stat_skips += uint32_t(skipped);
       FrameTag tag;
       {
         std::lock_guard lock(g.tags_mutex);
@@ -1501,12 +1739,29 @@ bool Frame() {
   end.environmentBlendMode = g.blend;
   end.layerCount = layer_count;
   end.layers = layers;
+  // Monado's compositor (WiVRn's) blocks in xrEndFrame until the GPU has finished the previous
+  // frame's work (it waits for that frame's semaphore before taking the next). xrEndFrame must hold
+  // the device's queue lock (the runtime submits on the game's queue in it), so for that whole wait
+  // the game's command processor could not submit: with true stereo on the real headset the game
+  // spent 14 ms of every 14 ms frame blocked there and the GPU idled (56 fps at 83 % busy). Wait for
+  // the previous frame here, without the lock: the empty submission made after the last xrEndFrame
+  // is done once everything the runtime submitted then is.
+  if (!g.locked_end_frame) {
+    const int64_t wait_start = SteadyNs();
+    FinishEndFence(50'000'000);
+    g.stat_end_wait_ns += SteadyNs() - wait_start;
+  }
   const int64_t end_start = SteadyNs();
   {
     const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
     r = g.xr.EndFrame(g.session, &end);
+    if (!g.locked_end_frame && g.end_fence != VK_NULL_HANDLE && !g.end_fence_pending) {
+      VkSubmitInfo marker{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      g.end_fence_pending = g.vk.QueueSubmit(queue.queue(), 1, &marker, g.end_fence) == VK_SUCCESS;
+    }
   }
   g.stat_end_frame_max_ns = std::max(g.stat_end_frame_max_ns, SteadyNs() - end_start);
+  g.stat_end_frame_ns += SteadyNs() - end_start;
   if (XR_FAILED(r)) {
     if (!g.frame_failures++) REXLOG_WARN("VR: xrEndFrame failed ({})", ResultName(r));
     return r != XR_ERROR_SESSION_LOST && r != XR_ERROR_INSTANCE_LOST;
@@ -1600,7 +1855,7 @@ std::string RunProbe(ProbeResult& p) {
   }
   std::vector<XrExtensionProperties> extensions(count, {XR_TYPE_EXTENSION_PROPERTIES});
   xr.EnumerateInstanceExtensionProperties(nullptr, count, &count, extensions.data());
-  bool vulkan2 = false, convert_time = false;
+  bool vulkan2 = false, convert_time = false, refresh_rate = false;
 #ifdef _WIN32
   const char* time_extension = XR_KHR_WIN32_CONVERT_PERFORMANCE_COUNTER_TIME_EXTENSION_NAME;
 #else
@@ -1609,10 +1864,12 @@ std::string RunProbe(ProbeResult& p) {
   for (const auto& e : extensions) {
     vulkan2 |= std::strcmp(e.extensionName, XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) == 0;
     convert_time |= std::strcmp(e.extensionName, time_extension) == 0;
+    refresh_rate |= std::strcmp(e.extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0;
   }
   if (!vulkan2) return "the OpenXR runtime has no XR_KHR_vulkan_enable2";
   std::vector<const char*> enabled{XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME};
   if (convert_time) enabled.push_back(time_extension);
+  if (refresh_rate) enabled.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
   XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
   std::strncpy(create.applicationInfo.applicationName, "Forza Horizon 1 ReImagined",
                XR_MAX_APPLICATION_NAME_SIZE - 1);
@@ -1667,6 +1924,14 @@ std::string RunProbe(ProbeResult& p) {
 #else
   if (convert_time) Load(p.instance, "xrConvertTimespecTimeToTimeKHR", xr.ConvertTime);
 #endif
+  if (refresh_rate &&
+      !(Load(p.instance, "xrEnumerateDisplayRefreshRatesFB", xr.EnumerateDisplayRefreshRatesFB) &&
+        Load(p.instance, "xrGetDisplayRefreshRateFB", xr.GetDisplayRefreshRateFB) &&
+        Load(p.instance, "xrRequestDisplayRefreshRateFB", xr.RequestDisplayRefreshRateFB))) {
+    xr.EnumerateDisplayRefreshRatesFB = nullptr;
+    xr.GetDisplayRefreshRateFB = nullptr;
+    xr.RequestDisplayRefreshRateFB = nullptr;
+  }
   XrInstanceProperties properties{XR_TYPE_INSTANCE_PROPERTIES};
   xr.GetInstanceProperties(p.instance, &properties);
   p.runtime_name = properties.runtimeName;
@@ -1818,6 +2083,22 @@ void Start(rex::system::IGraphicsSystem* graphics) {
       REXLOG_WARN("VR: this SDK build cannot make the eyes from the depth (patch 0394): mono");
     }
   }
+  // Patch 0396's true stereo also builds on the layers (the eyes come with the scene layer).
+  g.set_true_stereo = reinterpret_cast<SetGuestOutputTrueStereoFn>(
+      forza::SdkSymbol("rexui_SetGuestOutputTrueStereo"));
+  g.set_true_stereo_eyes = reinterpret_cast<SetGuestOutputTrueStereoEyesFn>(
+      forza::SdkSymbol("rexui_SetGuestOutputTrueStereoEyes"));
+  if (g.mode == Mode::kCockpit && REXCVAR_GET(vr_stereo) == "true") {
+    if (g.set_true_stereo) {
+      g.stereo = g.true_stereo = true;
+      flags |= kExportLayers;
+      REXLOG_INFO("VR: true stereo: the game draws each eye from its own point");
+    } else {
+      REXLOG_WARN("VR: this SDK build cannot draw each eye (patch 0396): mono");
+    }
+  }
+  // vr_frame_wait needs patch 0397's publish times (without them nothing waits).
+  g.frame_wait_ns = int64_t(REXCVAR_GET(vr_frame_wait) * 1e6);
   // Patch 0395: the scene layer sharpened (an SDK without it ignores this: no sharpening).
   if (g.mode == Mode::kCockpit && (flags & kExportLayers) && REXCVAR_GET(vr_sharpen) > 0) {
     using SetSharpenFn = void (*)(float);
@@ -1828,6 +2109,7 @@ void Start(rex::system::IGraphicsSystem* graphics) {
       REXLOG_WARN("VR: this SDK build cannot sharpen the cockpit's picture (patch 0395)");
     }
   }
+  g.export_flags = flags;
   g.set_export(int(flags));
   if (const std::string key = REXCVAR_GET(vr_recenter_key); !key.empty()) {
     rex::ui::RegisterBind("bind_vr_recenter", key, "Recentre the VR view", [] { Recenter(); });

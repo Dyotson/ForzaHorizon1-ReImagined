@@ -34,6 +34,10 @@
 //   FORZA_VR_POSE_TRACE=1                  log the calling thread every 300th call
 //   a FIFO line "exposure X"               the VR cockpit's exposure speed from then on (a test aid)
 //   a FIFO line "cull 0" or "cull 1"       the VR cockpit's size cull scale off or on (a test aid)
+//   a FIFO line "stereo 0" or "stereo 1"   VR true stereo off (one picture) or as set (a test aid)
+//   a FIFO line "framewait 0" or "... 1"   vr_frame_wait off or as set (a test aid)
+//   a FIFO line "recenter"                 recentre the VR view, as the Home key (a test aid: a headset
+//                                          lying still can relocalise after its display wakes)
 //
 // In the VR cockpit, vr_head_pose_test's pose (env or FIFO) is added to the headset's for the game's
 // camera only (xr.cpp CockpitView): a scripted look-around through the real runtime with the
@@ -130,6 +134,8 @@ std::atomic<bool> pose_set{false};
 std::atomic<int> skip_hook{0};  // 0 none, 1 view, 2 frustum
 std::atomic<float> exposure_speed_test{0};  // a FIFO's "exposure X" (0: vr_exposure_speed)
 std::atomic<int> cull_test{0};  // a FIFO's "cull 1" (1) or "cull 0" (2); 0: vr_cull_scale
+std::atomic<bool> stereo_off_test{false};  // a FIFO's "stereo 0" (until "stereo 1")
+std::atomic<bool> frame_wait_off_test{false};  // a FIFO's "framewait 0" (until "framewait 1")
 int SkipCode(const char* name) {
   return !name ? 0 : std::strcmp(name, "view") == 0 ? 1 : std::strcmp(name, "frustum") == 0 ? 2 : 0;
 }
@@ -189,6 +195,15 @@ void ReadFifo(std::string path) {
     if (line.rfind("cull ", 0) == 0) {  // test aid: "cull 0" / "cull 1" overrides vr_cull_scale
       cull_test = std::atoi(line.c_str() + 5) ? 1 : 2;
       REXLOG_INFO("VR head pose: cull scale {}", cull_test.load() == 1 ? "on" : "off");
+    } else if (line.rfind("stereo ", 0) == 0) {  // test aid: VR true stereo off / back on
+      stereo_off_test = std::atoi(line.c_str() + 7) == 0;
+      REXLOG_INFO("VR head pose: stereo {}", stereo_off_test.load() ? "off (test)" : "as set");
+    } else if (line.rfind("framewait ", 0) == 0) {  // test aid: vr_frame_wait off / back on
+      frame_wait_off_test = std::atoi(line.c_str() + 10) == 0;
+      REXLOG_INFO("VR head pose: frame wait {}", frame_wait_off_test.load() ? "off (test)" : "as set");
+    } else if (line == "recenter") {  // test aid: as the recentre key
+      forza::xr::Recenter();
+      REXLOG_INFO("VR head pose: recentre");
     } else if (line.rfind("exposure ", 0) == 0) {  // test aid: vr_exposure_speed from now on
       exposure_speed_test = std::strtof(line.c_str() + 9, nullptr);
       REXLOG_INFO("VR head pose: exposure speed {}", exposure_speed_test.load());
@@ -414,6 +429,9 @@ float CullScale() {
   const bool on = test ? test == 1 : REXCVAR_GET(vr_cull_scale);
   return on ? cull_scale.load(std::memory_order_relaxed) : 1.0f;
 }
+
+bool StereoOffTest() { return stereo_off_test.load(std::memory_order_relaxed); }
+bool FrameWaitOffTest() { return frame_wait_off_test.load(std::memory_order_relaxed); }
 
 bool TestPoseOffset(HeadPose& offset) {
   if (!REXCVAR_GET(vr_head_pose_test)) return false;

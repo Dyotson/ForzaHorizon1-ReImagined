@@ -4,7 +4,8 @@
 #include <atomic>
 #include "../../src/platform/xr.cpp"
 namespace forza{void* SdkSymbol(const char*){return nullptr;}}
-namespace forza::xr{bool TestPoseOffset(forza::vr::HeadPose&){return false;}}
+namespace forza::xr{bool TestPoseOffset(forza::vr::HeadPose&){return false;}bool StereoOffTest(){return false;}bool FrameWaitOffTest(){return false;}}
+int32_t frame_rate=72;
 using namespace forza::xr;
 #define CHECK(x) do{if(!(x)){std::fprintf(stderr,"XR actual FAIL %d: %s\n",__LINE__,#x);return 1;}}while(false)
 int submits=0,releases=0,destroys=0,waits=0,acquires=0,holds_released=0;

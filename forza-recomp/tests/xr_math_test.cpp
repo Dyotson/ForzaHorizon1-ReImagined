@@ -305,6 +305,45 @@ void TestEyePose() {
   Check(Near(left.q.y, view.q.y) && Near(right.q.w, view.q.w), "both look where the view looks");
 }
 
+void TestEyePictureRange() {
+  // True stereo draws each eye only across its part of the cockpit picture: a Quest 3's eyes (54
+  // out, 40 in) with the cockpit's 5 degree margin each see 0 to 80 % (left) and 20 to 100 %
+  // (right): a fifth less of the scene's pixels per eye.
+  const CockpitFrustum f = CoverEyes(kQuest3, kParallel, 5 * kDeg, 1.5f, 2.2f);
+  float lo, hi;
+  EyePictureRange(kQuest3[0], kParallel[0], f, 5 * kDeg, lo, hi);
+  Check(Near(lo, 0.0f, 0.01f) && Near(hi, 0.80f, 0.01f), "left eye: 0 to 80 %");
+  const float left_hi = hi;
+  EyePictureRange(kQuest3[1], kParallel[1], f, 5 * kDeg, lo, hi);
+  Check(Near(lo, 0.20f, 0.01f) && Near(hi, 1.0f, 0.01f), "right eye: 20 to 100 %");
+  Check(Near(lo, 1 - left_hi, 1e-3f), "mirror images");
+  // The inner edge without a margin: 40 degrees of a 61.7 degree half-width picture, a little more
+  // at the eye's corners seen from the picture's axis (pitched 5.5 degrees down): 0.75 against 0.73.
+  EyePictureRange(kQuest3[0], kParallel[0], f, 0, lo, hi);
+  const float inner = 0.5f + 0.5f * std::tan(40 * kDeg) / std::tan(f.HalfHorizontal());
+  Check(hi >= inner - 1e-4f && hi < inner + 0.04f, "the inner edge where the eye's field of view ends");
+  // Wider margins never leave the picture.
+  EyePictureRange(kQuest3[1], kParallel[1], f, 40 * kDeg, lo, hi);
+  Check(lo >= 0 && hi <= 1 && lo < 0.2f, "clamped to the picture");
+}
+
+void TestRefreshRate() {
+  const float quest3[] = {72, 80, 90, 120};
+  Check(ChooseRefreshRate(quest3, 4, 72, 0) == 72, "72 fps: 72 Hz");
+  Check(ChooseRefreshRate(quest3, 4, 60, 0) == 120, "60 fps: 120 Hz, each frame twice");
+  Check(ChooseRefreshRate(quest3, 4, 30, 0) == 90, "30 fps: 90 Hz, each frame three times");
+  Check(ChooseRefreshRate(quest3, 4, 90, 0) == 90, "90 fps: 90 Hz");
+  Check(ChooseRefreshRate(quest3, 4, 144, 0) == 120, "faster than the headset: its highest");
+  Check(ChooseRefreshRate(quest3, 4, 75, 0) == 80, "no multiple: the lowest above");
+  Check(ChooseRefreshRate(quest3, 4, 72, 90) == 90, "asked for 90");
+  Check(ChooseRefreshRate(quest3, 4, 72, 85) == 80 || ChooseRefreshRate(quest3, 4, 72, 85) == 90,
+        "asked for 85: a neighbour");
+  Check(ChooseRefreshRate(quest3, 4, 72, -1) == 0, "-1: the runtime's choice");
+  Check(ChooseRefreshRate(quest3, 0, 72, 0) == 0, "no rates offered");
+  const float index[] = {80, 90, 120, 144};
+  Check(ChooseRefreshRate(index, 4, 72, 0) == 144, "72 fps on 80/90/120/144: 144, each frame twice");
+}
+
 int main() {
   TestAxesMatchTheTestPose();
   TestLookingLeftSeesLeft();
@@ -320,7 +359,9 @@ int main() {
   TestCullScale();
   TestHudPanel();
   TestEyePose();
+  TestEyePictureRange();
   TestLatency();
+  TestRefreshRate();
   if (failures) return 1;
   std::printf("xr_math_test: ok\n");
   return 0;
