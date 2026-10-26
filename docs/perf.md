@@ -12,6 +12,13 @@ and reconstructs to 4K. 1080p Quality renders 720p directly and reconstructs to
 [Native DLSS](native_dlss.md) for the dimension table and validation limits.
 These launch checks are not a matched performance benchmark.
 
+## Co-op stall and sunrise FPS report (#444, 2026-10-25)
+
+I inspected both attached logs: they are successive snapshots of the same
+session. Sustained low FPS precedes the multi-second GPU fence waits, and the
+longer attachment shows recovery. The runtime cause remains unresolved.
+[Evidence, timeline and effective startup settings](issue-444-investigation.md).
+
 ## Native NVIDIA reconstruction, 2026-10-15 (before review fixes)
 
 These measurements predate the scene/HUD shader-cache correction. They are
