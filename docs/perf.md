@@ -124,8 +124,13 @@ using 1.5-2.5 cores. Rules:
 - `tools/perf_scenario.sh` records other game processes, the load average and free memory
   at the start and end and prints `status=CONTENDED` when another game ran or the
   1-minute load average was above 2. Contended results are not baselines.
-- Intro videos are skipped through the input FIFO, and each scene is only labelled once
+- The boot videos are skipped with `--skip_startup_movies=true`, which `tools/live_session.sh`,
+  `tools/run_forza.sh` and so `tools/perf_scenario.sh` pass by default (`FORZA_SKIP_MOVIES=false`
+  plays them; a flag after the script's arguments wins). The in-game videos (the festival
+  intro) are still skipped through the input FIFO, and each scene is only labelled once
   it is reached.
+  The tools emit one startup flag (the last explicit startup option wins over the
+  environment), and the scenario's boot input sequence follows that same effective value.
 
 ## Results
 
