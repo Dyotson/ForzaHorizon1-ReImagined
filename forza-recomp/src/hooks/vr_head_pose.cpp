@@ -38,6 +38,8 @@
 //   a FIFO line "framewait 0" or "... 1"   vr_frame_wait off or as set (a test aid)
 //   a FIFO line "recenter"                 recentre the VR view, as the Home key (a test aid: a headset
 //                                          lying still can relocalise after its display wakes)
+//   a FIFO line "parallax 0|1|2"           vr_cockpit_parallax off, on, or on with the game's own eye
+//                                          position for the shading (a test aid; vr_cockpit_space.cpp)
 //
 // In the VR cockpit, vr_head_pose_test's pose (env or FIFO) is added to the headset's for the game's
 // camera only (xr.cpp CockpitView): a scripted look-around through the real runtime with the
@@ -201,6 +203,9 @@ void ReadFifo(std::string path) {
     } else if (line.rfind("framewait ", 0) == 0) {  // test aid: vr_frame_wait off / back on
       frame_wait_off_test = std::atoi(line.c_str() + 10) == 0;
       REXLOG_INFO("VR head pose: frame wait {}", frame_wait_off_test.load() ? "off (test)" : "as set");
+    } else if (line.rfind("parallax ", 0) == 0) {  // test aid: vr_cockpit_parallax off / on
+      forza::xr::SetCockpitParallaxTest(std::atoi(line.c_str() + 9));
+      REXLOG_INFO("VR head pose: cockpit parallax {}", std::atoi(line.c_str() + 9));
     } else if (line == "recenter") {  // test aid: as the recentre key
       forza::xr::Recenter();
       REXLOG_INFO("VR head pose: recentre");

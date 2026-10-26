@@ -76,6 +76,9 @@ bool TestPoseOffset(vr::HeadPose& offset);
 bool StereoOffTest();
 // Camera hooks: a test FIFO's "framewait 0" (vr_frame_wait off until "framewait 1"; a test aid).
 bool FrameWaitOffTest();
+// hooks/vr_cockpit_space.cpp: a FIFO's "parallax 0|1|2" overrides vr_cockpit_parallax (a test aid; 2: the
+// cabin drawn from the eye but shaded with the game's own eye position).
+void SetCockpitParallaxTest(int on);
 
 // Camera hooks: the factor for the size cull of the views drawn from the camera (hooks/
 // vr_culling.cpp) while posed VR cockpit views are drawn: tan^2 of the in-car camera's own

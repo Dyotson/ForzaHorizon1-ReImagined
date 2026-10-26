@@ -6,6 +6,12 @@
 
 #include <cstdint>
 
+#define sub_823F37D0 sub_82423808  // check
+#define __imp__sub_823F37D0 __imp__sub_82423808
+#define sub_82447400 sub_82476AC0
+#define __imp__sub_82447400 __imp__sub_82476AC0
+#define sub_82447CA8 sub_82477368
+#define __imp__sub_82447CA8 __imp__sub_82477368
 #define sub_82D4DE30 sub_82E100B0
 #define __imp__sub_82D4DE30 __imp__sub_82E100B0
 #define sub_823E40D8 sub_82414068
@@ -163,6 +169,8 @@
 #define __imp__sub_82CF7278 __imp__sub_82DB8C18
 #define sub_82D3DB00 sub_82DFFC48
 #define __imp__sub_82D3DB00 __imp__sub_82DFFC48
+#define sub_82DCF1C0 sub_82E91040
+#define __imp__sub_82DCF1C0 __imp__sub_82E91040
 #define sub_82DD9D58 sub_82E9C3B8
 #define __imp__sub_82DD9D58 __imp__sub_82E9C3B8
 #define sub_82DF7BB0 sub_82EB9DF0  // check
