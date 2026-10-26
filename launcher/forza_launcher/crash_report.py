@@ -20,7 +20,7 @@ SETTING_KEYS = (
     "texture_dump", "texture_replace",
     "fh1_upscaler", "fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution",
     "fh1_upscale_quality", "fh1_aa", "resolution", "forza_ultrawide",
-    "fullscreen", "audio", "apu", "audio_driver", "time_scalar", "ai_rubber_banding",
+    "fullscreen", "audio", "apu", "audio_driver", "time_scalar", "ai_rubber_banding", "forza_car_tuning",
 )
 MAX_ISSUE_URL = 7500
 

@@ -60,6 +60,8 @@ def main():
         copy(REPO / "forza-recomp" / rel, out / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, out / "project" / "tools" / "cmake" / f.name)
+    for name in builder.NATIVE_MENU_FILES:
+        copy(REPO / "tools" / name, out / "project" / "tools" / name)
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
             copy(f, out / "server" / f.name)

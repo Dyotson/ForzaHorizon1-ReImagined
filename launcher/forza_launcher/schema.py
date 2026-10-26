@@ -476,6 +476,12 @@ add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
     "how good they are. Single-player races and free roam only: online races and Co-op "
     "Festival rounds always play as shipped.",
     "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
+add("forza_car_tuning", "Car tuning (experimental)", "Gameplay", "bool", False,
+    "Adds CAR TUNING to the pause menu in offline free roam, for the car you drive: tire "
+    "pressure, gearing, alignment, anti-roll bars, springs, damping, aero, brakes and "
+    "differential, as far as its upgrades allow, with named setups and tune files to share. "
+    "Needs Title Update 4: Setup > Build prepares it from your own files. Experimental: keep "
+    "a copy of your save. Applies on the next game launch.", "Pause menu", restart=True)
 
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")

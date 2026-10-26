@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3, power
-from .config import Config, render_toml, write_toml
+from .config import Config, parse_toml, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
 LOCAL_PROFILE = "B13EBABEBABEBABE"  # the runtime's own profile folder
@@ -413,6 +413,41 @@ def texture_packs_used(cfg: Config) -> bool:
     return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
 
 
+# The options that use runtime/update-native (builder.stage_runtime_update) instead of runtime/update.
+NATIVE_UPDATE_OPTIONS = ("forza_car_tuning",)
+
+
+def native_update_requested(cfg: Config, toml_text: str) -> bool:
+    """Use the same config/environment/CLI precedence as the runtime flags."""
+    values = parse_toml(toml_text)
+    environment = {**os.environ, **parse_env(cfg.advanced.get("extra_env", ""))}
+    for key in NATIVE_UPDATE_OPTIONS:
+        name = "REX_" + key.upper()
+        if name in environment:
+            values[key] = environment[name].lower() in ("true", "1")
+    extra = split_args(cfg.advanced.get("extra_args", ""))
+    for arg in extra:
+        if not arg.startswith("--"):
+            continue
+        key, equal, value = arg[2:].partition("=")
+        negated = key.startswith("no-")
+        if negated:
+            key = key[3:]
+        if key not in NATIVE_UPDATE_OPTIONS:
+            continue
+        if not equal:
+            value = "true"
+        values[key] = (value.lower() in ("true", "1")) != negated
+    return any(values.get(key) is True for key in NATIVE_UPDATE_OPTIONS)
+
+
+def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
+    prepared = game.dir / "update-native"
+    if native_update_requested(cfg, toml_text) and prepared.is_dir():
+        return prepared
+    return game.dir / "update"
+
+
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
     from . import ingame
     if cfg.gamertag_cleaned:
@@ -489,9 +524,14 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         unset.append("FORZA_SERVER")
 
     extra_update = any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", "")))
-    if (game.dir / "update").is_dir() and not extra_update:
-        args.append(f"--update_data_root={game.dir / 'update'}")  # the title update's files
+    update = update_data_root(cfg, game, toml_text)
+    if update.is_dir() and not extra_update:
+        args.append(f"--update_data_root={update}")  # the title update's files
     notes += content_warnings(cfg, game, home, root, extra_update, check_dlc=write or root.exists())
+    if not extra_update and update.name != "update-native" and native_update_requested(cfg, toml_text):
+        notes.append(f"Car tuning is on, but this build has no tuning resources ({game.dir / 'update-native'} "
+                     "is missing), so CAR TUNING in the pause menu does not open. It needs Title Update 4: open "
+                     "Setup and press Rebuild; if it is still missing, the build log says why.")
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
 

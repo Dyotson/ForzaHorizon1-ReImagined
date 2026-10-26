@@ -76,8 +76,10 @@ machine from their own copy:
    2 s), copies `forza_manifest_tu4.toml` with its three `file_path`s and `game_root` pointed at
    `build/tu`, configures with `-DFORZA_TITLE_UPDATE=4` (`hints_tu4/`, `generated_tu4/`) and
    stages `build/tu` as `runtime/update`, which Play passes as `--update_data_root`
-   (`--game_data_root` stays the disc's files). Without it the base manifest is built and
-   `runtime/update` removed. `--build` takes `--title-update PATH` (default: the launcher's
+   (`--game_data_root` stays the disc's files), and `runtime/update-native`: the same update plus
+   the car tuning resources `tools/native_tuning_assets.py` prepares from it, mounted instead only
+   while Car tuning is on (see Settings; [car-tuning.md](car-tuning.md)). Without it the base
+   manifest is built and both are removed. `--build` takes `--title-update PATH` (default: the launcher's
    setting) and `--base`.
 3. **Build**: preflight (RAM for the chosen job count, disk, cores), toolchain, SDK, codegen from `default.xex`,
    CMake configure, ninja (progress parsed from `[n/m]`, log view, cancel, resume), then the
@@ -640,7 +642,7 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
 racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, rumble style, clutch and shifter, pedal and shifter devices; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
-deadzones, vibration, `FORZA_PAD_PER_USER`), Gameplay (the CPU drivers' rubber banding), Audio, Online (server mode, live room, Horizon
+deadzones, vibration, `FORZA_PAD_PER_USER`), Gameplay (the CPU drivers' rubber banding, car tuning), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
 a free-form "other settings" box for any further `forza.toml` key, a live preview of the
@@ -654,6 +656,10 @@ a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
+Gameplay > Pause menu > **Car tuning (experimental)** (`forza_car_tuning`, off by default, #363):
+CAR TUNING in the pause menu of offline free roam ([car-tuning.md](car-tuning.md)); Play then
+passes `runtime/update-native` instead of `runtime/update` (no rebuild to switch), and says so when
+the build has none.
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

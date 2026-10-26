@@ -6,6 +6,12 @@ garage, physics and save operations. It needs
 only the player's FH1 files. `forza_car_tuning` defaults to false. The base-game
 build supplies inert stubs; the native addresses below are for Title Update 4.
 
+**Turning it on (players).** In the launcher, Settings > Gameplay > Pause menu >
+**Car tuning (experimental)**, then Play: the option applies on the next game
+launch. It needs a Title Update 4 build; Setup > Build prepares everything from
+your own files (below). Pause in offline free roam and choose **CAR TUNING**.
+It is experimental: keep a copy of your save.
+
 The SDK-independent field schema describes 35 possible controls; the adapter
 grants access only when the current car's native upgrade gates and ranges allow
 it. Copied-profile runtime checks cover representative edits across all nine
@@ -173,6 +179,21 @@ The underlying stock screen retains native dispatcher and datasource ownership;
 its presentation and the parent pause presentation are suppressed only after
 the dedicated component donors validate, then restored on teardown.
 
+The launcher's TU4 build (Setup > Build) runs `tools/native_tuning_assets.py`
+on the player's own update and installs its output as `runtime/update-native`,
+next to the unmodified `runtime/update` (`builder.stage_runtime_update`). With
+`forza_car_tuning` on, Play passes `runtime/update-native` as the update data
+root (`game.update_data_root`; the launcher's TOML, `REX_FORZA_CAR_TUNING` and
+`--forza_car_tuning` in extra flags count, as in the game); with it off, Play
+passes the unmodified `runtime/update`, so the stock pause flow is unchanged.
+Switching needs a restart, not a rebuild. Players do not prepare aliases by
+hand. When preparation fails (for example, a media.zip other than the original
+TU4), the build installs only the stock update and logs why, and Play says that
+CAR TUNING will not open. The tool is shipped in `project/tools` of every
+package; a change to it asks for a rebuild. Tests: `launcher/test_native_menu.py`,
+`launcher/test_native_menu_settings.py`.
+
+For a developer build without the launcher,
 `tools/native_tuning_assets.py ORIGINAL_FH1_TU4 --output NEW_PRIVATE_DIRECTORY`
 prepares 22 independent aliases of the player's pristine FH1 garage triplet.
 It checks the original archive hash and TU4 executable identity, copies opaque
