@@ -63,7 +63,7 @@ def main():
         copy(f, stage / "project" / "tools" / "cmake" / f.name)
     for resource in builder.NATIVE_TUNING_FILES:
         copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
-    if (REPO / "server").is_dir() and not (REPO / "server" / "forza_live_server.py").is_file():
+    if not (REPO / "server" / "forza_live_server.py").is_file():
         sys.exit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
