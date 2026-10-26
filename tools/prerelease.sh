@@ -10,8 +10,8 @@
 #   --ci          also dispatch the release workflow (artifacts only, no release) and wait for it
 #
 # Checks (in this order):
-#   sdk       SDK overlay matches patches/rexglue-sdk (tools/build_rexglue_sdk.sh runs only when the
-#             patch series or that script changed since the last install: a stamp in
+#   sdk       SDK overlay matches the ReIGlue tag tools/build_rexglue_sdk.sh pins (the script runs
+#             only when it changed since the last install: a stamp in
 #             ~/.cache/forza-prerelease/sdk.stamp). Reinstalling affects every running game.
 #   build     ninja -j4 (nice) of forza-recomp/out/build/linux-tu4 and linux, then restores
 #             forza-recomp/generated/rexglue.cmake (codegen rewrites it)
@@ -90,8 +90,7 @@ run_check() {  # run_check NAME FUNCTION: FUNCTION's output goes to $LOG/NAME.lo
 # ---------------------------------------------------------------- sdk
 check_sdk() {
     local want have
-    want="$(cat patches/rexglue-sdk/*.patch patches/rexglue-sdk/sdl3/*.patch tools/build_rexglue_sdk.sh |
-        sha256sum | cut -d' ' -f1)"
+    want="$(sha256sum < tools/build_rexglue_sdk.sh | cut -d' ' -f1)"
     have="$(cat "$STATE/sdk.stamp" 2>/dev/null || true)"
     if [ "$want" = "$have" ] && [ -d "$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib" ]; then
         echo "RESULT: overlay up to date (stamp)"

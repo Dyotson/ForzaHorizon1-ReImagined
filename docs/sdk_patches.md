@@ -1,5 +1,13 @@
 # ReXGlue SDK patches we carry
 
+> **Moved to ReIGlue.** These patches are now commits in
+> [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's fork of the ReXGlue SDK
+> (one commit per patch, same numbers, this text in the commit messages; its
+> `docs/reiglue/commits.md` marks the Forza-specific ones). `tools/build_rexglue_sdk.sh` checks
+> out the ReIGlue tag it pins (`REIGLUE_TAG`) and no longer applies `patches/rexglue-sdk/`;
+> the folder and this page stay for reference for now. New SDK changes go to ReIGlue
+> (CONTRIBUTING.md).
+
 `patches/rexglue-sdk/` holds this project's patches to the ReXGlue SDK (nightly 0.10.0.24,
 commit `bd833a2`); `tools/build_rexglue_sdk.sh` applies them to the clone
 `~/rexglue-sdk-src-forza` and installs the patched GPU plugin, runtime and codegen tool into
