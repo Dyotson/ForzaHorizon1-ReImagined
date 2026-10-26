@@ -137,6 +137,7 @@ set(FORZA_SOURCES
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
+    src/hooks/vr_culling.cpp
     src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp

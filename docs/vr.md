@@ -36,7 +36,13 @@ headset. Addresses are the disc executable's, with Title Update 4's in brackets.
   does, how, and the test steps for a Quest 3 with WiVRn](#openxr-session-and-cockpit-milestones-1-and-2).
   Version 2, after the first headset test: camera physics off in the cockpit, the field of view
   fitted to the eyes, pads without focus, a smaller screen, the trace
-  ([what changed](#version-2-after-the-first-headset-test)).
+  ([what changed](#version-2-after-the-first-headset-test)). Version 3, after the second: the eye
+  kept in the cabin, menus on the screen, the HUD on its own panel, depth stereo
+  ([version 3](#version-3-after-the-second-headset-test)). Version 4, after the third: the eye
+  free to move aside and back, slow eye adaptation, the size cull as on a monitor (cars no longer
+  pop in close ahead), the headset's picture sharpened, depth stereo off by default, a plan for
+  true stereo, the headset's own picture recorded and an emulator closer to it
+  ([version 4](#version-4-after-the-third-headset-test)).
 - **Recommended plan** (with the integration research, merged below): (a) an OpenXR session
   with a virtual screen, then the head-tracked mono cockpit (the prototype's hook fed by
   the headset, the HUD on a quad, the game at its own rate under the runtime's
@@ -236,11 +242,16 @@ run time, never linked.
 | Setting (cvar) | Default | What |
 | --- | --- | --- |
 | VR headset (experimental) (`vr_mode`) | `off` | `off`: nothing VR runs, no OpenXR library is loaded. `screen`: virtual screen. `cockpit`: virtual screen plus the head-tracked in-car view |
-| Seat height (cm) (`vr_seat_height_cm`) | 0 | Cockpit: raises or lowers the eye from the driver's position |
+| Seat height (cm) (`vr_seat_height_cm`) | -4 | Cockpit: raises or lowers the eye from the driver's position (version 4: 4 cm below it, [why](#what-moves-when-looking-around-1)) |
 | `vr_recenter_key` | `Home` | Recentres the view (both sticks pressed for a second do the same) |
 | `vr_fov_margin` | 5 | Degrees drawn beyond the headset's field of view on each side |
 | `vr_camera_effects` | false | Cockpit: keep the game's camera physics (shake, G-force lean and tilt, speed field of view) on top of the head pose |
-| `vr_head_back_limit_cm` | 8 | Cockpit: how far the eye may move back from where it was recentred (100: no limit) |
+| `vr_head_back_limit_cm`, `vr_head_side_limit_cm`, `vr_head_up_limit_cm` | 15, 18, 6 | Cockpit: the eye's room round where it was recentred (version 4: an ellipse on the floor and a dome over it; 100: no limit) |
+| `vr_exposure_speed` | 0.02 | Cockpit: how fast the exposure adapts while the head pose drives the camera, a factor of the game's rate |
+| `vr_cull_scale` | true | Cockpit: the object size cull as for the in-car camera's own field of view |
+| `vr_sharpen` | 0.5 | Cockpit: sharpening of the headset's picture, 0 to 1 (SDK patch 0395) |
+| `vr_stereo` | off | Cockpit: `depth` makes each eye from the picture and its depth (version 3; SDK patch 0394) |
+| `vr_hud` | true | Cockpit: the HUD on its own panel in front of the seat (SDK patch 0393) |
 | `vr_screen_width`, `vr_screen_distance` | 2.2, 2.5 | The virtual screen in metres (47 degrees wide; version 1: 3.2 m, 65 degrees) |
 | `vr_runtime_timeout` | 20 | Seconds to wait for the runtime at start |
 | `vr_trace` | false | Logs the head pose, the game camera, the field of view and the latency about 10 times a second ([the trace](#the-trace-vr_trace)) |
@@ -450,12 +461,13 @@ game (`xrEndFrame max` in the 10 s line); how far the head prediction is off and
    driver's hands on the wheel). You should be inside the car: turning and moving your head
    looks around the interior (door, pillars, mirrors, the roof); the world outside updates at
    the game's frame rate while the head motion stays smooth. The car's interior stays put at any
-   speed: no shake, no lean in corners, no zoom at speed. Both eyes see the same picture, so
-   there is no depth: the cockpit looks large and flat. Turned round you see your seat from the
-   front (the driver has no body), from at most 8 cm behind where you recentred. The speed and
-   map HUD sit at the outer edges of the view (hide them in the game's HUD options if they
-   bother you). Other cameras, the map and menus are on the screen. **Seat height (cm)** moves
-   the eye up or down; recentre after changing it. Try a drive.
+   speed: no shake, no lean in corners, no zoom at speed. Both eyes see the same picture (depth
+   stereo is an option, `vr_stereo=depth`), so the cockpit looks large and flat. Turned round you
+   see your seat from the front (the driver has no body), from at most 15 cm behind where you
+   recentred. The HUD is on its own panel below the windscreen (version 3); paused or in a menu,
+   the picture goes to the screen. Other cameras and the map are on the screen too. **Seat height
+   (cm)** moves the eye up or down (default 4 cm below the game's driver's eye); recentre after
+   changing it. Try a drive.
 6. **Send back** `forza.log` (launcher: Play page > Open log folder; by default
    `~/.local/share/forza/forza.log`), or at least `grep -n "VR\|Vulkan device\|Input: pads\|rror"
    forza.log`. The useful lines: `VR: OpenXR runtime WiVRn ...`, `VR: headset ...`, `Vulkan
@@ -641,6 +653,373 @@ or screen) and the last cockpit frame's latency in its two parts.
   eyes, caps, the turned view in OpenXR and in the game, yaw/pitch/roll, 180 and -180 and q/-q,
   the back limit, the latency cap), `xr_frame_tags_test`, `vr_head_pose_math_test`, the launcher's
   `test_vr.py`.
+
+## Version 3: after the second headset test
+
+The second test (Quest 3 over WiVRn at 90 Hz, cockpit, render scale 2, 72 fps, 25 October 2026, with
+the trace) confirmed that the shake and the lean were gone. What was still wrong, what caused it and
+what changed:
+
+| Report | Cause | Change |
+| --- | --- | --- |
+| 1. Turning the head about 90 degrees to see a mirror or a window "changes to another camera", very nauseating | Not a camera switch: the trace has `CCamDriver`, posed, look 0 throughout. The eyes turn round the neck: at 60-80 degrees the trace has the head 6-12 cm aside and 7-10 cm back. In the test car the driver's eye is a few centimetres under the roof, which slopes down to the sides and to the back: 7 cm aside and 8 cm back toward the driver's door (or 10 cm up) the eye leaves the cabin through the roof, the roof and the pillar vanish and the view looks like an outside camera's | The eye is held in half an ellipsoid round where it was recentred (10 cm aside, 8 back, 6 up; forward and down free), eased toward its surface; the head-tracked view's near plane is 2 cm instead of the camera's 10 |
+| 2. The pause menu, speed trap notices and skill points cannot be read in the cockpit | Menus and the HUD were drawn into the 123 x 109 degree cockpit picture: the pause menu runs off the eyes, the HUD sits at their outer edges | Paused or in a menu, the in-car view is not head-posed and the picture is on the screen; while driving the HUD is on its own panel in front of the seat (SDK patch 0393) |
+| 3. Hard to see what is ahead; sharper on a monitor | The 123 x 109 degree view gets 12.0 x 9.0 pixels per degree at render scale 2 (a monitor's 62 degree in-car view about twice that) | The launcher's VR picture preset draws more rows than columns (below); measured on the RX 9060 XT, only 2 x 2 holds 72 fps |
+| 4. No depth | Both eyes got the same picture | Each eye made from the picture and its depth (SDK patch 0394, `vr_stereo`; off by default since version 4) |
+
+### The eye stays in the cabin (1)
+
+Reproduced in the emulated headset (`scratchpad/xremu`, the user's eye fields of view, the test
+save's Koenigsegg, standing at the outpost) with the trace's poses: turned 70 degrees right (toward the
+driver's door: the car is right-hand drive) with the head 9 cm aside and 9 cm back, the roof over the
+door was cut away and the sky showed through; at 90 degrees, 10 cm aside and 10 back, the whole roof was
+gone (a black bar, the roof's edge, with the sky above it). A sweep at 90 degrees right and 8 cm back:
+3 and 5 cm aside kept the roof, 7 cm lost part of it, 10 cm all of it; 10 cm aside without moving back
+kept it, and so did 5 cm up while 10 cm up cut it. The near plane is not the cause: at 2 cm the same
+poses showed the same holes (the eye is above the roof's inside, not just near it). The trace had
+`CCamDriver`, posed, look 0 at every step.
+
+- **The head box** (`xr_math.h` `LimitHead`): the eye's offset from where it was recentred, with the
+  sideways, backward and upward parts scaled by the half-axes 10, 8 and 6 cm (`vr_head_side_limit_cm`,
+  `vr_head_back_limit_cm`, `vr_head_up_limit_cm`), has a radius; up to 0.8 of the surface it is
+  unchanged, beyond that it is eased (a tanh knee) so it approaches the surface without a hard stop, the
+  three parts scaled alike (the direction is kept). Forward (toward the wheel) and down are free. Every
+  point on the surface was checked to keep the roof (90 degrees right with 7.1 aside and 5.7 back, 8.7
+  and 4, 5 and 6.9; 60 and 120 degrees; 6 aside and 3.6 up). Version 2's 8 cm back limit is the same
+  half-axis, now eased.
+- **The near plane**: the hook on the director's near-plane accessor (`sub_8284EF98`, TU4
+  `sub_828FF268`) answers 2 cm (`vr_near_plane_cm`) inside a posed view's hand-over, for both readers
+  of the matrix. The game's depth is reversed and floating point (the shadow passes decode view z =
+  0.02 / depth), so the closer plane costs no precision. It keeps door cards, the wheel and the mirror
+  housing whole when the head leans close to them.
+- The trace now also prints where the eye was held: `head ... x 7.9 y 0.0 z -8.4 cm (eye held at x 6.0
+  y 0.0 z -6.4 cm)`.
+
+The user's poses on version 2 and 3 side by side: `shots/item1_side_v2_v3.png` (scratchpad).
+
+### Menus on the screen, the HUD on a panel (2)
+
+**Menus.** The world update's pause flag (`hooks/telemetry.cpp`, the wheel's `PlayerGate`: the pause
+and rewind menus, the map, the start menu, loading) turns the cockpit off for as long as it lasts: the
+camera hook does not pose the in-car view, the game draws its own 62 degree view under the menu, and the
+picture goes to the virtual screen (2.2 m at 2.5 m, 47 degrees) where the menu reads as on a monitor.
+Back in the game the cockpit returns within the gate's three frames. Log: `VR: the game is paused or in a
+menu: the picture is on the screen` / `VR: the game runs again: the in-car view follows the head`; the
+trace says `shows screen (paused or menu)`.
+
+**The HUD's own panel (SDK patch 0393).** The scene/HUD split per frame, as planned (patch B): the HDR
+path already copies the front buffer just before its first HUD draw (`CaptureHdrScene`, the 1280-pitch
+`2_10_10_10` composite before the first `2_10_10_10_AS_10_10_10_10` draw); with the VR flag it does so
+with HDR off too. In the swap refresher, after the guest output's own gamma pass, the same gamma pipeline
+runs again from that copy into the frame's scene image (so the ramp, fades and the channel order match the
+guest output), and a compute pass recovers the HUD alone from the two pictures: the game blends the HUD
+over the scene (frame = scene x (1 - a) + colour x a), and for each pixel the least coverage a that explains
+the change with a colour in [0, 1] is taken (a dark translucent backdrop comes out black at its own
+opacity, white text white, with no copy of the scene behind it), then box-filtered in premultiplied
+colour down to the HUD's own 1280 x 720. The OpenXR thread copies the scene into the cockpit's swapchain
+and the HUD into its own, and submits the HUD as a quad over the projection layer
+(`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | UNPREMULTIPLIED_ALPHA_BIT`), fixed in front of the
+recentred seat: 0.9 m wide, 1 m ahead, its middle 14 degrees below the eyes (`vr_hud_width`,
+`vr_hud_distance`, `vr_hud_pitch`): 48 x 27 degrees, the top edge at the horizon, notices and skill
+points in its upper middle, the speedometer and map in its lower corners about 21 degrees aside and
+24 down. `vr_hud=false` keeps version 2's HUD in the picture.
+
+### The picture's sharpness (3)
+
+The cockpit view is 123 x 109 degrees drawn into the game's 16:9 picture: at render scale 2 (2560 x
+1440) that is 12.0 pixels per degree across and 9.0 down in the middle, while the headset shows
+about 16. The launcher's **VR picture** (Display > VR) draws the cockpit at a draw scale per axis,
+more upward than across, so its pixels are about square in degrees: Sharp (2 x 3, 2560 x 2160, 12 x
+13) and Sharpest (3 x 4, 3840 x 2880, 18 x 18); "As the Display settings" (the default) keeps Render
+scale. GPU time a frame on the RX 9060 XT at the second test's settings (free roam in the cockpit,
+standing; `scratchpad/s333v3/bench.sh`, the game's DRM engine time over 20 s, the benchmark lock
+held):
+
+| Draw scale | VR cockpit | Flat |
+| --- | --- | --- |
+| 2 x 2 (2560 x 1440) | 11.7 ms, 72 fps | 11.6 ms, 72 fps |
+| 2 x 3 (2560 x 2160) | 17.9 ms, 55 fps | 16.5 ms, 60 fps |
+| 3 x 4 (3840 x 2880) | 34.0 ms, 29 fps | 31.5 ms, 32 fps |
+
+Only 2 x 2 holds 72 fps on this card (84 % of the 13.9 ms frame); 2 x 3 needs a faster one. Without
+MSAA 2 x 3 is no cheaper (18.1 ms): the cost is the pixels' shading.
+
+### Depth stereo (4)
+
+SDK patch 0394 ([sdk_patches.md](sdk_patches.md)): the main view's depth pre-pass, decoded to view
+distance at the frame's first sun shadow pass, moves each scene pixel by its disparity for each eye
+(half the headset's eye distance times the focal length over the distance, capped at
+`vr_stereo_max_shift`, 3 % of the width), the nearest winning; the holes beside near objects are
+filled from the farther side. The projection layer gets one half per eye, each at its eye's pose.
+It costs 0.3 ms of GPU a frame at 2 x 2 (11.69 against 11.39 ms mono). The third test switched it
+off ("full of artifacts"); version 4 makes it off by default (below).
+
+## Version 4: after the third headset test
+
+The third test (Quest 3 over WiVRn at 90 Hz, cockpit, render scale 2, 72 fps, depth stereo off, 26
+October 2026, with the trace): the HUD panel works, the flick of version 2 ("another camera") is
+gone, smoother; "a lot more to go":
+
+| Report | Cause | Change |
+| --- | --- | --- |
+| 1. Looking around the car, the camera moves and the lighting of the whole car moves | The lighting: the game's eye adaptation measures the whole picture, so with the cockpit's wide view a turn toward a bright window or the dark footwell re-exposes the cabin, at 72 fps within a fraction of a second (measured: a 45 degree turn makes the cabin 28 % brighter or 17 % darker in about a second). The camera: version 3's eye box held the eye 2-4 cm short of the head at every look toward a door or a mirror, so the cabin moved with the head | Exposure adapts 50 times slower in the head-tracked view (`vr_exposure_speed` 0.02: the same turn changes it by about a tenth); the eye is 4 cm lower (`vr_seat_height_cm` -4) and follows the head 1:1 aside and back (eased only beyond 15 and 13 cm), only how far it may go up is limited near the roof's slopes |
+| 2. Cars pop in right in front; draw distance bad | The renderer's object size cull uses the view's field of view: the cockpit's 109 degrees made every object 2.3 times smaller on the picture than the in-car camera's 62, so cars, signs and posts were dropped at 1/2.3 of their distance (41 items a frame standing at the festival, 9 with the fix), and small objects' shadows too | The cull runs with the in-car camera's own factor in the VR cockpit (`vr_cull_scale`): a drivatar's car 60-80 m away behind the guard rail, missing before, is drawn |
+| 2. Still blurry | Mostly the stream: WiVRn encoded each eye at 1472 x 1536 (0.71 of the headset's 2064 x 2162 on each axis) with H.264 8-bit at 24.6 Mbit/s (its server log); the game's picture gives 12.0 x 9.0 pixels per degree and nothing sharpens it for the headset | The headset's picture is sharpened (SDK patch 0395, `vr_sharpen` 0.5, no measurable GPU time); WiVRn settings below |
+| 3. Depth stereo full of artifacts | The depth warp's filled edges and its wrong depth for glass, particles and the HUD-less transparencies | Off by default (`vr_stereo` off; `depth` stays an option); true stereo: evaluated, plan below |
+| 4. The emulator does not look like the headset | `scratchpad/xremu` had 1000 x 1080 eyes, no video stream and no lens | `scratchpad/xremu2` (the Quest 3's eyes at full size, captures at full size, a WiVRn stream and lens model), `scratchpad/questcap` (records the headset's own picture over USB) |
+
+New settings (cvars; the launcher's Seat height default follows):
+
+| cvar | Default | What |
+| --- | --- | --- |
+| `vr_seat_height_cm` | -4 (was 0) | The eye 4 cm below the game's driver's eye, which sits just under the roof |
+| `vr_head_side_limit_cm`, `vr_head_back_limit_cm`, `vr_head_up_limit_cm` | 18, 15, 6 (were 10, 8, 6) | The eye's room: an ellipse on the floor, a dome over it (below) |
+| `vr_exposure_speed` | 0.02 | How fast the exposure adapts while the head pose drives the camera, a factor of the game's own rate |
+| `vr_cull_scale` | true | The size cull of the main and shadow views as for the in-car camera's field of view |
+| `vr_sharpen` | 0.5 | Contrast-adaptive sharpening of the headset's picture, 0 to 1 (patch 0395) |
+| `vr_stereo` | off (was depth) | `depth`: version 3's depth stereo |
+
+### What moves when looking around (1)
+
+**The trace.** The test's 3,453 head-tracked samples (`VR trace`, about 6 minutes in the car) show the
+looks the user made: turned 45-70 degrees the head was 7-12.5 cm aside and 3.5-10.4 cm back
+(the eyes pivot round the neck), up to 5 cm up when looking up. Version 3's ellipsoid (10 aside, 8
+back, 6 up, eased from 0.8 of the way out) held the eye 2-4 cm short at every one of them (turned
+62 degrees left: the head at x -9.9, z -6.2 cm, the eye held at x -7.8, z -4.9): the picture is
+drawn from where the eye is held and the runtime only turns it to the head, so the near cabin (the
+door at 40 cm, the pillar, the mirror) slid with the head by 3-6 degrees. Over the whole trace version 3 held the eye by more than 0.5 cm
+in 5.9 % of the samples; version 4's box in 2.1 % (only where the head went up while aside or back),
+with no hold at all at the 95th percentile.
+
+**The roof.** In the emulator with the test save's Lamborghini Aventador (left-hand drive), the
+trace's extreme poses without any limit: 66 degrees left looking up 19 degrees with the head 5.4 cm
+aside, 3.8 up and 10.2 back cut the roof open (the sky through it); so did 90 degrees left with 10
+aside, 5 up and 8 back even with the eye 4 cm lower. Aside and back without going up kept the roof
+at 90 degrees either way (10 aside, 10 back), and turned round 12 cm back. So the up part is what
+leaves the cabin. Version 4's box (`xr_math.h` `LimitHead`): the eye's sideways and backward offset
+is free inside an ellipse 18 x 15 cm (eased from 0.85 of the way out; 15 cm back is where the seat
+begins) and how far it may go up shrinks from 6 cm over the middle to nothing at the ellipse's edge
+(a dome), so a head that goes up near the doors or the rear window is held low while turns are
+1:1; with the 4 cm lower eye all six extreme poses keep the roof
+(`shots/extreme_v4/sheet.png`, scratchpad `s333v4`; version 3's box against none:
+`shots/user_box_vs_nobox.png`). The trace now also prints `picture drawn N cm away`: how far from
+the head at display time the shown picture was drawn (the eye box's hold, the head prediction's
+miss over the 80-90 ms latency, a test offset), the part the runtime cannot correct.
+
+**The lighting.** Pure head turns in the emulator, the car standing at the festival, the game's
+pictures compared through the rotation (`s333v4/re/rotcmp.py`: B's pixels looked up in A through the
+turn, the cabin's lower half): straight against turned 45 degrees right and left and back, about a
+second each (`seq/alt.txt`), at three adaptation speeds switched live (a FIFO test command):
+
+| Exposure speed | Turned right 45 (toward the passenger seat) | Turned left 45 (the driver's window) |
+| --- | --- | --- |
+| 1 (the game's) | 1.28, 1.27 times as bright | 0.83, 0.82 |
+| 0.05 | 1.11, 1.12 | 0.91, 0.98 |
+| 0.01 | 1.09, 1.11 | 0.95, 0.98 |
+
+With the game's rate the whole cabin re-exposes within the second the head is turned; held 8 s it
+is fully adapted either way. The track's `ToneMapeDelay` (TrackSettings.xml `0.075`, track settings
+struct +416, read every frame) is that rate: version 4 scales it while the head pose drives the camera
+(`world_detail.cpp` `ScaleExposureAdaptation`) and puts the track's own back for other cameras and
+menus. 0.02 (about 15 s to adapt instead of a fraction of a second) leaves a 45 degree glance about a tenth brighter or darker, as
+the eye would; what is left at 0.01 (about 9 %) is the method's noise and the HUD in the compared
+area. No other view-dependent lighting showed up: with adaptation slowed, the cabin's shading did
+not change with the turn beyond that (shadows, reflections and specular are drawn from the same eye
+point, which a pure turn does not move).
+
+### Draw distance (2)
+
+**The size cull.** The view setup (TU4 `sub_82E91710`) gives each view a cull record (camera
+position +0, a factor k +16, the track's screen-area distance D +20 and D squared +24), and the size
+test (`sub_8243FD70`, TU4 `sub_8246FE78`) keeps an item while k x distance^2 <= D^2 x size
+([graphics-detail.md](graphics-detail.md)). Logged in the cockpit (`FORZA_VR_CULL_STATS=1`, a test
+aid of `hooks/vr_culling.cpp`): k is 5.896 for the main view (D 350) and the shadow view (D 600 at
+Ultra shadow detail), 3 for the cube map's faces (D 70) and 0.052 for the mirror (D 8): k = 3 tan^2
+of the view's vertical half-angle (54.5 degrees: 1.965 x 3; the cube map's 45: 3). The in-car
+camera's 62 degrees give 1.083, so in the VR cockpit an item was dropped at 1/sqrt(5.4) = 1/2.3 of
+the distance it has on a monitor. Standing at the festival in 5 s: the main view dropped 14,760 items
+(41 a frame); with the in-car camera's k 3,240 (9 a frame, the wider view also holds more items); the
+shadow view 5,400 and 0. In the game's pictures switched between the two at the same spot
+(`shots/cull7`, scratchpad `s333v4`): with the fix a drivatar's car (its name tag "RAY") on the road
+behind the guard rail 60-80 m ahead and a post are drawn, without it they are not.
+
+`hooks/vr_culling.cpp` hooks the size test: in the VR cockpit, for the records whose D is the track's
+mainScene or shadow caster distance, an item the game dropped is tested again with k times tan^2 of
+the in-car camera's vertical half-angle over the cockpit's (0.184; the camera hook computes it from
+the director's own FOV at +304 before it writes the cockpit's), the same angular size as on a
+monitor. Cube map and mirror are unchanged; other cameras, menus and flat play take the game's path
+(one relaxed load). It draws about 100 more items a frame (2,755 draws against 2,658) for no
+measurable GPU time (11.21 against 11.23 ms a frame).
+
+**The other field-of-view readers** (issue #436: the director's FOV accessor `sub_8284EF90`, TU4
+`828FF260`, has 7 callers). The two that the head pose already covers since version 1 (the
+presentation camera's update `sub_825A9D20`, twice, and the game-side frustum `sub_829A4860`) get the
+cockpit's FOV and aspect. The others read the camera's own 62 degrees: the split view's update
+`sub_825AA358` (TU4 `82622558`) posts a camera message (id 7 to the object at TU4 `833CAAD4`: near,
+far, position +320, forward +208, up +224, FOV, a constant, ...), the world update `sub_823E3218`,
+and `sub_824A7E80` and `sub_82494E00` (TU4 `82514DB8`, `824C4EA8`; car and post-effect setup).
+They carry the car's unposed axes, so they do not follow the head either way; nothing in the tests
+pointed at them (the car above was the size cull). The renderer's car LOD distances
+(`renderscenarios.zip` `CarLODTransDist` 15/25/50 m, traffic 22-100 m) are distances, not screen sizes.
+
+### Sharpness (2)
+
+Where the blur comes from, in the order the picture goes through (Quest 3 eyes L -54/40/44/-55,
+R -40/54/44/-55 degrees):
+
+| Stage | Size | Pixels per degree in the middle |
+| --- | --- | --- |
+| The game's cockpit picture, render scale 2 | 2560 x 1440 over 123 x 109 degrees | 12.0 across, 9.0 down |
+| WiVRn's encoder, per eye (the user's sessions, its server log) | 1472 x 1536 | 11.6 across, 11.2 down |
+| The headset's panel, per eye | 2064 x 2208 | 16.3, 16.1 (before the lens) |
+
+and the stream is H.264 8-bit at 24.6 Mbit/s an eye at 90 Hz: 34 KB a frame for 2.3 million pixels.
+So more game pixels across bring little until WiVRn streams more of them; down, the game's 9.0 is
+the weakest.
+
+What version 4 changes on the PC side, without GPU cost that matters:
+
+- **Sharpening for the headset** (SDK patch 0395, [sdk_patches.md](sdk_patches.md)): the desktop
+  window's FSR/CAS present effect never reached the headset (the cockpit gets patch 0393's scene
+  layer). A contrast-adaptive sharpening pass (after AMD FidelityFX CAS) runs on the scene layer
+  after the HUD is recovered and before stereo and the hand-over, `vr_sharpen` 0.5. It costs
+  no measurable GPU time (11.21 ms a frame with it, 11.23 without, at 2 x 2 in the cockpit).
+- **No double resample on our side**: the cockpit picture is copied 1:1 into the swapchain (the
+  runtime samples it once into its eye images); the screen is halved only for the virtual screen.
+- **Not changed**: a texture LOD bias for the VR view (the game picks mips for its own picture's
+  pixels, which is right for what is drawn; the user already runs Distant texture detail High),
+  anisotropic filtering (the user runs 16x), the swapchain size (it is the picture's).
+
+**WiVRn settings** (in the WiVRn app on the headset and the dashboard on the PC), from the
+simulation below and the encoder's arithmetic:
+
+1. **Refresh rate 72 Hz** with the game at 72 fps: at 90 Hz each game frame stays one or two headset
+   frames in turn (5 to 4), so the world outside judders while the cabin, reprojected, does not.
+2. **Bit rate** as high as the link holds: 24.6 Mbit/s an eye is far below what a Quest 3 decodes;
+   100-200 Mbit/s in all on a 5 or 6 GHz router in the same room (or WiVRn over USB, which this PC
+   can use now that the headset has USB debugging).
+3. **Codec H.265 or AV1, 10-bit**: the RX 9060 XT encodes both in hardware (VA-API) and the Quest 3
+   decodes both; at the same bit rate they keep about twice H.264's detail, and 10-bit removes the
+   banding of the dark cabin and the sky.
+4. **Resolution**: the stream is 0.71 of the headset's size on each axis: raise WiVRn's resolution
+   scale toward 1 (or use foveated encoding, which keeps the middle at full size for fewer bits).
+
+What the stream does to an eye (the emulator's left eye at the panel's 2064 x 2208, straight ahead
+in the car; `headset_view.py` with this PC's VA-API encoder, a 4-pixel-a-frame pan; SSIM against
+the eye view, 1 = identical; `shots/doc8/wivrn_sim.png`, scratchpad `s333v4`):
+
+| Stream per eye | SSIM |
+| --- | --- |
+| 1472 x 1536, H.264 8-bit, 24.6 Mbit/s, 90 Hz (as tested) | 0.968 |
+| 1472 x 1536, H.265 10-bit, 50 Mbit/s | 0.972 |
+| 2064 x 2208, H.265 10-bit, 75 Mbit/s, 72 Hz | 0.987 |
+| 2064 x 2208, AV1 10-bit, 75 Mbit/s, 72 Hz (the encoder used a quarter of it) | 0.990 |
+
+The encoder size costs most (the wheel's grain, the gauges' numbers); the codec and bit rate then
+decide how much survives motion. The sharpening's own effect on the eye view: the edge energy of
+the dashboard's middle is 41 % higher at 0.5 than at 0 (`shots/sharpen_cmp.png`).
+
+### Stereo (3)
+
+Depth stereo is off by default (`vr_stereo` off): the user found it "full of artifacts", which is
+what the method gives where the depth is wrong or missing (glass, particles, the holes beside near
+objects filled from the background). It stays as `vr_stereo=depth`.
+
+**True stereo, evaluated; not built this round.** What it costs, measured on this PC (RX 9060 XT,
+the cockpit at 2 x 2, 72 fps, standing at the festival; `s333v4/bench.sh`, the benchmark lock held):
+the v4 cockpit takes 11.2 ms of GPU a frame (81 % of the 13.9 ms at 72 fps; 71.9 fps) and the GPU emulation's command processor 4.5-4.9 ms of CPU a frame for 2,660-2,920 draws (four runs: v4, without the cull scale, without sharpening, without both: GPU 11.21-11.23 ms in all). The ways to draw the world from two eye points:
+
+| Method | CPU | GPU | Verdict |
+| --- | --- | --- | --- |
+| The engine's second split view (FM4's split-screen: `CSplitView` 1, its own director and presentation camera) with the other eye's offset | The scene's share of the command processor and the render thread twice: about +3 ms of command processor a frame (two thirds of 4.6 ms and of 2,750 draws) and +1.5 ms of render thread, on the threads every frame waits for | About 2x the scene (its draws and pixels), shadows once | Not at 72 fps on this CPU; whether FH1 can make view 1 without a second player is not established |
+| Alternate eyes on alternate frames | 1x | 1x | No: each eye at 36 Hz, the scenery moves 0.4 m at 100 km/h between the eyes' frames (false depth) |
+| Per-eye replay inside the GPU emulation (the scene's draws recorded once, executed twice into per-eye render targets with a per-eye clip-space shift) | About 1x (+ the second submission's recording) | Per-eye frusta at the same pixels per degree need 1541 x 1231 per eye, 3.8 million pixels in all against today's 3.7: the pixels cost about the same, the vertex work and the draws' fixed cost double | The way to go: about 1.3-1.5x the scene's GPU time, which 2 x 2 at 72 fps has room for only with MSAA off |
+
+The plan for the per-eye replay (SDK work, patches after 0395):
+
+1. **The scene's range**: the main scene's draws are the ones patch 0394's depth capture and the
+   DLSS path already identify (`z_enable`, `zfunc` not Always, not window-space, the 1280-pitch
+   colour target; the first draw after the depth pre-pass resolve at the frame's first sun shadow
+   pass, `Fh1VrDepthBeforeDraw`), up to the resolve of the main colour target before
+   post-processing. Shadow passes, the cube map and the mirrors before it stay single.
+2. **Two sets of host render targets** for that range (the scene's EDRAM targets at the draw scale;
+   predicated tiling off for the range, as the split-screen scenario's `TilingScenario 4`), the
+   command processor executing the range's recorded Vulkan commands once per eye.
+3. **The eye's offset** in the translated vertex shaders: an epilogue `pos.x += -P00 * dx` (dx half
+   the eye distance, P00 from the cockpit's projection that the camera hook knows) plus each eye's
+   asymmetric frustum as an NDC scale and offset, from a push constant; the shader's cache key is
+   unchanged. Full-screen and window-space draws get no offset.
+4. **Post-processing once per eye** from each eye's resolve (bloom, tone mapping; their constants
+   are the same), the HUD once (patch 0393 already separates it), then each eye to its half of the
+   projection layer, as patch 0394's halves.
+5. **The camera hook** draws the union of the eyes as today (the cull, the LODs and the shadows for
+   both), so the game-side state stays single.
+
+Risks: readbacks or memexport inside the range (they must happen once), screen-space passes inside
+it that rebuild positions from depth (the motion-blur velocity pass: per eye or off), and the
+command processor's resolves and EDRAM bookkeeping at render scale.
+
+### The headset's own picture (4a)
+
+`scratchpad/questcap` (not in the repository): Google's platform-tools r37.0.1 (adb) and scrcpy
+5.0.1 in a private prefix, checked against Google's SDK manifest and pinned SHA-256s and the scrcpy
+release's signed checksums; adb on its own server port (5038) with its own key, so it never takes
+the headset from WiVRn's own adb. `capture.sh check|record|stop|shot|frames|trace` (its README):
+`adb exec-out screencap` gives the panels' picture, both eyes lens-shaped at 4128 x 2208, exactly
+what the eyes see through the lenses (stream, reprojection and all); `record` keeps the display
+awake (`com.oculus.vrpowermanager prox_close`, restored with `automation_disable` at the end and on
+Ctrl-C), names frames by host time and finds each one's nearest `VR trace` line. Captures can show
+the room (passthrough) outside the game: they stay local and out of commits and issues.
+
+**This round on the real headset** (allowed from 02:00): over adb the WiVRn client was started on the
+Quest 3 (on the desk, display kept awake), and the game ran against the system WiVRn server
+(`XR_RUNTIME_JSON` = the Flatpak's manifest, `s333v4/run_game.sh --wivrn`): `VR: OpenXR runtime
+WiVRn 'v26.9'`, session focused, frames submitted at 90 Hz (WiVRn's encoder again 1472 x 1536 and
+24.6 Mbit/s an eye). But the headset reported "the room is too dark to track your movements; turn on
+a light" and gave no head pose (`head not tracked`), so the cockpit never started and the lenses
+showed only that dialog; nothing else was captured. With a light on, `s333v4/hs_verify.sh` runs the
+check in one go: the look-around (straight, 45 left, 60 right leaning, 90 left, 90 left up, 180,
+down 30) as a test offset on top of the still headset (`vr_head_pose_test` with
+`FORZA_VR_POSE_FIFO`: the game's camera turns, the projection layer keeps the real head, so the
+turned view shows straight ahead in the lenses), the size cull off and on, the exposure at the
+game's speed and at version 4's, each as the lenses show it and as the game drew it.
+
+### The emulator closer to a Quest 3 (4b)
+
+`scratchpad/xremu2` (the original `xremu` untouched; its downloads and build sysroot reused):
+
+- `start.sh --profile quest3` (default): the eyes the user's Quest 3 reports through WiVRn (54 out,
+  40 in, 44 up, 55 down degrees) at the panels' 2064 x 2208 pixels each, 90 Hz, the recommended
+  swapchain size at 100 %; `--profile wivrn`: the same eyes at WiVRn's encoder size (1472 x 1536),
+  the picture WiVRn's own compositor (Monado's, as this one) renders before encoding.
+- Its own Monado build with patch 0004: eye captures at the eyes' full size (Monado's mirror was
+  fixed at 1080 rows).
+- `headset_view.py EYE.png`: what WiVRn's stream makes of an eye capture: scaled to the encoder size,
+  a 30-frame clip panning 4 pixels a frame encoded with the same VA-API encoder WiVRn uses on this
+  PC at the codec, bit depth and bit rate given (default the user's: H.264 8-bit 24.6 Mbit/s at 90
+  Hz), the middle frame decoded and scaled to the panel; `--lens` adds the panel's lens-shaped
+  picture as a screencap shows it (a radial model, approximate until fitted to a real capture);
+  `NAME_cmp.png` puts the middle of the input and of the result side by side.
+
+### Tested (version 4, Linux, TU4, RX 9060 XT)
+
+- **Emulated headset** (`scratchpad/xremu2`, Quest 3 eyes at 2064 x 2208, 90 Hz; render scale 2,
+  72 fps, the user's settings, the test save's Aventador at the festival): the third test's poses
+  and the extreme ones with version 3's box, without a box, and with version 4's (roof kept in all
+  six); straight and turned 45 degrees at three exposure speeds (table above); the size cull off
+  and on (counts and pictures above); sharpening 0 and 0.5; WiVRn's stream simulated at four
+  settings. The trace shows the test offset and `picture drawn N cm away`.
+- **Timing** (benchmark lock held, `s333v4/bench_results.txt`): GPU 11.2 ms a frame at 2 x 2 in
+  the cockpit with or without the cull scale and the sharpening (version 3: 11.4 ms mono, 11.7 with
+  depth stereo).
+- **Real headset**: the session on WiVRn started and focused; no head tracking in the dark room
+  (above).
+- **Unit tests**: `xr_math_test` (version 4's box: the third test's looks 1:1 within 3 mm, up held near
+  the edges, continuity sideways and up; the test offset; the cull factor 0.184 for 62 against 109
+  degrees), `world_detail_test` (the exposure factor), `xr_frame_tags_test`,
+  `vr_head_pose_math_test`, the launcher's `test_vr.py` (the seat's new default).
+- **Not done**: the headset check with a light on (`hs_verify.sh`), true stereo (plan above), the
+  lens model fitted to a real screencap.
 
 ## HUD and menus
 

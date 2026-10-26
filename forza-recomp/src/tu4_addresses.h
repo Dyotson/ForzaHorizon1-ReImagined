@@ -65,6 +65,8 @@
 #define __imp__sub_825F5AA8 __imp__sub_82699E48
 #define sub_82647B78 sub_826EFFC8
 #define __imp__sub_82647B78 __imp__sub_826EFFC8
+#define sub_8284EF98 sub_828FF268
+#define __imp__sub_8284EF98 __imp__sub_828FF268
 #define sub_82853DD0 sub_82904110
 #define __imp__sub_82853DD0 __imp__sub_82904110
 #define sub_82862170 sub_829128B8

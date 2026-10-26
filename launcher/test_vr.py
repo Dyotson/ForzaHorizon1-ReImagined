@@ -38,7 +38,7 @@ class VrSettingTest(unittest.TestCase):
         self.assertIsNotNone(m)
         self.assertEqual(m.group(1), schema.BY_KEY["vr_mode"].default)
         self.assertEqual(re.findall(r'"(\w+)"', m.group(2)), [v for v, _ in schema.BY_KEY["vr_mode"].choices])
-        seat = re.search(r"REXCVAR_DEFINE_DOUBLE\(vr_seat_height_cm, ([\d.]+),", text)
+        seat = re.search(r"REXCVAR_DEFINE_DOUBLE\(vr_seat_height_cm, (-?[\d.]+),", text)
         self.assertEqual(float(seat.group(1)), schema.BY_KEY["vr_seat_height_cm"].default)
 
     def test_off_writes_nothing_and_adds_nothing(self):
@@ -85,6 +85,46 @@ class VrSettingTest(unittest.TestCase):
         self.assertNotIn("XR_RUNTIME_JSON", env)
         vr.configure(cfg, env, [], [], in_flatpak=False, home=home, environ={})
         self.assertNotIn("XR_RUNTIME_JSON", env)
+
+    def test_picture_preset(self):
+        setting = schema.BY_KEY["vr_picture"]
+        self.assertEqual(setting.section, "VR (experimental)")
+        self.assertEqual([v for v, _ in setting.choices], ["game", "sharp", "sharpest"])
+        cfg = self.config()
+        cfg.settings["vr_mode"] = "cockpit"
+        cfg.settings["vr_picture"] = "sharp"
+        args = ["--resolution_scale=2", "--x"]
+        with mock.patch.object(paths, "IS_WINDOWS", False):
+            vr.configure(cfg, {}, args, [], in_flatpak=False, environ={})
+        self.assertEqual(args, ["--x", "--draw_resolution_scale_x=2", "--draw_resolution_scale_y=3"])
+        cfg.settings["vr_picture"] = "sharpest"
+        args = []
+        vr.configure(cfg, {}, args, [], in_flatpak=False, environ={})
+        self.assertEqual(args, ["--draw_resolution_scale_x=3", "--draw_resolution_scale_y=4"])
+
+    def test_picture_preset_only_in_the_cockpit(self):
+        cfg = self.config()
+        cfg.settings["vr_mode"] = "screen"
+        cfg.settings["vr_picture"] = "sharpest"
+        args = ["--resolution_scale=2"]
+        vr.configure(cfg, {}, args, [], in_flatpak=False, environ={})
+        self.assertEqual(args, ["--resolution_scale=2"])
+        cfg.settings["vr_mode"] = "cockpit"
+        cfg.settings["vr_picture"] = "game"
+        vr.configure(cfg, {}, args, [], in_flatpak=False, environ={})
+        self.assertEqual(args, ["--resolution_scale=2"])
+        # FSR 3 and DLSS keep their own scale.
+        cfg.settings["vr_picture"] = "sharp"
+        cfg.settings["present_effect"] = "fsr3"
+        notes = []
+        vr.configure(cfg, {}, args, notes, in_flatpak=False, environ={})
+        self.assertEqual(args, ["--resolution_scale=2"])
+        self.assertTrue(any("FSR 3" in n for n in notes))
+
+    def test_the_game_knows_the_scales(self):
+        # The draw resolution scale per axis is the SDK's (1 to 7 per axis).
+        for x, y in vr.PICTURE_SCALES.values():
+            self.assertTrue(1 <= x <= 7 and 1 <= y <= 7)
 
     def test_host_config_home(self):
         home, other = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())

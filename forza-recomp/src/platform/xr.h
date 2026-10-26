@@ -26,6 +26,7 @@ class IGraphicsSystem;
 }
 namespace forza::vr {
 struct HeadTransform;
+struct HeadPose;
 }
 
 namespace forza::xr {
@@ -65,6 +66,17 @@ void NoteView(uint32_t camera_vtable, const char* camera_name, float look_angle,
 // posed view is handed over on the calling thread, else 0. The viewport query's hook
 // (hooks/ultrawide_projection.cpp) answers with it.
 float PosedViewAspect();
+
+// Camera hooks (hooks/vr_head_pose.cpp): the test pose (vr_head_pose_test with FORZA_VR_POSE or
+// FORZA_VR_POSE_FIFO) while one is set; in the VR cockpit it is added to the headset's pose for
+// the game's camera only (the projection layer keeps the real head), so a scripted look-around
+// shows in the headset as if the head had turned. False: none.
+bool TestPoseOffset(vr::HeadPose& offset);
+
+// Camera hooks: the factor for the size cull of the views drawn from the camera (hooks/
+// vr_culling.cpp) while posed VR cockpit views are drawn: tan^2 of the in-car camera's own
+// vertical half-angle over the cockpit's (below 1), else 1.
+float CullScale();
 
 // Recentres the cockpit view and the screen on where the head is now.
 void Recenter();

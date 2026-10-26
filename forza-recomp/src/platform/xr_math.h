@@ -116,6 +116,23 @@ struct CockpitFrustum {
   Quat Offset() const { return Normalize(Mul(AxisY(yaw), AxisX(pitch))); }
 };
 
+// A test pose (vr::HeadPose: yaw left, pitch up, roll left in degrees; x right, y up, z forward in
+// metres, as the game's camera takes them) as an OpenXR pose in the recentred space: ToGameHead of
+// it is ToTransform of the test pose.
+inline Pose FromHeadPose(const vr::HeadPose& p) {
+  constexpr float kDeg = 3.14159265f / 180.0f;
+  return {Normalize(Mul(Mul(AxisY(p.yaw * kDeg), AxisX(p.pitch * kDeg)), AxisZ(p.roll * kDeg))),
+          {p.x, p.y, -p.z}};
+}
+
+// A recentred head pose with a test offset on top (vr_head_pose_test in the VR cockpit): turned by
+// the offset's rotation about the recentred axes and moved by its position, as if the head had
+// done that too. Lets a scripted look-around run through the real runtime with the headset still.
+inline Pose AddOffset(const Pose& rel, const Pose& offset) {
+  return {Normalize(Mul(offset.q, rel.q)),
+          {rel.p.x + offset.p.x, rel.p.y + offset.p.y, rel.p.z + offset.p.z}};
+}
+
 // The yaw (positive left) and pitch (positive up) of where an orientation looks.
 inline void YawPitch(const Quat& q, float& yaw, float& pitch) {
   const Vec3 f = Rotate(q, {0, 0, -1});
@@ -188,19 +205,86 @@ inline CockpitFrustum SymmetricCover(const Fov eyes[2], float picture_aspect, fl
   return f;
 }
 
+// The renderer's object size cull (hooks/vr_culling.cpp) keeps an item while k d^2 <= D^2 size,
+// with k = 3 tan^2 of the view's vertical half-angle: the factor that turns the cockpit's k into
+// the in-car camera's own (both vertical fields of view in radians), below 1 for a wider cockpit.
+inline float CullScale(float own_vertical, float cockpit_vertical) {
+  const float own = std::tan(own_vertical / 2), cockpit = std::tan(cockpit_vertical / 2);
+  return cockpit > 1e-4f ? std::min(1.0f, (own * own) / (cockpit * cockpit)) : 1.0f;
+}
+
 // Pixels per degree at the centre of a picture `pixels` wide (or tall) drawn over a symmetric
 // rectilinear half-angle `half`.
 inline float CentrePixelsPerDegree(float pixels, float half) {
   return pixels / 2 / std::tan(half) * 3.14159265f / 180;
 }
 
-// A recentred head pose held at most `back` metres behind the recentred position (+z is backwards
-// in the recentred frame). Turning round moves the eyes back with the neck and the shoulders, and
-// the driver's seat is only about 20-25 cm behind the game's eye point: further back, the near
-// plane cuts through the seat and the view lands inside it, which looks like another camera.
-inline Pose LimitBack(Pose rel, float back) {
-  rel.p.z = std::min(rel.p.z, back);
+// Where the eye may go relative to where it was recentred (metres; OpenXR LOCAL: x right, y up,
+// +z back). Turning the head 60-90 degrees moves the eyes 8-12 cm aside and 5-10 cm back with the
+// neck (the third headset test's trace: up to 12.5 aside, 10.4 back, 5 up). Version 3 held the eye
+// in an ellipsoid 10 cm aside, 8 back and 6 up, eased from 0.8 of the way out: every look at a
+// door or a mirror held the eye 2-4 cm short of the head, so the cabin moved with the head ("the
+// camera moves"). What leaves the cabin is going up, aside and back together, into the roof that
+// slopes down toward the doors and the rear window: in the test save's Aventador, 10 cm aside, 8
+// back and 5 up cut the roof open with the eye 4 cm below the game's driver's eye, and nothing
+// without the up part (docs/vr.md "Version 4"). So version 4 lowers the eye 4 cm (the seat's
+// default) and limits sideways and backward motion only far out (18 and 15 cm, eased from 0.85;
+// 15 cm back is where the seat begins), while how far it may go up shrinks to nothing as it goes
+// aside and back: an ellipse 18 x 15 cm on the floor and a dome over it 6 cm high. Forward
+// (toward the wheel) and down are free.
+struct HeadBox {
+  float side = 0.18f, back = 0.15f, up = 0.06f;
+};
+// Fraction of each limit the eye moves freely in; beyond it the motion is eased so that the eye
+// approaches the limit without a hard stop.
+constexpr float kHeadBoxKnee = 0.85f;
+
+// Eases r (a fraction of a limit, >= 0) to at most 1: unchanged up to the knee.
+inline float EaseToLimit(float r) {
+  if (r <= kHeadBoxKnee) return r;
+  const float soft = 1.0f - kHeadBoxKnee;
+  return kHeadBoxKnee + soft * std::tanh((r - kHeadBoxKnee) / soft);
+}
+
+// How far `rel` is out toward the floor ellipse's edge: 1 on it.
+inline float HeadBoxRadius(const Pose& rel, const HeadBox& box) {
+  const float x = rel.p.x / std::max(box.side, 1e-3f);
+  const float z = std::max(rel.p.z, 0.0f) / std::max(box.back, 1e-3f);
+  return std::sqrt(x * x + z * z);
+}
+// How far up the eye may go at its place on the floor ellipse (radius r after easing): the dome.
+inline float HeadBoxUp(float r, const HeadBox& box) { return box.up * std::max(0.0f, 1.0f - r * r); }
+
+// A recentred head pose with its position held in the box: sideways and back eased toward the
+// floor ellipse (both scaled alike, so the direction is kept), then up eased toward the dome above
+// that place. Unchanged inside the knees.
+inline Pose LimitHead(Pose rel, const HeadBox& box) {
+  const float r = HeadBoxRadius(rel, box);
+  float held = r;
+  if (r > kHeadBoxKnee) {
+    held = EaseToLimit(r);
+    const float scale = held / r;
+    rel.p.x *= scale;
+    if (rel.p.z > 0) rel.p.z *= scale;
+  }
+  if (rel.p.y > 0) {
+    const float up = HeadBoxUp(held, box);
+    rel.p.y = up > 1e-4f ? up * EaseToLimit(rel.p.y / up) : 0.0f;
+  }
   return rel;
+}
+
+// An eye's pose for a view pose (OpenXR: x right): `eye` 0 the left, 1 the right, `ipd` metres apart.
+inline Pose EyePose(const Pose& view, int eye, float ipd) {
+  const Vec3 d = Rotate(view.q, {(eye ? 0.5f : -0.5f) * ipd, 0, 0});
+  return {view.q, {view.p.x + d.x, view.p.y + d.y, view.p.z + d.z}};
+}
+
+// A panel `distance` metres from the recentred eyes in the direction `pitch` radians up (negative:
+// down), facing them: its pose relative to the recentre origin (OpenXR quads face +z).
+inline Pose PanelPose(float distance, float pitch) {
+  const Quat q = AxisX(pitch);
+  return {q, Rotate(q, {0, 0, -distance})};
 }
 
 // The head transform for a view turned by the frustum's offset (yaw, then pitch, in head space).

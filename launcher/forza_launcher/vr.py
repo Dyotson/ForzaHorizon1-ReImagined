@@ -12,6 +12,10 @@ from pathlib import Path
 from . import paths
 
 MODES = {"screen": "Virtual screen", "cockpit": "Cockpit"}
+# "VR picture" presets for the cockpit (docs/vr.md, "Version 3"): the draw resolution scale across and
+# up. The cockpit view is 123 x 109 degrees drawn into the game's 16:9 picture, so its pixels per
+# degree are 6.1 across and 4.5 up per unit of scale: 2 x 3 gives 12.1 x 13.4, 3 x 4 18.2 x 17.9.
+PICTURE_SCALES = {"sharp": (2, 3), "sharpest": (3, 4)}
 LOG_HINT = "lines starting with \"VR:\" in forza.log say what happened"
 
 
@@ -48,5 +52,14 @@ def configure(cfg, env: dict, args: list, notes: list, in_flatpak=None, home=Non
         manifest = active_runtime_manifest(Path(home or Path.home()), environ)
         if manifest is not None:
             env["XR_RUNTIME_JSON"] = str(manifest)
+    picture = cfg.settings.get("vr_picture", "game")
+    if mode == "cockpit" and picture in PICTURE_SCALES:
+        if cfg.settings.get("present_effect") == "fsr3" or cfg.settings.get("fh1_upscaler", "off") != "off":
+            notes.append("VR picture: AMD FSR 3 and NVIDIA DLSS keep their own scale; the VR picture "
+                         "preset is not applied.")
+        else:
+            x, y = PICTURE_SCALES[picture]
+            args[:] = [a for a in args if not a.startswith(("--resolution_scale=", "--draw_resolution_scale_"))]
+            args += [f"--draw_resolution_scale_x={x}", f"--draw_resolution_scale_y={y}"]
     notes.append(f"VR headset: {MODES[mode]}. Start your OpenXR runtime and connect the headset "
                  f"before the game; without them it starts on the screen only ({LOG_HINT}).")

@@ -32,6 +32,13 @@
 //                                          what each one feeds); a FIFO line "skip view",
 //                                          "skip frustum" or "skip none" changes it
 //   FORZA_VR_POSE_TRACE=1                  log the calling thread every 300th call
+//   a FIFO line "exposure X"               the VR cockpit's exposure speed from then on (a test aid)
+//   a FIFO line "cull 0" or "cull 1"       the VR cockpit's size cull scale off or on (a test aid)
+//
+// In the VR cockpit, vr_head_pose_test's pose (env or FIFO) is added to the headset's for the game's
+// camera only (xr.cpp CockpitView): a scripted look-around through the real runtime with the
+// headset still. FIFO test commands there: "cull 0|1" (vr_cull_scale), "exposure X"
+// (vr_exposure_speed).
 //
 // VR cockpit mode: the view hook asks the OpenXR thread for the predicted head pose and the
 // field of view to draw with (the headset's plus a margin, written into the director's FOV at
@@ -42,7 +49,9 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/vr_head_pose_math.h"
+#include "../platform/world_detail.h"
 #include "../platform/xr.h"
+#include "../platform/xr_math.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -50,6 +59,7 @@
 #include <rex/ppc/func.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -66,6 +76,20 @@
 REXCVAR_DEFINE_BOOL(vr_head_pose_test, false, "VR",
                     "Experimental: apply a test head pose (FORZA_VR_POSE / FORZA_VR_POSE_FIFO) "
                     "to the in-car camera");
+REXCVAR_DEFINE_DOUBLE(vr_near_plane_cm, 2.0, "VR",
+                      "Cockpit: the near clipping plane of the head-tracked view, cm (the in-car "
+                      "camera's own is 10 cm: a head moved toward the door or the roof cut them "
+                      "open, which looked like another camera)")
+    .range(0.5, 10);
+// The eye adaptation measures the whole picture: with the cockpit's 123 x 109 degree view a head
+// turn toward a bright window or the dark footwell re-exposed the whole cabin within a fraction of
+// a second at 72 fps (docs/vr.md "Version 4"). 0.02: fifty times slower than the track's rate.
+REXCVAR_DEFINE_DOUBLE(vr_exposure_speed, 0.02, "VR",
+                      "Cockpit: how fast the exposure adapts while the head pose drives the camera, "
+                      "as a factor of the game's own rate (1: the game's; smaller: looking at a "
+                      "window or the footwell changes the cabin's brightness less)")
+    .range(0.001, 1);
+REXCVAR_DECLARE(bool, vr_cull_scale);  // src/hooks/vr_culling.cpp
 REXCVAR_DEFINE_BOOL(vr_camera_effects, false, "VR",
                     "Cockpit: keep the game's camera physics (shake at speed, G-force lean and "
                     "tilt, the speed field of view) on top of the head pose");
@@ -93,11 +117,19 @@ XrView xr_view;
 // none): the viewport query (hooks/ultrawide_projection.cpp) answers with it inside the two
 // readers, so the presentation camera's projection and the game-side frustum both get it.
 thread_local float posed_aspect = 0;
+// The near plane (metres) of the VR cockpit while a posed view is handed over on this thread (0:
+// the camera's own): the hook on the director's near-plane accessor answers with it.
+thread_local float posed_near = 0;
+// The size-cull factor for the frames being built (vr_culling.cpp): the in-car camera's own
+// vertical field of view (+304) over the posed cockpit view's, as tan^2 of the half-angles.
+std::atomic<float> cull_scale{1.0f};
 
 std::mutex pose_mutex;
 HeadPose pose;
 std::atomic<bool> pose_set{false};
 std::atomic<int> skip_hook{0};  // 0 none, 1 view, 2 frustum
+std::atomic<float> exposure_speed_test{0};  // a FIFO's "exposure X" (0: vr_exposure_speed)
+std::atomic<int> cull_test{0};  // a FIFO's "cull 1" (1) or "cull 0" (2); 0: vr_cull_scale
 int SkipCode(const char* name) {
   return !name ? 0 : std::strcmp(name, "view") == 0 ? 1 : std::strcmp(name, "frustum") == 0 ? 2 : 0;
 }
@@ -154,7 +186,13 @@ void ReadFifo(std::string path) {
       continue;
     }
     HeadPose p;
-    if (line.rfind("skip ", 0) == 0) {
+    if (line.rfind("cull ", 0) == 0) {  // test aid: "cull 0" / "cull 1" overrides vr_cull_scale
+      cull_test = std::atoi(line.c_str() + 5) ? 1 : 2;
+      REXLOG_INFO("VR head pose: cull scale {}", cull_test.load() == 1 ? "on" : "off");
+    } else if (line.rfind("exposure ", 0) == 0) {  // test aid: vr_exposure_speed from now on
+      exposure_speed_test = std::strtof(line.c_str() + 9, nullptr);
+      REXLOG_INFO("VR head pose: exposure speed {}", exposure_speed_test.load());
+    } else if (line.rfind("skip ", 0) == 0) {
       skip_hook = SkipCode(line.c_str() + 5);
       REXLOG_INFO("VR head pose: skip {}", line.c_str() + 5);
     } else if (Parse(line.c_str(), p)) {
@@ -254,6 +292,14 @@ class PosedView {
     if (!xr && !trace && !REXCVAR_GET(vr_head_pose_test)) return;
     uint32_t camera = 0;
     const bool posed = Pose(base, director, hook, xr, view_hook, camera);
+    // The VR cockpit's slower eye adaptation, while the head pose drives the camera; the track's
+    // own rate otherwise (other cameras, menus).
+    if (xr && view_hook && Valid(director)) {
+      const float test_speed = exposure_speed_test.load(std::memory_order_relaxed);
+      const float speed = test_speed > 0 ? test_speed : float(REXCVAR_GET(vr_exposure_speed));
+      forza::world_detail::ScaleExposureAdaptation(base, posed ? speed : 1.0f);
+      if (!posed) cull_scale = 1.0f;
+    }
     if (trace && Valid(director)) {  // view 1 of single player has no director
       const uint32_t vtable = Valid(camera) ? Load32(base, camera) : 0;
       forza::xr::NoteView(vtable, Valid(camera) ? CameraName(vtable) : "none",
@@ -265,7 +311,10 @@ class PosedView {
     if (matrix_ && std::memcmp(matrix_, posed_, sizeof(posed_)) == 0)
       std::memcpy(matrix_, original_, sizeof(original_));
     if (fov_ && std::memcmp(fov_, posed_fov_, 4) == 0) std::memcpy(fov_, original_fov_, 4);
-    if (matrix_) posed_aspect = previous_aspect_;
+    if (matrix_) {
+      posed_aspect = previous_aspect_;
+      posed_near = previous_near_;
+    }
   }
   PosedView(const PosedView&) = delete;
   PosedView& operator=(const PosedView&) = delete;
@@ -315,11 +364,20 @@ class PosedView {
     if (fov > 0) {
       fov_ = forza::GuestPtr(base, director + kFov);
       std::memcpy(original_fov_, fov_, 4);
+      if (view_hook && aspect > 0) {
+        // The cull record's k is 3 tan^2 of the vertical half-angle (measured: 5.896 at the
+        // cockpit's 109 degrees, 3 for the cube map's 90), so the in-car camera's own k is this
+        // fraction of the cockpit's.
+        const float own = LoadFloat(base, director + kFov);
+        if (own > 0.1f && own < 3.0f) cull_scale = forza::xr::CullScale(own, fov);
+      }
       PutFloat(posed_fov_, fov);
       std::memcpy(fov_, posed_fov_, 4);
     }
     previous_aspect_ = posed_aspect;
     if (aspect > 0) posed_aspect = aspect;
+    previous_near_ = posed_near;
+    if (xr) posed_near = float(REXCVAR_GET(vr_near_plane_cm)) / 100.0f;
     static std::atomic<bool> logged{false};
     if (!logged.exchange(true))
       REXLOG_INFO("VR head pose: first posed view (director {:08X}, camera {:08X}, {})", director,
@@ -334,6 +392,7 @@ class PosedView {
   uint8_t original_fov_[4];
   uint8_t posed_fov_[4];
   float previous_aspect_ = 0;
+  float previous_near_ = 0;
 };
 
 // View 0's director, found as sub_829A4860 finds it.
@@ -350,6 +409,20 @@ uint32_t FirstViewDirector(uint8_t* base) {
 
 namespace forza::xr {
 float PosedViewAspect() { return posed_aspect; }
+float CullScale() {
+  const int test = cull_test.load(std::memory_order_relaxed);
+  const bool on = test ? test == 1 : REXCVAR_GET(vr_cull_scale);
+  return on ? cull_scale.load(std::memory_order_relaxed) : 1.0f;
+}
+
+bool TestPoseOffset(HeadPose& offset) {
+  if (!REXCVAR_GET(vr_head_pose_test)) return false;
+  InitOnce();
+  if (!pose_set) return false;
+  std::lock_guard lock(pose_mutex);
+  offset = pose;
+  return true;
+}
 }  // namespace forza::xr
 
 // The camera physics step: sub_82853DD0 (camera, view matrix in/out, FOV in/out, position out),
@@ -372,6 +445,24 @@ extern "C" REX_FUNC(sub_82853DD0) {
     return;
   }
   __imp__sub_82853DD0(ctx, base);
+}
+
+// The director's near-plane accessor (director: the active camera's virtual function +32), which
+// both readers of the view matrix call for the clip planes (sub_825A9D20's SetZClip and the
+// render-side view state, the frustum). Inside a posed VR cockpit view it answers with
+// vr_near_plane_cm when that is nearer: the in-car camera's 10 cm cut the roof and the door open
+// when the head moved toward them (turned 70-90 degrees toward the driver's door the head moves
+// 8-10 cm sideways and back, docs/vr.md "Version 3").
+extern "C" REX_FUNC(__imp__sub_8284EF98);
+extern "C" REX_FUNC(sub_8284EF98) {
+  __imp__sub_8284EF98(ctx, base);
+  if (posed_near > 0 && ctx.f1.f64 > posed_near) {
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true))
+      REXLOG_INFO("VR: the in-car view's near plane is {:.3f} m instead of the camera's {:.3f} m",
+                  posed_near, ctx.f1.f64);
+    ctx.f1.f64 = posed_near;
+  }
 }
 
 // The view's presentation camera update (view = CSplitView: +8 director, +40 camera).

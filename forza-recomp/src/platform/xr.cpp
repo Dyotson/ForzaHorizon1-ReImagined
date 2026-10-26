@@ -10,6 +10,7 @@
 
 #include "xr.h"
 
+#include "driving_gate.h"
 #include "guest_memory.h"
 #include "sdk_import.h"
 #include "vr_head_pose_math.h"
@@ -54,17 +55,29 @@ REXCVAR_DEFINE_STRING(vr_mode, "off", "VR",
                       "cockpit (head-tracked in-car view, mono); needs an OpenXR runtime")
     .allowed({"off", "screen", "cockpit"})
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_DOUBLE(vr_seat_height_cm, 0.0, "VR",
-                      "Cockpit mode: raises (positive) or lowers the eye from the driver's seat, cm")
+REXCVAR_DEFINE_DOUBLE(vr_seat_height_cm, -4.0, "VR",
+                      "Cockpit mode: raises (positive) or lowers the eye from the driver's seat, cm "
+                      "(-4: the game's driver's eye sits a few cm under the roof, and a head turned "
+                      "toward a door or the rear window would leave the cabin through it)")
     .range(-50, 50);
 REXCVAR_DEFINE_STRING(vr_recenter_key, "Home", "VR",
                       "Key that recentres the VR view on the head (both sticks held for a second "
                       "do the same)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
-REXCVAR_DEFINE_DOUBLE(vr_head_back_limit_cm, 8.0, "VR",
-                      "Cockpit: how far the eye may move back from where it was recentred, cm; "
-                      "turning round moves the head back, and further back the eye would enter "
-                      "the seat (100: no limit)")
+// The eye's room around where it was recentred (xr_math.h HeadBox): an ellipse on the floor
+// beside and behind it, eased toward its edge, and a dome over it; forward and down are free.
+REXCVAR_DEFINE_DOUBLE(vr_head_back_limit_cm, 15.0, "VR",
+                      "Cockpit: how far the eye may move back from where it was recentred, cm "
+                      "(turning round moves the head back; 100: no limit)")
+    .range(0, 100);
+REXCVAR_DEFINE_DOUBLE(vr_head_side_limit_cm, 18.0, "VR",
+                      "Cockpit: how far the eye may move sideways, cm (turning the head toward a "
+                      "door moves it 8-12 cm aside; 100: no limit)")
+    .range(0, 100);
+REXCVAR_DEFINE_DOUBLE(vr_head_up_limit_cm, 6.0, "VR",
+                      "Cockpit: how far the eye may move up while near where it was recentred, cm; "
+                      "less the further it is aside or back, where the roof slopes down (100: no "
+                      "limit)")
     .range(0, 100);
 REXCVAR_DEFINE_DOUBLE(vr_fov_margin, 5.0, "VR",
                       "Cockpit mode: degrees drawn beyond the headset's field of view on each side, "
@@ -82,6 +95,40 @@ REXCVAR_DEFINE_INT32(vr_runtime_timeout, 20, "VR",
 REXCVAR_DEFINE_DOUBLE(vr_screen_width, 2.2, "VR", "Virtual screen width, metres").range(0.5, 20);
 REXCVAR_DEFINE_DOUBLE(vr_screen_distance, 2.5, "VR", "Virtual screen distance, metres")
     .range(0.5, 20);
+// The HUD's own panel in the cockpit (needs SDK patch 0393): 0.9 m wide 1 m ahead, its middle 14
+// degrees below the eyes: 48 x 27 degrees, the HUD's 1280 pixels at 27 per degree; its top edge
+// sits just under the horizon, the speedometer and map 24 degrees down in its corners.
+REXCVAR_DEFINE_BOOL(vr_hud, true, "VR",
+                    "Cockpit: the HUD on its own panel in front of the seat, below the eyes, instead "
+                    "of in the corners of the head-tracked view")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_DOUBLE(vr_hud_width, 0.9, "VR", "Cockpit: the HUD panel's width, metres").range(0.2, 3);
+REXCVAR_DEFINE_DOUBLE(vr_hud_distance, 1.0, "VR", "Cockpit: the HUD panel's distance, metres")
+    .range(0.3, 5);
+REXCVAR_DEFINE_DOUBLE(vr_hud_pitch, -14.0, "VR",
+                      "Cockpit: the HUD panel's direction from the eyes, degrees (negative: below)")
+    .range(-60, 30);
+// Depth stereo (SDK patch 0394): each eye made from the one picture the game draws and its depth
+// pre-pass, shifted by the disparity of each pixel's distance, the holes beside near objects
+// filled from the background. Off (the default since version 4: the third headset test found it
+// "full of artifacts"): both eyes see the same picture (version 2).
+REXCVAR_DEFINE_STRING(vr_stereo, "off", "VR",
+                      "Cockpit: off (both eyes see the same picture: no depth) or depth (each eye "
+                      "made from the picture and its depth: approximate 3D, filled edges beside "
+                      "near objects)")
+    .allowed({"off", "depth"})
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_DOUBLE(vr_stereo_max_shift, 3.0, "VR",
+                      "Depth stereo: the most a pixel moves for an eye, percent of the picture's "
+                      "width (nearer than that is drawn at that depth)")
+    .range(0.5, 10)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+// SDK patch 0395: contrast-adaptive sharpening of the cockpit's picture before the headset gets it
+// (the desktop window's FSR/CAS present effect works on the window's picture only).
+REXCVAR_DEFINE_DOUBLE(vr_sharpen, 0.5, "VR",
+                      "Cockpit: sharpening of the head-tracked picture, 0 (off) to 1 (strongest)")
+    .range(0, 1)
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(vr_trace, false, "VR",
                     "Log the head pose, the game camera, the field of view drawn and the latency "
                     "about 10 times a second (lines \"VR trace:\")")
@@ -114,10 +161,24 @@ struct RexGuestOutputFrame {
   uint32_t height;
   VkImage image;
   VkImageView view;
+  // Patch 0393: the frame's VR layers, all A2B10G10R10 in SHADER_READ_ONLY_OPTIMAL like `image`
+  // except the HUD (R8G8B8A8_UNORM, unpremultiplied colour and its coverage); held with the frame.
+  struct Layers {
+    uint32_t layers;  // kLayerScene, kLayerHud, kLayerStereo
+    uint32_t scene_width, scene_height;
+    VkImage scene;  // the scene before the HUD, the guest output's gamma and format
+    uint32_t hud_width, hud_height;
+    VkImage hud;  // the HUD alone at 1280 x 720
+    uint32_t stereo_width, stereo_height;
+    VkImage stereo;  // both eyes side by side (patch 0394)
+  } vr;
 };
 }
+constexpr uint32_t kExportFrames = 1, kExportLayers = 2, kExportStereo = 4;  // rexui_SetGuestOutputExport
+constexpr uint32_t kLayerScene = 1, kLayerHud = 2, kLayerStereo = 4;
 using SetVulkanCreationHooksFn = void (*)(const RexVulkanCreationHooks*);
 using SetPadsWithoutFocusFn = void (*)(int);  // patch 0392 (src/input/input_system.cpp)
+using SetGuestOutputStereoFn = void (*)(float, float);  // patch 0393 (vulkan_presenter.cpp)
 using SetGuestOutputExportFn = void (*)(int);
 using AcquireGuestOutputFrameFn = int (*)(RexGuestOutputFrame*, uint64_t);
 using ReleaseGuestOutputFrameFn = void (*)(uint32_t);
@@ -208,6 +269,20 @@ struct CopySlot {
   bool busy = false;
 };
 
+// A swapchain the OpenXR thread copies game pictures into, with its staging image.
+struct Target {
+  XrSwapchain swapchain = XR_NULL_HANDLE;
+  std::vector<VkImage> images;
+  uint32_t width = 0, height = 0;
+  uint32_t failed_width = 0, failed_height = 0;
+  VkImage staging = VK_NULL_HANDLE;
+  VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+  bool have_image = false;  // a copy was released into the swapchain
+  XrExtent2Di shown_extent{};  // the picture's part of the swapchain image (smaller for the screen)
+  bool image_acquired = false;  // a timed-out wait must resume this same acquisition
+  uint32_t acquired_index = 0;
+};
+
 struct State {
   Mode mode = Mode::kOff;
 #ifdef _WIN32
@@ -233,6 +308,11 @@ struct State {
   AcquireGuestOutputFrameFn acquire_frame = nullptr;
   ReleaseGuestOutputFrameFn release_frame = nullptr;
   SetPadsWithoutFocusFn set_pads_without_focus = nullptr;
+  SetGuestOutputStereoFn set_stereo = nullptr;
+  bool stereo = false;  // vr_stereo depth was asked for and the SDK can do it
+  float ipd = 0.064f;  // the eyes' distance (xrLocateViews), handed to the SDK for the eyes
+  bool picture_stereo = false;  // the picture swapchain holds both eyes side by side
+  float picture_ipd = 0.064f;  // the eye distance those eyes were made with
 
   // The session (OpenXR thread; the spaces are also read by CockpitView under pose_mutex).
   VulkanDevice* device = nullptr;
@@ -251,24 +331,19 @@ struct State {
   VkFormat staging_format = VK_FORMAT_UNDEFINED;  // the 8-bit UNORM twin of the sRGB format
 
   // The swapchain for the game's picture, sized as the guest output.
-  XrSwapchain swapchain = XR_NULL_HANDLE;
-  std::vector<VkImage> swapchain_images;
-  bool image_acquired = false;  // a timed-out wait must resume this same acquisition
-  uint32_t acquired_index = 0;
-  uint32_t width = 0, height = 0;
-  uint32_t failed_width = 0, failed_height = 0;
-  VkImage staging = VK_NULL_HANDLE;
-  VkDeviceMemory staging_memory = VK_NULL_HANDLE;
+  Target picture;  // the game's picture: the screen, or the cockpit (the scene without the HUD)
+  Target hud;  // the HUD alone (SDK patch 0393), on its panel in the cockpit
+  bool hud_shown = false;  // the last cockpit picture came with its HUD in `hud`
+  bool layers_logged = false;
   CopySlot slots[3];
   uint32_t next_slot = 0;
-  bool have_image = false;  // a copy was released into the swapchain
   uint64_t last_serial = 0;
   FrameTag shown_tag;  // the tag of the picture in the swapchain (id 0: untagged)
-  XrExtent2Di shown_extent{};  // the picture's part of the swapchain image (smaller for the screen)
   bool linear_blit = false;  // the guest output's format can be filtered: the screen is downscaled
 
   // Cockpit state shared with the camera hooks.
   std::atomic<bool> cockpit_active{false};
+  bool menu_up = false;  // the game is paused or in a menu (OpenXR thread): the screen shows it
   std::atomic<bool> recenter{true};
   std::mutex pose_mutex;  // the spaces while CockpitView locates, the origin, the frustum
   Pose origin;
@@ -302,7 +377,7 @@ struct State {
 
   // Statistics for the periodic log line.
   std::atomic<uint32_t> stat_swaps{0}, stat_tagged_swaps{0}, stat_extra_views{0}, stat_repeat_views{0};
-  uint32_t stat_frames = 0, stat_projection = 0, stat_quad = 0, stat_copies = 0;
+  uint32_t stat_frames = 0, stat_projection = 0, stat_quad = 0, stat_hud = 0, stat_copies = 0;
   int64_t stat_end_frame_max_ns = 0;
   std::chrono::steady_clock::time_point stat_since;
 };
@@ -567,28 +642,34 @@ void ReapSlots() {
   }
 }
 
+// Destroys a target's swapchain and staging image; only once no copy into them is in flight.
+void DestroyTarget(Target& t) {
+  const VkDevice device = g.device->device();
+  if (t.swapchain != XR_NULL_HANDLE) g.xr.DestroySwapchain(t.swapchain);
+  t.swapchain = XR_NULL_HANDLE;
+  t.images.clear();
+  t.image_acquired = false;
+  if (t.staging != VK_NULL_HANDLE) g.vk.DestroyImage(device, t.staging, nullptr);
+  if (t.staging_memory != VK_NULL_HANDLE) g.vk.FreeMemory(device, t.staging_memory, nullptr);
+  t.staging = VK_NULL_HANDLE;
+  t.staging_memory = VK_NULL_HANDLE;
+  t.width = t.height = 0;
+  t.have_image = false;
+}
+
 bool DestroySwapchain() {
-  // A timeout is not completion. Retain the swapchain, staging image, pools,
+  // A timeout is not completion. Retain the swapchains, staging images, pools,
   // fences and guest-image holds until every submitted copy has finished.
   if (!FinishAllSlots()) return false;
-  const VkDevice device = g.device->device();
-  if (g.swapchain != XR_NULL_HANDLE) g.xr.DestroySwapchain(g.swapchain);
-  g.swapchain = XR_NULL_HANDLE;
-  g.swapchain_images.clear();
-  g.image_acquired = false;
-  if (g.staging != VK_NULL_HANDLE) g.vk.DestroyImage(device, g.staging, nullptr);
-  if (g.staging_memory != VK_NULL_HANDLE) g.vk.FreeMemory(device, g.staging_memory, nullptr);
-  g.staging = VK_NULL_HANDLE;
-  g.staging_memory = VK_NULL_HANDLE;
-  g.width = g.height = 0;
-  g.have_image = false;
+  DestroyTarget(g.picture);
+  DestroyTarget(g.hud);
   return true;
 }
 
 // The cockpit view's size and its pixel density in the middle of the picture (the guest output's
-// size: 16:9 at the render scale), once both are known.
+// size: 1280 x 720 at the render scale, which may differ per axis), once both are known.
 void LogCockpitView() {
-  if (g.mode != Mode::kCockpit || !g.width || !g.height) return;
+  if (g.mode != Mode::kCockpit || !g.picture.width || !g.picture.height) return;
   CockpitFrustum f;
   {
     std::lock_guard lock(g.pose_mutex);
@@ -601,15 +682,15 @@ void LogCockpitView() {
               "middle",
               2 * f.HalfHorizontal() * kToDeg, f.vertical * kToDeg, std::fabs(f.pitch) * kToDeg,
               f.pitch < 0 ? "down" : "up", std::fabs(f.yaw) * kToDeg, f.yaw < 0 ? "right" : "left",
-              g.width, g.height, CentrePixelsPerDegree(float(g.width), f.HalfHorizontal()),
-              CentrePixelsPerDegree(float(g.height), f.vertical / 2));
+              g.picture.width, g.picture.height,
+              CentrePixelsPerDegree(float(g.picture.width), f.HalfHorizontal()),
+              CentrePixelsPerDegree(float(g.picture.height), f.vertical / 2));
 }
 
-bool CreateSwapchain(uint32_t width, uint32_t height) {
-  if (!DestroySwapchain()) {
-    g.stop = true;  // stop copying; session cleanup will retry the pending fences
-    return false;
-  }
+// A swapchain (8-bit sRGB) and its staging image: the source blitted to 8 bits, then copied bit
+// for bit into the sRGB swapchain image (the sources already hold gamma-encoded values).
+bool CreateTarget(Target& t, uint32_t width, uint32_t height, const char* what) {
+  DestroyTarget(t);  // the caller made sure no copy into it is in flight
   XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
   info.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
   info.format = g.swapchain_format;
@@ -622,24 +703,22 @@ bool CreateSwapchain(uint32_t width, uint32_t height) {
   XrResult r;
   {
     const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
-    r = g.xr.CreateSwapchain(g.session, &info, &g.swapchain);
+    r = g.xr.CreateSwapchain(g.session, &info, &t.swapchain);
   }
   if (XR_FAILED(r)) {
-    REXLOG_WARN("VR: xrCreateSwapchain {}x{} failed ({})", width, height, ResultName(r));
-    g.swapchain = XR_NULL_HANDLE;
+    REXLOG_WARN("VR: xrCreateSwapchain {}x{} for the {} failed ({})", width, height, what, ResultName(r));
+    t.swapchain = XR_NULL_HANDLE;
     return false;
   }
   uint32_t count = 0;
-  g.xr.EnumerateSwapchainImages(g.swapchain, 0, &count, nullptr);
+  g.xr.EnumerateSwapchainImages(t.swapchain, 0, &count, nullptr);
   std::vector<XrSwapchainImageVulkan2KHR> images(count, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR});
   if (XR_FAILED(g.xr.EnumerateSwapchainImages(
-          g.swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())))) {
+          t.swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(images.data())))) {
     return false;
   }
-  for (const auto& image : images) g.swapchain_images.push_back(image.image);
+  for (const auto& image : images) t.images.push_back(image.image);
 
-  // The staging image: the guest output blitted to 8 bits, then copied bit for bit into the sRGB
-  // swapchain image (the guest output already holds gamma-encoded values).
   const VkDevice device = g.device->device();
   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -651,9 +730,9 @@ bool CreateSwapchain(uint32_t width, uint32_t height) {
   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
   image_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  if (g.vk.CreateImage(device, &image_info, nullptr, &g.staging) != VK_SUCCESS) return false;
+  if (g.vk.CreateImage(device, &image_info, nullptr, &t.staging) != VK_SUCCESS) return false;
   VkMemoryRequirements requirements;
-  g.vk.GetImageMemoryRequirements(device, g.staging, &requirements);
+  g.vk.GetImageMemoryRequirements(device, t.staging, &requirements);
   VkPhysicalDeviceMemoryProperties memory;
   g.vk.GetPhysicalDeviceMemoryProperties(g.device->physical_device(), &memory);
   uint32_t type = UINT32_MAX;
@@ -666,16 +745,33 @@ bool CreateSwapchain(uint32_t width, uint32_t height) {
   VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
   alloc.allocationSize = requirements.size;
   alloc.memoryTypeIndex = type;
-  if (type == UINT32_MAX || g.vk.AllocateMemory(device, &alloc, nullptr, &g.staging_memory) != VK_SUCCESS ||
-      g.vk.BindImageMemory(device, g.staging, g.staging_memory, 0) != VK_SUCCESS) {
-    REXLOG_WARN("VR: no memory for the {}x{} staging image", width, height);
+  if (type == UINT32_MAX || g.vk.AllocateMemory(device, &alloc, nullptr, &t.staging_memory) != VK_SUCCESS ||
+      g.vk.BindImageMemory(device, t.staging, t.staging_memory, 0) != VK_SUCCESS) {
+    REXLOG_WARN("VR: no memory for the {}x{} staging image of the {}", width, height, what);
     return false;
   }
-  g.width = width;
-  g.height = height;
-  REXLOG_INFO("VR: swapchain {}x{}, format {}, {} images", width, height, g.swapchain_format,
-              g.swapchain_images.size());
-  LogCockpitView();
+  t.width = width;
+  t.height = height;
+  REXLOG_INFO("VR: {} swapchain {}x{}, format {}, {} images", what, width, height, g.swapchain_format,
+              t.images.size());
+  return true;
+}
+
+// The target at this size, made (again) if needed; false if that failed (tried again only for
+// another size) or copies into the old one are still in flight (the session stops; its cleanup
+// waits for them).
+bool EnsureTarget(Target& t, uint32_t width, uint32_t height, const char* what) {
+  if (width == t.width && height == t.height) return true;
+  if (width == t.failed_width && height == t.failed_height) return false;
+  if (!FinishAllSlots()) {
+    g.stop = true;
+    return false;
+  }
+  if (!CreateTarget(t, width, height, what)) {
+    t.failed_width = width;
+    t.failed_height = height;
+    return false;
+  }
   return true;
 }
 
@@ -693,87 +789,82 @@ VkImageMemoryBarrier Barrier(VkImage image, VkAccessFlags src, VkAccessFlags dst
   return b;
 }
 
-// Copies a guest output into the next swapchain image and releases it to the runtime. The frame's
-// hold is dropped when the copy's fence signals. For the screen a picture drawn at render scale 2
-// or more is halved (or more) on the way with a linear filter: the screen covers about 1,000 of
-// the headset's pixels across, and the runtime samples its layers without mipmaps, so a full
-// 2560-pixel picture would shimmer.
-bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
-  if (g.stop) return false;
-  if (frame.width != g.width || frame.height != g.height) {
-    if (frame.width == g.failed_width && frame.height == g.failed_height) return false;
-    if (!CreateSwapchain(frame.width, frame.height)) {
-      g.failed_width = frame.width;  // tried again only for another size
-      g.failed_height = frame.height;
-      return false;
-    }
-  }
-  CopySlot& slot = g.slots[g.next_slot];
-  if (!FinishSlot(slot, 100'000'000)) return false;
-  if (g.stop) return false;
-
-  XrResult r;
-  if (!g.image_acquired) {
+// Acquires the target's next swapchain image, or resumes an acquisition whose wait timed out, and
+// waits for it (the queue lock around the acquire, as XR_KHR_vulkan_enable2 asks). XR_TIMEOUT_EXPIRED
+// is a success code, but the runtime still owns the image: it is neither copied into nor released
+// until a later wait succeeds. Other failures stop the session (its cleanup retires the image).
+bool AcquireTarget(Target& t) {
+  if (!t.image_acquired) {
     XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
-    r = g.xr.AcquireSwapchainImage(g.swapchain, &acquire, &g.acquired_index);
+    XrResult r;
+    {
+      const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
+      r = g.xr.AcquireSwapchainImage(t.swapchain, &acquire, &t.acquired_index);
+    }
     if (XR_FAILED(r)) return false;
-    g.image_acquired = true;
+    t.image_acquired = true;
   }
   XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
   wait.timeout = 100'000'000;
-  r = g.xr.WaitSwapchainImage(g.swapchain, &wait);
+  const XrResult r = g.xr.WaitSwapchainImage(t.swapchain, &wait);
   if (r != XR_SUCCESS) {
-    // XR_TIMEOUT_EXPIRED is positive, but the runtime still owns the image.
-    // Retry the same acquisition next frame; never copy or release it yet.
-    // On session loss/error, retire it by destroying the session instead.
     if (r != XR_TIMEOUT_EXPIRED) g.stop = true;
     return false;
   }
-  if (g.stop) return false;
+  return !g.stop;
+}
 
-  const VkDevice device = g.device->device();
-  g.vk.ResetCommandPool(device, slot.pool, 0);
-  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  g.vk.BeginCommandBuffer(slot.buffer, &begin);
-  const VkImage target = g.swapchain_images[g.acquired_index];
-  const uint32_t divisor = for_screen && g.linear_blit ? std::max(1u, frame.width / 1280) : 1;
-  const uint32_t out_width = std::max(1u, g.width / divisor), out_height = std::max(1u, g.height / divisor);
-  // As the presenter's own guest output capture: the guest output leaves and returns to
-  // SHADER_READ_ONLY in the fragment shader stage, which later refreshes wait for.
+// Hands an acquired image back to the runtime (the caller holds the queue lock); false if the
+// runtime refused it.
+bool ReleaseTarget(Target& t) {
+  XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+  const XrResult r = g.xr.ReleaseSwapchainImage(t.swapchain, &release);
+  if (XR_SUCCEEDED(r)) {
+    t.image_acquired = false;
+    return true;
+  }
+  REXLOG_WARN("VR: xrReleaseSwapchainImage failed ({})", ResultName(r));
+  return false;
+}
+
+// Records `source` (shader-read-only, as the SDK hands its images over) blitted to out_width x
+// out_height into the target's staging image and copied into its acquired swapchain image.
+void RecordCopy(VkCommandBuffer cb, Target& t, VkImage source, uint32_t width, uint32_t height,
+                uint32_t out_width, uint32_t out_height) {
+  const VkImage target = t.images[t.acquired_index];
+  // As the presenter's own guest output capture: the source leaves and returns to
+  // SHADER_READ_ONLY in the fragment shader stage, which later writers wait for.
   VkImageMemoryBarrier to_copy[2] = {
-      Barrier(frame.image, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+      Barrier(source, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
-      Barrier(g.staging, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+      Barrier(t.staging, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)};
-  g.vk.CmdPipelineBarrier(slot.buffer,
-                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+  g.vk.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, to_copy);
   VkImageBlit blit{};
   blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-  blit.srcOffsets[1] = {int32_t(frame.width), int32_t(frame.height), 1};
+  blit.srcOffsets[1] = {int32_t(width), int32_t(height), 1};
   blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
   blit.dstOffsets[1] = {int32_t(out_width), int32_t(out_height), 1};
-  g.vk.CmdBlitImage(slot.buffer, frame.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g.staging,
+  const bool scaled = out_width != width || out_height != height;
+  g.vk.CmdBlitImage(cb, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.staging,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
-                    divisor > 1 ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+                    scaled ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
   VkImageMemoryBarrier after_blit[3] = {
-      Barrier(frame.image, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      Barrier(source, 0, VK_ACCESS_SHADER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-      Barrier(g.staging, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+      Barrier(t.staging, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
       Barrier(target, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)};
-  g.vk.CmdPipelineBarrier(slot.buffer,
-                          VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+  g.vk.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                           VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
                           nullptr, 0, nullptr, 3, after_blit);
   VkImageCopy copy{};
   copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
   copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
   copy.extent = {out_width, out_height, 1};
-  g.vk.CmdCopyImage(slot.buffer, g.staging, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
+  g.vk.CmdCopyImage(cb, t.staging, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target,
                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
   // Swapchain images go back to the runtime in COLOR_ATTACHMENT_OPTIMAL (XR_KHR_vulkan_enable2).
   VkImageMemoryBarrier release_barrier =
@@ -781,15 +872,66 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                   VK_ACCESS_SHADER_READ_BIT,
               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  g.vk.CmdPipelineBarrier(slot.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                          &release_barrier);
+  g.vk.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                          nullptr, 0, nullptr, 1, &release_barrier);
+}
+
+// Copies a guest output into the next swapchain image and releases it to the runtime. The frame's
+// hold is dropped when the copy's fence signals. For the screen a picture drawn at render scale 2
+// or more is scaled down on the way with a linear filter to its 1280 x 720 (per axis, so a picture
+// drawn at other scales across and up keeps its 16:9): the screen covers about 1,000 of the
+// headset's pixels across, and the runtime samples its layers without mipmaps, so a full
+// 2560-pixel picture would shimmer. For the cockpit, with the VR layers (SDK patch 0393), the
+// scene before the HUD goes to the picture and the HUD alone to its own swapchain.
+bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
+  if (g.stop) return false;
+  bool layers = !for_screen && frame.size >= sizeof(RexGuestOutputFrame) &&
+                (frame.vr.layers & kLayerScene) && frame.vr.scene != VK_NULL_HANDLE &&
+                frame.vr.scene_width == frame.width && frame.vr.scene_height == frame.height;
+  bool with_hud = layers && (frame.vr.layers & kLayerHud) && frame.vr.hud != VK_NULL_HANDLE;
+  // Without a HUD swapchain the cockpit shows the guest output, the HUD in it.
+  if (with_hud && !EnsureTarget(g.hud, frame.vr.hud_width, frame.vr.hud_height, "HUD")) {
+    if (g.stop) return false;
+    layers = with_hud = false;
+  }
+  // Patch 0394: both eyes side by side, made from the scene and its depth.
+  const bool stereo = layers && g.stereo && (frame.vr.layers & kLayerStereo) &&
+                      frame.vr.stereo != VK_NULL_HANDLE && frame.vr.stereo_width == 2 * frame.width &&
+                      frame.vr.stereo_height == frame.height;
+  const uint32_t picture_width = stereo ? frame.vr.stereo_width : frame.width;
+  if (!EnsureTarget(g.picture, picture_width, frame.height, "picture")) return false;
+  CopySlot& slot = g.slots[g.next_slot];
+  if (!FinishSlot(slot, 100'000'000)) return false;
+  if (g.stop) return false;
+
+  if (!AcquireTarget(g.picture)) return false;
+  // A HUD image still owned by the runtime (its wait timed out) misses this frame: the panel keeps
+  // its last picture.
+  const bool hud_acquired = with_hud && AcquireTarget(g.hud);
+  if (g.stop) return false;
+
+  const VkDevice device = g.device->device();
+  g.vk.ResetCommandPool(device, slot.pool, 0);
+  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  g.vk.BeginCommandBuffer(slot.buffer, &begin);
+  const uint32_t divide_x = for_screen && g.linear_blit ? std::max(1u, frame.width / 1280) : 1;
+  const uint32_t divide_y = for_screen && g.linear_blit ? std::max(1u, frame.height / 720) : 1;
+  const uint32_t out_width = std::max(1u, picture_width / divide_x);
+  const uint32_t out_height = std::max(1u, frame.height / divide_y);
+  RecordCopy(slot.buffer, g.picture, stereo ? frame.vr.stereo : layers ? frame.vr.scene : frame.image,
+             picture_width, frame.height, out_width, out_height);
+  if (hud_acquired) {
+    RecordCopy(slot.buffer, g.hud, frame.vr.hud, frame.vr.hud_width, frame.vr.hud_height,
+               frame.vr.hud_width, frame.vr.hud_height);
+  }
   g.vk.EndCommandBuffer(slot.buffer);
 
   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
   submit.commandBufferCount = 1;
   submit.pCommandBuffers = &slot.buffer;
   VkResult submitted;
+  bool released, hud_released = true;
   {
     const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
     submitted = g.vk.QueueSubmit(queue.queue(), 1, &submit, slot.fence);
@@ -798,25 +940,41 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
       slot.busy = true;
       g.next_slot = (g.next_slot + 1) % 3;
     }
-    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    r = g.xr.ReleaseSwapchainImage(g.swapchain, &release);
-    if (XR_SUCCEEDED(r)) g.image_acquired = false;
+    released = ReleaseTarget(g.picture);
+    if (hud_acquired) hud_released = ReleaseTarget(g.hud);
   }
   if (submitted != VK_SUCCESS) {
     REXLOG_WARN("VR: vkQueueSubmit of the copy failed ({})", int(submitted));
     g.stop = true;
     return false;
   }
-  if (XR_FAILED(r)) {
-    // Submission already owns the guest frame: keep its hold until the fence
-    // completes even though the image could not be handed to the compositor.
-    REXLOG_WARN("VR: xrReleaseSwapchainImage failed ({})", ResultName(r));
-    g.have_image = false;
+  if (!released || !hud_released) {
+    // The submission owns the guest frame: keep its hold until the fence completes even though an
+    // image could not be handed to the compositor.
+    if (!released) g.picture.have_image = false;
+    if (!hud_released) g.hud.have_image = false;
     g.stop = true;
     return true;
   }
-  g.have_image = true;
-  g.shown_extent = {int32_t(out_width), int32_t(out_height)};
+  g.picture.have_image = true;
+  g.picture.shown_extent = {int32_t(out_width), int32_t(out_height)};
+  g.picture_stereo = stereo;
+  g.picture_ipd = g.ipd;
+  if (hud_acquired) {
+    g.hud.have_image = true;
+    g.hud.shown_extent = {int32_t(frame.vr.hud_width), int32_t(frame.vr.hud_height)};
+  }
+  // The HUD panel shows with the cockpit pictures that come without their HUD; a cockpit frame
+  // without layers has the HUD in its picture.
+  g.hud_shown = with_hud && g.hud.have_image;
+  if (layers && !g.layers_logged) {
+    g.layers_logged = true;
+    REXLOG_INFO("VR: the cockpit gets the scene without the HUD ({}x{}){}{}", frame.width, frame.height,
+                with_hud ? fmt::format("; the HUD is on its own panel ({}x{})", frame.vr.hud_width,
+                                       frame.vr.hud_height)
+                         : std::string(),
+                stereo ? "; each eye its own picture (depth stereo)" : "");
+  }
   ++g.stat_copies;
   return true;
 }
@@ -1037,15 +1195,36 @@ void LogStats() {
                           g.stat_runtime_ns / n / 1e6, g.latency.Value() / 1e6);
   }
   REXLOG_INFO(
-      "VR: {:.0f} Hz headset, {:.1f} game frames/s copied; shown as cockpit {} / screen {} "
-      "frames; swaps tagged {}/{} (dropped views {}, repeated {}); {}; xrEndFrame max {:.1f} ms",
-      g.stat_frames / seconds, g.stat_copies / seconds, g.stat_projection, g.stat_quad, tagged,
-      swaps, extra, repeat, latency, g.stat_end_frame_max_ns / 1e6);
-  g.stat_frames = g.stat_projection = g.stat_quad = g.stat_copies = 0;
+      "VR: {:.0f} Hz headset, {:.1f} game frames/s copied; shown as cockpit {} (HUD panel {}) / "
+      "screen {} frames; swaps tagged {}/{} (dropped views {}, repeated {}); {}; xrEndFrame max {:.1f} ms",
+      g.stat_frames / seconds, g.stat_copies / seconds, g.stat_projection, g.stat_hud, g.stat_quad,
+      tagged, swaps, extra, repeat, latency, g.stat_end_frame_max_ns / 1e6);
+  g.stat_frames = g.stat_projection = g.stat_quad = g.stat_hud = g.stat_copies = 0;
   g.stat_end_frame_max_ns = 0;
   g.stat_game_ns = g.stat_runtime_ns = 0;
   g.stat_latency_samples = 0;
   g.stat_since = now;
+}
+
+float StereoMaxShift() { return float(REXCVAR_GET(vr_stereo_max_shift)) / 100.0f; }
+
+HeadBox Box() {
+  return {float(REXCVAR_GET(vr_head_side_limit_cm)) / 100.0f,
+          float(REXCVAR_GET(vr_head_back_limit_cm)) / 100.0f,
+          float(REXCVAR_GET(vr_head_up_limit_cm)) / 100.0f};
+}
+
+// The game's pause flag and menus (hooks/telemetry.cpp feeds the gate from the world update).
+bool GameMenuUp() {
+  switch (telemetry::Player().State()) {
+    case telemetry::Drive::kPause:
+    case telemetry::Drive::kRewind:
+    case telemetry::Drive::kMenu:
+    case telemetry::Drive::kLoading:
+      return true;
+    default:
+      return false;
+  }
 }
 
 // vr_trace, about 10 times a second: the head relative to the recentred pose (yaw left, pitch up,
@@ -1069,6 +1248,23 @@ void Trace(XrTime display_time, Layer layer) {
                          std::round(yaw * 57.2958f) + 0.0f, std::round(pitch * 57.2958f) + 0.0f,
                          std::round(roll * 57.2958f) + 0.0f, std::round(rel.p.x * 1000) / 10 + 0.0f,
                          std::round(rel.p.y * 1000) / 10 + 0.0f, std::round(-rel.p.z * 1000) / 10 + 0.0f);
+      vr::HeadPose test;
+      if (TestPoseOffset(test))
+        head += fmt::format(" + test offset yaw {:.0f} pitch {:.0f} roll {:.0f}, x {:.1f} y {:.1f} z {:.1f} cm",
+                            test.yaw, test.pitch, test.roll, test.x * 100, test.y * 100, test.z * 100);
+      // How far from the head at display time the shown cockpit picture was drawn (the runtime
+      // turns the picture to the head but cannot move it: this offset is what makes the cabin
+      // swim; the eye box's hold, the prediction's miss over the latency, a test offset).
+      if (layer == Layer::kProjection && g.shown_tag.id) {
+        const Vec3 d{g.shown_tag.head.p.x - located.p.x, g.shown_tag.head.p.y - located.p.y,
+                     g.shown_tag.head.p.z - located.p.z};
+        head += fmt::format(" (picture drawn {:.1f} cm away)", std::round(std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) * 1000) / 10);
+      }
+      // Where the eye was held (the head box), when that is not where the head is.
+      const Pose eye = LimitHead(rel, Box());
+      if (std::fabs(eye.p.x - rel.p.x) + std::fabs(eye.p.y - rel.p.y) + std::fabs(eye.p.z - rel.p.z) > 0.005f)
+        head += fmt::format(" (eye held at x {:.1f} y {:.1f} z {:.1f} cm)", std::round(eye.p.x * 1000) / 10 + 0.0f,
+                            std::round(eye.p.y * 1000) / 10 + 0.0f, std::round(-eye.p.z * 1000) / 10 + 0.0f);
     }
   }
   const int64_t view_age = now - g.trace_view_ns.load();
@@ -1082,6 +1278,9 @@ void Trace(XrTime display_time, Layer layer) {
                          g.trace_posed.load() ? "posed" : "not posed");
   }
   std::string shown = layer == Layer::kProjection ? "cockpit" : layer == Layer::kQuad ? "screen" : "nothing";
+  if (g.menu_up && layer == Layer::kQuad) shown += " (paused or menu)";
+  if (layer == Layer::kProjection && g.picture_stereo) shown += " stereo";
+  if (layer == Layer::kProjection && g.hud_shown) shown += " with the HUD panel";
   if (layer == Layer::kProjection) {
     const CockpitFrustum& f = g.shown_tag.frustum;
     shown += fmt::format(" {:.0f}x{:.0f} deg pitch {:.1f}", 2 * f.HalfHorizontal() * 57.2958f,
@@ -1134,6 +1333,15 @@ bool Frame() {
         {eyes[0].fov.angleLeft, eyes[0].fov.angleRight, eyes[0].fov.angleUp, eyes[0].fov.angleDown},
         {eyes[1].fov.angleLeft, eyes[1].fov.angleRight, eyes[1].fov.angleUp, eyes[1].fov.angleDown}};
     const bool oriented = view_state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT;
+    if (g.stereo && (view_state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)) {
+      const XrVector3f a = eyes[0].pose.position, b = eyes[1].pose.position;
+      const float ipd = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+      if (ipd > 0.04f && ipd < 0.09f && std::fabs(ipd - g.ipd) > 0.0005f) {
+        g.ipd = ipd;
+        g.set_stereo(ipd, StereoMaxShift());
+        REXLOG_INFO("VR: stereo with the headset's eye distance, {:.1f} mm", ipd * 1000);
+      }
+    }
     const Quat rotation[2] = {oriented ? ToPose(eyes[0].pose).q : Quat{},
                               oriented ? ToPose(eyes[1].pose).q : Quat{}};
     const float margin = float(REXCVAR_GET(vr_fov_margin)) * 3.14159265f / 180.0f;
@@ -1167,7 +1375,18 @@ bool Frame() {
       REXLOG_INFO("VR: recentred (head at {:.2f} {:.2f} {:.2f} m)", head.p.x, head.p.y, head.p.z);
     }
   }
-  g.cockpit_active = !g.stop && g.mode == Mode::kCockpit && g.origin_set &&
+  // While the game is paused or a menu is up (the pause and rewind menus, the start menu, loading)
+  // the in-car view is not head-posed: the game draws its own in-car view under the menu and the
+  // picture goes to the screen, where the menu can be read (version 2 drew it into the 123 degree
+  // cockpit view, its text at the edges of the eyes).
+  const bool menu = GameMenuUp();
+  if (menu != g.menu_up) {
+    g.menu_up = menu;
+    if (g.mode == Mode::kCockpit)
+      REXLOG_INFO("VR: {}", menu ? "the game is paused or in a menu: the picture is on the screen"
+                                 : "the game runs again: the in-car view follows the head");
+  }
+  g.cockpit_active = !g.stop && g.mode == Mode::kCockpit && g.origin_set && !menu &&
                      (g.state == XR_SESSION_STATE_VISIBLE || g.state == XR_SESSION_STATE_FOCUSED);
 
   if (frame_state.shouldRender) {
@@ -1208,28 +1427,58 @@ bool Frame() {
                                                {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
   XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
   XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
-  const XrCompositionLayerBaseHeader* layers[1] = {};
+  XrCompositionLayerQuad hud{XR_TYPE_COMPOSITION_LAYER_QUAD};
+  const XrCompositionLayerBaseHeader* layers[2] = {};
   uint32_t layer_count = 0;
-  const XrRect2Di rect{{0, 0}, g.shown_extent};
+  const XrRect2Di rect{{0, 0}, g.picture.shown_extent};
   const Layer layer = frame_state.shouldRender
-                          ? ChooseLayer(g.have_image, g.mode == Mode::kCockpit,
+                          ? ChooseLayer(g.picture.have_image, g.mode == Mode::kCockpit,
                                         g.shown_tag.id ? &g.shown_tag : nullptr,
                                         frame_state.predictedDisplayTime)
                           : Layer::kNone;
   if (layer == Layer::kProjection) {
     // Mono: both eyes get the picture as drawn from the head pose (turned to the drawn axis) and
     // the field of view it was rendered with.
+    // With depth stereo (SDK patch 0394) each eye gets its half of the picture, made for that eye
+    // (the head's pose moved half the eye distance along its x axis).
     const Fov fov = g.shown_tag.frustum.ImageFov();
-    for (auto& view : views) {
-      view.pose = ToXr(g.shown_tag.head);
+    for (int i = 0; i < 2; ++i) {
+      XrCompositionLayerProjectionView& view = views[i];
       view.fov = {fov.left, fov.right, fov.up, fov.down};
-      view.subImage = {g.swapchain, rect, 0};
+      if (g.picture_stereo) {
+        const int32_t half = rect.extent.width / 2;
+        view.pose = ToXr(EyePose(g.shown_tag.head, i, g.picture_ipd));
+        view.subImage = {g.picture.swapchain, {{i * half, 0}, {half, rect.extent.height}}, 0};
+      } else {
+        view.pose = ToXr(g.shown_tag.head);
+        view.subImage = {g.picture.swapchain, rect, 0};
+      }
     }
     projection.space = g.local;
     projection.viewCount = 2;
     projection.views = views;
     layers[layer_count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     ++g.stat_projection;
+    // The HUD on its panel, fixed in front of the seat below the eyes (LOCAL is car-fixed while
+    // seated): drawn over the cockpit with its own coverage.
+    if (g.hud_shown && g.hud.have_image) {
+      Pose origin;
+      {
+        std::lock_guard lock(g.pose_mutex);
+        origin = g.origin;
+      }
+      const float width = float(REXCVAR_GET(vr_hud_width));
+      hud.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                       XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+      hud.space = g.local;
+      hud.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+      hud.subImage = {g.hud.swapchain, {{0, 0}, g.hud.shown_extent}, 0};
+      hud.pose = ToXr(Compose(origin, PanelPose(float(REXCVAR_GET(vr_hud_distance)),
+                                                float(REXCVAR_GET(vr_hud_pitch)) * 3.14159265f / 180.0f)));
+      hud.size = {width, width * float(g.hud.shown_extent.height) / float(std::max(g.hud.shown_extent.width, 1))};
+      layers[layer_count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&hud);
+      ++g.stat_hud;
+    }
   } else if (layer == Layer::kQuad) {
     Pose origin;
     {
@@ -1240,9 +1489,10 @@ bool Frame() {
     const float width = float(REXCVAR_GET(vr_screen_width));
     quad.space = g.local;
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-    quad.subImage = {g.swapchain, rect, 0};
+    quad.subImage = {g.picture.swapchain, rect, 0};
     quad.pose = ToXr(Compose(origin, {Quat{}, Vec3{0, 0, -distance}}));
-    quad.size = {width, width * float(g.shown_extent.height) / float(std::max(g.shown_extent.width, 1))};
+    quad.size = {width, width * float(g.picture.shown_extent.height) /
+                            float(std::max(g.picture.shown_extent.width, 1))};
     layers[layer_count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad);
     ++g.stat_quad;
   }
@@ -1553,7 +1803,32 @@ void Start(rex::system::IGraphicsSystem* graphics) {
   }
   g.trace = REXCVAR_GET(vr_trace);
   g.device = device;
-  g.set_export(1);
+  // Patch 0393's layers for the cockpit's HUD panel: the scene without the HUD and the HUD alone
+  // (an SDK without it ignores the flag: the HUD stays in the picture).
+  uint32_t flags = kExportFrames;
+  if (g.mode == Mode::kCockpit && REXCVAR_GET(vr_hud)) flags |= kExportLayers;
+  // Patch 0394's depth stereo builds on the scene without the HUD, so it brings the HUD panel.
+  g.set_stereo = reinterpret_cast<SetGuestOutputStereoFn>(forza::SdkSymbol("rexui_SetGuestOutputStereo"));
+  if (g.mode == Mode::kCockpit && REXCVAR_GET(vr_stereo) == "depth") {
+    if (g.set_stereo) {
+      g.stereo = true;
+      flags |= kExportLayers | kExportStereo;
+      g.set_stereo(g.ipd, StereoMaxShift());
+    } else {
+      REXLOG_WARN("VR: this SDK build cannot make the eyes from the depth (patch 0394): mono");
+    }
+  }
+  // Patch 0395: the scene layer sharpened (an SDK without it ignores this: no sharpening).
+  if (g.mode == Mode::kCockpit && (flags & kExportLayers) && REXCVAR_GET(vr_sharpen) > 0) {
+    using SetSharpenFn = void (*)(float);
+    if (auto set_sharpen = reinterpret_cast<SetSharpenFn>(forza::SdkSymbol("rexui_SetGuestOutputSharpen"))) {
+      set_sharpen(float(REXCVAR_GET(vr_sharpen)));
+      REXLOG_INFO("VR: the cockpit's picture is sharpened ({:.2f}) for the headset", REXCVAR_GET(vr_sharpen));
+    } else {
+      REXLOG_WARN("VR: this SDK build cannot sharpen the cockpit's picture (patch 0395)");
+    }
+  }
+  g.set_export(int(flags));
   if (const std::string key = REXCVAR_GET(vr_recenter_key); !key.empty()) {
     rex::ui::RegisterBind("bind_vr_recenter", key, "Recentre the VR view", [] { Recenter(); });
   }
@@ -1594,9 +1869,14 @@ bool CockpitView(vr::HeadTransform& head, float& vertical_fov, float& aspect, ui
     // The camera looks along the frustum's axis: the head turned by its offset, in the game (the
     // recentred head) and in the layer (the head in LOCAL) alike, from the eye held in front of
     // the seat.
-    const Pose rel = LimitBack(Relative(g.origin, located), float(REXCVAR_GET(vr_head_back_limit_cm)) / 100.0f);
+    const Pose real = Relative(g.origin, located);
+    const Pose rel = LimitHead(real, Box());
     t.head = TurnView(Compose(g.origin, rel), t.frustum);
-    head = ToGameHead(TurnView(rel, t.frustum), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
+    // A test offset turns and moves the game's camera only: the layer keeps the real head's pose,
+    // so the headset shows the turned view straight ahead (as the head would see it turned).
+    vr::HeadPose test;
+    const Pose game = TestPoseOffset(test) ? LimitHead(AddOffset(real, FromHeadPose(test)), Box()) : rel;
+    head = ToGameHead(TurnView(game, t.frustum), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
   }
   t.id = g.next_tag.fetch_add(1);
   if (!t.id) t.id = g.next_tag.fetch_add(1);

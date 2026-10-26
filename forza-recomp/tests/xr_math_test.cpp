@@ -165,23 +165,82 @@ void TestTurnedView() {
   Check(Near(fov.left, -fov.right) && Near(fov.up, -fov.down), "the picture is symmetric about the axis");
 }
 
-void TestBackLimit() {
-  // Turned round with the head 20 cm back (+z): the eye stops 8 cm back; forward, sideways and
-  // up are free.
-  const Pose back{AxisY(180 * kDeg), {0.05f, 0.03f, 0.20f}};
-  const Pose held = LimitBack(back, 0.08f);
-  Check(Near(held.p.z, 0.08f) && Near(held.p.x, 0.05f) && Near(held.p.y, 0.03f), "held 8 cm back");
+void TestHeadBox() {
+  const HeadBox box;  // floor ellipse 18 aside x 15 back, dome 6 up
+  // The third headset test's looks at the doors and mirrors are 1:1 (version 3 held them 2-4 cm short).
+  for (const Vec3 p : {Vec3{0.116f, 0.0f, 0.053f}, Vec3{-0.122f, -0.024f, 0.104f}, Vec3{0.09f, 0.0f, 0.05f}}) {
+    const Pose kept = LimitHead({AxisY(-59 * kDeg), p}, box);
+    Check(Near(kept.p.x, p.x, 0.003f) && Near(kept.p.z, p.z, 0.003f) && Near(kept.p.y, p.y),
+          "a look round the cabin is held by 3 mm at most");
+  }
+  const Pose small{AxisY(-40 * kDeg), {0.04f, 0.02f, 0.03f}};
+  const Pose kept = LimitHead(small, box);
+  Check(Near(kept.p.x, 0.04f) && Near(kept.p.y, 0.02f) && Near(kept.p.z, 0.03f), "inside the knee: unchanged");
+  Check(Near(kept.q.y, small.q.y), "the orientation is never changed");
+  // Turned round with the head 25 cm back: held under 15 cm back, sideways scaled alike.
+  const Pose back{AxisY(180 * kDeg), {0.05f, 0.0f, 0.25f}};
+  const Pose held = LimitHead(back, box);
+  Check(held.p.z < 0.15f && held.p.z > 0.13f, "25 cm back is held within 15 cm");
+  Check(Near(held.p.x / held.p.z, 0.05f / 0.25f), "the direction is kept");
+  Check(HeadBoxRadius(held, box) <= 1.0f + 1e-5f, "never past the floor ellipse");
   const auto h = ToGameHead(held, 0);
-  Check(Near(h.t[2], -0.08f), "the game's eye 8 cm behind the driver's point");
-  const Pose forward{{}, {0, 0, -0.3f}};
-  Check(Near(LimitBack(forward, 0.08f).p.z, -0.3f), "leaning forward is not limited");
+  Check(Near(h.t[2], -held.p.z), "the game's eye behind the driver's point");
+  // Up, aside and back together (the Aventador's roof cut at 10 aside, 8 back, 5 up): held low.
+  const Pose corner = LimitHead({AxisY(90 * kDeg), {-0.10f, 0.05f, 0.08f}}, box);
+  Check(corner.p.y < 0.025f && Near(corner.p.x, -0.10f) && Near(corner.p.z, 0.08f),
+        "up is held near the roof's slope, aside and back are not");
+  Check(LimitHead({{}, {0, 0.20f, 0}}, box).p.y <= 0.06f + 1e-6f, "straight up is held within 6 cm");
+  Check(Near(LimitHead({{}, {0, 0.03f, 0}}, box).p.y, 0.03f), "a little up in the middle is free");
+  Check(LimitHead({{}, {0.19f, 0.04f, 0.16f}}, box).p.y < 0.005f, "no room up at the floor ellipse's edge");
+  Check(LimitHead({{}, {-0.30f, 0, 0}}, box).p.x >= -0.18f - 1e-6f, "sideways is held within 18 cm");
+  // Forward and down are free.
+  const Pose lean = LimitHead({{}, {0, -0.10f, -0.30f}}, box);
+  Check(Near(lean.p.z, -0.30f) && Near(lean.p.y, -0.10f), "leaning forward and down are not limited");
+  // Continuous and monotonic, sideways and up.
+  for (int axis = 0; axis < 2; ++axis) {
+    float last = 0;
+    bool monotonic = true, continuous = true;
+    for (int i = 1; i <= 400; ++i) {
+      const float v = 0.0005f * float(i);
+      const Pose p = axis ? Pose{{}, {0.05f, v, 0.04f}} : Pose{{}, {v, 0, 0}};
+      const float y = axis ? LimitHead(p, box).p.y : LimitHead(p, box).p.x;
+      if (y < last) monotonic = false;
+      if (y - last > 0.0005f + 1e-5f) continuous = false;
+      last = y;
+    }
+    Check(monotonic && continuous, axis ? "up: continuous and in order" : "sideways: continuous and in order");
+  }
   // In LOCAL the held pose is the origin composed with it.
   const Pose origin{AxisY(30 * kDeg), {0.1f, 1.2f, 0.4f}};
   const Pose located = Compose(origin, back);
-  const Pose shown = Compose(origin, LimitBack(Relative(origin, located), 0.08f));
+  const Pose shown = Compose(origin, LimitHead(Relative(origin, located), box));
   const Vec3 d{shown.p.x - located.p.x, shown.p.y - located.p.y, shown.p.z - located.p.z};
   const Vec3 along = Rotate(Conj(origin.q), d);
-  Check(Near(along.x, 0) && Near(along.y, 0) && Near(along.z, -0.12f), "moved 12 cm forward along the recentred axis");
+  Check(Near(along.x, held.p.x - 0.05f) && Near(along.z, held.p.z - 0.25f), "moved along the recentred axes");
+}
+
+// A test pose added to the headset's (vr_head_pose_test in the VR cockpit): on a still head it is
+// the test pose itself in the game's terms; on a turned head it turns further about the car's up.
+void TestOffset() {
+  const forza::vr::HeadPose test{45, -10, 5, 0.05f, 0.02f, -0.03f};
+  const Pose offset = FromHeadPose(test);
+  const auto game = ToGameHead(AddOffset(Pose{}, offset), 0);
+  const auto want = forza::vr::ToTransform(test);
+  Check(SameRotation(game.r, want.r), "the offset's rotation is the test pose's");
+  Check(Near(game.t[0], 0.05f) && Near(game.t[1], 0.02f) && Near(game.t[2], -0.03f), "the offset's position");
+  const Pose turned = AddOffset({AxisY(20 * kDeg), {0.01f, 0, 0}}, FromHeadPose({30, 0, 0, 0, 0, 0}));
+  float yaw, pitch;
+  YawPitch(turned.q, yaw, pitch);
+  Check(Near(yaw, 50 * kDeg) && Near(pitch, 0), "yaw adds up on a turned head");
+  Check(Near(turned.p.x, 0.01f), "the head's position is kept");
+}
+
+// The size cull's factor: the in-car camera's 62 degrees against the cockpit's 109 (measured k
+// 1.083 and 5.896: 3 tan^2 of the half-angles).
+void TestCullScale() {
+  Check(Near(CullScale(62 * kDeg, 109 * kDeg), 0.1837f, 2e-3f), "62 against 109 degrees");
+  Check(Near(3 * std::pow(std::tan(54.5f * kDeg), 2.0f), 5.896f, 2e-3f), "k at the cockpit's 109 degrees");
+  Check(CullScale(62 * kDeg, 62 * kDeg) == 1.0f && CullScale(80 * kDeg, 62 * kDeg) == 1.0f, "never above 1");
 }
 
 void TestYawPitchRoll() {
@@ -221,6 +280,31 @@ void TestLatency() {
 }
 }  // namespace
 
+void TestHudPanel() {
+  // 1 m ahead, 14 degrees down, facing the eyes.
+  const Pose panel = PanelPose(1.0f, -14 * kDeg);
+  Check(Near(panel.p.x, 0) && Near(panel.p.y, -std::sin(14 * kDeg)) && Near(panel.p.z, -std::cos(14 * kDeg)),
+        "the panel's middle is 14 degrees below the eyes, 1 m away");
+  const Vec3 normal = Rotate(panel.q, {0, 0, 1});
+  const float len = std::sqrt(panel.p.x * panel.p.x + panel.p.y * panel.p.y + panel.p.z * panel.p.z);
+  Check(Near(normal.x, -panel.p.x / len) && Near(normal.y, -panel.p.y / len) && Near(normal.z, -panel.p.z / len),
+        "the panel faces the eyes");
+  // Placed in LOCAL relative to a recentre origin turned 30 degrees: it turns with it.
+  const Pose origin{AxisY(30 * kDeg), {0.2f, 1.1f, 0.3f}};
+  const Pose world = Compose(origin, panel);
+  const Pose back = Relative(origin, world);
+  Check(Near(back.p.y, panel.p.y) && Near(back.p.z, panel.p.z), "relative to the origin as given");
+}
+
+void TestEyePose() {
+  // A head turned 90 degrees left: its right is LOCAL's -z, so the right eye is toward -z.
+  const Pose view{AxisY(90 * kDeg), {0.1f, 1.2f, 0.3f}};
+  const Pose left = EyePose(view, 0, 0.064f), right = EyePose(view, 1, 0.064f);
+  Check(Near(right.p.z, 0.3f - 0.032f) && Near(left.p.z, 0.3f + 0.032f), "the eyes lie along the head's x axis");
+  Check(Near(left.p.x, 0.1f) && Near(right.p.y, 1.2f), "and nowhere else");
+  Check(Near(left.q.y, view.q.y) && Near(right.q.w, view.q.w), "both look where the view looks");
+}
+
 int main() {
   TestAxesMatchTheTestPose();
   TestLookingLeftSeesLeft();
@@ -231,7 +315,11 @@ int main() {
   TestCoverCantedAndCapped();
   TestTurnedView();
   TestYawPitchRoll();
-  TestBackLimit();
+  TestHeadBox();
+  TestOffset();
+  TestCullScale();
+  TestHudPanel();
+  TestEyePose();
   TestLatency();
   if (failures) return 1;
   std::printf("xr_math_test: ok\n");
