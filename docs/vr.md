@@ -357,6 +357,11 @@ run time, never linked.
 
 ### Copy ownership and shutdown
 
+Leaving a posed cockpit for a menu or a lost session restores the loaded track's own exposure
+adaptation rate and normal size-cull factor on the next camera hook, before its flat-path early
+return. The frustum hook can restore them without a valid director or a new view. Ordinary flat
+play never applies or restores those cockpit adjustments.
+
 A swapchain wait timeout does not make an image writable. The bridge keeps that
 acquisition and retries its wait on the next frame, without copying or releasing
 the image until the wait succeeds. A session error stops new copies. Submitted
@@ -387,6 +392,8 @@ ctest --test-dir out/xr-lifecycle --output-on-failure
 
 These fixtures cover timeout/retry ownership, fence-deferred destruction,
 session/device loss, failed submission/release, stop and join-before-teardown.
+They also compile the actual camera hook for base and TU4, checking cockpit-to-flat restoration,
+frustum-first transitions without a director, repeated transitions and the untouched flat baseline.
 They do not qualify a physical headset or comfort.
 
 ### Tested without a headset (Linux, TU4, RX 9060 XT, RADV)

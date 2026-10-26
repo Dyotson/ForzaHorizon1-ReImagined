@@ -45,6 +45,8 @@ class PlayInVrTests(unittest.TestCase):
             patch("forza_launcher.game.native_tuning_needs_build", return_value=False),
             patch("forza_launcher.installer.check_game_folder", return_value=(True, "Ready")),
             patch("forza_launcher.builder.build_status", return_value=("built", "")),
+            # These tests exercise Play's VR choice, not the NVIDIA runtime download.
+            patch("forza_launcher.dlss.menu_runtime_enabled", return_value=False),
             patch("forza_launcher.build_env._detect_tools", return_value=build_env.Tools()),
         ]
         for p in self.patches:
@@ -92,6 +94,23 @@ class PlayInVrTests(unittest.TestCase):
             self.window.start_game(False)
             self.cfg.d["vr"]["checklist_hidden"] = True
             self.window.play_in_vr()
+        self.assertEqual(calls, [False, True])
+
+    def test_vr_choice_survives_dlss_preparation(self):
+        calls = []
+        self.cfg.d["vr"]["checklist_hidden"] = True
+        with patch("forza_launcher.dlss.menu_runtime_enabled", return_value=True), \
+                patch.object(self.window, "_prepare_dlss") as prepare, \
+                patch("forza_launcher.game.build_plan", side_effect=lambda *a, **k: calls.append(k.get("vr")) or
+                      (_ for _ in ()).throw(RuntimeError("stop"))):
+            for vr in (False, True):
+                self.window.start_game(vr)
+                self.assertEqual(calls, [] if not vr else [False])
+                # The download's completion resumes start_game without a new choice.
+                self.window._dlss_prepared = (self.cfg.data_home(), self.root / "bin",
+                                              self.cfg.settings.get("fh1_upscaler"))
+                self.window.start_game()
+        self.assertEqual(prepare.call_count, 2)
         self.assertEqual(calls, [False, True])
 
     def test_checklist_dont_show_again(self):

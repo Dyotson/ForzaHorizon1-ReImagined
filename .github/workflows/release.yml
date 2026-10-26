@@ -164,6 +164,13 @@ jobs:
           "$RUNNER_TEMP/xr-math-test"
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_frame_tags_test.cpp -o "$RUNNER_TEMP/xr-frame-tags-test"
           "$RUNNER_TEMP/xr-frame-tags-test"
+          # The actual camera hook must restore flat/menu state after a posed cockpit view.
+          for update in 0 4; do
+            g++ -std=c++20 -O2 -pthread -DFORZA_TITLE_UPDATE="$update" \
+              -I forza-recomp/src -I forza-recomp/tests/xr_lifecycle/mocks \
+              forza-recomp/tests/xr_lifecycle/vr_camera_test.cpp -o "$RUNNER_TEMP/vr-camera-$update-test"
+            "$RUNNER_TEMP/vr-camera-$update-test"
+          done
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from ReIGlue,
   # the project's fork of the SDK, at the tag tools/build_rexglue_sdk.sh pins. Cached on that script.
