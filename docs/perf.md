@@ -12,6 +12,13 @@ and reconstructs to 4K. 1080p Quality renders 720p directly and reconstructs to
 [Native DLSS](native_dlss.md) for the dimension table and validation limits.
 These launch checks are not a matched performance benchmark.
 
+## Co-op stall and sunrise FPS report (#444, 2026-10-25)
+
+I inspected both attached logs: they are successive snapshots of the same
+session. Sustained low FPS precedes the multi-second GPU fence waits, and the
+longer attachment shows recovery. The runtime cause remains unresolved.
+[Evidence, timeline and effective startup settings](issue-444-investigation.md).
+
 ## Native NVIDIA reconstruction, 2026-10-15 (before review fixes)
 
 These measurements predate the scene/HUD shader-cache correction. They are
@@ -1917,3 +1924,79 @@ up and the clocks down, the same session with the Deck kept cooler (a cooler roo
 confirm heat; if the GPU memory is full, the same session with the BIOS UMA frame buffer at 4 GB, or with
 `texture_cache_memory_limit_soft = 192` in `forza.toml` (a smaller texture cache: unused textures go after 30 s
 once it holds 192 MB), would tell whether memory placement is the cause.
+
+
+## HDD write amplification (#443)
+
+The issue attachment `forzalog.zip` contains a 150,249,543-byte `forza.log`,
+2026-10-25 20:27:05.214 through 21:08:21.135 (timestamps as logged). Counting
+records by severity yields 1,197,547 lines, including 1,193,642 debug records:
+896,546 XMA unknown-register messages and 125,297 PRESENT messages. The SDK
+uses synchronous spdlog loggers and a buffered basic file sink; its default
+flush threshold is info, with periodic flush disabled. Debug records do not
+individually force a flush. The log does not record actual filesystem write
+calls, flush settings or disk queue occupancy, so bytes and message counts
+cannot establish the physical HDD workload. The maintainer has already asked
+for an info-level retest; that result remains necessary.
+
+Independently, the log records 22 successful driver-cache saves totaling
+11,795,138,021 bytes (11.8 GB), retaining 252 pipelines in files between
+536,063,947 and 536,204,779 bytes. Fourteen successive saves have the same byte
+count as their predecessor. Equal lengths alone do not prove equal contents.
+Source inspection identifies a redundant-write path: adding any pipeline
+increments the global driver-cache generation, including pipelines omitted by
+the 512 MiB retained-subset budget. The next storage-thread save rewrites the
+whole retained subset even when none of its entries changed. Writes use a
+temporary file, stream flush and atomic replacement; on Windows replacement
+uses MOVEFILE_WRITE_THROUGH. They are separate from debug log writes.
+
+Patch 0342 compares the retained subset with the last successful save before
+opening a temporary file. It compares identity, destination, ordered keys,
+fresh sizes and immutable payloads (byte comparison if a pointer changed, even
+when checksums match). Weak references avoid extending payload lifetimes.
+Unchanged subsets acknowledge the captured generation without I/O. Failed
+writes retain the successful snapshot and retry later. Startup/reset begins
+with no snapshot; the on-disk format and restart reads are unchanged, as are
+0320's 512 MiB cap, smaller-entry packing and atomic replacement. Only the
+serialized storage writer uses the state; startup saves precede its creation,
+shutdown joins it before the final save/reset, and pipeline producers still
+publish under the existing mutex. A newer generation remains dirty when a
+save acknowledges an older captured generation.
+
+The log selects a GTX 1650 with about 4 GB device-local memory, although the
+report lists an RTX 5060 (both are enumerated). At minute 40 it reports about
+1541 MB device-local of a 3557 MB budget, 245 MB system GPU memory, 384 MB
+textures, 572 MB render targets, 32 MB readback buffers and 273+360 MB guest
+memory. Readback stalls occur in some windows, but these records do not show
+exhausted VRAM or measure host process memory/paging. Streaming can compete
+with the writes on an HDD; the log does not measure those disk reads. There
+is no disk trace or controlled game reproduction establishing which events
+caused the reporter's hitches. This change fixes the demonstrated redundant
+save path; it does not claim the entire issue is resolved.
+
+Validation on Windows: `tools/test_driver_pipeline_cache.cpp` compiled against
+an isolated SDK snapshot at bd833a2ab69d305f99ddf57418fc38ffec8af93d with all 124
+public patches applied. It passes bounded omitted-only additions, same-size
+changes, forced checksum collision, changed key/metadata, displaced entries,
+smaller-entry packing, separately loaded identical data, destination/identity
+changes, reset, weak payload lifetime, failed replacement/retry and concurrent
+readers, plus the existing corruption, replacement and six-start reuse model.
+A negative control disabling the unchanged fast path fails the omitted-only
+assertion. A private harness compiled the exact patched
+`SaveDriverPipelineCache` body and passed generation acknowledgement/no-write
+and denied Windows replacement/retry checks. Initial validation did not include
+a full GPU plugin/game build, HDD trace or game run.
+
+
+Follow-up Windows build validation: a private reconstruction of the pinned SDK
+plus all 124 public patches, with exact local gitlink copies and the carried
+SDL patches, configured with Clang 23.1.3, Vulkan/D3D12, DLSS, FSR3, Tracy and
+performance counters enabled. The three affected Vulkan translation units
+compiled first. The remaining `rexgpu-xenos` target then compiled and linked
+with ordinary Ninja `-j1 -k1` in 361 seconds, within a 20-minute limit. The
+matching `rexruntime.dll` linked too; the Ninja graph and all 1369 tracked SDK
+source hashes were unchanged. Static AMD64 PE inspection found the required
+`rex_gpu_abi_version` and `rex_gpu_create` exports plus the two existing GPU
+selection hints, and the plugin imports `rexruntime.dll`. Its DLSS capability
+manifest matches its SHA-256. No DLL was loaded, no shared prefix installed,
+and no game, persistence/restart reuse or HDD stutter validation was performed.

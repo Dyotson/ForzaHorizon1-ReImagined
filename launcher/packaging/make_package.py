@@ -25,7 +25,7 @@ sys.path.insert(0, str(HERE.parent))
 from forza_launcher import builder  # noqa: E402
 
 README = """Forza Horizon 1: ReImagined - launcher
-https://github.com/Dyotson/ForzaHorizon1-ReImagined
+https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 
 This package contains the launcher, the project's source code and the patched ReXGlue SDK
 pieces. It contains NO game code and NO game data. Open the launcher, point it at your own copy
@@ -61,6 +61,8 @@ def main():
         copy(REPO / "forza-recomp" / rel, stage / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, stage / "project" / "tools" / "cmake" / f.name)
+    for resource in builder.NATIVE_TUNING_FILES:
+        copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
             copy(f, stage / "server" / f.name)

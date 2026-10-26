@@ -13,6 +13,12 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main, 'launcher-stack/**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+      - 'screenshots/**'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 
 concurrency:
@@ -108,6 +114,11 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src tools/test_lsp_request_header.cpp -o "$RUNNER_TEMP/lsp-request-header-test"
           "$RUNNER_TEMP/lsp-request-header-test"
+      - if: runner.os == 'Linux'
+        name: Effective startup performance settings
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/performance_settings_test.cpp -o "$RUNNER_TEMP/performance-settings-test"
+          "$RUNNER_TEMP/performance-settings-test"
       - if: runner.os == 'Linux'
         name: Scene MSAA and tiling choice
         run: |

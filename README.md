@@ -5,7 +5,7 @@
 <h1 align="center">Forza Horizon 1: ReImagined</h1>
 
 > [!TIP]
-> **Install with the launcher: [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest).**
+> **Install with the launcher: [latest release](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/releases/latest).**
 > Windows installer, Linux Flatpak (recommended on SteamOS: [Steam Deck steps](docs/steam_deck.md)), or the Linux `.tar.gz`.
 > It updates itself, and it builds the game on your PC from your own copy.
 > [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/yu7zScdcWw)
@@ -87,18 +87,18 @@ These numbers are from one machine, a Ryzen 7 7800X3D with a Radeon RX 9060 XT (
 | 120 | 115.2 fps | 75.7 fps |
 | 144 | 111.5 fps | 70.1 fps |
 
-Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is render scale 1 with AMD FSR 1, 30 fps (40 with the screen at 40 Hz), Scene anti-aliasing Off and Console detail. Higher render scales and 60 fps cost more than the Deck has to spare. Install, settings, controls and suspend: [`docs/steam_deck.md`](docs/steam_deck.md).
+Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is render scale 1 with AMD FSR 1, 30 fps (40 with the screen at 40 Hz), Scene anti-aliasing Off and Console detail. Higher render scales and 60 fps cost more than the Deck has to spare. Install, settings, controls and suspend: [`docs/steam_deck.md`](docs/steam_deck.md).
 
-Shader prebuild and the shader-cache fixes shipped in 0.1.28. Further CPU savings for 4-core systems are in testing ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45)). [`docs/shader_prebuild.md`](docs/shader_prebuild.md) · [`docs/perf.md`](docs/perf.md)
+Shader prebuild and the shader-cache fixes shipped in 0.1.28. Further CPU savings for 4-core systems are in testing ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45)). [`docs/shader_prebuild.md`](docs/shader_prebuild.md) · [`docs/perf.md`](docs/perf.md)
 
 ## Known issues
 
-- **Low-end CPUs and the Steam Deck.** Free roam is about 15–20 fps on a Deck and about 15–25 fps on a 4-core laptop or an integrated GPU. Big races are slower. Use 30 fps. Work is in progress ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140), [#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)).
-- **NVIDIA.** Stutter on Vulkan with a warm shader cache ([#49](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/49), [#158](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/158)), green texture glitches ([#106](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/106)), flicker and coloured artifacts at render scale 3 ([#47](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/47)), and flicker and greenish reflections on Direct3D 12 ([#46](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/46)). On Windows, **Settings > Display > Graphics API** should stay on Vulkan unless you are comparing. Some fast NVIDIA PCs also report the game barely using the machine ([#181](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/181), [#34](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/34)).
-- **Crashes.** A bad guest read during a race is still open ([#83](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/83)). Quitting to the title screen can crash ([#262](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/262)). Alt-tab on some NVIDIA systems aborts the game ([#221](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/221)). A race crash that exited with code 134 ([#182](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/182)) is fixed in 0.1.28; if you still hit it, comment there. Flashing or black video is still open on some AMD and Intel machines ([#91](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/91), [#114](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/114)).
+- **Low-end CPUs and the Steam Deck.** Free roam is about 15–20 fps on a Deck and about 15–25 fps on a 4-core laptop or an integrated GPU. Big races are slower. Use 30 fps. Work is in progress ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/140), [#263](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/268)).
+- **NVIDIA.** Stutter on Vulkan with a warm shader cache ([#49](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/49), [#158](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/158)), green texture glitches ([#106](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/106)), flicker and coloured artifacts at render scale 3 ([#47](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/47)), and flicker and greenish reflections on Direct3D 12 ([#46](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/46)). On Windows, **Settings > Display > Graphics API** should stay on Vulkan unless you are comparing. Some fast NVIDIA PCs also report the game barely using the machine ([#181](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/181), [#34](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/34)).
+- **Crashes.** A bad guest read during a race is still open ([#83](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/83)). Quitting to the title screen can crash ([#262](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/262)). Alt-tab on some NVIDIA systems aborts the game ([#221](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/221)). A race crash that exited with code 134 ([#182](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/182)) is fixed in 0.1.28; if you still hit it, comment there. Flashing or black video is still open on some AMD and Intel machines ([#91](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/91), [#114](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/114)).
 - **Title Update 4 and the base game do not share rooms.** A TU4 game only meets other TU4 players. A profile that has been saved on TU4 is refused by the base game ("MISSING TITLE UPDATE"). [`docs/dlc.md`](docs/dlc.md#online-20)
 
-Other open reports include a lobby that stops taking joins after time in a club ([#186](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/186)) and an online level reset ([#245](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/245)).
+Other open reports include a lobby that stops taking joins after time in a club ([#186](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/186)) and an online level reset ([#245](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/245)).
 
 ## Requirements
 
@@ -111,7 +111,7 @@ Other open reports include a lobby that stops taking joins after time in a club 
 
 This is the way to install. The launcher builds the game on your machine from your own files. Nothing of the game is downloaded.
 
-1. Get the launcher from the [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest). On Windows, the installer. On Linux, the Flatpak (recommended on SteamOS) or the `.tar.gz`. From v0.1.9 onward the launcher checks for updates itself (**About > Launcher updates**).
+1. Get the launcher from the [latest release](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/releases/latest). On Windows, the installer. On Linux, the Flatpak (recommended on SteamOS) or the `.tar.gz`. From v0.1.9 onward the launcher checks for updates itself (**About > Launcher updates**).
    The Flatpak is `flatpak install --user ForzaHorizon1-ReImagined-x86_64.flatpak`. It pulls the freedesktop SDK runtime from Flathub. Install the compiler extension once, or the launcher downloads a 2 GB compiler instead and tells you so:
 
    ```sh
@@ -140,7 +140,7 @@ The same document is installed as `windows-build-manifest.json`. If antivirus
 quarantines a file, report the exact file path, detection name and launcher version
 from Protection history. The published manifest can identify the expected file
 without restoring it. Signing and antivirus assessment remain separate work
-([#354](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/354)).
+([#354](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/354)).
 
 ## Building from source
 
@@ -178,7 +178,7 @@ Title Update 4 players and base-game players do not meet. The Auction House has 
 [`docs/framerate.md`](docs/framerate.md),
 [`docs/online_vision.md`](docs/online_vision.md),
 [`docs/PROJECT.md`](docs/PROJECT.md),
-and the [issue tracker](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues).
+and the [issue tracker](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
 
 ## Roadmap
 
@@ -194,7 +194,7 @@ Every card is an issue. Comment there to discuss an item or help with it.
 ## Community
 
 Questions, help with setup and online sessions: [Discord](https://discord.gg/yu7zScdcWw).
-Bugs and feature requests: [issues](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues).
+Bugs and feature requests: [issues](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
 The bug report template asks for your OS, CPU, GPU and log.
 
 ## Legal
