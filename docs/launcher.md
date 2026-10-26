@@ -849,9 +849,9 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   generated uninstaller or the separately bundled Microsoft redistributable. If
   payload signing is added, generate this manifest after signing. The installer
   smoke test verifies that the installed launcher matches its recorded hash.
-* `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
-  deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
-* Preview the page: `tools/preview_site.sh`.
+* The website (forza.dyotson.dev) is its own repository,
+  [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website), with its Pages workflow
+  and `tools/preview_site.sh`. Screenshots it shows from `docs/images` are copied there.
 
 ## Developing
 
