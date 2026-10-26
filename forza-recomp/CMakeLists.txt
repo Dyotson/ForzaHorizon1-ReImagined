@@ -139,6 +139,7 @@ set(FORZA_SOURCES
     src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
+    src/hooks/garage_capacity.cpp
     src/hooks/ultrawide_projection.cpp
     src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
