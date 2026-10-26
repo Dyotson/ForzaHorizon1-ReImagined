@@ -12,7 +12,7 @@ import math
 from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "VR", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -266,6 +266,21 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
     "Show a calibration strip over the picture. Turn off when finished. "
     "An SDR screenshot cannot show the physical brightness.", "HDR",
     choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
+
+# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333). Launcher-only: the values
+# go to the game as arguments of "Play in VR" (vr.py), so Play always starts flat.
+add("vr_mode", "Mode", "VR", "choice", "cockpit",
+    "Cockpit puts you in the driver's seat and turns the in-car camera with your head. "
+    "Big screen shows the game on a screen in front of you, in any camera.", "VR (experimental)",
+    choices=[("cockpit", "Cockpit (recommended)"), ("screen", "Big screen")])
+add("vr_picture", "Sharpness", "VR", "choice", "game",
+    "How sharp the cockpit looks. Higher is clearer but needs a stronger graphics card; "
+    "if the headset stutters, go back a step.", "VR (experimental)",
+    choices=[("game", "Standard"), ("sharp", "Sharp (needs a stronger graphics card)"),
+             ("sharpest", "Sharpest (needs a much stronger graphics card)")])
+add("vr_seat_height_cm", "Seat height (cm)", "VR", "float", -4.0,
+    "Raises or lowers your eye in the cockpit. Lower it if your head pokes through the roof.",
+    "VR (experimental)", lo=-30, hi=30, step=1)
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,

@@ -13,6 +13,7 @@ for f in bin/rexglue lib/librexgpu-xenos.so lib/librexruntime.so; do
     [ -f "$OVERLAY/$f" ] || { echo "missing $OVERLAY/$f (run tools/build_rexglue_sdk.sh)" >&2; exit 1; }
 done
 files=(bin/rexglue lib/librexgpu-xenos.so lib/librexruntime.so)
+[ -f "$OVERLAY/lib/libopenxr_loader.so.1" ] && files+=(lib/libopenxr_loader.so.1)  # VR (docs/vr.md)
 [ -d "$OVERLAY/fh1-licenses" ] && files+=(fh1-licenses)
 tar -C "$OVERLAY" -hczf "$OUT" "${files[@]}"
 echo "$OUT"

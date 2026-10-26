@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "tools/build_rexglue_sdk.sh"
+TAG = re.search(r"(?m)^REIGLUE_TAG=(\S+)", SCRIPT.read_text()).group(1)  # the pinned tag
 BASH = (str(Path("C:/Program Files/Git/bin/bash.exe")) if os.name == "nt" and
         Path("C:/Program Files/Git/bin/bash.exe").is_file() else shutil.which("bash"))
 
@@ -41,7 +42,7 @@ class ReiglueCheckout(unittest.TestCase):
         patches.mkdir(parents=True)
         (patches / "0147.patch").write_text(patch)
         self.target = self.commit(self.origin, "SDK changes")
-        self.git(self.origin, "tag", "--no-sign", "-a", "fh1-0.10.0.24-r1", "-m", "fixture tag")
+        self.git(self.origin, "tag", "--no-sign", "-a", TAG, "-m", "fixture tag")
         self.source = self.root / "checkout with spaces"
         text = SCRIPT.read_text()
         text = re.sub(r"(?m)^SDK_COMMIT=[0-9a-f]+", "SDK_COMMIT=" + self.base, text)
@@ -192,7 +193,7 @@ class ReiglueCheckout(unittest.TestCase):
         self.ready()
         (self.source / "sdk.txt").write_text("other revision\n")
         other = self.commit(self.source, "Different SDK")
-        self.git(self.source, "tag", "--no-sign", "--force", "fh1-0.10.0.24-r1", other)
+        self.git(self.source, "tag", "--no-sign", "--force", TAG, other)
         result = self.prepare()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.git(self.source, "rev-parse", "HEAD").stdout.strip(), other)

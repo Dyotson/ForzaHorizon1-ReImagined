@@ -155,6 +155,24 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/mod_archive_test.cpp -o "$RUNNER_TEMP/mod-archive-test"
           "$RUNNER_TEMP/mod-archive-test"
+      - if: runner.os == 'Linux'
+        name: VR head pose, OpenXR maths and frame pairing
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror forza-recomp/tests/vr_head_pose_math_test.cpp -o "$RUNNER_TEMP/vr-head-pose-test"
+          "$RUNNER_TEMP/vr-head-pose-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_math_test.cpp -o "$RUNNER_TEMP/xr-math-test"
+          "$RUNNER_TEMP/xr-math-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/xr_frame_tags_test.cpp -o "$RUNNER_TEMP/xr-frame-tags-test"
+          "$RUNNER_TEMP/xr-frame-tags-test"
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/vr_cockpit_space_test.cpp -o "$RUNNER_TEMP/vr-cockpit-space-test"
+          "$RUNNER_TEMP/vr-cockpit-space-test"
+          # The actual camera hook must restore flat/menu state after a posed cockpit view.
+          for update in 0 4; do
+            g++ -std=c++20 -O2 -pthread -DFORZA_TITLE_UPDATE="$update" \
+              -I forza-recomp/src -I forza-recomp/tests/xr_lifecycle/mocks \
+              forza-recomp/tests/xr_lifecycle/vr_camera_test.cpp -o "$RUNNER_TEMP/vr-camera-$update-test"
+            "$RUNNER_TEMP/vr-camera-$update-test"
+          done
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from ReIGlue,
   # the project's fork of the SDK, at the tag tools/build_rexglue_sdk.sh pins. Cached on that script.
@@ -169,7 +187,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rexglue-overlay-linux-amd64.tar.gz
-          key: sdk-overlay-linux-${{ hashFiles('tools/build_rexglue_sdk.sh', 'tools/test_readback_history.cpp', 'tools/test_frame_cost.cpp', 'tools/test_world_ao.cpp', 'tools/test_texture_pack_dds.cpp', 'tools/test_shader_load_memo.cpp', 'tools/test_pipeline_lookahead.cpp', 'forza-recomp/tests/wheel_ff_log_test.cpp', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_vulkan_memory_placement.cpp', 'tools/test_submission_watch.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
+          key: sdk-overlay-linux-${{ hashFiles('tools/build_rexglue_sdk.sh', 'tools/test_readback_history.cpp', 'tools/test_frame_cost.cpp', 'tools/test_world_ao.cpp', 'tools/test_vr_stereo.cpp', 'tools/test_texture_pack_dds.cpp', 'tools/test_shader_load_memo.cpp', 'tools/test_pipeline_lookahead.cpp', 'forza-recomp/tests/wheel_ff_log_test.cpp', 'forza-recomp/tests/wheel_ff_reject_test.cpp', 'forza-recomp/tests/wheel_thrustmaster_test.cpp', 'forza-recomp/tests/wheel_rumble_test.cpp', 'forza-recomp/tests/wheel_ff_test.cpp', 'forza-recomp/tests/wheel_devices_test.cpp', 'forza-recomp/tests/wheel_buttons_test.cpp', 'forza-recomp/tests/wheel_shifter_test.cpp', 'forza-recomp/tests/wheel_min_force_test.cpp', 'forza-recomp/tests/wheel_gear_request_test.cpp', 'forza-recomp/tests/wheel_handbrake_test.cpp', 'forza-recomp/tests/wheel_primary_test.cpp', 'tools/test_wait_wakeups.cpp', 'tools/test_driver_pipeline_cache.cpp', 'tools/test_pipeline_store.cpp', 'tools/test_fh1_screen_raster.cpp', 'tools/test_render_target_trim.cpp', 'tools/test_vulkan_memory_placement.cpp', 'tools/test_submission_watch.cpp', 'tools/test_gamepad_remap.cpp', 'tools/test_pipeline_prebuild.cpp', 'tools/test_vfs_host_errors.cpp', 'tools/test_xma_invalid_input.cpp', 'launcher/packaging/ci_linux_sdk_setup.sh', 'launcher/packaging/ci_toolchain_debs.txt', 'launcher/forza_launcher/pins.py') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build dependencies, LLVM, CMake and the pinned SDK nightly
         run: |
@@ -210,6 +228,10 @@ jobs:
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics" \
             tools/test_frame_cost.cpp -o "$RUNNER_TEMP/frame-cost-test"
           "$RUNNER_TEMP/frame-cost-test"
+          # #333: VR true stereo's decisions (ReIGlue 0396).
+          clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics" \
+            tools/test_vr_stereo.cpp -o "$RUNNER_TEMP/vr-stereo-test"
+          "$RUNNER_TEMP/vr-stereo-test"
           # #380: world ambient occlusion (patch 0350).
           clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/src/graphics/vulkan" \
             tools/test_world_ao.cpp -o "$RUNNER_TEMP/world-ao-test"
@@ -385,6 +407,12 @@ jobs:
           cmake --build "$RUNNER_TEMP/sdk-filesystem" --parallel 2
           ctest --test-dir "$RUNNER_TEMP/sdk-filesystem" --output-on-failure
           cp "$SRC/LICENSE" "$PREFIX/LICENSE-rexglue-sdk.txt"
+          # The OpenXR loader for the VR setting (docs/vr.md, "Packaging"; pinned in pins.py): the
+          # launcher copies every DLL of bin/ next to forza.exe. The game opens it only with VR on.
+          python launcher/packaging/ci_fetch.py openxr-loader-windows "$RUNNER_TEMP/openxr"
+          cp "$RUNNER_TEMP/openxr/x64/bin/openxr_loader.dll" "$PREFIX/bin/"
+          mkdir -p "$PREFIX/share/licenses/openxr-loader"
+          cp "$RUNNER_TEMP/openxr/share/doc/openxr/LICENSE" "$PREFIX/share/licenses/openxr-loader/LICENSE.txt"
           tar -C "$PREFIX" -czf rexglue-overlay-windows-amd64.tar.gz .
       - if: failure()
         uses: actions/upload-artifact@v4

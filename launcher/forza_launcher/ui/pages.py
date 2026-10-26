@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
-               shader_prebuild)
+               shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -51,6 +51,7 @@ def human_time(seconds):
 class PlayPage(QWidget):
     goto_setup = Signal()
     play_requested = Signal()
+    play_vr_requested = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -90,6 +91,12 @@ class PlayPage(QWidget):
         self.play.setCursor(Qt.PointingHandCursor)
         self.play.clicked.connect(self._clicked)
         row.addWidget(self.play)
+        self.play_vr = QPushButton("Play in VR")
+        self.play_vr.setCursor(Qt.PointingHandCursor)
+        self.play_vr.setToolTip("Experimental: starts the game in your VR headset.")
+        self.play_vr.clicked.connect(self.play_vr_requested.emit)
+        self.play_vr.hide()
+        row.addWidget(self.play_vr)
         self.stop = QPushButton("Stop")
         self.stop.clicked.connect(window.stop_game)
         self.stop.hide()
@@ -99,6 +106,10 @@ class PlayPage(QWidget):
         logs.clicked.connect(lambda: open_folder(cfg.data_home()))
         row.addWidget(logs)
         lay.addLayout(row)
+        self.vr_note = label("VR is experimental: it is playable, but expect rough edges. "
+                             "Take a break if you feel motion sickness.", "warn")
+        self.vr_note.hide()
+        lay.addWidget(self.vr_note)
         launcher_logs = QPushButton("Open launcher log folder")
         launcher_logs.setObjectName("link")
         launcher_logs.setToolTip("Open the folder containing launcher.log (launcher errors and tracebacks).")
@@ -205,6 +216,9 @@ class PlayPage(QWidget):
             else:
                 self.mode = "setup"
                 self.play.setText("Set up the game")
+        self.play_vr.setVisible(self.mode == "play" and self.play.isEnabled() and ready
+                                and vr.detect() is not None)
+        self.vr_note.setVisible(self.play_vr.isVisibleTo(self))
         if not self._keep_warn:
             self.warn.setVisible(False)
 

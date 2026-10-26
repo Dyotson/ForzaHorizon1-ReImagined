@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
                                QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs, vr
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
-from .widgets import DoubleSpinBox, SpinBox, Switch, card, label
+from .widgets import Disclosure, DoubleSpinBox, SpinBox, Switch, card, label
 
 NO_WHEEL = Qt.StrongFocus
 
@@ -550,6 +550,8 @@ class SettingsPage(QWidget):
     def _build_group(self, g):
         leads = {
             "Display": "Window, frame rate and picture.",
+            "VR": "Experimental: playable, but expect rough edges. Play with a VR headset: "
+                  "press Play in VR on the Play page.",
             "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
             "Gameplay": "How the game plays in single player. Online games always play as shipped.",
             "Audio": "",
@@ -560,11 +562,15 @@ class SettingsPage(QWidget):
         scroll, lay = self._page(g, leads[g])
         if g == "Display":
             self._gpu_block(lay)
+        if g == "VR":
+            self._vr_status_block(lay)
         if g == "Online":
             self._online_block(lay)
         if g == "Profile":
             self._profile_block(lay)
         self._rows(lay, g)
+        if g == "VR":
+            self._vr_extras_block(lay)
         if g == "Display":
             self._texture_pack_block()
         if g == "Controls":
@@ -576,6 +582,38 @@ class SettingsPage(QWidget):
             self._advanced_block(lay)
         lay.addStretch(1)
         return scroll
+
+    # --- VR (vr.py) -----------------------------------------------------------------
+    def _vr_status_block(self, lay):
+        runtime = vr.detect()
+        self.vr_status = label("", "")
+        self.vr_status.setTextFormat(Qt.RichText)
+        self.vr_status.setOpenExternalLinks(True)
+        self.vr_status.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        if runtime is not None:
+            self.vr_status.setText(f"\u2713 {runtime.name} found")
+        else:
+            self.vr_status.setText(
+                "No VR app found: install "
+                f"<a href=\"{vr.WIVRN_URL}\">WiVRn</a> (Linux) or "
+                f"<a href=\"{vr.STEAMVR_URL}\">SteamVR</a> / Meta Quest Link (Windows).")
+        frame, content = card(margins=(24, 16, 24, 16), spacing=6)
+        content.addWidget(self.vr_status)
+        lay.addWidget(frame)
+
+    def _vr_extras_block(self, lay):
+        content = self.section_contents.get("VR (experimental)")
+        if content is None:
+            return
+        content.addWidget(hline())
+        content.addWidget(label("Recentre: Home key, or hold both sticks for a second.", "help"))
+        advanced = Disclosure("Advanced: what VR changes")
+        advanced.content.addWidget(label(
+            "Play in VR sets these for that session only; your normal settings are not changed.", "help"))
+        for name, value, _key in vr.SESSION_OVERRIDES:
+            advanced.content.addWidget(label(f"{name}: {value}", "help"))
+        self.vr_advanced = advanced
+        content.addWidget(advanced)
 
     # --- texture packs (#384) -------------------------------------------------------
     def _texture_pack_block(self):
