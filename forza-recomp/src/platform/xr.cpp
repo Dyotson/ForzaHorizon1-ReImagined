@@ -2170,6 +2170,7 @@ bool CockpitView(vr::HeadTransform& head, float& vertical_fov, float& aspect, ui
     vr::HeadPose test;
     const Pose game = TestPoseOffset(test) ? HeldHead(AddOffset(real, FromHeadPose(test))) : rel;
     head = ToGameHead(TurnView(game, t.frustum), float(REXCVAR_GET(vr_seat_height_cm)) / 100.0f);
+    t.game = head;
   }
   t.id = g.next_tag.fetch_add(1);
   if (!t.id) t.id = g.next_tag.fetch_add(1);
@@ -2201,6 +2202,14 @@ void RememberPosedView(uint32_t tag, const uint8_t matrix[64]) {
 void OnRenderView(uint32_t camera, const uint8_t matrix[64]) {
   std::lock_guard lock(g.tags_mutex);
   g.swap_tagger.OnView(camera, g.views.Match(matrix));
+}
+
+bool RenderViewHead(vr::HeadTransform& head) {
+  std::lock_guard lock(g.tags_mutex);
+  const FrameTag* tag = g.tags.Find(g.swap_tagger.Current());
+  if (!tag) return false;
+  head = tag->game;
+  return true;
 }
 
 void TagSwap(uint8_t* base, uint32_t packet) {

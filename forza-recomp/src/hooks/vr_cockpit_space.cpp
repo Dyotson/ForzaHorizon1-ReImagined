@@ -17,7 +17,10 @@
 // under the camera's shake; past 10 cm the game uses the real offset, which is the jump version 7
 // found.
 //
-// In the VR cockpit the hooks below give the cabin passes the real offset at every distance:
+// In the VR cockpit the hooks below give the cabin passes the eye's real offset at every distance (the
+// head's own, from the frame's head transform: the game's (camera - point) also carries how far the
+// camera and the car's point are apart when the cabin is drawn, a few millimetres while driving), and
+// the VR near plane instead of the car's 10 cm:
 // sub_82DCF1C0 marks its thread as inside the pass, sub_82447400 hands over the car render object it
 // returns there, and before each of the three cabin draws the offset, the camera's position, its
 // matrix's translation and the view are written again from the position the pass saved and the
@@ -35,8 +38,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
+REXCVAR_DECLARE(double, vr_near_plane_cm);  // vr_head_pose.cpp
 REXCVAR_DEFINE_BOOL(vr_cockpit_parallax, true, "VR",
                     "Cockpit: draw the car's interior from where the head really is (the game draws it "
                     "from the in-car camera's point while the view is within 10 cm of it, so the cabin "
@@ -44,6 +49,8 @@ REXCVAR_DEFINE_BOOL(vr_cockpit_parallax, true, "VR",
 
 namespace {
 constexpr uint32_t kViewMatrix = 0;          // view constants: world to camera
+constexpr uint32_t kProjection = 64;         // the projection (row 2 z at +104, row 3 z at +120)
+constexpr uint32_t kFarPlane = 624;          // the far plane the pass builds its projection with
 constexpr uint32_t kCameraMatrix = 128;      // camera to world (row 3 at +176: the position)
 constexpr uint32_t kCameraPosition = 192;    // the camera's position (in the pass: the offset)
 constexpr uint32_t kSavedPosition = 208;     // the pass keeps the world position here
@@ -91,21 +98,44 @@ void Unsnap(uint8_t* base, uint32_t constants) {
     camera[i] = LoadFloat(base, constants + kSavedPosition + 4 * i);
     point[i] = int32_t(Load32(base, pass.car + kCarCameraPoint + 4 * i));
   }
-  float offset[4];
-  forza::vr::CockpitOffset(camera, point, offset);
+  // The game's own offset (the camera's position against the car's point), and the head's.
+  float game[4];
+  forza::vr::CockpitOffset(camera, point, game);
+  float m[16];
+  for (int i = 0; i < 12; ++i) m[i] = LoadFloat(base, constants + kCameraMatrix + 4 * i);
+  float offset[4] = {game[0], game[1], game[2], game[3]};
+  forza::vr::HeadTransform head;
+  const bool from_head = forza::xr::RenderViewHead(head);
+  if (from_head) forza::vr::HeadOffset(head, m, offset);
   // Sanity: the in-car camera point is the car's, a few metres at most from the camera.
   if (!(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2] < 100.0f)) return;
   // (A test aid, FIFO "parallax 2": the shading keeps the game's eye position, only the geometry
   // moves, to tell view-dependent shading from light that slides.)
   if (parallax_test.load(std::memory_order_relaxed) != 2)
     for (int i = 0; i < 4; ++i) StoreFloat(base, constants + kCameraPosition + 4 * i, offset[i]);
-  float m[16];
-  for (int i = 0; i < 12; ++i) m[i] = LoadFloat(base, constants + kCameraMatrix + 4 * i);
   m[12] = offset[0], m[13] = offset[1], m[14] = offset[2], m[15] = 1.0f;
   for (int i = 12; i < 16; ++i) StoreFloat(base, constants + kCameraMatrix + 4 * i, m[i]);
   float view[16];
   forza::vr::RigidInverse(m, view);
   for (int i = 0; i < 16; ++i) StoreFloat(base, constants + kViewMatrix + 4 * i, view[i]);
+  // The pass's own near plane is the car's (its render object's virtual +456, CockpitNearPlane in
+  // the car's data: 10 cm for the test save's car), not the camera's: an eye moved toward the
+  // driver's door or the roof had the headliner over the door and the pillar within 10 cm, cut away
+  // (the sky through the roof, versions 2-7). The VR near plane instead (vr_near_plane_cm), as for
+  // the world.
+  const float far_plane = LoadFloat(base, constants + kFarPlane);
+  const float near_plane = float(REXCVAR_GET(vr_near_plane_cm)) / 100.0f;
+  const float p22 = LoadFloat(base, constants + kProjection + 40);
+  if (far_plane > near_plane * 2 && p22 > 0) {
+    const float z = far_plane / (far_plane - near_plane);
+    StoreFloat(base, constants + kProjection + 40, z);
+    StoreFloat(base, constants + kProjection + 56, -z * near_plane);
+  }
+  // A test aid: FORZA_VR_CABIN_TRACE=1 logs the offset used and the game's own every 24th draw.
+  static const bool trace = std::getenv("FORZA_VR_CABIN_TRACE") != nullptr;
+  static std::atomic<uint32_t> n{0};
+  if (trace && n++ % 24 == 0)
+    REXLOG_INFO("VR cabin trace: offset {:.4f} {:.4f} {:.4f} (head {}) game {:.4f} {:.4f} {:.4f}", offset[0], offset[1], offset[2], from_head, game[0], game[1], game[2]);
   static std::atomic<bool> logged{false};
   if (!logged.exchange(true))
     REXLOG_INFO("VR: the cabin is drawn from the eye's own position ({:.1f} cm from the in-car camera's "

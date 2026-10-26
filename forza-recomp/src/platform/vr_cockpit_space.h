@@ -11,6 +11,8 @@
 // really is, slides the shadows over it.
 #pragma once
 
+#include "vr_head_pose_math.h"
+
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -44,6 +46,17 @@ inline void CockpitOffset(const float camera[4], const int32_t point[4], float o
 constexpr float kCockpitSnapSquared = 0.01f;
 inline bool GameSnaps(const float offset[4]) {
   return offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2] < kCockpitSnapSquared;
+}
+
+// The eye's offset from the in-car camera's own position in world axes, from the head transform the
+// game's camera was posed with (posed view = view * inverse([R 0; t 1]), t in the camera's own space)
+// and the posed camera-to-world matrix m (row vectors, rows 0-2 the axes): t * R_own, R_own = R^T * m.
+// Unlike the game's (camera - point), it carries no difference between where the car's point and the
+// camera are at the moment the cabin is drawn: only the head's. out[3] is left as it is.
+inline void HeadOffset(const HeadTransform& h, const float m[16], float out[4]) {
+  float u[3];  // R * t^T: u_k = sum_i R[k][i] t_i
+  for (int k = 0; k < 3; ++k) u[k] = h.r[k][0] * h.t[0] + h.r[k][1] * h.t[1] + h.r[k][2] * h.t[2];
+  for (int j = 0; j < 3; ++j) out[j] = u[0] * m[j] + u[1] * m[4 + j] + u[2] * m[8 + j];
 }
 
 // The view (world to camera) of a rigid camera-to-world matrix, row vectors, rows 0-2 the axes and

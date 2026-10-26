@@ -51,6 +51,8 @@ void RememberPosedView(uint32_t tag, const uint8_t matrix[64]);
 // Render thread: a view matrix reached the render-side camera (CPresentationCamera at guest
 // address `camera`).
 void OnRenderView(uint32_t camera, const uint8_t matrix[64]);
+// Render thread: the head transform the view it draws now was posed with (false: not a posed view).
+bool RenderViewHead(vr::HeadTransform& head);
 // Render thread, at VdSwap after the SDK wrote the swap packet at guest address `packet`:
 // puts the tag of the frame being swapped into it.
 void TagSwap(uint8_t* base, uint32_t packet);

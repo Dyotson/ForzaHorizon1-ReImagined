@@ -74,12 +74,40 @@ void TestRigidInverse() {
     for (int j = 0; j < 4; ++j) identity &= Near(prod[4 * i + j], i == j ? 1.0f : 0.0f);
   Check(identity, "camera matrix times view is the identity");
 }
+// The head's offset in world axes is where the posed camera is, less where the camera itself is.
+void TestHeadOffset() {
+  const HeadTransform h = ToTransform({35.0f, -12.0f, 4.0f, 0.06f, -0.04f, 0.03f});
+  // The camera's own camera-to-world matrix: turned 70 degrees about y, pitched 5, at p.
+  const float a = 1.2217f, b = -0.0873f;
+  const float ya[3][3] = {{std::cos(a), 0, -std::sin(a)}, {0, 1, 0}, {std::sin(a), 0, std::cos(a)}};
+  const float pi[3][3] = {{1, 0, 0}, {0, std::cos(b), std::sin(b)}, {0, -std::sin(b), std::cos(b)}};
+  float c[3][3] = {};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      for (int k = 0; k < 3; ++k) c[i][j] += pi[i][k] * ya[k][j];
+  const float p[3] = {87.98f, 101.65f, -3920.9f};
+  // posed = H * C: rows 0-2 R * C, row 3 t * C + p
+  float m[16] = {};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      for (int k = 0; k < 3; ++k) m[4 * i + j] += h.r[i][k] * c[k][j];
+  for (int j = 0; j < 3; ++j) m[12 + j] = h.t[0] * c[0][j] + h.t[1] * c[1][j] + h.t[2] * c[2][j] + p[j];
+  m[15] = 1;
+  float out[4] = {0, 0, 0, 7};
+  HeadOffset(h, m, out);
+  bool ok = out[3] == 7;
+  for (int j = 0; j < 3; ++j) ok &= Near(out[j], m[12 + j] - p[j], 2e-3f);
+  Check(ok, "head offset is the posed camera less the camera's own position");
+  const float len = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+  Check(Near(len, std::sqrt(0.06f * 0.06f + 0.04f * 0.04f + 0.03f * 0.03f), 1e-4f), "a rigid move keeps its length");
+}
 }  // namespace
 
 int main() {
   TestFixedPoint();
   TestOffset();
   TestRigidInverse();
+  TestHeadOffset();
   if (failures) {
     std::printf("%d failure(s)\n", failures);
     return 1;
