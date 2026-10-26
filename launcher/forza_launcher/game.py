@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3, power
+from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3, power, tuning_status
 from .config import Config, parse_toml, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
@@ -500,6 +500,22 @@ def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
     text = render_toml(cfg)
     return (native_update_requested(cfg, text) and
             update_data_root(cfg, install, text) == install.dir / "update")
+
+
+def native_tuning_warning(cfg: Config, install: GameInstall) -> str:
+    status = tuning_status.read(install.dir)
+    if status and status["code"] != "ready":
+        return tuning_status.summary(status)
+    if not cfg["tu_package"]:
+        return tuning_status.summary(tuning_status.failure(
+            "no_title_update", "This build needs FH1 Title Update 4 for tuning.",
+            "Select your Title Update 4 package in Setup, then Build."))
+    if status and status["code"] == "ready":
+        return ("Native car tuning resources were prepared, but are now missing or incomplete. "
+                "Open Setup and Build to restore them. Normal play is available.")
+    return ("Native car tuning is enabled, but its resources are missing. "
+            "Open Setup and Build with Title Update 4 selected. If you already rebuilt, "
+            "send the build log's 'Native car tuning unavailable' error. Normal play is available.")
 
 
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver, vr=False) -> LaunchPlan:

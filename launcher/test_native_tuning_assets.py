@@ -96,6 +96,26 @@ class TuningAssets(unittest.TestCase):
             assets.stage(self.update, output)
         self.assertFalse(output.exists())
 
+    def test_wrong_update_reports_found_version_and_repair_action(self):
+        path = self.update / "default.xex"
+        header = bytearray(path.read_bytes())
+        struct.pack_into(">I", header, 36, 0x100)
+        path.write_bytes(header)
+        with self.assertRaises(assets.PreparationError) as caught:
+            assets.stage(self.update, self.root / "prepared")
+        status = assets.error_diagnostic(caught.exception)
+        self.assertEqual(status["code"], "wrong_title_update")
+        self.assertIn("00000100", status["detail"])
+        self.assertIn("Setup", status["action"])
+
+    def test_missing_and_access_errors_have_distinct_actions(self):
+        for error, code in ((FileNotFoundError("missing media.zip"), "missing_file"),
+                            (PermissionError("output denied"), "access_denied")):
+            with self.subTest(code=code):
+                status = assets.error_diagnostic(error)
+                self.assertEqual(status["code"], code)
+                self.assertEqual(status["detail"], str(error))
+
 
 if __name__ == "__main__":
     unittest.main()

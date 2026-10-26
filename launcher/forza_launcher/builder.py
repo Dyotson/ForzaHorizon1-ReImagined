@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import __version__, paths, pins
+from . import __version__, paths, pins, tuning_status
 from . import build_env, cleanenv, datafolder, fetch, specs
 from .fetch import Cancelled
 
@@ -419,6 +419,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
         code = proc.wait()
     finally:
         stop.set()
+        proc.stdout.close()
         if mon:
             mon.stop_flag.set()
             monitor["peak"] = max(monitor.get("peak", 0), mon.peak)
@@ -749,27 +750,52 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
     the codegen input and is never modified. Return whether native resources were installed.
     """
     work = build_dir(opts.root).resolve()
+    rt = runtime_dir(opts.root)
+
+    def record(value):
+        try:
+            tuning_status.write(rt, value)
+        except OSError as error:
+            rep.log(f"Could not save tuning diagnostic: {error}")
+
+    def unavailable(value):
+        record(value)
+        rep.log(tuning_status.summary(value) + f" Diagnostic: {value['code']}. Installing the stock FH1 update.")
+        if value["detail"]:
+            rep.log("Tuning preparation details: " + value["detail"])
+        _publish_runtime_update(opts.root, None, rep, "update-native")
+        return False
+
     if tu is not None and work.is_relative_to(tu.resolve()):
         raise BuildError("The source title update must not contain the build workspace.")
     # Always install the unmodified update. Restart-only options select the
     # independent prepared overlay at launch, without requiring a rebuild.
     _publish_runtime_update(opts.root, tu, rep)
     if tu is None:
-        _publish_runtime_update(opts.root, None, rep, "update-native")
-        return False
+        return unavailable(tuning_status.failure("no_title_update", "This build has no Title Update 4 selected.",
+                           "Select your FH1 Title Update 4 package in Setup, then Build."))
     work.mkdir(parents=True, exist_ok=True)
     script = native_tuning_script()
     if script is None:
-        rep.log("Native car tuning unavailable: preparation tools are missing; installing the stock FH1 update.")
-        _publish_runtime_update(opts.root, None, rep, "update-native")
-        return False
+        return unavailable(tuning_status.failure("missing_tools", "This launcher is missing the tuning preparation tool.",
+                           "Reinstall the current launcher release, then Build with Title Update 4 selected."))
     with tempfile.TemporaryDirectory(prefix="native-tuning-", dir=work) as directory:
         prepared = Path(directory) / "overlay"
         rep.status("Preparing native tuning resources from your FH1 update")
+        output_lines = []
+        diagnostic = None
+
+        def preparation_line(line):
+            nonlocal diagnostic
+            output_lines.append(line[-1000:])
+            del output_lines[:-8]
+            diagnostic = tuning_status.tool_failure(line) or diagnostic
+
         try:
             cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
                 script, tu, "--output", prepared]
-            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority)
+            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority,
+                on_line=preparation_line)
             required = (*TU_EXECUTABLES, "media.zip", "native-tuning-provenance.json")
             missing = [name for name in required if not (prepared / name).is_file()]
             if missing:
@@ -780,11 +806,18 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
                     len(report["source_archive_sha256"]) != 64 or not isinstance(report.get("entries"), list):
                 raise BuildError("Preparation produced an unrecognized resource manifest")
         except (BuildError, OSError, ValueError) as error:
-            rep.log(f"Native car tuning unavailable: {error}; installing the stock FH1 update.")
-            _publish_runtime_update(opts.root, None, rep, "update-native")
-            return False
+            if diagnostic is None:
+                denied = isinstance(error, (PermissionError, FolderBlocked))
+                diagnostic = tuning_status.failure(
+                    "access_denied" if denied else "preparation_failed",
+                    "Tuning preparation could not access a required file." if denied else "Tuning resource preparation failed.",
+                    "Check the file access error and your selected data folder." if denied else
+                    "Send the build log, including the preparation error; another rebuild alone may not fix it.",
+                    str(error) + ("\n" + "\n".join(output_lines) if output_lines else ""))
+            return unavailable(diagnostic)
         _publish_runtime_update(opts.root, prepared, rep, "update-native")
     rep.log("Installed native tuning resources prepared from FH1; no other game files are needed.")
+    record(tuning_status.failure("ready", "Tuning resources were prepared successfully.", ""))
     return True
 
 

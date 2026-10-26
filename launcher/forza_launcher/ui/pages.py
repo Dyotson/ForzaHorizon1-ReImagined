@@ -69,6 +69,7 @@ class PlayPage(QWidget):
 
         self.tuning_notice = label("Native car tuning is enabled, but its resources are missing. "
                                    "Open Setup and press Build with Title Update 4 selected.", "warn")
+        self.tuning_notice.setTextFormat(Qt.PlainText)
         self.tuning_notice.hide()
         lay.addWidget(self.tuning_notice)
         self.tuning_setup = QPushButton("Open Setup → Build")
@@ -160,12 +161,15 @@ class PlayPage(QWidget):
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
         tuning_needs_build = install is not None and game.native_tuning_needs_build(cfg, install)
+        if tuning_needs_build:
+            self.tuning_notice.setText(game.native_tuning_warning(cfg, install))
         self.tuning_notice.setVisible(tuning_needs_build)
         self.tuning_setup.setVisible(tuning_needs_build)
         if install is not None:
             self.r_build.set(True if state != "stale" else None,
                              f"{game.game_version(install)}" +
-                             (" · Update available in Setup" if state == "stale" else " · Ready to play"))
+                             (" · Update available in Setup" if state == "stale" else
+                              " · Ready to play (tuning unavailable)" if tuning_needs_build else " · Ready to play"))
         else:
             self.r_build.set(False if state != "partial" else None, detail + " Open Setup and press Build.")
         n = game.installed_dlc(cfg)
