@@ -43,6 +43,11 @@ class ErrorMessages(unittest.TestCase):
             self.assertIn("verification enabled", text)
             self.assertNotIn("writable data folder", text)
 
+    def test_other_tls_failures_do_not_claim_certificate_cause(self):
+        text = errors.next_step(ssl.SSLError(1, "unexpected TLS EOF"), "build")
+        self.assertIn("secure connection failed", text)
+        self.assertNotIn("date/time", text)
+
     def test_http_status_does_not_guess_rate_limit_or_credentials(self):
         for code in (403, 404, 429, 503):
             text = errors.message(HTTPError("https://example.test/sdk", code, "download failed", {}, None),
