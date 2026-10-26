@@ -147,11 +147,19 @@ namespace forza::frame_time {
 int VblankHz() { Unexpected(); return 60; }
 void ResetRenderTiming() { Unexpected(); }
 }
-// graphics_menu.cpp also defines pause/tuning hooks. Keep those paths forbidden
-// in this title-only harness, including when the linker retains unused functions.
+// The shared row bridge probes whether the active menu belongs to native pause.
+// This fixture owns only the title menu, so these checked probes return false.
+// Actual pause/tuning operations remain forbidden by the guards above.
 namespace forza::native_pause_scene {
-bool Owns(uint32_t) { Unexpected(); return false; }
-bool Page(PPCContext&, uint8_t*, uint32_t, bool) { Unexpected(); return false; }
+bool Owns(uint32_t screen) {
+  Check(from_main_menu && screen == kMenu, "ownership probe stays on the title owner");
+  return false;
+}
+bool Page(PPCContext&, uint8_t* base, uint32_t screen, bool) {
+  Check(from_main_menu && screen == kMenu && base == memory.data(),
+        "shared row bridge probes only the title fixture");
+  return false;
+}
 }
 namespace forza {
 void UpdatePerformanceOverlay() { Check(graphics_snapshot, "title layout tick only"); }
