@@ -12,8 +12,8 @@ briefly while a saved renderer change applies. Failure restores the preceding
 selections, displays the error and does not persist the failed request.
 
 Controls appear in this order: quality preset, output resolution, upscaling,
-anti-aliasing, MSAA scene resolution, texture filtering, frame limit, VSync,
-and ultrawide HUD placement. Irrelevant rows dim immediately without requiring
+anti-aliasing, MSAA scene resolution, texture filtering, shadow softness, ambient
+occlusion, frame limit, VSync, and ultrawide HUD placement. Irrelevant rows dim immediately without requiring
 hover or selection, and restore when relevant. Inactive values are retained.
 The game's font cache is updated separately from native row input state.
 
@@ -46,7 +46,10 @@ Medium uses Balanced/8x; High uses Quality/16x. Auto selects native at 1080p and
 Quality above it, according to available reconstruction features. It is not a
 benchmark. Without reconstruction, Low uses a 1x scene; the other presets use
 output-sized scene scaling. These presets do not change model, shadow or
-reflection quality. Manual image-quality edits return the preset to Custom.
+reflection quality. Shadow softness (Console, Soft, Softer) applies on Save; see
+[Shadow softness](graphics-detail.md#shadow-softness-380). Ambient occlusion (Off, Low, High)
+also applies on Save (Vulkan; dimmed on Direct3D 12); see
+[Ambient occlusion](graphics-detail.md#ambient-occlusion-380). Manual image-quality edits return the preset to Custom.
 
 The renderer applies one complete request between frames, waits for GPU work,
 and rebuilds affected caches together. Failure restores the previous state.

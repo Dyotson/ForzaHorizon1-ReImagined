@@ -18,8 +18,9 @@ void Float(uint8_t* memory, uint32_t address, float value) {
   std::memcpy(&bits, &value, 4);
   Word(memory, address, bits);
 }
-bool vr = false;
+bool vr = false, xr_cockpit = false;
 }
+bool forza::xr::CockpitActive() { return xr_cockpit; }
 bool& FLAGS_vr_head_pose_test_storage_() { return vr; }
 extern "C" REX_FUNC(__imp__sub_8284EF90) {
   ++original_calls;
@@ -108,6 +109,10 @@ int main() {
   vr = true;
   assert(result() == Radians(70));
   vr = false;
+  xr_cockpit = true;
+  assert(result() == Radians(70));
+  xr_cockpit = false;
+  assert(std::fabs(result() - Radians(88)) < 2e-6);
   rex::memory::GuestPtr(memory.data(), kWorld)[0x0C] = 1;
   assert(result() == Radians(70));
   rex::memory::GuestPtr(memory.data(), kWorld)[0x0C] = 0;

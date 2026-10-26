@@ -23,6 +23,9 @@ else()
     message(FATAL_ERROR "FORZA_TITLE_UPDATE must be 0 or 4")
 endif()
 
+include(cmake/NativePause.cmake)
+forza_validate_native_pause()
+
 # Builds handed a finished generated/ (CI building from the private copy of the codegen
 # output) have no default.xex to run codegen on.
 option(FORZA_SKIP_CODEGEN "Compile generated/ as it is, never run codegen" OFF)
@@ -31,7 +34,7 @@ if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERA
 endif()
 
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
-# builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
+# builds it from ReIGlue (the SDK fork), and some of its changes alter the generated code (0025:
 # Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
 if(APPLE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
@@ -136,11 +139,21 @@ set(FORZA_SOURCES
     src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
+    src/hooks/garage_capacity.cpp
     src/hooks/ultrawide_projection.cpp
+    src/hooks/vr_culling.cpp
     src/hooks/vr_head_pose.cpp
     src/hooks/camera_fov.cpp
+    src/hooks/vr_cockpit_space.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/pause_menu.cpp
+    src/hooks/native_pause_scene.cpp
+    src/hooks/native_pause_edges.cpp
+    src/hooks/fh1_map_preview.cpp
+    src/hooks/offline_cars.cpp
+    src/hooks/festival_travel.cpp
+    src/hooks/car_recovery.cpp
     src/hooks/native_car_tuning.cpp
     src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
@@ -149,6 +162,8 @@ set(FORZA_SOURCES
     src/hooks/scene_resolution.cpp
     src/hooks/scene_tiling.cpp
     src/hooks/world_detail.cpp
+    src/hooks/shadow_filter.cpp
+    src/hooks/ai_catchup.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
@@ -192,12 +207,15 @@ set(FORZA_SOURCES
     src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/world_ao.cpp
+    src/platform/native_quit.cpp
     src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp
     src/platform/vulkan_hooks.cpp
     src/platform/wheel_bridge.cpp
+    src/platform/xr.cpp
 )
 
 # fiber_trace.cpp interposes the SDK's rexcrt_SwitchToFiber with dlsym(RTLD_NEXT): Linux only.
@@ -245,6 +263,7 @@ add_subdirectory(texcompress)
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
+forza_apply_native_pause(forza)
 
 # The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
 include(cmake/CpuTarget.cmake)
@@ -257,10 +276,22 @@ forza_configure_cpu_target(forza)
 if(TARGET rex::renderdoc)
     target_link_libraries(forza PRIVATE rex::renderdoc)
 endif()
+# VR (src/platform/xr.cpp) also includes them, and the vendored OpenXR headers; the OpenXR
+# loader is opened at run time only when vr_mode is on, so the game neither links it nor needs
+# it to start.
+set(_forza_xr_includes "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openxr/include")
 if(UNIX AND NOT APPLE)
     set_source_files_properties(src/platform/vulkan_hooks.cpp PROPERTIES
         INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wsi_stubs")
+    list(APPEND _forza_xr_includes "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wsi_stubs")
 endif()
+set_source_files_properties(src/platform/xr.cpp PROPERTIES INCLUDE_DIRECTORIES "${_forza_xr_includes}")
+add_custom_command(TARGET forza POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:forza>/licenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/openxr/LICENSE-Apache-2.0.txt"
+        "$<TARGET_FILE_DIR:forza>/licenses/openxr-sdk.txt"
+    VERBATIM)
 
 # The stock SDK Xenos plugin has rendering bugs (e.g. it reads the texture-fetch
 # exponent bias from the wrong fetch-constant word, which darkens textures 256x).

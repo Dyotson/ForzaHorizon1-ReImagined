@@ -1,6 +1,7 @@
 #include "../platform/camera_fov.h"
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
+#include "../platform/xr.h"
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -38,7 +39,7 @@ extern "C" REX_FUNC(sub_8284EF90) {
       REXCVAR_GET(forza_chase_far_fov), REXCVAR_GET(forza_cockpit_fov),
       REXCVAR_GET(forza_hood_fov), REXCVAR_GET(forza_bumper_fov)};
   static const bool trace = std::getenv("FORZA_FOV_TRACE") != nullptr;
-  if ((settings.Stock() && !trace) || REXCVAR_GET(vr_head_pose_test)) return;
+  if ((settings.Stock() && !trace) || REXCVAR_GET(vr_head_pose_test) || forza::xr::CockpitActive()) return;
   const Memory memory{base};
   const auto world = forza::camera::camera_world.load(std::memory_order_relaxed);
   if (!forza::camera::LiveCameraWorld(memory(world, 0x2C)) || director > UINT32_MAX - 20) return;

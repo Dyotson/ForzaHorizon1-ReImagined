@@ -3,13 +3,20 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
+#include <optional>
 #include <string>
 #include <vector>
+#include "../platform/social_presence.h"
 
 namespace forza {
 
 // The virtual network is on (FORZA_NET or a Forza Live server).
 bool NetworkOn();
+
+// A validated server welcome arrived within the last 20 seconds. Unlike
+// NetworkOn/LiveSignin, this checks recent server contact, not configuration.
+bool LiveConnected();
 
 // The Forza Live server's IPv4 address (host order) and the TCP port of its title
 // servers (HTTP). False without FORZA_SERVER, or before the server welcomed us.
@@ -156,6 +163,16 @@ void LiveFriendsTick();
 // from the game; `block_all`: the game gets no input.
 uint16_t LiveFriendsPad(uint16_t buttons, int left_x, int left_y, bool& block_all);
 bool LiveFriendsScreenOpen();
+// Queue the existing friends editor/chat through its input-thread request path.
+void LiveOpenFriends(bool chat = false);
+enum class LiveFriendsPage { Friends, Requests, AddFriend, Blocked, Chat };
+void LiveOpenFriendsPage(LiveFriendsPage page);
+struct LiveChatPreview {
+  size_t unread = 0;
+  std::string latest;
+};
+// Read-only copy under the friends/chat lock. Does not mark messages read.
+LiveChatPreview LiveGetChatPreview();
 // ForzaApp::OnCreateDialogs: registers the keyboard bindings.
 void InstallFriendsKey();
 
@@ -172,5 +189,22 @@ void LiveChatMessage(const uint8_t* body, size_t size);
 // The ids of the sessions we host or joined (live_xmsg.cpp): the "session" chat channel
 // reaches the players in one of them.
 std::vector<uint64_t> LiveSessionIds();
+
+// Newest presence session, copied under the session lock. Members are XUIDs
+// observed through XSessionJoin/Leave, never the unrelated server-room roster.
+struct LiveSessionView {
+  uint64_t id = 0;
+  uint32_t flags = 0;
+  bool hosted = false;
+  uint32_t players = 0, capacity = 0;
+  std::array<uint8_t, 0x3C> info{};
+  std::vector<uint64_t> members;
+  social_presence::Car local_car;
+};
+std::optional<LiveSessionView> LiveCurrentSession();
+void LiveSetCarDetails(const social_presence::Car& car);
+// Explicit join confirmation through the existing native invite-accept path.
+// Revalidates presence, blocking and friends-only restrictions before showing.
+bool LiveRequestJoin(uint64_t xuid);
 
 }  // namespace forza

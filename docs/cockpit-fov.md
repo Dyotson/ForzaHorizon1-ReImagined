@@ -37,8 +37,10 @@ The current world's existing pause/replay flag, loaded flag and time scale
 exclude paused, replay, rewind and loading worlds. These are the same fields used
 by the existing wheel-driving gate, read directly without its debounce delay.
 All adjustments are bypassed while vr_head_pose_test is enabled, even for an
-identity pose. This is compatibility with the existing head-pose prototype;
-real-headset asymmetric stereo projection has not been implemented or tested.
+identity pose, or while the real OpenXR cockpit session is active
+(`forza::xr::CockpitActive()`). The headset retains ownership of its projection.
+Virtual-screen mode keeps the ordinary camera settings. This guard is covered by
+the production-hook test; real-headset compatibility of this PR remains untested.
 
 Camera position, near/far planes and aspect are untouched. Ultrawide retains its
 existing aspect query. Mirrors retain their own unmodified rear-view camera.
@@ -114,3 +116,16 @@ captures do not validate this new accessor, dynamic speed or blend path. The PR
 must remain draft until the revised path and five-row native layout are tested.
 All prior runs used offline copied profiles, hard limits and unchanged source
 profile hashes. Captures, game data, caches and build products remain outside Git.
+
+## Current main integration (2026-10-26)
+
+Integrated main `b560528`, including ReIGlue r2 and the merged OpenXR feature.
+The native screen retains shadow softness and ambient occlusion alongside all
+five camera controls. The real OpenXR cockpit guard prevents the FOV accessor
+from adjusting the headset projection, independently of the test-pose flag.
+TU0/TU4 production-hook interface tests and standalone math tests pass; 32
+focused launcher tests pass, including one combined native-settings import of
+all five FOV preferences with shadow and ambient-occlusion settings. These are
+source/interface checks, not current-SDK host or revised in-game qualification.
+The earlier 121-patch SDK build above belongs to the previous checkpoint.
+The accessor/blend/speed and native-layout runtime gate remains open.

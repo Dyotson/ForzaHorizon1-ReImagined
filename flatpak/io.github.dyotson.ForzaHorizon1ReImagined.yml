@@ -34,6 +34,13 @@ finish-args:
   - --filesystem=xdg-run/discord-ipc-0
   - --filesystem=xdg-run/app/com.discordapp.Discord
   - --filesystem=xdg-run/app/com.discordapp.DiscordCanary
+  # VR, only with the VR headset setting (docs/vr.md, "Packaging"): the host's OpenXR runtime
+  # manifest (the launcher names it in XR_RUNTIME_JSON), the runtime library of a system-wide
+  # WiVRn Flatpak (a user install is under home), and WiVRn's and Monado's compositor sockets.
+  - --filesystem=xdg-config/openxr:ro
+  - --filesystem=/var/lib/flatpak/app/io.github.wivrn.wivrn:ro
+  - --filesystem=xdg-run/wivrn:ro
+  - --filesystem=xdg-run/monado_comp_ipc
 
 add-extensions:
   org.freedesktop.Sdk.Extension.llvm22:

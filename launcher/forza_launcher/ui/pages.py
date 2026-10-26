@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
-               shader_prebuild)
+               shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -51,6 +51,7 @@ def human_time(seconds):
 class PlayPage(QWidget):
     goto_setup = Signal()
     play_requested = Signal()
+    play_vr_requested = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -66,6 +67,16 @@ class PlayPage(QWidget):
         self.warn.hide()
         lay.addWidget(self.warn)
 
+        self.tuning_notice = label("Native car tuning is enabled, but its resources are missing. "
+                                   "Open Setup and press Build with Title Update 4 selected.", "warn")
+        self.tuning_notice.hide()
+        lay.addWidget(self.tuning_notice)
+        self.tuning_setup = QPushButton("Open Setup → Build")
+        self.tuning_setup.setObjectName("link")
+        self.tuning_setup.clicked.connect(self.goto_setup.emit)
+        self.tuning_setup.hide()
+        lay.addWidget(self.tuning_setup, 0, Qt.AlignLeft)
+
         c, cl = card()
         self.r_files = StatusRow("Game files")
         self.r_build = StatusRow("Game")
@@ -80,6 +91,12 @@ class PlayPage(QWidget):
         self.play.setCursor(Qt.PointingHandCursor)
         self.play.clicked.connect(self._clicked)
         row.addWidget(self.play)
+        self.play_vr = QPushButton("Play in VR")
+        self.play_vr.setCursor(Qt.PointingHandCursor)
+        self.play_vr.setToolTip("Experimental: starts the game in your VR headset.")
+        self.play_vr.clicked.connect(self.play_vr_requested.emit)
+        self.play_vr.hide()
+        row.addWidget(self.play_vr)
         self.stop = QPushButton("Stop")
         self.stop.clicked.connect(window.stop_game)
         self.stop.hide()
@@ -89,6 +106,15 @@ class PlayPage(QWidget):
         logs.clicked.connect(lambda: open_folder(cfg.data_home()))
         row.addWidget(logs)
         lay.addLayout(row)
+        self.vr_note = label("VR is experimental: it is playable, but expect rough edges. "
+                             "Take a break if you feel motion sickness.", "warn")
+        self.vr_note.hide()
+        lay.addWidget(self.vr_note)
+        launcher_logs = QPushButton("Open launcher log folder")
+        launcher_logs.setObjectName("link")
+        launcher_logs.setToolTip("Open the folder containing launcher.log (launcher errors and tracebacks).")
+        launcher_logs.clicked.connect(lambda: open_folder(paths.launcher_log().parent))
+        lay.addWidget(launcher_logs, 0, Qt.AlignLeft)
         self.msg = label("", "muted")
         self.msg.hide()
         lay.addWidget(self.msg)
@@ -133,6 +159,9 @@ class PlayPage(QWidget):
         self.r_files.set(files_ok, files_msg)
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
+        tuning_needs_build = install is not None and game.native_tuning_needs_build(cfg, install)
+        self.tuning_notice.setVisible(tuning_needs_build)
+        self.tuning_setup.setVisible(tuning_needs_build)
         if install is not None:
             self.r_build.set(True if state != "stale" else None,
                              f"{game.game_version(install)}" +
@@ -187,6 +216,9 @@ class PlayPage(QWidget):
             else:
                 self.mode = "setup"
                 self.play.setText("Set up the game")
+        self.play_vr.setVisible(self.mode == "play" and self.play.isEnabled() and ready
+                                and vr.detect() is not None)
+        self.vr_note.setVisible(self.play_vr.isVisibleTo(self))
         if not self._keep_warn:
             self.warn.setVisible(False)
 

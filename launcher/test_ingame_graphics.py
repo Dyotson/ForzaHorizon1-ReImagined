@@ -38,6 +38,17 @@ class InGameGraphicsTests(unittest.TestCase):
         self.assertEqual(saved.settings["anisotropic_override"], 5)
         self.assertFalse(saved.settings["forza_hud_edges"])
 
+    def test_native_720p_output_survives_save_and_reload(self):
+        self.request(output="720p", upscaler="off", anti_aliasing="game",
+                     resolution_scale="1")
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        saved = Config(self.cfg.path)
+        self.assertEqual(saved.settings["resolution"], "720p")
+        self.assertEqual(saved.settings["resolution_scale"], 1)
+        self.assertEqual(saved.settings["forza_antialiasing"], "game")
+        # Reconstruction selectors have separate, higher-output schemas.
+        self.assertIn(saved.settings["fsr3_output_resolution"], ("1080p", "1440p", "4k"))
+
     def test_current_720p_does_not_reset_reconstruction_output(self):
         previous = self.cfg.settings["fsr3_output_resolution"]
         self.request(output="720p", upscaler="off", anti_aliasing="game", frame_rate="120")
@@ -75,6 +86,16 @@ class InGameGraphicsTests(unittest.TestCase):
             self.request(**bad)
             self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
             self.assertEqual(self.cfg.settings, previous)
+
+    def test_camera_and_world_lighting_settings_survive_one_native_save(self):
+        fovs = {key: str(40 + i * 10) for i, key in enumerate(sorted(schema.CAMERA_FOV_KEYS))}
+        self.request(**fovs, world_shadow_filter="softer", world_ambient_occlusion="high")
+        self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+        saved = Config(self.cfg.path)
+        for key, value in fovs.items():
+            self.assertEqual(saved.settings[key], int(value))
+        self.assertEqual(saved.settings["world_shadow_filter"], "softer")
+        self.assertEqual(saved.settings["world_ambient_occlusion"], "high")
 
     def test_ultrawide_live_settings_preserve_launcher_rendering(self):
         self.cfg.settings.update(forza_ultrawide=True, resolution="720p", resolution_scale=1)
@@ -125,6 +146,32 @@ class InGameGraphicsTests(unittest.TestCase):
 
 
 
+
+    def test_shadow_softness_is_imported_and_validated(self):
+        for value in ("soft", "softer", "console"):
+            with self.subTest(value=value):
+                self.request(frame_rate="60", world_shadow_filter=value)
+                self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(Config(self.cfg.path).settings["world_shadow_filter"], value)
+        previous = dict(self.cfg.settings)
+        for bad in ("high", "Soft", ""):
+            with self.subTest(bad=bad):
+                self.request(frame_rate="120", world_shadow_filter=bad)
+                self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(self.cfg.settings, previous)
+
+    def test_ambient_occlusion_is_imported_and_validated(self):
+        for value in ("low", "high", "off"):
+            with self.subTest(value=value):
+                self.request(frame_rate="60", world_ambient_occlusion=value)
+                self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(Config(self.cfg.path).settings["world_ambient_occlusion"], value)
+        previous = dict(self.cfg.settings)
+        for bad in ("on", "High", ""):
+            with self.subTest(bad=bad):
+                self.request(frame_rate="120", world_ambient_occlusion=bad)
+                self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(self.cfg.settings, previous)
 
     def test_20_and_40_fps_are_imported(self):
         for rate in (20, 40, 30):

@@ -15,6 +15,8 @@ images = repo / "docs" / "images"
 
 stdlib = set(sys.stdlib_module_names)
 hidden = set()
+if not (repo / "server" / "forza_live_server.py").is_file():
+    raise SystemExit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
 for f in (repo / "server").glob("*.py"):
     if f.name.startswith("test_"):
         continue
@@ -53,9 +55,14 @@ hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
 # prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
-for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py", "native_menu_scene.py", "offline_cars_flow.py", "native_tuning_assets.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
+datas.append((str(repo / "tools" / "native_menu" / "fh1_donors.json"), "tools/native_menu"))
+for name in ("change_car", "tune_car", "garage", "autoshow", "social_friends", "social_world", "social_game", "social_requests", "social_chat", "social_connection"):
+    datas.append((str(repo / "tools" / "native_menu" / "icons" / (name + ".xds")), "tools/native_menu/icons"))
+for name in ("ATTRIBUTION.md", "FONT-AWESOME-LICENSE.txt"):
+    datas.append((str(repo / "tools" / "native_menu" / "icons" / name), "tools/native_menu/icons"))
 # The shipped pipeline list (hashes and render state only).
 datas.append((str(root / "forza_launcher" / "data" / "pipelines-4D5309C9.json"), "forza_launcher/data"))
 # The known-good DLC files (sizes and SHA-1 only, forza_launcher/dlccheck.py, #422).
@@ -67,7 +74,7 @@ a = Analysis(
     datas=datas,
     binaries=collect_dynamic_libs("sdl2dll"),
     hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "xdc_decode", "livery_codec", "tomllib", "pipeline_list",
-                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update"],
+                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update", "offline_cars_flow"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],
