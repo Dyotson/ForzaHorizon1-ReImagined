@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
-               shader_prebuild)
+               shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -51,6 +51,7 @@ def human_time(seconds):
 class PlayPage(QWidget):
     goto_setup = Signal()
     play_requested = Signal()
+    play_vr_requested = Signal()
 
     def __init__(self, cfg: Config, window):
         super().__init__()
@@ -90,6 +91,12 @@ class PlayPage(QWidget):
         self.play.setCursor(Qt.PointingHandCursor)
         self.play.clicked.connect(self._clicked)
         row.addWidget(self.play)
+        self.play_vr = QPushButton("Play in VR")
+        self.play_vr.setCursor(Qt.PointingHandCursor)
+        self.play_vr.setToolTip("Experimental: starts the game in your VR headset.")
+        self.play_vr.clicked.connect(self.play_vr_requested.emit)
+        self.play_vr.hide()
+        row.addWidget(self.play_vr)
         self.stop = QPushButton("Stop")
         self.stop.clicked.connect(window.stop_game)
         self.stop.hide()
@@ -200,6 +207,8 @@ class PlayPage(QWidget):
             else:
                 self.mode = "setup"
                 self.play.setText("Set up the game")
+        self.play_vr.setVisible(self.mode == "play" and self.play.isEnabled() and ready
+                                and vr.detect() is not None)
         if not self._keep_warn:
             self.warn.setVisible(False)
 

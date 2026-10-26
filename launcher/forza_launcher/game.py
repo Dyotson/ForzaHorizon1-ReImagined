@@ -378,9 +378,9 @@ def gpu_vendor_arg(cfg: Config, extra_args=()) -> str:
 
 
 def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print,
-               battery_saver=True) -> LaunchPlan:
+               battery_saver=True, vr=False) -> LaunchPlan:
     """battery_saver=False plans with the player's settings even when battery saver would apply
-    (the shader prebuild, which builds for them)."""
+    (the shader prebuild, which builds for them). vr=True is "Play in VR": the VR values as arguments."""
     from . import ingame
     if write:
         ingame.import_pending(cfg, log)
@@ -397,7 +397,7 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     real = cfg.d["settings"]
     cfg.d["settings"] = {**real, **saver.settings}  # this start only; launcher.json keeps the player's
     try:
-        return _build_plan(cfg, game, write, refresh_xenia, log, saver)
+        return _build_plan(cfg, game, write, refresh_xenia, log, saver, vr)
     finally:
         cfg.d["settings"] = real
 
@@ -498,7 +498,7 @@ def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
             not (install.dir / "update-native").is_dir())
 
 
-def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
+def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver, vr=False) -> LaunchPlan:
     from . import ingame
     if cfg.gamertag_cleaned:
         log("The saved Gamertag %r is not plain ASCII (letters, digits, spaces, at most 15): "
@@ -590,8 +590,8 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
                          for a in split_args(cfg.advanced.get("extra_args", "")))
     if texture_packs_used(cfg) and not extra_textures:  # a flag given twice confuses the game
         args.append(f"--texture_pack_root={texture_pack_folder(cfg)}")
-    from . import vr
-    vr.configure(cfg, env, args, notes)
+    from . import vr as vr_module
+    vr_module.configure(cfg, env, args, notes, session=vr)
     from . import antialiasing
     antialiasing.configure_runtime(cfg, env, args, write=write)
 

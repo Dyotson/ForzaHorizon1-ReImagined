@@ -12,7 +12,7 @@ import math
 from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "VR", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -266,31 +266,20 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
     "An SDR screenshot cannot show the physical brightness.", "HDR",
     choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
 
-# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333).
-add("vr_mode", "VR headset (experimental)", "Display", "choice", "off",
-    "Experimental and unfinished: tested on one headset so far (Meta Quest 3 with WiVRn on Linux; "
-    "Windows untested). Plays on a VR headset through an OpenXR runtime, which must be running "
-    "before the game starts: WiVRn, Monado or SteamVR on Linux; SteamVR, Meta Quest Link or Virtual "
-    "Desktop on Windows. Virtual screen shows the game on a screen in front of you. Cockpit also "
-    "turns the in-car camera with your head (one image for both eyes, no 3D depth yet; other "
-    "cameras and menus stay on the screen; the game's camera shake is off). Recentre with the Home "
-    "key or by holding both sticks pressed. The desktop window keeps showing the game. Without a "
-    "runtime or headset the game starts normally. Vulkan only.", "VR (experimental)",
-    choices=[("off", "Off"), ("screen", "Virtual screen"), ("cockpit", "Cockpit")], restart=True)
-add("vr_picture", "VR picture", "Display", "choice", "game",
-    "Cockpit: how sharp the head-tracked view is drawn. The cockpit view covers about 123 x 109 "
-    "degrees, so the game's 1280 x 720 picture is stretched over far more than a monitor's field of "
-    "view; these draw it at a higher resolution, more upward than across, so its pixels match the "
-    "headset's on both axes. Sharp (2 x 3, 2560 x 2160): about 12 x 13 pixels per degree, for "
-    "graphics cards like an RX 9060 XT or RTX 4060 Ti. Sharpest (3 x 4, 3840 x 2880): 18 x 18, "
-    "for faster cards. As the Display settings: Render scale above. Not with AMD FSR 3 or NVIDIA "
-    "DLSS, which keep their own scale.", "VR (experimental)",
-    choices=[("game", "As the Display settings"), ("sharp", "Sharp"), ("sharpest", "Sharpest")],
-    restart=True)
-add("vr_seat_height_cm", "Seat height (cm)", "Display", "float", -4.0,
-    "Cockpit: raises (positive) or lowers your eye from the driver's position. -4: the game's "
-    "driver's eye sits just under the roof, and a head turned toward a door would leave the car "
-    "through it. Recentre while sitting as you drive.", "VR (experimental)", lo=-30, hi=30, step=1)
+# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333). Launcher-only: the values
+# go to the game as arguments of "Play in VR" (vr.py), so Play always starts flat.
+add("vr_mode", "Mode", "VR", "choice", "cockpit",
+    "Cockpit puts you in the driver's seat and turns the in-car camera with your head. "
+    "Big screen shows the game on a screen in front of you, in any camera.", "VR (experimental)",
+    choices=[("cockpit", "Cockpit (recommended)"), ("screen", "Big screen")])
+add("vr_picture", "Sharpness", "VR", "choice", "game",
+    "How sharp the cockpit looks. Higher is clearer but needs a stronger graphics card; "
+    "if the headset stutters, go back a step.", "VR (experimental)",
+    choices=[("game", "Standard"), ("sharp", "Sharp (needs a stronger graphics card)"),
+             ("sharpest", "Sharpest (needs a much stronger graphics card)")])
+add("vr_seat_height_cm", "Seat height (cm)", "VR", "float", -4.0,
+    "Raises or lowers your eye in the cockpit. Lower it if your head pokes through the roof.",
+    "VR (experimental)", lo=-30, hi=30, step=1)
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,

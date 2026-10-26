@@ -197,7 +197,7 @@ Setup's **Build log** is collapsed initially, continues recording while hidden,
 and opens automatically on a build failure. Cancelling a build does not force it open.
 
 Setup has top tabs for **Game files**, **Updates & DLC**, and **Build**. Settings
-has top tabs for its seven categories. Each tab switches to a separate page with its
+has top tabs for its eight categories. Each tab switches to a separate page with its
 own scroll position; tabs are not scroll shortcuts. Related settings are grouped
 in padded cards, with space between descriptions and controls. File-location
 controls in Advanced and Profile sit below their descriptions. Setup's **Build
@@ -659,12 +659,19 @@ starts straight at the title screen, without the Microsoft Studios, Dolby and Pl
 videos (about 45 s). The game boots as after a restart of itself; the festival and 1000 Club
 videos inside the game still play. Applies on the next launch.
 
-Display > VR (experimental) > **VR headset (experimental)** (`vr_mode`: off, screen, cockpit;
-#333; marked experimental in its label, section and help) and **Seat height (cm)**
-(`vr_seat_height_cm`): Play adds `--gpu_backend=vulkan` on Windows, and
-inside the Flatpak names the host's `~/.config/openxr/1/active_runtime.json` in `XR_RUNTIME_JSON`
-(the sandbox's `XDG_CONFIG_HOME` is the app's own folder) (`vr.py`;
-[vr.md](vr.md#openxr-session-and-cockpit-milestones-1-and-2)).
+**Play in VR** (#333, experimental): the Play page shows a **Play in VR** button next to Play when an
+OpenXR runtime is installed (`vr.detect()`: on Linux the active runtime manifest, incl. the host's
+inside the Flatpak; on Windows the `HKLM\\SOFTWARE\\Khronos\\OpenXR\\1` `ActiveRuntime` value, read-only).
+Play always starts flat. Play in VR starts with the VR values as launch arguments for that session only
+(frame rate 72, scene MSAA off, render scale 2 or the chosen Sharpness, true stereo, the VR trace off,
+the chosen mode and seat height; `--gpu_backend=vulkan` on Windows; inside the Flatpak the host's manifest
+in `XR_RUNTIME_JSON`), so the saved flat settings stay as they are; an extra flag the player named wins.
+The first time a checklist asks to start the VR app, connect and put on the headset, then press Play in VR
+(**Don't show again**, `vr.checklist_hidden` in launcher.json). Settings has a **VR** tab: a status line
+(runtime found, or links to WiVRn and SteamVR), **Mode** (Cockpit, recommended / Big screen; `vr_mode`),
+**Sharpness** (Standard / Sharp / Sharpest; `vr_picture`), **Seat height (cm)** (`vr_seat_height_cm`), the
+recentre hint and an **Advanced** expander listing what VR overrides. The three settings are launcher-only
+(never written to forza.toml); an older config's `vr_mode` is just the chosen mode ([vr.md](vr.md)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3

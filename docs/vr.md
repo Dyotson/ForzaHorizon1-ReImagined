@@ -1,3 +1,20 @@
+# Playing in VR
+
+Experimental: tested on a Meta Quest 3 with WiVRn on Linux. SteamVR and Meta Quest Link on Windows are untested.
+
+1. Start your VR app (WiVRn on Linux; SteamVR, Meta Quest Link or Virtual Desktop on Windows) and connect the headset.
+2. Put the headset on.
+3. In the launcher, press **Play in VR** (it appears next to Play once a VR app is installed). Play alone starts the
+   normal flat game.
+
+Settings > VR has the options: **Mode** (Cockpit, recommended, or Big screen), **Sharpness** (Standard, Sharp,
+Sharpest: sharper needs a stronger graphics card) and **Seat height**. Recentre with the Home key, or hold both
+sticks pressed for a second. Play in VR sets what the headset needs (72 frames a second, no scene anti-aliasing,
+a higher render scale) for that session only; your normal settings are not changed.
+
+To make it sharper in WiVRn: stream HEVC or AV1 at 10-bit, raise the bitrate (50 Mbit/s an eye worked on a Quest 3),
+and raise the resolution in the WiVRn app on the headset.
+
 # VR: feasibility study and head-tracking prototype (#333)
 
 Goal: sit in the car with a headset (OpenXR: SteamVR, Quest Link, Monado), as in Assetto
