@@ -244,23 +244,22 @@ inline float CentrePixelsPerDegree(float pixels, float half) {
   return pixels / 2 / std::tan(half) * 3.14159265f / 180;
 }
 
-// Where the eye may go relative to where it was recentred (metres; OpenXR LOCAL: x right, y up,
-// +z back). Turning the head 60-90 degrees moves the eyes 8-12 cm aside and 5-10 cm back with the
-// neck (the third headset test's trace: up to 12.5 aside, 10.4 back, 5 up). Version 3 held the eye
-// in an ellipsoid 10 cm aside, 8 back and 6 up, eased from 0.8 of the way out: every look at a
-// door or a mirror held the eye 2-4 cm short of the head, so the cabin moved with the head ("the
-// camera moves"). What leaves the cabin is going up, aside and back together, into the roof that
-// slopes down toward the doors and the rear window: in the test save's Aventador, 10 cm aside, 8
-// back and 5 up cut the roof open with the eye 4 cm below the game's driver's eye, and nothing
-// without the up part (docs/vr.md "Version 4"). So version 4 lowers the eye 4 cm (the seat's
-// default) and limits sideways and backward motion only far out (18 and 15 cm, eased from 0.85;
-// 15 cm back is where the seat begins), while how far it may go up shrinks to nothing as it goes
-// aside and back: an ellipse 18 x 15 cm on the floor and a dome over it 6 cm high. Forward
-// (toward the wheel) and down are free.
+// Where the eye may go (metres; OpenXR LOCAL: x right, y up, +z back). Measured (docs/vr.md
+// "Version 7"): while the view is within 10.0 cm of the in-car camera's own point, the game draws
+// the player's car following the view (a head moved inside that sphere moves the cabin with it);
+// once the view is farther, it draws the car where it really is, so the whole cabin jumps by those
+// 10 cm (and the roof over the door opens): the flick of versions 2 and 6, the "another camera" of
+// version 1. Turning the head 60-90 degrees moves the eyes 8-12 cm aside and 5-10 cm back with the
+// neck, past that sphere. So the view is held within `reach` of the in-car camera's point (the
+// seat's height offset counts: it moves the view too), eased from kHeadBoxKnee of it so that it
+// approaches the limit without a hard stop. Inside the sphere the hold does not show in the cabin
+// (it follows the view anyway); only the world outside moves a few centimetres less.
+// Versions 3 and 4 held the eye in boxes round the recentred head (10 x 8 x 6 cm, then 18 x 15 cm
+// with a dome): version 3's kept it inside the sphere for most looks, version 4's did not.
 struct HeadBox {
-  float side = 0.18f, back = 0.15f, up = 0.06f;
+  float reach = 0.09f;
 };
-// Fraction of each limit the eye moves freely in; beyond it the motion is eased so that the eye
+// Fraction of the limit the eye moves freely in; beyond it the motion is eased so that the eye
 // approaches the limit without a hard stop.
 constexpr float kHeadBoxKnee = 0.85f;
 
@@ -271,30 +270,23 @@ inline float EaseToLimit(float r) {
   return kHeadBoxKnee + soft * std::tanh((r - kHeadBoxKnee) / soft);
 }
 
-// How far `rel` is out toward the floor ellipse's edge: 1 on it.
-inline float HeadBoxRadius(const Pose& rel, const HeadBox& box) {
-  const float x = rel.p.x / std::max(box.side, 1e-3f);
-  const float z = std::max(rel.p.z, 0.0f) / std::max(box.back, 1e-3f);
-  return std::sqrt(x * x + z * z);
+// How far the view of a recentred head pose is from the in-car camera's point, as a fraction of
+// the reach: 1 on its limit. `seat_height` metres (positive raises the eye), as ToGameHead takes it.
+inline float HeadBoxRadius(const Pose& rel, const HeadBox& box, float seat_height) {
+  const float y = rel.p.y + seat_height;
+  return std::sqrt(rel.p.x * rel.p.x + y * y + rel.p.z * rel.p.z) / std::max(box.reach, 1e-3f);
 }
-// How far up the eye may go at its place on the floor ellipse (radius r after easing): the dome.
-inline float HeadBoxUp(float r, const HeadBox& box) { return box.up * std::max(0.0f, 1.0f - r * r); }
 
-// A recentred head pose with its position held in the box: sideways and back eased toward the
-// floor ellipse (both scaled alike, so the direction is kept), then up eased toward the dome above
-// that place. Unchanged inside the knees.
-inline Pose LimitHead(Pose rel, const HeadBox& box) {
-  const float r = HeadBoxRadius(rel, box);
-  float held = r;
+// A recentred head pose with its view held within the reach of the in-car camera's point: the
+// offset from that point eased toward the sphere (its direction kept). Unchanged inside the knee;
+// the orientation is never changed.
+inline Pose LimitHead(Pose rel, const HeadBox& box, float seat_height) {
+  const float r = HeadBoxRadius(rel, box, seat_height);
   if (r > kHeadBoxKnee) {
-    held = EaseToLimit(r);
-    const float scale = held / r;
+    const float scale = EaseToLimit(r) / r;
     rel.p.x *= scale;
-    if (rel.p.z > 0) rel.p.z *= scale;
-  }
-  if (rel.p.y > 0) {
-    const float up = HeadBoxUp(held, box);
-    rel.p.y = up > 1e-4f ? up * EaseToLimit(rel.p.y / up) : 0.0f;
+    rel.p.y = (rel.p.y + seat_height) * scale - seat_height;
+    rel.p.z *= scale;
   }
   return rel;
 }

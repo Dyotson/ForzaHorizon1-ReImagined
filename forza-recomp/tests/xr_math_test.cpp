@@ -166,46 +166,47 @@ void TestTurnedView() {
 }
 
 void TestHeadBox() {
-  const HeadBox box;  // floor ellipse 18 aside x 15 back, dome 6 up
-  // The third headset test's looks at the doors and mirrors are 1:1 (version 3 held them 2-4 cm short).
-  for (const Vec3 p : {Vec3{0.116f, 0.0f, 0.053f}, Vec3{-0.122f, -0.024f, 0.104f}, Vec3{0.09f, 0.0f, 0.05f}}) {
-    const Pose kept = LimitHead({AxisY(-59 * kDeg), p}, box);
-    Check(Near(kept.p.x, p.x, 0.003f) && Near(kept.p.z, p.z, 0.003f) && Near(kept.p.y, p.y),
-          "a look round the cabin is held by 3 mm at most");
+  const HeadBox box;  // 9 cm round the in-car camera's point
+  const float seat = -0.04f;
+  const auto reach = [&](const Pose& p) {  // the view's distance from the in-car camera's point
+    const auto h = ToGameHead(p, seat);
+    return std::sqrt(h.t[0] * h.t[0] + h.t[1] * h.t[1] + h.t[2] * h.t[2]);
+  };
+  // The sixth headset test's looks at the side windows (the trace, 26 October): the head 9-12 cm
+  // aside and 4-9 back; with the eye 4 cm lower the view was 11-14 cm from the in-car camera's
+  // point, past the game's 10 cm. Held within 9 cm, the direction kept.
+  for (const Vec3 p : {Vec3{0.113f, -0.007f, 0.077f}, Vec3{-0.096f, -0.029f, 0.050f}, Vec3{0.104f, -0.015f, 0.055f}}) {
+    const Pose held = LimitHead({AxisY(-65 * kDeg), p}, box, seat);
+    Check(reach(held) <= 0.09f + 1e-5f && reach(held) > 0.085f, "a look at the side window is held within 9 cm");
+    const float y0 = p.y + seat, y1 = held.p.y + seat;
+    Check(Near(held.p.x / p.x, y1 / y0) && Near(held.p.z / p.z, held.p.x / p.x), "the direction from the camera's point is kept");
   }
   const Pose small{AxisY(-40 * kDeg), {0.04f, 0.02f, 0.03f}};
-  const Pose kept = LimitHead(small, box);
+  const Pose kept = LimitHead(small, box, seat);
   Check(Near(kept.p.x, 0.04f) && Near(kept.p.y, 0.02f) && Near(kept.p.z, 0.03f), "inside the knee: unchanged");
   Check(Near(kept.q.y, small.q.y), "the orientation is never changed");
-  // Turned round with the head 25 cm back: held under 15 cm back, sideways scaled alike.
+  Check(Near(LimitHead({{}, {0, 0, 0}}, box, seat).p.y, 0.0f), "the recentred head: unchanged");
+  // Turned round with the head 25 cm back: held under 9 cm, the seat's offset counted.
   const Pose back{AxisY(180 * kDeg), {0.05f, 0.0f, 0.25f}};
-  const Pose held = LimitHead(back, box);
-  Check(held.p.z < 0.15f && held.p.z > 0.13f, "25 cm back is held within 15 cm");
+  const Pose held = LimitHead(back, box, seat);
+  Check(reach(held) <= 0.09f + 1e-5f && held.p.z < 0.09f, "25 cm back is held within 9 cm");
   Check(Near(held.p.x / held.p.z, 0.05f / 0.25f), "the direction is kept");
-  Check(HeadBoxRadius(held, box) <= 1.0f + 1e-5f, "never past the floor ellipse");
-  const auto h = ToGameHead(held, 0);
-  Check(Near(h.t[2], -held.p.z), "the game's eye behind the driver's point");
-  // Up, aside and back together (the Aventador's roof cut at 10 aside, 8 back, 5 up): held low.
-  const Pose corner = LimitHead({AxisY(90 * kDeg), {-0.10f, 0.05f, 0.08f}}, box);
-  Check(corner.p.y < 0.025f && Near(corner.p.x, -0.10f) && Near(corner.p.z, 0.08f),
-        "up is held near the roof's slope, aside and back are not");
-  Check(LimitHead({{}, {0, 0.20f, 0}}, box).p.y <= 0.06f + 1e-6f, "straight up is held within 6 cm");
-  Check(Near(LimitHead({{}, {0, 0.03f, 0}}, box).p.y, 0.03f), "a little up in the middle is free");
-  Check(LimitHead({{}, {0.19f, 0.04f, 0.16f}}, box).p.y < 0.005f, "no room up at the floor ellipse's edge");
-  Check(LimitHead({{}, {-0.30f, 0, 0}}, box).p.x >= -0.18f - 1e-6f, "sideways is held within 18 cm");
-  // Forward and down are free.
-  const Pose lean = LimitHead({{}, {0, -0.10f, -0.30f}}, box);
-  Check(Near(lean.p.z, -0.30f) && Near(lean.p.y, -0.10f), "leaning forward and down are not limited");
+  Check(HeadBoxRadius(held, box, seat) <= 1.0f + 1e-5f, "never past the limit");
+  // Every direction: forward, down and up too (the game's switch is a sphere).
+  for (const Vec3 p : {Vec3{0, 0, -0.3f}, Vec3{0, -0.3f, 0}, Vec3{0, 0.3f, 0}, Vec3{-0.2f, 0.1f, -0.2f}})
+    Check(reach(LimitHead({{}, p}, box, seat)) <= 0.09f + 1e-5f, "held within 9 cm in every direction");
+  // The seat's offset alone past the knee (a seat 8 cm down): held, not moved out.
+  Check(reach(LimitHead({{}, {0, 0, 0}}, box, -0.08f)) <= 0.08f, "a low seat is held, never pushed out");
   // Continuous and monotonic, sideways and up.
   for (int axis = 0; axis < 2; ++axis) {
-    float last = 0;
+    float last = axis ? -1.0f : 0.0f;
     bool monotonic = true, continuous = true;
     for (int i = 1; i <= 400; ++i) {
       const float v = 0.0005f * float(i);
       const Pose p = axis ? Pose{{}, {0.05f, v, 0.04f}} : Pose{{}, {v, 0, 0}};
-      const float y = axis ? LimitHead(p, box).p.y : LimitHead(p, box).p.x;
+      const float y = axis ? LimitHead(p, box, seat).p.y : LimitHead(p, box, seat).p.x;
       if (y < last) monotonic = false;
-      if (y - last > 0.0005f + 1e-5f) continuous = false;
+      if (i > 1 && y - last > 0.0005f + 1e-5f) continuous = false;
       last = y;
     }
     Check(monotonic && continuous, axis ? "up: continuous and in order" : "sideways: continuous and in order");
@@ -213,7 +214,7 @@ void TestHeadBox() {
   // In LOCAL the held pose is the origin composed with it.
   const Pose origin{AxisY(30 * kDeg), {0.1f, 1.2f, 0.4f}};
   const Pose located = Compose(origin, back);
-  const Pose shown = Compose(origin, LimitHead(Relative(origin, located), box));
+  const Pose shown = Compose(origin, LimitHead(Relative(origin, located), box, seat));
   const Vec3 d{shown.p.x - located.p.x, shown.p.y - located.p.y, shown.p.z - located.p.z};
   const Vec3 along = Rotate(Conj(origin.q), d);
   Check(Near(along.x, held.p.x - 0.05f) && Near(along.z, held.p.z - 0.25f), "moved along the recentred axes");

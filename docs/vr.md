@@ -61,7 +61,9 @@ headset. Addresses are the disc executable's, with Title Update 4's in brackets.
   true stereo, the headset's own picture recorded and an emulator closer to it
   ([version 4](#version-4-after-the-third-headset-test)). Version 5: true stereo, the scene drawn
   for each eye from its own point in the GPU emulation (72 fps on the RX 9060 XT with the scene's
-  MSAA off; [version 5](#version-5-true-stereo)).
+  MSAA off; [version 5](#version-5-true-stereo)). Version 6: true stereo at 72 fps on the real
+  headset ([version 6](#version-6-true-stereo-on-the-real-headset)). Version 7: no jump of the
+  cabin when looking at a side window ([version 7](#version-7-the-cabin-no-longer-jumps)).
 - **Recommended plan** (with the integration research, merged below): (a) an OpenXR session
   with a virtual screen, then the head-tracked mono cockpit (the prototype's hook fed by
   the headset, the HUD on a quad, the game at its own rate under the runtime's
@@ -265,7 +267,7 @@ run time, never linked.
 | `vr_recenter_key` | `Home` | Recentres the view (both sticks pressed for a second do the same) |
 | `vr_fov_margin` | 5 | Degrees drawn beyond the headset's field of view on each side |
 | `vr_camera_effects` | false | Cockpit: keep the game's camera physics (shake, G-force lean and tilt, speed field of view) on top of the head pose |
-| `vr_head_back_limit_cm`, `vr_head_side_limit_cm`, `vr_head_up_limit_cm` | 15, 18, 6 | Cockpit: the eye's room round where it was recentred (version 4: an ellipse on the floor and a dome over it; 100: no limit) |
+| `vr_head_reach_cm` | 9 | Cockpit: how far the eye may move from the in-car camera's own point, the seat height included ([version 7](#version-7-the-cabin-no-longer-jumps); versions 3-6 had a box round the recentred head) |
 | `vr_exposure_speed` | 0.02 | Cockpit: how fast the exposure adapts while the head pose drives the camera, a factor of the game's rate |
 | `vr_cull_scale` | true | Cockpit: the object size cull as for the in-car camera's own field of view |
 | `vr_sharpen` | 0.5 | Cockpit: sharpening of the headset's picture, 0 to 1 (ReIGlue 0395) |
@@ -285,8 +287,8 @@ run time, never linked.
   window keeps showing the game as before (it is the mirror).
 - **Cockpit:** while the active camera is the in-car one (`CCamDriver`, or `CCamCockpit`), the
   camera hook takes the head pose from the headset instead of `FORZA_VR_POSE`: rotation and
-  position relative to the recentred head (held at most `vr_head_back_limit_cm` behind it),
-  plus the seat height. The game draws exactly the union of both eyes' fields of view plus the
+  position relative to the recentred head plus the seat height, held within `vr_head_reach_cm`
+  of the in-car camera's point. The game draws exactly the union of both eyes' fields of view plus the
   margin: around an axis pitched to the middle of the eyes' up and down angles, with a
   projection aspect of its own (Quest 3: 123 x 109 degrees, the axis 5.5 degrees down), the
   vertical field of view written into the director's FOV (+304) and the aspect returned by the
@@ -1341,6 +1343,73 @@ New settings (cvars):
 Test aids: the test FIFO's `framewait 0|1` (`vr_frame_wait` off and back), `recenter` (as the Home
 key: a headset lying still can relocalise after its display wakes, once by 134 degrees and 57 cm),
 `FORZA_VR_LOCKED_END_FRAME=1`.
+
+## Version 7: the cabin no longer jumps
+
+The fourth headset test (version 6, Quest 3 over WiVRn, 72 fps, true stereo, 26 October 2026, with
+the trace): "much better", but turning the head about 90 degrees to a side window or into the car
+"flicks", as in version 2. The trace has `CCamDriver`, posed, throughout; the head 9-12 cm aside and
+4-9 cm back at 60-73 degrees, the eye held by version 4's box in none of the samples.
+
+**Reproduced.** The trace's head path from 12:37:05.9 to 12:37:16.4 replayed step by step in the
+emulated headset (`scratchpad/xremu2`, the test save's Aventador): looking left at 54 degrees with
+the head 7.8 cm aside, 2.2 down and 4.1 back the whole cabin jumps between two steps and the roof
+over the door is gone (the sky through it), and comes back when the head returns; looking right the
+headliner changes as abruptly. The same path through the test-pose FIFO on the real headset
+(`scratchpad/svrflick/hs_flick.sh`, the display recorded at 72 fps): the jump in one frame, 42-47
+(mean difference of the left eye between frames) where the head turn itself gives up to 28, twice
+each pass.
+
+**The cause.** Swept 1 cm (then 2.5 mm) at a time in every direction, the jump happens where the
+view is 10.0 cm from the in-car camera's own point (9.9-10.1 cm aside left and right, forward, down
+and back), the same in both eyes and with one picture (`vr_stereo off`), and with the near plane at
+0.5 cm as at 2. Inside that sphere the game draws the player's car following the view: the cabin
+looks the same with the head 5 cm aside, 4 cm down or 8 cm back, and the seat height (`vr_seat_height_cm`
+0 against -4) does not show in it. Past 10 cm it draws the car where it really is, so the cabin jumps
+by the whole 10 cm at once and parts of the roof are not drawn. The game's camera (the director's
+position and matrix) and the head pose are continuous through it, and the frame's draws are the
+same (`FORZA_GPU_FRAME_TRACE`): the switch is the renderer's, on the view's distance from the
+camera. Versions 1 and 2 met it looking back and aside ("another camera"); version 3's box held
+the eye 10 x 8 x 6 cm round the game's eye point, inside the sphere for nearly every look; version 4
+lowered the eye 4 cm and let it move 18 cm aside and 15 back, so a look at a side window (the head
+9-12 cm aside and 4-9 back, 11-14 cm from the camera's point) crossed it every time. Versions 5 and 6
+did not change it; the user had not tested 4 and 5.
+
+**The change.** The eye is held within 9 cm of the in-car camera's point (`vr_head_reach_cm`, the
+seat height included), its offset eased toward that sphere from 0.85 of it (7.7 cm) as version 3's
+box was, the direction kept (`xr_math.h` `LimitHead`). Version 4's box (`vr_head_side_limit_cm`,
+`vr_head_back_limit_cm`, `vr_head_up_limit_cm`) is gone. Inside the sphere the hold does not show in
+the cabin (it follows the view anyway); the world outside moves a few centimetres less. True stereo
+is untouched: each eye's 3.2 cm is added in the vertex shader, after the game's decision.
+
+- **Not the near plane, not the field of view.** A smaller near plane or a "smaller camera" would not
+  help: nothing is clipped, the game moves the car once the view is more than 10 cm from where the
+  in-car camera is. Version 3's finding that the near plane was not the cause stands.
+- **Not a fade.** Fading to dark where the eye would leave the cabin (common in VR) is not needed:
+  with the hold the view never gets there, and a fade at every look at a mirror would be worse.
+- **Head translation in the cabin.** Inside the sphere the cabin follows the view, so leaning
+  does not move the eye in the cabin (so it was in every version); only the turn of the head
+  and each eye's offset do. Drawing the car where it is relative to the posed view (what the game
+  does past 10 cm, with the cockpit's own parts) would need the renderer's switch found and changed:
+  a lead for later.
+
+**Tested (version 7).** The same replayed path, emulated: the roof stays at every step; at the two
+steps where the cabin jumped the left eye changes by 21 and 30 (version 6: 41 and 44, the head turn
+alone up to 39), and the top of the left eye never fills with sky (bright share 0.55 at most against
+0.93). On the real headset
+(`hs_flick.sh`, two passes): no jump (largest change between frames 21.7 against 47.4), the roof
+always there (`svrflick/shots/headset_before_after.png`: before, the roof gone in one frame;
+after, the same moment). True stereo afterwards: 71.8 fps, 13.4 ms of GPU a frame, 72 Hz, 68-69
+frames shown a second. Unit tests: `xr_math_test` (the side-window looks of the trace held within
+9 cm, every direction, the direction kept, continuous, a low seat never pushed out).
+
+New settings (cvars):
+
+| cvar | Default | What |
+| --- | --- | --- |
+| `vr_head_reach_cm` | 9 | How far the eye may move from the in-car camera's own point, the seat height included (the game redraws the car past 10 cm; 100: no limit) |
+
+Removed: `vr_head_side_limit_cm`, `vr_head_back_limit_cm`, `vr_head_up_limit_cm`.
 
 ## HUD and menus
 
