@@ -136,7 +136,11 @@ def decode(profile, raw, keys):
 def _open(database):
     db = sqlite3.connect(':memory:')
     try:
-        db.enable_load_extension(False)
+        # Some Python builds (including macOS) omit loadable-extension support.
+        # Where the API exists, explicitly keep it disabled before reading the save.
+        disable_extensions = getattr(db, 'enable_load_extension', None)
+        if disable_extensions is not None:
+            disable_extensions(False)
         db.execute('PRAGMA trusted_schema=OFF')
         db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_DATABASE)
         db.deserialize(database)

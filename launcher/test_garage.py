@@ -82,6 +82,29 @@ class GarageTests(unittest.TestCase):
             doc = garage.decode(self.profile,raw,(KEYS,))
             self.assertEqual(garage.encode(doc,doc.database),raw)
 
+    def test_editor_without_optional_sqlite_extension_api(self):
+        class NoExtensionAPI(sqlite3.Connection):
+            @property
+            def enable_load_extension(self):
+                raise AttributeError('SQLite extension API was not compiled in')
+
+        connect = sqlite3.connect
+        def without_extension_api(*args, **kwargs):
+            return connect(*args, **kwargs, factory=NoExtensionAPI)
+
+        with patch.object(garage.sqlite3, 'connect', side_effect=without_extension_api):
+            document = garage.decode(self.profile, self.original, (KEYS,))
+            self.assertEqual(garage.encode(document, document.database), self.original)
+            with closing(garage._open(document.database)) as db:
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'not authorized|no such function'):
+                    db.execute("SELECT load_extension('garage-test-must-not-load')")
+            result = garage.add_missing(self.cfg, self.profile)
+            self.assertEqual(len(result.added), 7)
+            with closing(garage._open(garage.decode(self.profile, self.path.read_bytes(), (KEYS,)).database)) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM Career_Garage').fetchone()[0], 8)
+            saves.restore(self.profile, result.backup)
+            self.assertEqual(self.path.read_bytes(), self.original)
+
     def test_multiple_compression_blocks_and_bounded_bad_data(self):
         data = b'SQLite format 3\0'+bytes(100000)
         self.assertEqual(garage._inflate(garage._deflate(data)),data)
