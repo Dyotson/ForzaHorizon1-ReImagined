@@ -12,6 +12,13 @@ and reconstructs to 4K. 1080p Quality renders 720p directly and reconstructs to
 [Native DLSS](native_dlss.md) for the dimension table and validation limits.
 These launch checks are not a matched performance benchmark.
 
+## Co-op stall and sunrise FPS report (#444, 2026-10-25)
+
+I inspected both attached logs: they are successive snapshots of the same
+session. Sustained low FPS precedes the multi-second GPU fence waits, and the
+longer attachment shows recovery. The runtime cause remains unresolved.
+[Evidence, timeline and effective startup settings](issue-444-investigation.md).
+
 ## Native NVIDIA reconstruction, 2026-10-15 (before review fixes)
 
 These measurements predate the scene/HUD shader-cache correction. They are
@@ -1153,6 +1160,237 @@ another job on CPUs 0-3.)
 - On the Deck the command processor's chain is the bound (above): a Deck log of the benchmark with these changes,
   with the performance overlay, would show how much of the gap they close.
 
+## The command processor per draw, outside the bindings (#45, 2026-10-25)
+
+The command processor is the thread a frame waits for on a Deck and on 4-core CPUs (above). Sean's drafts #179
+(dynamic constant descriptors) and #192 (reuse of texture and sampler bindings) work on `UpdateBindings`,
+`RequestTextures` and the samplers; this looks at the rest of its time per draw.
+
+Method: the TU4 game build of main (048b553) with the SDK series of a8288c0 built with `-gline-tables-only` (the
+same code, so samples see inlined functions), the user's Xenia save in a scratch `--user_data_root`, the local
+Forza Live server, audio muted, a warm scratch shader cache, the low tier (`--frame_rate=30 --resolution_scale=1
+--present_effect=fsr`), the inputs of `tools/perf_scenario.sh race` (the 8-car festival race, 26 s) and `freeroam`
+(90 s of driving). Four cores: every game thread on CPUs 0-3 (`taskset`, as `PERF_CPUSET=0-3`), the samplers on
+4-7; all cores: no `taskset`. The command processor's CPU and draws per frame come from 0180's
+`fh1_frame_cost_csv` over the scene; hot functions from `PERF_CPUPROF=1` symbolized with their inlined frames
+(`llvm-symbolizer --inlining`); call stacks from `eu-stack -1 -i` a few hundred times a run (at
+`--frame_rate=240`, so the thread is busy); repeat rates from temporary counters (not committed). BENCH lock
+held. Other jobs shared the machine during parts of the day (game runs that ignored the lock, a decompiler, a
+busy wait): every run records the other games and how busy the CPUs were besides the game
+(`tools/thread_stats.py report --cpus`), and runs with another game or more than 45% of a core of other load on
+CPUs 0-3 (70% on all eight) were run again; they are not in the tables. (Its "race" was the car standing at the spawn point:
+the 1000 Club intro took the sign-up inputs; see round 3 below.)
+
+**Where the time goes** (four cores, 30 fps; % of the command processor's CPU samples by the function that was
+running, inlined code counted in its caller; race 4.92 ms a frame, 3,040 draws, 1.62 ms per 1,000 draws; free
+roam 3.44 ms, 2,060 draws, 1.67 ms):
+
+| Area | Race | Free roam | What |
+| --- | --- | --- | --- |
+| Bindings, textures, samplers (#179, #192) | 28.4% | 27.8% | `UpdateBindings`, `RequestTextures`, sampler lookups, the driver's `vkUpdateDescriptorSets` |
+| Register writes | 14.4% | 15.0% | `WriteRegistersFromMem` (constants and render state), `WriteRegisterRangeFromRing`, `copy_and_swap` (0140 already) |
+| Render target setup | 8.6% | 7.6% | `RenderTargetCache::Update`: the EDRAM ownership walk (`ChangeOwnership`, a `std::map`), render target lookups, the sort of the bases, `PerformTransfersAndResolveClears`, the render pass key and framebuffer |
+| Packet parsing | 8.2% | 8.3% | `ExecutePacket`, `ExecutePacketType3`, `ExecuteIndirectBuffer` |
+| Shader and pipeline state | 7.2% | 6.1% | `PM4_IM_LOAD`'s memo (0140: a `memcmp` of the microcode), translation lookups, `GetCurrentStateDescription`, the pipeline map |
+| `IssueDraw` itself | 6.3% | 5.8% | among it `GetVulkanDevice` (a virtual `provider()` call, 0.8%) and `rex::bit_scan_forward` (1.4%: a call into the runtime library for one instruction) |
+| System constants, viewport, dynamic state | 6.3% | 5.7% | `UpdateSystemConstantValues`, `GetHostViewportInfo`, `UpdateDynamicState` |
+| Shared memory and memory watches | 6.0% | 6.8% | `RequestRanges` (vertex and index data), `mprotect`, `FireWatches` |
+| `memcpy`, `memcmp` (callers above) | 5.4% | 6.0% | |
+| Sync, command recording, barriers, submission | 5.1% | 6.4% | `sched_yield`, futex wakes, `DeferredCommandBuffer`, `EndSubmission` |
+| Primitive processing | 0.8% | 1.0% | `PrimitiveProcessor::Process` |
+
+How often a draw repeats the one before (race, temporary counters): 95% of the draws have the render target
+registers of the previous draw with nothing touching the render targets in between (and then the full setup
+finds no transfer, no barrier and the same render pass); only 4.6% change no render state register at all, the
+system constants change in 70%, and 60% use the previous draw's pipeline. So caching everything until any
+register changes (as Pinyon Shift's register epoch does) would rarely hit here; the render target setup can be
+kept almost always.
+
+**Change 1: SDK patch 0340, the render target setup of the previous draw.** `VulkanRenderTargetCache::Update`
+keeps the previous draw's result when the inputs the common `Update` reads are the same
+(`RenderTargetCache::GetUpdateInputs`: rasterization, depth and stencil use, the color mask, `RB_SURFACE_INFO`,
+`RB_DEPTH_INFO`, the four `RB_COLOR_INFO`, the clamp setting and the height `DrawExtentEstimator` gives), nothing
+changed the cache since (`update_state_generation`: every `ChangeOwnership` call, a new render target, a reset of
+the accumulated bindings, a clear or trim) and the bound render targets are still in their draw layout and
+access (a resolve or a dump moves them out; then a barrier is due). Such a draw owns its EDRAM ranges already: the
+full update would find no transfer, the same render pass and framebuffer and no barrier, so only the transfer
+lists are cleared. Setting `vulkan_render_target_update_reuse` (default on); `..._verify` still runs the full
+update for a reused draw and logs a difference in the ownership map, the bindings, the render pass, the
+framebuffer, the commands or the barriers recorded; once a minute the log says how many draws reused it
+(`Render target update reuse: N of M draws`). In a race and in free roam 94.6-94.8% of the draws reuse it
+(menus and loading 56-78%).
+
+- Verified: a race and free roam with `vulkan_render_target_update_reuse_verify`, every reused draw checked
+  against its full update: no difference.
+- Pixel check: the pause menu in free roam redraws the whole scene every frame (2,940-3,040 draws) and the
+  picture stands still (two shots 3 s apart identical). Shots with the setting on, then switched off in the
+  running game (its storage written through `/proc/PID/mem`), then on again: identical.
+
+**Measured.** Other jobs kept loading the machine through the day, so the A/B runs switch the setting in the
+running game, alternating within the scene (every 2 s in the race, 5 s in free roam, every 5 s on the pause menu;
+the setting's storage written through `/proc/PID/mem`; the first 0.3-0.5 s of each window left out), three runs per
+configuration starting with either state, the BENCH lock held, other load besides the game 6-23% of a core on
+CPUs 0-3 in all but one run. The command processor's CPU per frame and per 1,000 draws over each state's windows;
+the frame rate and p99 from the command processor's frame intervals (at 240 the guest's frame rate; the window
+itself shows 144, the display's). Mean [min-max] over the runs:
+
+| Scene | Cores, cap | 0340 | ms a frame | ms per 1,000 draws | draws a frame | fps | p99 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Race | 4, 30 fps | off | 4.99 [4.83-5.19] | 1.644 [1.626-1.681] | 3,032 | 30.0 | 34.1 |
+| Race | 4, 30 fps | on | 4.62 [4.49-4.81] | 1.522 [1.508-1.547] | 3,037 | 30.0 | 34.1 |
+| Free roam | 4, 30 fps | off | 3.50 [3.27-3.61] | 1.688 [1.677-1.709] | 2,071 | 30.0 | 34.2 |
+| Free roam | 4, 30 fps | on | 3.16 [3.04-3.34] | 1.579 [1.566-1.589] | 2,001 | 30.0 | 34.1 |
+| Race | 4, 240 fps | off | 4.78 [4.73-4.81] | 1.586 [1.572-1.609] | 3,016 | 158.4 [158.0-159.1] | 8.3 [8.0-8.4] |
+| Race | 4, 240 fps | on | 4.44 [4.39-4.47] | 1.467 [1.454-1.491] | 3,023 | 165.1 [164.1-166.9] | 7.8 [7.6-8.1] |
+| Race | 8, 30 fps | off | 4.99 [4.92-5.11] | 1.636 [1.635-1.637] | 3,047 | 30.0 | 33.8 |
+| Race | 8, 30 fps | on | 4.62 [4.55-4.71] | 1.517 [1.514-1.521] | 3,043 | 30.0 | 33.8 |
+| Free roam | 8, 30 fps | off | 3.52 [3.27-3.71] | 1.693 [1.671-1.712] | 2,080 | 30.0 | 33.8 |
+| Free roam | 8, 30 fps | on | 3.19 [3.09-3.40] | 1.591 [1.568-1.613] | 2,010 | 30.0 | 33.8 |
+| Pause menu (same frames) | 4, 30 fps | off / on | 4.91 / 4.54 | 1.637 / 1.518 | 2,994 | 30.0 | |
+| Pause menu (same frames) | 8, 30 fps | off / on | 5.06 / 4.69 | 1.691 / 1.567 | 2,994 | 30.0 | |
+
+- The command processor needs 7.3-7.5% less CPU per 1,000 draws in the race (four or eight cores, capped or not),
+  6.0-6.4% less in free roam and 7.3% in the paused scene, whose frames are the same: about 0.12 ms per 1,000
+  draws, 0.37 ms of a race frame here. Free roam's per-frame figures move with the scenery each window shows;
+  per 1,000 draws they do not.
+- Uncapped on four cores, the race runs 4.2% faster (158 to 165 fps) and its p99 is 0.5 ms shorter: the
+  command processor is what that frame rate waits for. At 30 fps the frame rate is capped and the frame times do
+  not move.
+- Separate whole runs (on, off, alternating) agreed where no other job ran (race 4.43 against 5.10-5.13 ms a
+  frame, free roam 3.26-3.29 against 3.55), but most of them shared the machine and are left out.
+- Extrapolating to a Deck (2-2.5 times this time per instruction, above) suggests about 0.8-0.9 ms of a race
+  frame on the thread the frame waits for. This is an estimate, not a measurement on a Deck.
+
+**Change 2: SDK patch 0341, the memory watch walk.** A write to guest memory (a resolve on the command
+processor, a CPU write fault on a game thread) tests every watch node of its 4 MB buckets: about 40 nodes a
+write, 3,700 a frame in free roam here, 2,800-6,600 in the minute lines of an i7-8700K's log (#274), each a
+dependent load of the node and of its range, under the global lock the game's write faults also take. The nodes
+now hold their range's pages, and `gpu_memory_watch_bucket_log2` sets the bucket size (18-22, log2 bytes; 22, the
+old 4 MB, is the default). The same ranges fire. Free roam, nodes checked a frame (the minute lines) and the
+watches' nodes:
+
+| `gpu_memory_watch_bucket_log2` | Nodes checked a frame | Watch nodes | `FireWatches` + `WatchMemoryRange`, CP samples |
+| --- | --- | --- | --- |
+| 22 (4 MB, before) | 3,670 | 875 | 0.8% |
+| 20 (1 MB) | 2,628 | 932 | 0.6% |
+| 18 (256 KB) | 1,027 | 958-966 | 0.6% |
+
+Race on four cores at 30 fps, separate runs alternating (the setting is read at start; 0340 on in both): 22 gave
+1.506 and 1.501 ms per 1,000 draws, 18 gave 1.510, 1.500 and 1.513 (a first 22 run that shared the machine with
+another game, 1.585, left out), with 3,667-3,698 against 1,028-1,030 nodes checked a frame and 735-749 against
+939-949 watch nodes. On this CPU the walk is 0.5-0.8% of the command processor and the difference is inside the
+spread, so the default stays 22; the nodes' own pages (no change in behaviour) are always on. Worth a test where
+cache misses cost more (#274's i7-8700K checks 2,800-6,600 nodes a frame, a Deck): `gpu_memory_watch_bucket_log2 =
+18` and the minute line's `memory watch nodes checked` and `us a draw`.
+
+**Left** (outside #179 and #192):
+
+- `IssueDraw` and its helpers call `GetVulkanDevice()` (a virtual `provider()` call) several times a draw, and
+  `rex::bit_scan_forward` / `tzcnt` are calls into the runtime library through the PLT for one instruction each:
+  together about 2% of the command processor, gone with a cached device pointer and inline bit scans in the
+  plugin (no behaviour change, so nothing to switch).
+- Register writes (14-15%) are mostly the copies themselves after 0140; packet parsing 8%.
+- Shader and pipeline state (6-7%): 0140's `PM4_IM_LOAD` memo compares the microcode with `memcmp` for every
+  load; a translation lookup per shader per draw could keep the shader's last modification; 40% of the draws
+  hash their pipeline description for the map.
+- The system constants change in 70% of the draws, and 95% of the draws follow a change of some render state
+  register, so a cache that holds until any register changes (Pinyon Shift's register epoch,
+  `docs/PERFORMANCE_BACKLOG.md` in that project; its notes were read, nothing from them run) would rarely hold
+  here. Most of their per-draw work went into the descriptor, sampler and texture binding steps (here #179 and
+  #192); their render target memo, keyed on a register epoch, hit 50-62% of the draws, 0340's key (the render
+  target registers only) 95%.
+
+## The command processor per draw, round 3 (#45, 2026-10-25)
+
+Round 2 (above) left the register writes (14-15 % of the command processor), the packet parsing
+(8 %), the shader and pipeline state (6-7 %) and `IssueDraw`'s calls into the runtime library
+(about 2 %). This round takes those, still outside #179 and #192.
+
+Method: as round 2 (the same TU4 game build; the SDK series of main 673c1b8, with 0350, built
+with `-gline-tables-only`; scratch XDG dirs and `--user_data_root`, a local Forza Live server,
+audio muted, the low tier, four cores with `taskset` or all eight), with one difference: the
+save. **The `race` scenario never reached the race:** with the user's Xenia save, TU4 plays the
+1000 Club introduction video (about 45 s) the first time free roam loads signed in to Forza Live,
+and then holds the car at the spawn point until the 1000 Club tutorial is done. Every run copies
+the save afresh, so every run played it: the scenario's sign-up inputs (X, A, A, X) went into the
+video and its "race" was the car standing at the spawn point (about 3,000 draws a frame, the
+figures of round 2's race rows and of the first runs here, "Spawn" below); its free roam began
+with about 15 s of the video. The runs below copy a save made once past the intro and the
+tutorial (`scratchpad/golden-save-tu4`, its README says how): the race runs (5,000-5,600 draws
+a frame, 7 ms of command processor a frame at 30 fps on four cores) and free roam drives for the
+whole 90 s (2,900 draws a frame).
+
+**What a draw costs in packets** (race, temporary counters, not committed): 14.7 type-0 packets
+with 203 registers (8.0 ranges of render state registers, 3 registers each and 90 % of the
+values unchanged; 4.4 float constant ranges of 32 registers; 2.3 fetch constant ranges; 1.1
+packets that write one register repeatedly), 8.8 type-3 packets (4.5 `SET_BIN_MASK_LO/HI`, 1.1
+`IM_LOAD` of 143 dwords, 1.0 draw, 0.85 `LOAD_ALU_CONSTANT`, 0.7 `SET_CONSTANT` and
+`SET_CONSTANT2` of registers, 0.26 indirect buffers) and 13 padding words in 6 runs. 39 % of the
+draws follow no change of any render state register.
+
+**Changes** (`docs/sdk_patches.md` has the details):
+
+- **0360**, register ranges in the packet loop (`gpu_plain_register_ranges`, default on): a
+  range made only of render state registers the Vulkan backend just stores is stored by the
+  packet loop from the ring, without the two virtual calls (`WriteRegisterRangeFromRing`,
+  `WriteRegistersFromMem`) and the backend's sorting of the range; a range inside the ring no
+  longer divides for its read offset.
+- **0361**, no calls into the runtime library for one instruction: `GetVulkanDevice` keeps the
+  device pointer instead of calling the virtual `provider()`; `rex::bit_scan_forward`, `tzcnt`
+  and `lzcnt` are inline in the GPU plugin. No setting (no behaviour change):
+  `tools/test_inline_bit_scans.cpp` checks every 32-bit value and 2^28 random 64-bit values
+  against the runtime's functions.
+- **0362**, the last translation of each shader (`gpu_shader_translation_memo`, default on;
+  `..._verify` also looks it up and logs a difference): a draw that asks a shader for the same
+  modification as the draw before skips the map lookup.
+
+Checks: a race and free roam with `gpu_shader_translation_memo_verify`, no difference; the paused
+scene (pause menu over free roam, the same frames) with 0360 and 0362 on, switched off in the
+running game and on again: the shots are identical.
+
+**Measured**, 0360 and 0362 together, switched in the running game every 2 s (race, spawn) or
+5 s (free roam) as in round 2 (the cvars' storage written through `/proc/PID/mem`, the first
+0.3 s of each window left out), 0361 on in both states. The BENCH lock held; the user's desktop
+and other agents' builds kept 10-35 % of a core busy on CPUs 0-3 and 50-90 % on all eight, so
+the limits of round 2 were 45 % and 100 %. Command processor CPU per 1,000 draws, mean [min-max]
+over the runs; "paired" compares each on window with its neighbouring off windows:
+
+| Scene | Cores, cap | Runs | off | on | change | paired | fps off / on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Race | 4, 30 fps | 2 | 1.355 [1.334-1.375] | 1.317 [1.308-1.326] | -2.7 % [-4.9, -0.6] | -2.4 % | 30 / 30 |
+| Free roam | 4, 30 fps | 2 | 1.504 [1.484-1.525] | 1.460 [1.441-1.479] | -3.0 % [-3.0, -2.9] | -2.8 % | 30 / 30 |
+| Race | 4, 240 fps | 1 | 1.296 | 1.282 | -1.1 % | -1.2 % | 114.7 / 118.7 |
+| Free roam | 4, 240 fps | 1 | 1.388 | 1.359 | -2.1 % | -2.1 % | 201.7 / 203.6 |
+| Race | 8, 30 fps | 1 | 1.403 | 1.331 | -5.1 % | -4.6 % | 30 / 30 |
+| Free roam | 8, 30 fps | 1 | 1.513 | 1.484 | -1.9 % | -2.1 % | 30 / 30 |
+| Spawn (standing) | 4, 30 fps | 1 | 1.429 | 1.392 | -2.6 % | -2.5 % | 30 / 30 |
+| Spawn (standing) | 4, 240 fps | 1 | 1.349 | 1.309 | -3.0 % | -2.9 % | 178.1 / 185.2 |
+| Spawn (standing) | 8, 30 fps | 1 | 1.460 | 1.452 | -0.5 % | -0.6 % | 30 / 30 |
+
+- 0360 and 0362 take 2-3 % off the command processor's CPU per draw (about 0.04 ms per 1,000
+  draws here; 0.2 ms of a 5,300-draw race frame). The race moves from window to window (draws
+  a frame differ by 10 % between neighbouring windows), so its single runs scatter (-0.6 to
+  -5.1 %); the standing scene and free roam agree on 2-3 %. Uncapped on four cores the guest's
+  frame rate rose 3.5-4 % where the command processor bounds it (race, spawn), not in free roam.
+- 0361 was not measured on its own: in the profiles before it, `bit_scan_forward` and
+  `provider()` were 2.2-2.3 % of the command processor's samples, now gone from the plugin's
+  imports; expect about that.
+- Fewer runs than planned (1-2 per configuration instead of 3): the round was cut short.
+
+**Left** (outside #179 and #192):
+
+- Each of 0360 and 0362 on its own, 0361 against main (whole runs alternating, the standing
+  scene), and three runs per configuration: the harness has the plans (`stand`/`standab`
+  scenarios); not run.
+- The register writes left are mostly the float constants (5 ranges, 170 registers a draw, the
+  copy itself) and the stream itself: the packet loop's first read of each packet, where
+  reading the game's command buffer stalls, is about 2 % of the command processor here; on a CPU with a small cache or slow memory (BC-250's GDDR6, a Deck) that
+  share is probably larger. Not tried: prefetching the ring ahead.
+- `IM_LOAD`'s memo compares the shader's 143 dwords with guest memory on every load (1.1 a
+  draw); the pipeline description (`GetCurrentStateDescription`, about 1 %) is still built for
+  every draw.
+- System constants, viewport and dynamic state (5-6 %) as round 2 left them.
+
 ## One-pass scene: `scene_msaa` (#45, 2026-10-23)
 
 The three EDRAM tiles above are most of the command processor's time. The game can render
@@ -1778,3 +2016,79 @@ up and the clocks down, the same session with the Deck kept cooler (a cooler roo
 confirm heat; if the GPU memory is full, the same session with the BIOS UMA frame buffer at 4 GB, or with
 `texture_cache_memory_limit_soft = 192` in `forza.toml` (a smaller texture cache: unused textures go after 30 s
 once it holds 192 MB), would tell whether memory placement is the cause.
+
+
+## HDD write amplification (#443)
+
+The issue attachment `forzalog.zip` contains a 150,249,543-byte `forza.log`,
+2026-10-25 20:27:05.214 through 21:08:21.135 (timestamps as logged). Counting
+records by severity yields 1,197,547 lines, including 1,193,642 debug records:
+896,546 XMA unknown-register messages and 125,297 PRESENT messages. The SDK
+uses synchronous spdlog loggers and a buffered basic file sink; its default
+flush threshold is info, with periodic flush disabled. Debug records do not
+individually force a flush. The log does not record actual filesystem write
+calls, flush settings or disk queue occupancy, so bytes and message counts
+cannot establish the physical HDD workload. The maintainer has already asked
+for an info-level retest; that result remains necessary.
+
+Independently, the log records 22 successful driver-cache saves totaling
+11,795,138,021 bytes (11.8 GB), retaining 252 pipelines in files between
+536,063,947 and 536,204,779 bytes. Fourteen successive saves have the same byte
+count as their predecessor. Equal lengths alone do not prove equal contents.
+Source inspection identifies a redundant-write path: adding any pipeline
+increments the global driver-cache generation, including pipelines omitted by
+the 512 MiB retained-subset budget. The next storage-thread save rewrites the
+whole retained subset even when none of its entries changed. Writes use a
+temporary file, stream flush and atomic replacement; on Windows replacement
+uses MOVEFILE_WRITE_THROUGH. They are separate from debug log writes.
+
+Patch 0342 compares the retained subset with the last successful save before
+opening a temporary file. It compares identity, destination, ordered keys,
+fresh sizes and immutable payloads (byte comparison if a pointer changed, even
+when checksums match). Weak references avoid extending payload lifetimes.
+Unchanged subsets acknowledge the captured generation without I/O. Failed
+writes retain the successful snapshot and retry later. Startup/reset begins
+with no snapshot; the on-disk format and restart reads are unchanged, as are
+0320's 512 MiB cap, smaller-entry packing and atomic replacement. Only the
+serialized storage writer uses the state; startup saves precede its creation,
+shutdown joins it before the final save/reset, and pipeline producers still
+publish under the existing mutex. A newer generation remains dirty when a
+save acknowledges an older captured generation.
+
+The log selects a GTX 1650 with about 4 GB device-local memory, although the
+report lists an RTX 5060 (both are enumerated). At minute 40 it reports about
+1541 MB device-local of a 3557 MB budget, 245 MB system GPU memory, 384 MB
+textures, 572 MB render targets, 32 MB readback buffers and 273+360 MB guest
+memory. Readback stalls occur in some windows, but these records do not show
+exhausted VRAM or measure host process memory/paging. Streaming can compete
+with the writes on an HDD; the log does not measure those disk reads. There
+is no disk trace or controlled game reproduction establishing which events
+caused the reporter's hitches. This change fixes the demonstrated redundant
+save path; it does not claim the entire issue is resolved.
+
+Validation on Windows: `tools/test_driver_pipeline_cache.cpp` compiled against
+an isolated SDK snapshot at bd833a2ab69d305f99ddf57418fc38ffec8af93d with all 124
+public patches applied. It passes bounded omitted-only additions, same-size
+changes, forced checksum collision, changed key/metadata, displaced entries,
+smaller-entry packing, separately loaded identical data, destination/identity
+changes, reset, weak payload lifetime, failed replacement/retry and concurrent
+readers, plus the existing corruption, replacement and six-start reuse model.
+A negative control disabling the unchanged fast path fails the omitted-only
+assertion. A private harness compiled the exact patched
+`SaveDriverPipelineCache` body and passed generation acknowledgement/no-write
+and denied Windows replacement/retry checks. Initial validation did not include
+a full GPU plugin/game build, HDD trace or game run.
+
+
+Follow-up Windows build validation: a private reconstruction of the pinned SDK
+plus all 124 public patches, with exact local gitlink copies and the carried
+SDL patches, configured with Clang 23.1.3, Vulkan/D3D12, DLSS, FSR3, Tracy and
+performance counters enabled. The three affected Vulkan translation units
+compiled first. The remaining `rexgpu-xenos` target then compiled and linked
+with ordinary Ninja `-j1 -k1` in 361 seconds, within a 20-minute limit. The
+matching `rexruntime.dll` linked too; the Ninja graph and all 1369 tracked SDK
+source hashes were unchanged. Static AMD64 PE inspection found the required
+`rex_gpu_abi_version` and `rex_gpu_create` exports plus the two existing GPU
+selection hints, and the plugin imports `rexruntime.dll`. Its DLSS capability
+manifest matches its SHA-256. No DLL was loaded, no shared prefix installed,
+and no game, persistence/restart reuse or HDD stutter validation was performed.

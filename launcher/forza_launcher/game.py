@@ -121,9 +121,15 @@ def server_listening(port=LOCAL_HTTP_PORT) -> bool:
         return False
 
 
-def server_command(script: Path, data_dir: Path):
+def server_command(script: Path, data_dir: Path, game_files: Path | None = None):
     args = ["--host", "127.0.0.1", "--port", LOCAL_SERVER.split(":")[1],
             "--http-port", str(LOCAL_HTTP_PORT), "--data-dir", str(data_dir)]
+    # The festival events (the Co-op Festival's /event, the Horizon World's events) come from
+    # the game's database. The server only looks for it in a source checkout (extracted/game
+    # beside server/); without it the Co-op Festival is not offered at all (#67).
+    db = game_files / "media" / "db" / "gamedb.slt" if game_files else None
+    if db and db.is_file():
+        args += ["--game-db", str(db)]
     if paths.FROZEN:  # run the server inside this executable (no Python needed)
         return [sys.executable, "--live-server", str(script)] + args
     return [sys.executable, str(script)] + args
@@ -407,35 +413,93 @@ def texture_packs_used(cfg: Config) -> bool:
     return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
 
 
-def native_update_requested(cfg: Config, toml_text: str) -> bool:
+def native_update_requested(cfg: Config, toml_text: str, keys=("forza_car_tuning",)) -> bool:
     """Use the same config/environment/CLI precedence as the runtime flags."""
     values = parse_toml(toml_text)
     environment = {**os.environ, **parse_env(cfg.advanced.get("extra_env", ""))}
-    for key in ("forza_native_pause", "forza_car_tuning"):
+    for key in keys:
         name = "REX_" + key.upper()
         if name in environment:
-            values[key] = environment[name].lower() in ("true", "1")
+            # rex::string::from_string<bool> is case-sensitive (numeric.h).
+            values[key] = environment[name] in ("true", "1", "yes")
+    # CLI11 add_flag_function uses case-insensitive counts and sums repeated
+    # registered flags. The environment conversion is intentionally separate.
+    def flag_count(value):
+        value = value.lower()
+        if value in ("true", "yes", "on", "enable", "t", "y", "+"):
+            return 1
+        if value in ("false", "no", "off", "disable", "f", "n", "-", "0"):
+            return -1
+        if re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)", value):
+            digits = value.lstrip("+-")
+            base = 16 if digits.startswith("0x") else 8 if digits.startswith("0") else 10
+            return int(value, base)
+        return None
+
+    def summed_count(value):
+        # CLI11's Sum policy tries numeric conversion before boolean words.
+        # In particular, a positive flag's explicit 0 contributes zero.
+        numeric = value.replace("_", "").replace("'", "")
+        try:
+            return float(numeric)
+        except ValueError:
+            try:
+                return float.fromhex(numeric) if "0x" in numeric.lower() else float(int(numeric, 0))
+            except ValueError:
+                return flag_count(value)
+
+    cli_counts = {}
+    invalid_counts = set()
     extra = split_args(cfg.advanced.get("extra_args", ""))
     for arg in extra:
+        if arg == "--":
+            break
         if not arg.startswith("--"):
             continue
         key, equal, value = arg[2:].partition("=")
         negated = key.startswith("no-")
         if negated:
             key = key[3:]
-        if key not in ("forza_native_pause", "forza_car_tuning"):
+        if key not in keys:
             continue
-        if not equal:
-            value = "true"
-        values[key] = (value.lower() in ("true", "1")) != negated
-    return any(values.get(key) is True for key in ("forza_native_pause", "forza_car_tuning"))
+        if not equal or value in ("", "{}"):
+            value = "false" if negated else "true"
+        elif negated:
+            # get_flag_value inverts recognized integer/boolean overrides;
+            # other numeric spellings (such as 2.5) pass through unchanged.
+            count = flag_count(value)
+            if count is not None:
+                value = str(-count)
+        count = summed_count(value)
+        if count is None:
+            invalid_counts.add(key)
+        cli_counts[key] = cli_counts.get(key, 0) + (count or 0)
+    for key, count in cli_counts.items():
+        # CLI11 formats its floating-point sum before the int64 callback.
+        integer = re.match(r"[+-]?\d+", format(count, ".16g"))
+        values[key] = key not in invalid_counts and integer is not None and int(integer[0]) > 0
+    return any(values.get(key) is True for key in keys)
 
 
 def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
+    menu = game.dir / "update-menu"
+    if native_update_requested(cfg, toml_text, ("forza_native_pause",)):
+        return menu if menu.is_dir() else game.dir / "update"
     prepared = game.dir / "update-native"
     if native_update_requested(cfg, toml_text) and prepared.is_dir():
         return prepared
     return game.dir / "update"
+
+
+def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
+    """Warn about an enabled feature whose automatic resources have not been built."""
+    # The launch plan leaves explicit roots authoritative. Rebuilding the managed
+    # overlay cannot repair or replace the user's explicitly selected directory.
+    if any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", ""))):
+        return False
+    text = render_toml(cfg)
+    return (native_update_requested(cfg, text) and
+            update_data_root(cfg, install, text) == install.dir / "update")
 
 
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
@@ -507,7 +571,7 @@ def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver
         else:
             env["FORZA_SERVER"] = LOCAL_SERVER
             if not server_listening():
-                server_argv = server_command(script, home / "live_server")
+                server_argv = server_command(script, home / "live_server", data)
     else:
         if mode == "custom":
             notes.append("No custom server address set: starting offline.")

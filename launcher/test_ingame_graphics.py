@@ -108,6 +108,32 @@ class InGameGraphicsTests(unittest.TestCase):
 
 
 
+    def test_shadow_softness_is_imported_and_validated(self):
+        for value in ("soft", "softer", "console"):
+            with self.subTest(value=value):
+                self.request(frame_rate="60", world_shadow_filter=value)
+                self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(Config(self.cfg.path).settings["world_shadow_filter"], value)
+        previous = dict(self.cfg.settings)
+        for bad in ("high", "Soft", ""):
+            with self.subTest(bad=bad):
+                self.request(frame_rate="120", world_shadow_filter=bad)
+                self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(self.cfg.settings, previous)
+
+    def test_ambient_occlusion_is_imported_and_validated(self):
+        for value in ("low", "high", "off"):
+            with self.subTest(value=value):
+                self.request(frame_rate="60", world_ambient_occlusion=value)
+                self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(Config(self.cfg.path).settings["world_ambient_occlusion"], value)
+        previous = dict(self.cfg.settings)
+        for bad in ("on", "High", ""):
+            with self.subTest(bad=bad):
+                self.request(frame_rate="120", world_ambient_occlusion=bad)
+                self.assertFalse(ingame.import_pending(self.cfg, lambda _: None))
+                self.assertEqual(self.cfg.settings, previous)
+
     def test_20_and_40_fps_are_imported(self):
         for rate in (20, 40, 30):
             with self.subTest(rate=rate):

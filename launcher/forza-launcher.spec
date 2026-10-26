@@ -15,6 +15,8 @@ images = repo / "docs" / "images"
 
 stdlib = set(sys.stdlib_module_names)
 hidden = set()
+if not (repo / "server" / "forza_live_server.py").is_file():
+    raise SystemExit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
 for f in (repo / "server").glob("*.py"):
     if f.name.startswith("test_"):
         continue
@@ -53,7 +55,7 @@ hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
 # prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
-for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py", "native_menu_scene.py", "offline_cars_flow.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py", "native_menu_scene.py", "offline_cars_flow.py", "native_tuning_assets.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
 datas.append((str(repo / "tools" / "native_menu" / "fh1_donors.json"), "tools/native_menu"))

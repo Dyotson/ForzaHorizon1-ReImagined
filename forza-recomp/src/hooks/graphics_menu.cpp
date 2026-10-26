@@ -250,7 +250,8 @@ std::vector<std::pair<std::string, std::string>> preview_baseline;
 
 bool IsLive(const Setting &setting) {
   return setting.key == "vsync" || setting.key == "anisotropic_override" ||
-         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay";
+         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay" ||
+         setting.key == "world_shadow_filter" || setting.key == "world_ambient_occlusion";
 }
 
 void RememberPreview() {
@@ -286,8 +287,11 @@ bool ApplyPreview() {
 }
 
 constexpr size_t kAntiAliasing = 9;
+constexpr size_t kShadowSoftness = 10;
+constexpr size_t kAmbientOcclusion = 11;
 // Preset first, then image quality, frame pacing, HUD and monitoring.
-constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 4, 6, 7};
+constexpr std::array<size_t, 12> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, kShadowSoftness,
+                                               kAmbientOcclusion, 3, 4, 6, 7};
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
@@ -369,6 +373,10 @@ void Snapshot() {
        {{"custom", "Custom"}, {"auto", "Auto (recommended)"}, {"low", "Low"},
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
+      {"world_shadow_filter", "world_shadow_filter", "Shadow softness", "",
+       {{"console", "Console"}, {"soft", "Soft"}, {"softer", "Softer"}}},
+      {"world_ambient_occlusion", "world_ambient_occlusion", "Ambient occlusion", "",
+       {{"off", "Off"}, {"low", "Low"}, {"high", "High"}}},
   };
   auto &modes = settings[1].choices;
 #ifdef _WIN32
@@ -406,6 +414,14 @@ void Snapshot() {
 #endif
     if (setting.key == "output") setting.value = CurrentOutput(setting.value);
     if (setting.value.empty())
+      setting.value = setting.choices.front().value;
+  }
+  // A value the screen does not offer would be saved back as it is; show and keep the
+  // game's look (Console, Off).
+  for (const size_t world : {kShadowSoftness, kAmbientOcclusion}) {
+    auto &setting = settings[world];
+    if (std::none_of(setting.choices.begin(), setting.choices.end(),
+                     [&](const Choice &choice) { return choice.value == setting.value; }))
       setting.value = setting.choices.front().value;
   }
   // Never let an unknown/current launcher mode silently select spinner index
@@ -488,12 +504,15 @@ bool SaveNativeConfig() {
       "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
       "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
       "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
-      "forza_hud_edges", "forza_performance_overlay"}) {
+      "forza_hud_edges", "forza_performance_overlay", "world_shadow_filter",
+      "world_ambient_occlusion"}) {
     auto value = rex::cvar::GetFlagByName(name);
     if (value.empty()) continue;
     const std::string key(name);
     if (key == "resolution" || key == "fh1_upscaler" || key == "swap_post_effect" ||
-        key == "forza_performance_overlay") value = "\"" + value + "\"";
+        key == "forza_performance_overlay" || key == "world_shadow_filter" ||
+        key == "world_ambient_occlusion")
+      value = "\"" + value + "\"";
     updates.emplace_back(key, value);
   }
   auto temporary = native_config_path;
@@ -576,6 +595,11 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
       return;
     ui.Call(0x828EED20, {empty_pause_source});
   }
+  // Graphics is created asynchronously. Keep the title's shifted transforms
+  // while its rows are still visible, including their unfocus animations.
+  // Restore only when the new page is ready to hide them, before rebinding
+  // the component can retire or reuse those row nodes.
+  if (!show && from_main_menu) RestoreTitle(base);
   ui.Call(0x828B82C8,
           {component, show ? source : empty_pause_source});
   ui.Call(Read(base, Read(base, component + 0x6C) + 0x28), {component + 0x6C});
@@ -624,7 +648,9 @@ std::string Help(size_t i) {
       "Move ultrawide HUD anchors to the center or edges. Save applies this change when HUD layout is enabled.",
       "Show measured game FPS, optionally with recent frame times in milliseconds. Save applies this change.",
       "Adjust reconstruction and filtering together. Auto uses available features and output size, not a benchmark. HUD and FPS limit stay unchanged.",
-      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method."};
+      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method.",
+      "Softer, smoother edges on the world's shadows: Soft filters them over a 1.5x wider area, Softer 2x with a wider blur (a little GPU time). Console is the game's filter. Save applies this change.",
+      "Darker sunlight where the world's surfaces meet: under cars, along rails and curbs, at the foot of walls and in creases of the ground. Low or High strength (about 0.5 ms per frame at 2560x1440). Off is the game's lighting. Save applies this change."};
   return i < std::size(help) ? help[i] : "Save applies graphics changes without restarting.";
 }
 uint32_t MakeChoices(Native &ui, uint8_t *base, size_t i) {
@@ -649,6 +675,8 @@ bool Relevant(size_t i) {
 #endif
   if (i == 2) return BackendMode() == "off";
   if (i == kAntiAliasing) return settings[1].value == "off";
+  // The occlusion is a pass of the Vulkan renderer (SDK patch 0350).
+  if (i == kAmbientOcclusion) return rex::cvar::GetFlagByName("gpu_backend") != "d3d12";
   if (i == 6) return rex::cvar::GetFlagByName("forza_ultrawide") == "true" ||
                      rex::cvar::GetFlagByName("forza_hud_layout") == "true";
   return true;
@@ -1021,7 +1049,6 @@ extern "C" REX_FUNC(sub_82836928) {
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics &&
       Read(base, main_menu + 0x260) == 12) {
     title_layout_pending = false;
-    RestoreTitle(base);
     active_menu = main_menu;
     from_main_menu = true;
     OpenGraphics(ctx, base);

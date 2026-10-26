@@ -16,14 +16,21 @@ Bucket List is excluded. The feature remains opt-in.
 
 ### Review corrections - 2026-10-25
 
-The launcher now publishes two independent overlays: `runtime/update` contains
-the unmodified FH1 TU4 files; `runtime/update-native` contains prepared resources
-and the offline reload flow. Launch selects the prepared overlay only when
-`forza_native_pause` or `forza_car_tuning` is enabled, honoring environment and
-command-line overrides. Turning both off and restarting selects stock resources
-without rebuilding. Failed preparation removes stale prepared output and leaves
-the complete stock overlay available. Build/runtime directory links are allowed;
-links on the individual update publication targets are rejected.
+The launcher keeps the unmodified FH1 TU4 files in `runtime/update`. Standalone
+car tuning uses `runtime/update-native`, prepared by the tuning-only tool without
+changing the stock pause flow. The full pause menu uses `runtime/update-menu`,
+which contains its donors, tuning aliases and offline reload flow. Both prepared
+outputs are built independently from the pristine update.
+
+Launch selects the full overlay only when effective `forza_native_pause` is on;
+otherwise tuning selects its independent overlay, or both options off select
+stock. Environment and command-line overrides retain runtime precedence, and an
+explicit update-root argument remains authoritative. Missing full-menu resources
+fall back to stock rather than mounting tuning-only resources as a full menu.
+Turning options off and restarting restores the corresponding path without a
+rebuild. Failed preparation removes only that preparer's stale output, keeping
+the stock and other independent overlay intact. Build/runtime directory links
+are allowed; links on individual publication targets are rejected.
 
 MY CARS and the Cars page require known Colorado free roam, virtual networking
 off and no current Live session. Capabilities, activation and the native garage
@@ -425,9 +432,9 @@ child restores the previous page and focused tile, even when FH1 recreates the
 pause screen. Resuming and then opening pause again starts on Home.
 
 The launcher prepares resources from its freshly applied FH1 TU4 update during
-installation. It publishes unmodified files to `runtime/update` and prepared
-files to `runtime/update-native`; only an enabled native pause/tuning option
-selects the latter on launch. Unsupported or modified input removes stale
+installation. It publishes unmodified files to `runtime/update`, standalone tuning to
+`runtime/update-native`, and the full pause overlay to `runtime/update-menu`.
+Only the corresponding enabled option selects each prepared output on launch. Unsupported or modified input removes stale
 prepared output, leaves stock available, and logs why preparation was unavailable.
 Each overlay is published only after its copy is complete. Original input files
 remain unchanged.

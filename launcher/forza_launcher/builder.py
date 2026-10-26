@@ -107,6 +107,9 @@ def runtime_dir(root: Path) -> Path:
 
 
 EXCLUDE_DIRS = {"out", "__pycache__"}
+# Original preparation source only; no generated tuning assets are distributed.
+NATIVE_TUNING_FILES = ("native_tuning_assets.py",)
+
 # Original resource preparation shipped with the project; no generated game assets.
 NATIVE_MENU_FILES = ("native_menu_scene.py", "offline_cars_flow.py", "lzx_delta.py",
                      "native_menu/fh1_donors.json", "native_menu/icons/ATTRIBUTION.md",
@@ -138,7 +141,7 @@ def sources_hash(proj: Path) -> str:
     only when one changed (size or modification time), not every time (#124)."""
     base = proj / "forza-recomp"
     extras = [proj / "tools" / "cmake" / "windows-native-clang-cl.cmake"]
-    extras += [proj / "tools" / name for name in NATIVE_MENU_FILES]
+    extras += [proj / "tools" / name for name in (*NATIVE_TUNING_FILES, *NATIVE_MENU_FILES)]
     rels, sig = sorted(source_files(proj)), []
     for rel in rels:
         try:
@@ -671,6 +674,16 @@ def apply_title_update(opts: Options, rep: Reporter, game_files: Path) -> Path |
     return out.parent
 
 
+def native_tuning_script() -> Path | None:
+    """Prefer the tool belonging to the shipped project (also used in its source hash)."""
+    proj = project_dir()
+    locations = ([proj / "tools"] if proj else []) + [paths.LAUNCHER_ROOT / "tools"]
+    for folder in locations:
+        if all((folder / name).is_file() for name in NATIVE_TUNING_FILES):
+            return folder / "native_tuning_assets.py"
+    return None
+
+
 def native_menu_script() -> Path | None:
     """Prefer the tool belonging to the shipped project (also used in its source hash)."""
     proj = project_dir()
@@ -691,7 +704,7 @@ def _scoped_path(parent: Path, child: Path) -> Path:
 
 def _publish_runtime_update(root: Path, source: Path | None, rep: Reporter, name="update"):
     """Copy completely before replacing the old update; retain it if publishing fails."""
-    if name not in ("update", "update-native"):
+    if name not in ("update", "update-native", "update-menu"):
         raise BuildError("Unsupported runtime update destination.")
     rt = runtime_dir(root).resolve()  # build/runtime may be linked to another drive.
     rt.mkdir(parents=True, exist_ok=True)
@@ -730,7 +743,7 @@ def _publish_runtime_update(root: Path, source: Path | None, rep: Reporter, name
 
 
 def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
-    """Prepare original native menu resources from FH1 only; fall back to the stock TU.
+    """Prepare original native tuning resources from FH1 only; fall back to the stock TU.
 
     The preparation tool only sees a new private output directory. Its source TU is also
     the codegen input and is never modified. Return whether native resources were installed.
@@ -745,10 +758,53 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
         _publish_runtime_update(opts.root, None, rep, "update-native")
         return False
     work.mkdir(parents=True, exist_ok=True)
+    script = native_tuning_script()
+    if script is None:
+        rep.log("Native car tuning unavailable: preparation tools are missing; installing the stock FH1 update.")
+        _publish_runtime_update(opts.root, None, rep, "update-native")
+        return False
+    with tempfile.TemporaryDirectory(prefix="native-tuning-", dir=work) as directory:
+        prepared = Path(directory) / "overlay"
+        rep.status("Preparing native tuning resources from your FH1 update")
+        try:
+            cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
+                script, tu, "--output", prepared]
+            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority)
+            required = (*TU_EXECUTABLES, "media.zip", "native-tuning-provenance.json")
+            missing = [name for name in required if not (prepared / name).is_file()]
+            if missing:
+                raise BuildError("Preparation did not produce " + ", ".join(missing))
+            report = json.loads((prepared / "native-tuning-provenance.json").read_text(encoding="utf-8"))
+            if not isinstance(report, dict) or report.get("schema") != 1 or \
+                    not isinstance(report.get("source_archive_sha256"), str) or \
+                    len(report["source_archive_sha256"]) != 64 or not isinstance(report.get("entries"), list):
+                raise BuildError("Preparation produced an unrecognized resource manifest")
+        except (BuildError, OSError, ValueError) as error:
+            rep.log(f"Native car tuning unavailable: {error}; installing the stock FH1 update.")
+            _publish_runtime_update(opts.root, None, rep, "update-native")
+            return False
+        _publish_runtime_update(opts.root, prepared, rep, "update-native")
+    rep.log("Installed native tuning resources prepared from FH1; no other game files are needed.")
+    return True
+
+
+def stage_native_menu_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
+    """Prepare original native menu resources from FH1 only; fall back to the stock TU.
+
+    The preparation tool only sees a new private output directory. Its source TU is also
+    the codegen input and is never modified. Return whether native resources were installed.
+    """
+    work = build_dir(opts.root).resolve()
+    if tu is not None and work.is_relative_to(tu.resolve()):
+        raise BuildError("The source title update must not contain the build workspace.")
+    if tu is None:
+        _publish_runtime_update(opts.root, None, rep, "update-menu")
+        return False
+    work.mkdir(parents=True, exist_ok=True)
     script = native_menu_script()
     if script is None:
         rep.log("Native menu unavailable: preparation tools are missing; installing the stock FH1 update.")
-        _publish_runtime_update(opts.root, None, rep, "update-native")
+        _publish_runtime_update(opts.root, None, rep, "update-menu")
         return False
     with tempfile.TemporaryDirectory(prefix="native-menu-", dir=work) as directory:
         prepared = Path(directory) / "overlay"
@@ -767,9 +823,9 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
                 raise BuildError("Preparation produced an unrecognized resource manifest")
         except (BuildError, OSError, ValueError) as error:
             rep.log(f"Native menu unavailable: {error}; installing the stock FH1 update.")
-            _publish_runtime_update(opts.root, None, rep, "update-native")
+            _publish_runtime_update(opts.root, None, rep, "update-menu")
             return False
-        _publish_runtime_update(opts.root, prepared, rep, "update-native")
+        _publish_runtime_update(opts.root, prepared, rep, "update-menu")
     rep.log("Installed native menu resources prepared from FH1; no other game files are needed.")
     return True
 
@@ -1009,12 +1065,13 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     rt = stage_runtime(opts, rep, bdir, sdk)
     # runtime/update is the game's update: (--update_data_root): the patched executables and the
     # update's media.zip. A base build has none.
-    native_menu = stage_runtime_update(opts, rep, tu)
+    native_tuning = stage_runtime_update(opts, rep, tu)
+    native_menu = stage_native_menu_update(opts, rep, tu)
     wall = time.time() - t0
     peak = monitor.get("peak", 0)
     write_state(root, {"started": t0, "id": cid, "complete": True,
                        "when": time.strftime("%Y-%m-%d %H:%M"), "tu4": tu is not None, "cpu_target": target,
-                       "native_menu": native_menu,
+                       "native_tuning": native_tuning, "native_menu": native_menu,
                        "seconds": round(wall), "peak_rss_gb": round(peak / 2 ** 30, 1), "jobs": opts.jobs})
     (rt / "version.txt").write_text(f"built {time.strftime('%Y-%m-%d')} (sources {sources_hash(project_dir())[:8]})\n")
     rep.progress(1.0, "done")

@@ -33,6 +33,20 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   and quick presses end on the last station picked. The new station then starts about
   0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
   (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
+- **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
+  `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
+  their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20
+  m more a place) they brake and corner toward the best values, and 10-25 m behind they get
+  their skill's best braking and cornering. `ai_rubber_banding = "off"` (launcher: Gameplay,
+  CPU drivers, Rubber banding: Off) races every CPU driver at its own skill wherever you are,
+  in single-player races and free roam. Online races (Horizon World events, Co-op Festival
+  rounds) keep the game's AI on every console. The difficulty (the skill rows), the post-race
+  skill adjustment and two boosts in the game's code (by grid place at the start, and for a
+  Nemesis rival) stay the game's. Measured with `FORZA_AI_TRACE=1` on Recaro Rush (FR02,
+  Medium: skills 66-73, rows 8-9) with the player standing on the grid: Game kept every CPU
+  driver in the torque cut (down to 0.19 of their torque) and the first reached the finish,
+  about 5 km on, after 182 s; Off had no cut, and six of seven finished after 150-159 s.
+  Details in `src/hooks/ai_catchup.cpp`.
 - **Keyboard and mouse:** `mnk_mode = true` in `forza.toml` (or `--mnk_mode=true`, or the
   launcher's Controls page); bindings and test results [below](#keyboard-and-mouse).
 - **Mouse cursor:** the game hides it after three seconds without movement and shows it
@@ -201,36 +215,13 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 
 ## Steam Deck
 
-The launcher detects the Deck and applies its preset: Vulkan, render scale 1, AMD FSR 1, `frame_rate = 30`,
-background shader compilation and the shader cache on (the PC check asks for the same: 30 fps for its CPU,
-render scale 1 for its graphics). Keep these: render scale 2 and `frame_rate = 60` only make it slower. Play a
-session or two on a warm shader cache before judging the speed. Reported speed on a Steam Deck OLED (#45,
-0.1.27): 17 to 25 fps, 8 in an 8-car race. Since then the game needs less CPU on few cores (#286): waits wake only
-their own threads, and the render thread sleeps while it waits for the GPU (`gpu_wait_blocking`, on by default
-on Linux; nothing to set). We have no Deck. This PC limited to four cores holds 30 fps in free roam and in a race,
-and the Deck's graphics, about a quarter of this card's compute units at half its clock, may well be what limits
-it (`docs/perf.md`, "Low-end CPUs"); a log from a Deck with Steam's performance overlay at level 4 in a race would
-tell. Cutscene audio that does not match the picture comes with the low frame rate; it has not been reproduced
-here.
-
-**Battery saver** (Settings > Display > Frame rate, Linux): On, or *Auto on battery (Steam Deck)*, starts the
-game on the lightest settings: 30 fps, render scale 1 with AMD FSR 1 (AMD FSR 3 and SMAA off) and the render
-thread sleeping while it waits for the GPU. Your own settings are not changed: the next start on mains power uses
-them again, so a docked setup at 60 fps and render scale 2 comes back by itself. Auto looks at the power source
-when the game starts, not while it runs. It is off by default; on the Deck's own preset it only undoes a frame
-rate, render scale or filter you raised.
-
-**Suspend and resume** (#140). The game should carry on where it was when the Deck wakes up: a suspend stops
-the clock the game runs on, so the game itself sees no gap. A game that was paused while that clock ran on (as
-`kill -STOP` does) does not count the time away either: the race clock did not count a 3 s or a 10 s stop.
-Signed in to Forza Live, the game says hello to the server as soon as it runs again. The server forgets a player
-after 30 s without one; from this version it gives a game that comes back its old player id, so the session it
-hosts and its address stay the same (an older server gives it a new id). Other players in your session see you
-leave after their own timeout, as on a console that lost its connection. `forza.log` has a `FORZA_RESUME:` line
-for each stop or sleep. Tested on Linux by stopping the game for 3 s, 10 s, 45 s, 2 and 10 minutes, offline in a
-race and signed in to a local server (free roam and a hosted Horizon World); not on a Deck yet: that the sound
-comes back (the game plays on the system's default output, which SDL follows when it changes), that the GPU
-survives the sleep without a "device lost", and that the Deck's controls come back.
+Install, settings, controls and suspend: [steam_deck.md](steam_deck.md). In short: on SteamOS use the Flatpak
+launcher and add it to Steam as a non-Steam game. The launcher detects the Deck and applies (or, to an install that
+already had settings, offers once) its preset: 30 fps, render scale 1 with AMD FSR 1, Scene anti-aliasing Off,
+Console shadow and texture detail. The Deck is limited by its CPU (the GPU emulation's command processor,
+[perf.md](perf.md#steam-deck-and-4-core-cpus-the-built-in-benchmark-45-2026-10-23)); 40 fps suits its screen at
+40 Hz, Battery saver (*Auto on battery*) starts it on the lightest settings off the charger, and the game carries
+on after a sleep, signed in to Forza Live again with the same player id.
 
 ## Keyboard and mouse
 
