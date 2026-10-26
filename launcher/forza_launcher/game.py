@@ -11,8 +11,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3
-from .config import Config, render_toml, write_toml
+from . import TITLE_ID, cleanenv, gpu, paths, dlss, fsr3, power
+from .config import Config, parse_toml, render_toml, write_toml
 
 EXE = "forza.exe" if paths.IS_WINDOWS else "forza"
 LOCAL_PROFILE = "B13EBABEBABEBABE"  # the runtime's own profile folder
@@ -121,9 +121,15 @@ def server_listening(port=LOCAL_HTTP_PORT) -> bool:
         return False
 
 
-def server_command(script: Path, data_dir: Path):
+def server_command(script: Path, data_dir: Path, game_files: Path | None = None):
     args = ["--host", "127.0.0.1", "--port", LOCAL_SERVER.split(":")[1],
             "--http-port", str(LOCAL_HTTP_PORT), "--data-dir", str(data_dir)]
+    # The festival events (the Co-op Festival's /event, the Horizon World's events) come from
+    # the game's database. The server only looks for it in a source checkout (extracted/game
+    # beside server/); without it the Co-op Festival is not offered at all (#67).
+    db = game_files / "media" / "db" / "gamedb.slt" if game_files else None
+    if db and db.is_file():
+        args += ["--game-db", str(db)]
     if paths.FROZEN:  # run the server inside this executable (no Python needed)
         return [sys.executable, "--live-server", str(script)] + args
     return [sys.executable, str(script)] + args
@@ -313,8 +319,9 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
     no update (the base game starts: no Horizon Rally, no 1000 Club), or DLC installed or chosen but
     none in the user data folder the game is started on (Horizon Rally then says "Xbox LIVE
     Marketplace error"; issues #65, #70), or DLC there without the Rally Expansion Pack (the same
-    error, #79)."""
-    from . import datafolder
+    error, #79), or a known DLC package there that is damaged or incomplete (dlccheck: the Rally pack's
+    bad copy crashes Kettle Hills stage 1, #422)."""
+    from . import datafolder, dlccheck
     out = []
     if cfg["tu_package"].strip() and not extra_update and not (game.dir / "update").is_dir():
         out.append(f"Title Update 4 is chosen in Setup, but this build has none ({game.dir / 'update'} is "
@@ -341,6 +348,11 @@ def content_warnings(cfg: Config, game: GameInstall, home: Path, root: Path, ext
                        f"{root / datafolder.DLC_DIR / '00000002'}: Horizon Rally says \"Xbox LIVE Marketplace "
                        "error\" (issue #79). Open Setup and install the DLC again (step 2) with the Rally "
                        "Expansion Pack.")
+        for name, problem, effect in dlccheck.installed_problems(root):
+            out.append(f"Your {dlccheck.display_name(name)} is damaged: {problem}"
+                       + (f" ({effect})" if effect else "") +
+                       ". Install it again from an intact copy of its package file (Setup, step 2), "
+                       "which checks every block.")
     return out
 
 
@@ -365,10 +377,137 @@ def gpu_vendor_arg(cfg: Config, extra_args=()) -> str:
     return f"--gpu_vendor={gpu.SDK_VENDORS[vendor]}"
 
 
-def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print) -> LaunchPlan:
+def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, log=print,
+               battery_saver=True, vr=False) -> LaunchPlan:
+    """battery_saver=False plans with the player's settings even when battery saver would apply
+    (the shader prebuild, which builds for them). vr=True is "Play in VR": the VR values as arguments."""
     from . import ingame
     if write:
         ingame.import_pending(cfg, log)
+    saver = power.decide(cfg.effective_settings()) if battery_saver else power.Saver()
+    if write and battery_saver:
+        if cfg.settings.get("battery_saver", power.OFF) != power.OFF:
+            log(f"Battery saver: {'applies' if saver.active else 'off'} ({saver.reason})")
+        if (cfg.d["power"].get("applied") or {}) != saver.settings:
+            cfg.d["power"]["applied"] = dict(saver.settings) or None
+            try:
+                cfg.save()
+            except OSError as e:
+                log(f"could not save launcher.json: {e}")
+    real = cfg.d["settings"]
+    cfg.d["settings"] = {**real, **saver.settings}  # this start only; launcher.json keeps the player's
+    try:
+        return _build_plan(cfg, game, write, refresh_xenia, log, saver, vr)
+    finally:
+        cfg.d["settings"] = real
+
+
+def texture_pack_folder(cfg: Config) -> Path:
+    """Texture packs and dumps (#384): <data folder>/textures, also with a Xenia save (whose user
+    data root is a copy elsewhere); Settings > Display > Open textures folder opens it."""
+    return cfg.data_home() / "textures"
+
+
+def texture_packs_used(cfg: Config) -> bool:
+    settings = cfg.effective_settings()
+    return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
+
+
+def native_update_requested(cfg: Config, toml_text: str, keys=("forza_car_tuning",)) -> bool:
+    """Use the same config/environment/CLI precedence as the runtime flags."""
+    values = parse_toml(toml_text)
+    environment = {**os.environ, **parse_env(cfg.advanced.get("extra_env", ""))}
+    for key in keys:
+        name = "REX_" + key.upper()
+        if name in environment:
+            # rex::string::from_string<bool> is case-sensitive (numeric.h).
+            values[key] = environment[name] in ("true", "1", "yes")
+    # CLI11 add_flag_function uses case-insensitive counts and sums repeated
+    # registered flags. The environment conversion is intentionally separate.
+    def flag_count(value):
+        value = value.lower()
+        if value in ("true", "yes", "on", "enable", "t", "y", "+"):
+            return 1
+        if value in ("false", "no", "off", "disable", "f", "n", "-", "0"):
+            return -1
+        if re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)", value):
+            digits = value.lstrip("+-")
+            base = 16 if digits.startswith("0x") else 8 if digits.startswith("0") else 10
+            return int(value, base)
+        return None
+
+    def summed_count(value):
+        # CLI11's Sum policy tries numeric conversion before boolean words.
+        # In particular, a positive flag's explicit 0 contributes zero.
+        numeric = value.replace("_", "").replace("'", "")
+        try:
+            return float(numeric)
+        except ValueError:
+            try:
+                return float.fromhex(numeric) if "0x" in numeric.lower() else float(int(numeric, 0))
+            except ValueError:
+                return flag_count(value)
+
+    cli_counts = {}
+    invalid_counts = set()
+    extra = split_args(cfg.advanced.get("extra_args", ""))
+    for arg in extra:
+        if arg == "--":
+            break
+        if not arg.startswith("--"):
+            continue
+        key, equal, value = arg[2:].partition("=")
+        negated = key.startswith("no-")
+        if negated:
+            key = key[3:]
+        if key not in keys:
+            continue
+        if not equal or value in ("", "{}"):
+            value = "false" if negated else "true"
+        elif negated:
+            # get_flag_value inverts recognized integer/boolean overrides;
+            # other numeric spellings (such as 2.5) pass through unchanged.
+            count = flag_count(value)
+            if count is not None:
+                value = str(-count)
+        count = summed_count(value)
+        if count is None:
+            invalid_counts.add(key)
+        cli_counts[key] = cli_counts.get(key, 0) + (count or 0)
+    for key, count in cli_counts.items():
+        # CLI11 formats its floating-point sum before the int64 callback.
+        integer = re.match(r"[+-]?\d+", format(count, ".16g"))
+        values[key] = key not in invalid_counts and integer is not None and int(integer[0]) > 0
+    return any(values.get(key) is True for key in keys)
+
+
+def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
+    menu = game.dir / "update-menu"
+    if native_update_requested(cfg, toml_text, ("forza_native_pause",)):
+        return menu if menu.is_dir() else game.dir / "update"
+    prepared = game.dir / "update-native"
+    if native_update_requested(cfg, toml_text) and prepared.is_dir():
+        return prepared
+    return game.dir / "update"
+
+
+def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
+    """Warn about an enabled feature whose automatic resources have not been built."""
+    # The launch plan leaves explicit roots authoritative. Rebuilding the managed
+    # overlay cannot repair or replace the user's explicitly selected directory.
+    if any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", ""))):
+        return False
+    text = render_toml(cfg)
+    return (native_update_requested(cfg, text) and
+            update_data_root(cfg, install, text) == install.dir / "update")
+
+
+def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver, vr=False) -> LaunchPlan:
+    from . import ingame
+    if cfg.gamertag_cleaned:
+        log("The saved Gamertag %r is not plain ASCII (letters, digits, spaces, at most 15): "
+            "using %r" % cfg.gamertag_cleaned)
+        cfg.gamertag_cleaned = None
     home = cfg.data_home()
     data = cfg.game_files()
     toml_path = game.dir / "forza.toml"
@@ -432,15 +571,16 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
         else:
             env["FORZA_SERVER"] = LOCAL_SERVER
             if not server_listening():
-                server_argv = server_command(script, home / "live_server")
+                server_argv = server_command(script, home / "live_server", data)
     else:
         if mode == "custom":
             notes.append("No custom server address set: starting offline.")
         unset.append("FORZA_SERVER")
 
     extra_update = any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", "")))
-    if (game.dir / "update").is_dir() and not extra_update:
-        args.append(f"--update_data_root={game.dir / 'update'}")  # the title update's files
+    update = update_data_root(cfg, game, toml_text)
+    if update.is_dir() and not extra_update:
+        args.append(f"--update_data_root={update}")
     notes += content_warnings(cfg, game, home, root, extra_update, check_dlc=write or root.exists())
     if cfg.advanced.get("pad_per_user"):
         env["FORZA_PAD_PER_USER"] = "1"
@@ -450,6 +590,12 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     dlss.configure(cfg, env, args, notes, write)
     dlss_status_file = Path(env["FORZA_DLSS_STATUS_FILE"]) if "FORZA_DLSS_STATUS_FILE" in env else None
     fsr3.configure(cfg, args, notes)
+    extra_textures = any(a.startswith("--texture_pack_root")
+                         for a in split_args(cfg.advanced.get("extra_args", "")))
+    if texture_packs_used(cfg) and not extra_textures:  # a flag given twice confuses the game
+        args.append(f"--texture_pack_root={texture_pack_folder(cfg)}")
+    from . import vr as vr_module
+    vr_module.configure(cfg, env, args, notes, session=vr)
     from . import antialiasing
     antialiasing.configure_runtime(cfg, env, args, write=write)
 
@@ -457,8 +603,18 @@ def build_plan(cfg: Config, game: GameInstall, write=True, refresh_xenia=False, 
     vendor_arg = gpu_vendor_arg(cfg, extra)
     if vendor_arg:
         args.append(vendor_arg)
+    if saver.active:
+        args += saver.flags
+        notes.append(saver.note())
     if not any(a == "--log_file" or a.startswith("--log_file=") for a in extra):
         args.append(f"--log_file={log_file}")
+    # The mods turned on in the Mods page, in their load order (#149). An option the player
+    # names in the extra flags ("--name=value" or "--name value") is left to them: the game
+    # refuses one given twice.
+    from . import mods, texture_packs
+    named = {a[2:].split("=", 1)[0] for a in extra if a.startswith("--")}
+    args += mods.launch_args(cfg, named)
+    args += texture_packs.launch_args(cfg, named)  # the packs turned on, in order (#384)
     args += extra
     env.update(parse_env(cfg.advanced.get("extra_env", "")))
 
@@ -581,6 +737,51 @@ def exit_is_crash(plan: "LaunchPlan", code, stopped=False) -> bool:
 CPU_EXIT_CODE = 76
 
 
+def heap_failure_summary(tail):
+    """Recognize the memory manager's deliberate stops, not arbitrary low-address faults.
+
+    Base sub_823F3048 / TU4 sub_82423000 write to 4 (capacity) or 5 (a block
+    could not be allocated despite aggregate capacity). Their preserved registers
+    identify the request and final heap; see docs/PROJECT.md, issue #299.
+    """
+    text = "\n".join(tail)
+    faults = list(re.finditer(
+        r"Unhandled guest access violation: (read|write) of guest 0x([0-9A-Fa-f]+)\b[^\n]*"
+        r"on thread 0x([0-9A-Fa-f]+)\b", text))
+    if not faults:
+        return None
+    fault = faults[-1]
+    if fault[1] != "write" or int(fault[2], 16) not in (4, 5):
+        return None
+    thread = int(fault[3], 16)
+    for match in re.finditer(
+            r"Guest thread ([0-9A-Fa-f]+) registers \(lr=([0-9A-Fa-f]+) ctr=[^\n]*\):"
+            r"([^\[]*)", text[fault.end():]):
+        if int(match[1], 16) != thread:
+            continue
+        arenas = {0x823F30B4: 0x832AAC24, 0x8242306C: 0x8339664C}.get(int(match[2], 16))
+        registers = {int(n): int(v, 16) for n, v in re.findall(
+            r"\br(\d+)=([0-9A-Fa-f]{8})\b", match[3])}
+        if arenas is None or any(registers.get(n) != 0 for n in (3, 6, 31)):
+            return None
+        if not all(n in registers for n in (27, 29, 30)):
+            return None
+        size, alignment, heap = (registers.get(n, 0) for n in (29, 27, 30))
+        offset = heap - arenas
+        arena, kind = divmod(offset, 0x314)
+        if not size or not 0 <= arena < 8 or kind not in (0x10, 0x190):
+            return None
+        category = (0x10 if kind == 0x10 else 0x20) + arena
+        detail = ("The heap had aggregate capacity, but could not provide a suitable block "
+                  "(fragmentation or allocation constraints)." if int(fault[2], 16) == 5 else
+                  "The heap had insufficient remaining capacity for this request.")
+        return (f"The game's internal heap 0x{category:02X} could not allocate {size:,} bytes "
+                f"(alignment {alignment} bytes). {detail} This does not establish that system "
+                "RAM or video memory is exhausted. Include what you were doing and how long "
+                "the game had been running in the crash report.")
+    return None
+
+
 def crash_reason(plan: "LaunchPlan", code) -> str:
     """A readable text for a game that stopped early: its exit code, the last error lines of its
     log and, for the usual causes, what to do."""
@@ -588,10 +789,14 @@ def crash_reason(plan: "LaunchPlan", code) -> str:
         from . import builder
         return builder.CPU_TOO_OLD
     log = log_path_of(plan)
-    errors = last_errors(_log_tail(plan))
+    tail = _log_tail(plan)
+    errors = last_errors(tail)
     text = f"The game stopped (exit code {code})."
     joined = " ".join(errors)
-    if "Vulkan" in joined:
+    heap_failure = heap_failure_summary(tail)
+    if heap_failure:
+        text += " " + heap_failure
+    elif "Vulkan" in joined:
         text += (" It needs a graphics card with Vulkan support and an up-to-date graphics driver; none was "
                  "found (a virtual machine or a remote desktop session usually has none).")
     elif "memory" in joined.lower() or "alloc" in joined.lower():
@@ -650,6 +855,13 @@ class Session:
         self.stop_deadline = None
         self.haptics = None
         self._save_lock = None
+        self._catalog_recovered = False
+        self._save_lease = None
+
+    def _release_save_lease(self):
+        if self._save_lease is not None:
+            lease, self._save_lease = self._save_lease, None
+            lease.__exit__(None, None, None)
 
     def start(self):
         from . import saves
@@ -658,6 +870,8 @@ class Session:
             guard.__enter__()
             self._save_lock = guard
         try:
+            if self.plan.save_profile is not None:
+                saves._recover(self.plan.save_profile)
             self._start()
         except BaseException:
             self.cleanup()
@@ -665,23 +879,58 @@ class Session:
 
     def _start(self):
         plan = self.plan
-        if plan.log_dir:
-            plan.log_dir.mkdir(parents=True, exist_ok=True)
-        flags = 0x08000000 if paths.IS_WINDOWS else 0  # CREATE_NO_WINDOW for the server
-        if plan.server_argv:
-            data_dir = Path(plan.server_argv[plan.server_argv.index("--data-dir") + 1])
-            data_dir.mkdir(parents=True, exist_ok=True)
-            # Popen gives the child its own handle. Close our copy immediately, including
-            # when starting the server fails; otherwise Windows keeps server.log locked.
-            with open(data_dir / "server.log", "ab") as server_log:
-                self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
-                                               stderr=subprocess.STDOUT, creationflags=flags,
-                                               stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
-            self.log("Started a local Forza Live server")
-        self._start_game({})
+        self._acquire_save_lease()
+        try:
+            if plan.log_dir:
+                plan.log_dir.mkdir(parents=True, exist_ok=True)
+            flags = 0x08000000 if paths.IS_WINDOWS else 0  # CREATE_NO_WINDOW for the server
+            if plan.server_argv:
+                data_dir = Path(plan.server_argv[plan.server_argv.index("--data-dir") + 1])
+                data_dir.mkdir(parents=True, exist_ok=True)
+                # Popen gives the child its own handle. Close our copy immediately, including
+                # when starting the server fails; otherwise Windows keeps server.log locked.
+                with open(data_dir / "server.log", "ab") as server_log:
+                    self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
+                                                   stderr=subprocess.STDOUT, creationflags=flags,
+                                                   stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
+                self.log("Started a local Forza Live server")
+            self._start_game({})
+        except BaseException:
+            if self.server and self.server.poll() is None:
+                self.server.terminate()
+            self._release_save_lease()
+            raise
+
+    def _acquire_save_lease(self):
+        plan = self.plan
+        if not self._catalog_recovered and plan.log_dir is not None:
+            from . import catalog_import, ugc
+            target = catalog_import.target_for_plan(plan)
+            # The save manager and catalog importer use the same home-wide OS lock.
+            # Reuse the session lock instead of trying to acquire it a second time.
+            lease = None if self._save_lock is not None else catalog_import.locked(target)
+            if lease is not None:
+                lease.__enter__()
+            try:
+                try:
+                    catalog_import.recover(target)
+                except ugc.CatalogError as exc:
+                    warning = catalog_import.recovery_warning(target, exc)
+                    log = paths.log_error('recover design catalog: ' + warning, exc)
+                    warning += f' Log: {log}'
+                    if warning not in plan.notes:
+                        plan.notes.append(warning)
+                        self.log(warning)
+            except BaseException:
+                if lease is not None:
+                    lease.__exit__(None, None, None)
+                raise
+            self._save_lease = lease
+            self._catalog_recovered = True
 
     def _start_game(self, extra):
         plan = self.plan
+        self._acquire_save_lease()
         plan.log_before_start = log_signature(plan)
         from .shader_warmup import Monitor
         self.shader_warmup = Monitor(log_path_of(plan))
@@ -765,6 +1014,8 @@ class Session:
         if self.server and self.server.poll() is None:
             self.server.terminate()
         dlss.cleanup_status(self.plan)
+        self._release_save_lease()
+        self._catalog_recovered = False
         if self._save_lock is not None:
             guard, self._save_lock = self._save_lock, None
             guard.__exit__(None, None, None)

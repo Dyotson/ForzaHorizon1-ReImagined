@@ -17,6 +17,7 @@ class Task(QThread):
         self.fn, self.name = fn, name
         self._cancel = False
         self.blocked = False    # the data folder was denied (builder.FolderBlocked)
+        self.warning = False    # it worked, but its message is a warning (damaged DLC)
 
     def cancel(self):
         self._cancel = True
@@ -111,8 +112,10 @@ def dlc_task(folder, user_data):
         def prog(done, total, name):
             t.progress.emit(done / total if total else 0, name)
         t.status.emit("Installing DLC")
-        n = installer.install_dlc_folder(folder, Path(user_data), prog, t.cancelled, t.log.emit)
-        return f"Installed {n} DLC package(s)."
+        damaged = []
+        n = installer.install_dlc_folder(folder, Path(user_data), prog, t.cancelled, t.log.emit, damaged)
+        t.warning = bool(damaged)
+        return f"Installed {n} DLC package(s)." + installer.damaged_note(damaged)
     return Task(fn, "install DLC")
 
 

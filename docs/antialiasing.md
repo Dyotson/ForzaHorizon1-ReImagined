@@ -25,3 +25,14 @@ exclusive upscaling/AA choices, legacy DLAA migration, and the ultrawide bypass.
 UI tests cover NVIDIA availability and immediate disabled/re-enabled styling.
 The combined build was also exercised in copied-save 1440p gameplay; that
 in-game settings UI is supplied in the dependent graphics-menu change.
+
+## Scene MSAA (`scene_msaa`)
+
+Separate from the selector above: in free roam and races the game draws its 3D scene with 4x
+MSAA in three EDRAM tiles, and the emulated GPU processes the scene once per tile. Display >
+Picture > "Scene anti-aliasing (MSAA)" (`scene_msaa`) chooses `game` (4x, three tiles, the
+default), `2x` (two tiles, the game's own 2x scenario) or `off` (one pass without MSAA), with the
+least CPU and GPU time and the most jagged edges. It changes the game's render scenario and
+draws the static world, its trees and barriers from the lists the game recorded for the tiled
+pass, without their tile layout. See docs/perf.md "One-pass scene" for the measurements and
+screenshots.

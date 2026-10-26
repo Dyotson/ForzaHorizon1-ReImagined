@@ -1,5 +1,5 @@
-// forza - an overlay for friends, chat and invite screens. Head-to-head challenges
-// use the game's native HUD instead (platform/challenge_hud.h).
+// forza - an overlay for friends, chat and invite screens and the game's text prompts.
+// Head-to-head challenges use the game's native HUD instead (platform/challenge_hud.h).
 //
 // Drawn with the SDK's ImGui drawer at the top centre of the window, without taking input,
 // and registered with the drawer only while it shows (as the achievement toasts are,
@@ -7,8 +7,9 @@
 // registered. It is drawn over the presented frame, so tools/live_shot.sh screenshots
 // (the game's output image) don't show it; every text is also logged ("HUD: ...").
 //
-// The invite prompts (src/kernel/live_invites.cpp) and the friends screen
-// (src/kernel/live_friends.cpp) also read the keyboard through it: while one wants keys
+// The invite prompts (src/kernel/live_invites.cpp), the friends screen
+// (src/kernel/live_friends.cpp) and the game's text prompts (src/kernel/xam_keyboard.cpp)
+// also read the keyboard through it: while one wants keys
 // (HudWantKeys), the window's text input is on and each drawn frame collects the typed
 // text and the keys below for HudTakeKeys. A body line starting with
 // kHudHighlight is drawn highlighted (the picker's cursor).
@@ -42,6 +43,7 @@ constexpr char kHudHighlight = '\x01';
 // Any thread. `log` false skips the log line (texts that change every frame).
 void HudShow(const std::string& title, const std::string& body, double seconds, bool log = true);
 void HudClear();
+bool HudReady();  // InstallHud ran (not headless)
 
 // Keyboard input since the last HudTakeKeys, collected while the HUD shows and keys are
 // wanted. `typed`: text input (UTF-8); `key_frames`: drawn frames with any key down (the

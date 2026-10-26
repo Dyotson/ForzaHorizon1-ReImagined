@@ -38,14 +38,17 @@
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
+#include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
+#include "live_connection.h"
 #include "live_tcp.h"
 #include "../platform/socket.h"
 
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+#include <rex/system/flags.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xevent.h>
 #include <rex/system/xthread.h>
@@ -609,6 +612,9 @@ class VNet {
     }
   }
 
+  // The machine slept for `seconds` (LiveResumed): LiveLoop says HELLO at once.
+  void Resumed(double seconds) { resumed_.store(seconds); }
+
   // This instance's XNADDR: the Forza Live form once the server has welcomed us,
   // else the LAN form.
   void WriteSelfXnAddr(uint8_t* xna) {
@@ -628,6 +634,12 @@ class VNet {
     ip = server_.ip;
     port = http_port_;
     return true;
+  }
+
+  bool LiveConnected() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return forza::live_connection::IsFresh(
+        live_, live_id_, last_welcome_received_, Clock::now());
   }
 
   std::vector<forza::LiveFriend> Roster() {
@@ -782,6 +794,7 @@ class VNet {
     if (live_) {
       std::random_device rd;
       live_token_ = uint64_t(rd()) << 32 | rd();
+      ParseServerSpec();
       std::thread([this] { LiveLoop(); }).detach();
       // Give the server a moment, so the game sees its Live address from the start.
       std::unique_lock<std::mutex> lock(mutex_);
@@ -881,7 +894,8 @@ class VNet {
 
   std::string ServerName() const { return server_host_ + ":" + std::to_string(server_port_); }
 
-  bool ResolveServer() {
+  // Host and port of FORZA_SERVER / live_server; set once, before LiveLoop starts.
+  void ParseServerSpec() {
     std::string spec = forza::LiveServerSpec();
     server_port_ = kLiveDefaultPort;
     if (auto colon = spec.rfind(':'); colon != std::string::npos) {
@@ -889,17 +903,26 @@ class VNet {
       spec.resize(colon);
     }
     server_host_ = spec;
+  }
+
+  bool ResolveServer() {
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     addrinfo* result = nullptr;
-    if (getaddrinfo(spec.c_str(), nullptr, &hints, &result) != 0 || !result) {
-      REXLOG_WARN("FORZA_LIVE: cannot resolve server {}", spec);
+    if (getaddrinfo(server_host_.c_str(), nullptr, &hints, &result) != 0 || !result) {
+      REXLOG_WARN("FORZA_LIVE: cannot resolve server {}", server_host_);
       return false;
     }
     uint32_t ip = ntohl(reinterpret_cast<sockaddr_in*>(result->ai_addr)->sin_addr.s_addr);
     freeaddrinfo(result);
     std::lock_guard<std::mutex> lock(mutex_);
+    if (ip != server_.ip) {
+      // The address the game sends to, and the profile's country and language (the launcher's
+      // Country ID and Language ID), for reports where the server never answers (#392).
+      REXLOG_INFO("FORZA_LIVE: server {} is {} (country {}, language {})", ServerName(),
+                  IpString(ip), REXCVAR_GET(user_country), REXCVAR_GET(user_language));
+    }
     server_ = {ip, server_port_};
     return true;
   }
@@ -931,8 +954,11 @@ class VNet {
     // and an invite asks before joining (live_invites.cpp, #90). The server delivers invites
     // only between games that have it. 0x02, the game keeps its friends list on the server
     // (live_friends.cpp, #92), followed by our friends key (u8 length + bytes), which the
-    // server binds our XUID's friends to. 0x04, text chat (#92).
-    body.push_back(0x07);
+    // server binds our XUID's friends to. 0x04, text chat (#92). 0x08, the Co-op Festival
+    // playlist runs as a Horizon World (world_drop_in.cpp, world_events.cpp, #309): the
+    // server lists it only to games that say so. 0x10, our standby records follow the lobby
+    // (its game type, and as the game's host its own description; live_xmsg.cpp, #391).
+    body.push_back(0x1F);
     const std::string& key = forza::IdentityFriendsKey();
     body.push_back(uint8_t(key.size()));
     body.insert(body.end(), key.begin(), key.end());
@@ -953,11 +979,61 @@ class VNet {
   void LiveLoop() {
     Clock::time_point next_hello{}, next_resolve{}, next_list{}, next_match{};
     bool resolved = false;
+    // Never welcomed: when the first HELLO went out, the next lookup of the server's name,
+    // and whether the player was told (#392).
+    Clock::time_point first_hello{}, next_reresolve{};
+    bool told_silent = false;
+    Clock::time_point last_pass = Clock::now();
     for (;;) {
       const auto now = Clock::now();
+      double away = resumed_.exchange(0);  // the machine slept (LiveResumed)
+      if (now - last_pass >= std::chrono::seconds(2)) {
+        // This thread did not run either: the game was stopped.
+        away += std::chrono::duration<double>(now - last_pass).count();
+      }
+      if (away > 0 && resolved) {
+        // The server may have dropped us meanwhile (#140): say HELLO now instead of in up to 5 s.
+        REXLOG_INFO("FORZA_LIVE: back after {:.0f} s; signing in to {} again", away, ServerName());
+        next_hello = next_list = now;
+        rejoining_ = true;  // log the welcome even when the server kept our id
+        std::lock_guard<std::mutex> lock(mutex_);
+        last_welcome_ = now;  // not "lost the server": the time away was ours
+      }
       if (!resolved && now >= next_resolve) {
         resolved = ResolveServer();
         next_resolve = now + std::chrono::seconds(10);
+        if (resolved) {
+          first_hello = now;
+          next_reresolve = now + std::chrono::seconds(30);
+        }
+      }
+      if (resolved) {
+        bool welcomed;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          welcomed = live_id_ != 0;
+        }
+        if (!welcomed && now >= next_reresolve) {
+          // Not a word from the server yet: its name may point elsewhere by now.
+          ResolveServer();
+          next_reresolve = now + std::chrono::seconds(30);
+        }
+        if (!welcomed && !told_silent && !server_heard_ &&
+            now - first_hello >= std::chrono::seconds(30)) {
+          // Every online feature of the game says "the Forza Horizon server is unavailable"
+          // until the server answers once (#392).
+          told_silent = true;
+          Endpoint to;
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            to = server_;
+          }
+          REXLOG_WARN(
+              "FORZA_LIVE: {} ({}:{}) has not answered in 30 s; online stays unavailable until it "
+              "does. Something between this PC and the server drops its UDP traffic: a firewall "
+              "or antivirus, a VPN or proxy, or the network or provider blocking the address",
+              ServerName(), IpString(to.ip), to.port);
+        }
       }
       if (resolved && now >= next_list && forza::LiveSignin()) {
         next_list = now + std::chrono::seconds(3);
@@ -1003,6 +1079,8 @@ class VNet {
         forza::LiveMatchTick();
         forza::LiveFriendsTick();
       }
+      // From here: a pass that took long by itself (a slow name lookup) is no time away.
+      last_pass = Clock::now();
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   }
@@ -1013,6 +1091,7 @@ class VNet {
       std::lock_guard<std::mutex> lock(mutex_);
       from_server = from == server_;
     }
+    if (from_server) server_heard_ = true;
     switch (type) {
       case kWelcome: {
         if (!from_server || n < 14) return;
@@ -1028,9 +1107,10 @@ class VNet {
           live_epoch_ = epoch;
           public_ep_ = {public_ip, public_port};
           last_welcome_ = Clock::now();
+          last_welcome_received_ = last_welcome_;
           cv_.notify_all();
         }
-        if (changed) {
+        if (rejoining_.exchange(false) || changed) {
           REXLOG_INFO("FORZA_LIVE: signed in to {} as {} (player #{}), public address {}:{}{}{}",
                       ServerName(), forza::IdentityGamertag(), id, IpString(public_ip),
                       public_port, motd_size ? ": " : "",
@@ -1150,7 +1230,7 @@ class VNet {
           const size_t name_size = p[pos + 12];
           pos += 13;
           if (pos + name_size + 4 + 0x3C + 1 > n) return;
-          f.gamertag.assign(reinterpret_cast<const char*>(p + pos), name_size);
+          f.gamertag = forza::SanitizeGamertag(std::string_view(reinterpret_cast<const char*>(p + pos), name_size));
           pos += name_size;
           f.state = Load32(p + pos);
           std::memcpy(f.session, p + pos + 4, 0x3C);
@@ -1300,6 +1380,11 @@ class VNet {
   Endpoint public_ep_;
   uint16_t http_port_ = 0;  // the server's title servers (HTTP), from its welcome
   Clock::time_point last_welcome_{};
+  // Receipt-only timestamp: reconnect logging must never refresh UI liveness.
+  Clock::time_point last_welcome_received_{};
+  std::atomic<double> resumed_{0};  // seconds the machine slept (LiveResumed), 0: none
+  std::atomic<bool> rejoining_{false};  // back after a stop or a sleep, not welcomed yet
+  std::atomic<bool> server_heard_{false};  // any datagram from the server so far
   std::unordered_map<uint32_t, LivePeer> live_peers_;
   std::unordered_map<uint32_t, uint32_t> live_id_by_vip_;
   std::vector<uint8_t> presence_;  // body of our last presence message
@@ -1320,6 +1405,8 @@ void SetError(uint32_t error) { rex::system::XThread::SetLastError(error); }
 namespace forza {
 bool NetworkOn() { return NetOn(); }
 
+bool LiveConnected() { return NetOn() && VNet::Get().LiveConnected(); }
+
 bool LiveServerHttp(uint32_t& ip, uint16_t& port) {
   return NetOn() && VNet::Get().LiveServerHttp(ip, port);
 }
@@ -1335,6 +1422,10 @@ void LiveSetPresence(uint32_t state, const uint8_t* session_info, const std::str
 }
 
 void LiveSelfXnAddr(uint8_t* xnaddr) { VNet::Get().WriteSelfXnAddr(xnaddr); }
+
+void LiveResumed(double seconds) {
+  if (NetOn() && LiveMode()) VNet::Get().Resumed(seconds);
+}
 
 void LiveSendInvite(uint64_t xuid, const uint8_t* session_info) {
   if (NetOn()) VNet::Get().SendInvite(xuid, session_info);

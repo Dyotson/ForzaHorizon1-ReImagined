@@ -1,10 +1,12 @@
 # Frame rate above 30 fps
 
 Status: `frame_rate` in `forza.toml` (or `--frame_rate=N`) runs the game at 30 (the
-console's, the default) or any rate from 60 to 240: 60, 120 and 144 are tested. The game
-times its simulation in real time, so physics, the race clock and the videos keep their
-speed at every rate; above 30 its frame time comes from the guest tick clock instead of
-the kernel's millisecond tick (`src/hooks/frame_time.cpp`), so motion stays even above 60.
+console's, the default), 20 or 40 (for PCs that cannot hold 30 or 60: they divide 60 and
+120 Hz screens, "20 and 40 fps" below), or any rate from 60 to 240: 20, 40, 60, 120 and 144
+are tested. The game times its simulation in real time, so physics, the race clock and the
+videos keep their speed at every rate; away from 30 its frame time comes from the guest tick
+clock instead of the kernel's millisecond tick (`src/hooks/frame_time.cpp`), so motion stays
+even.
 Addresses are in `default.xex` (base version); `docs/perf.md` explains the measurements.
 
 ## How Forza paces itself
@@ -82,7 +84,12 @@ VSync thread fires vblank j at the first 1 ms check after start + j * interval, 
 callback is never early and the schedule is the earliest one consistent with every
 callback. dt is the difference of two timestamps, so frames that keep up get exactly the
 frame period, late frames their real length, and the sum is real time. The game's rules
-stay: more than 4 s still counts as one 60 Hz frame, and dt is at least 0.1 ms. At 144 fps
+stay: more than 4 s still counts as one 60 Hz frame, and dt is at least 0.1 ms. A game
+that was stopped (the process paused while the clock ran on, #140) needs nothing more: the
+frame after a 3 s stop got dt = 3.0 s at 60 fps, but the physics step takes at most 0.2 s of
+it and the race clock moved the same 2.1 s across a 3 s stop as across a 10 s one (over 4 s:
+one 60 Hz frame), at 30 and at 60 fps; a system suspend stops the guest clock
+(CLOCK_MONOTONIC_RAW), so the game sees no gap at all. At 144 fps
 99-100% of the frames get exactly 6.944 ms (`FORZA_FRAMETIME_LOG=1` logs the statistics).
 
 **Pacing.** The divider of two stays above 30 and the guest vblank runs at twice the frame
@@ -129,9 +136,10 @@ against 60), well below the network delay of a real connection. The traffic grow
 frame rate (about 65 datagrams a second each way at 30 fps in an earlier free-roam test,
 about 100 at 60, 150-200 at 144, more when the render thread keeps up): a 144 fps player
 sends up to twice the traffic of a 60 fps one (about 50 KB/s to each peer at about 250
-bytes a datagram; measured through the relay with three players: 15-18 KB/s per peer at 144 fps, `docs/online_vision.md`, "Three players"). Through the server's relay (160 KB/s per player, `--rate-limit`,
-`docs/hosting.md`) that budget runs out sooner with several peers; direct peer-to-peer
-paths are not limited. Seen in both
+bytes a datagram in that test; through the relay with four players, one datagram a frame of
+about 100 bytes per car, about 14 KB/s per peer at 144 fps: `docs/online_vision.md`, "Three
+and four players"). The server's relay budget (256 KB/s per player, `--rate-limit`, `docs/hosting.md`) covers a world
+of 8 at 240 fps; direct peer-to-peer paths are not limited. Seen in both
 runs and unrelated to the frame rate: the host's race clock started about 12 s before the
 peer's (A 00:15.150, B 00:03.100 at the same moment, 60 against 60).
 
@@ -152,15 +160,137 @@ beat the board's best from `GetBestScores`, at 60 and 144 alike.)
 
 ## The frame_rate setting
 
-`frame_rate` (`src/main.cpp`; 30 by default; 60 to 240 allowed; it needs a restart) sets the
-guest vblank (`video_mode_refresh_rate`, which `VdQueryVideoMode` reports and the SDK's
-VSync thread follows) to twice the frame rate, or to the frame rate when twice is past the
-SDK's limit (480 Hz with patch 0037, 240 without), unless `video_mode_refresh_rate` is set
-explicitly (then the frame rate is that rate divided by the same divider). The frame
-stats' `ontarget` uses the same target. Test switches: `FORZA_FRAME_TIME=game` (the millisecond frame time), `FORZA_RENDER_SYNC=0`
-(no render sync, below),
-`FORZA_VBLANK_DIVIDER=1|2`, `FORZA_FRAMETIME_LOG=1`, `FORZA_FRAMETIME_CSV=<path>` (per frame:
-time, dt, the game's ms, on target, the player's car position).
+`frame_rate` (`src/main.cpp`; 30 by default; 20, 40 and 60 to 240 allowed; the in-game
+Graphics menu changes it while the game runs) sets the guest vblank
+(`video_mode_refresh_rate`, which `VdQueryVideoMode` reports and the SDK's VSync thread
+follows) to three times 20 or 40 (60 and 120 Hz), twice a higher frame rate, or the frame
+rate when twice is past the SDK's limit (480 Hz with patch 0037, 240 without), unless
+`video_mode_refresh_rate` is set explicitly (then the frame rate is that rate divided by the
+same divider). The frame stats' `ontarget` uses the same target. Test switches:
+`FORZA_FRAME_TIME=game` (the millisecond frame time), `FORZA_RENDER_SYNC=0` (no render sync,
+below), `FORZA_VBLANK_DIVIDER=1|2|3`, `FORZA_PRESENT_PACING=0` (20 and 40 fps, below),
+`FORZA_FRAMETIME_LOG=1`, `FORZA_FRAMETIME_CSV=<path>` (per frame: time, dt, the game's ms, on
+target, the player's car position).
+
+## 20 and 40 fps (#263)
+
+Report (#263, i5-1135G7 with Iris Xe, Linux, a 60 Hz screen, the default 30 fps cap): a flat
+frame-time graph at about 43 ms (20-23 fps), yet the game "feels jerky with micro-stutters". At
+22 fps a 60 Hz screen holds the frames for 2 or 3 refreshes (33 or 50 ms) in turn, so even
+frame times judder. A cap the refresh divides fixes that: 20 fps is 3 refreshes of a 60 Hz
+screen, 40 fps 3 of a 120 Hz one (1 of a Steam Deck at 40 Hz). The launcher clamped every
+rate under 60 to 30.
+
+**The game at 50 ms frames.** What takes the frame time (`dt`):
+
+- The world update (`sub_823E40D8`) clamps `dt` to 1/30 only when its time scale is above
+  1.01 (a fast-forward), then to +-0.2 s: a race gets the whole 50 ms.
+- The physics step (`sub_82D4E2E0`) runs `min(ceil(dt * 359), 2)` substeps of `min(dt / n, 1/30)`:
+  two of 25 ms at 20 fps (16.7 at 30). A console that fell to 20 fps did the same; a frame
+  longer than 1/15 s loses physics time at every rate.
+- The float 1/30 (`0x820256E4`, and its copy at `0x82238018` in the physics step) is read at 20
+  places. Call rates measured with a probe in a race (TU4, 20 against 30 fps) leave five that
+  run once per frame. Two are the map entity lists of `CMapComponent` (slot 14,
+  `sub_82611590`): `sub_8255DE80` (activities, `CMapEntityActivity`) and `sub_825581E8`
+  (barn-find regions) clamp `dt` to 1/30, so their animations ran at two thirds of their
+  speed. Fixed: `src/hooks/map_entity_time.cpp` hands them a frame longer than 1/30 s in
+  two halves (at rates other than 30). Fixed steps of 1/30 per call stay as they are, two thirds of their
+  speed at 20 as they run 2-8 times fast above 30: the culling radius scale (`sub_8243DF70`,
+  per rendered frame), the sun-glare fade (`sub_8257E5B8`, per rendered frame) and a short
+  delay before a race UI action (`sub_82801218`). The rest run once (a table built at 1/30
+  steps in `sub_825CB590`, constructors) or not in a race (`sub_8247E3D8` on loading
+  screens, the crowd bake). The crowd animation hook (`crowd_anim.cpp`) and the frame time
+  and render sync of `frame_time.cpp` now run at every rate but 30.
+- Audio: the game submitted 937-938 frames of 256 samples every 5 s at 20, 30 and 40 fps alike
+  (`FORZA_AUDIOLOG`, the output muted).
+
+**Real time.** TU4, the Millennia Masters race, the user's Xenia save (copy), a local Forza
+Live server, headless gamescope at 60 Hz (1280x720), `tools/autodrive.py` driving for 75 s;
+the race clock in two screenshots against the host's clock when each was taken:
+
+| frame_rate | Race clock | Wall clock | Main loop dt |
+| --- | --- | --- | --- |
+| 20 | 00:03.200 -> 00:57.200 (54.000 s) | 54.01 s | 50.000 ms on 100% of frames |
+| 30 | 00:03.267 -> 00:57.267 (54.000 s) | 54.00 s | (the game's) |
+| 40 | 00:03.450 -> 00:56.950 (53.500 s) | 53.51 s | 25.000 ms on 100% of frames |
+
+With the throttle held from the countdown (26 s, `tools/carlog.py`), the car was 9.4 / 28.3-28.6
+/ 53.9-55.4 m from the launch after 1 / 2 / 3 s and reached 100 km/h in 2.35-2.65 s at 20 fps
+(three runs), 9.1 / 28.5-29.1 / 54.7-56.3 m and 2.43-2.60 s at 30 (two). The race clock moved
+18.500 s in 18.51 s (20) and 19.000 s in 19.01 s (30). The car's displacement per frame
+followed `dt` within 1.15% at 20 (`tools/frametime_report.py`).
+
+**Pacing.** The main loop starts every frame exactly on time (`dt` 50.000 ms). Where the frame
+reaches the screen is the question. Per frame of a 20 fps race (guest tick clock, a probe
+in the present hook): the render thread called `VdSwap` 4-9 ms after the frame's start, the
+swap waited for the next guest vblank (patch 0030), the SDK's VSync thread fired it 0-1 ms
+after its time (it checks every 1 ms), and the present followed 0.4-1.1 ms later: 25.5-26.9 ms
+after the frame's start (p1-p99, with the 40 Hz guest vblank of a first version). Against the screen,
+whose refresh drifts slowly against the guest clock (CLOCK_MONOTONIC_RAW against the display's
+crystal), that 1.4 ms band is a window: while it straddles a refresh deadline, frames
+alternate 2 and 4 refreshes. A frame that missed its vblank came 25 ms late, 1.5 refreshes of
+a 60 Hz screen. Two changes:
+
+- **The 60 and 120 Hz vblank.** 20 fps runs a 60 Hz guest vblank and 40 fps a 120 Hz one, with
+  a divider of three: the hook of the vblank counter (`sub_8247C678`) shows the game two of
+  every three vblanks, so its counter (`mainthread30fps` on, a release every second vblank it
+  sees) releases the main loop every third (`src/platform/frame_pacing.h`, `ThirdVblank`).
+  A frame that misses its vblank now comes one refresh of the screen late.
+- **Present pacing.** The first host present of each guest frame waits (in the
+  `vkQueuePresentKHR` hook, `src/platform/vulkan_hooks.cpp`) until a fixed time after the start
+  of the frame period it falls in: about the 98th percentile of the times the frames come at
+  (tracked per present: 49 steps of 1 us down for each step of 50 us up). A later frame is not
+  held. On a 40 fps race most frames swapped on the second 120 Hz vblank of their period and
+  one in twenty already on the first; the pacing holds those to the others. The wait is
+  `nanosleep` on Linux and macOS, a high-resolution waitable timer on Windows;
+  Direct3D 12 is not paced.
+
+Measured (the probe's host present times; "3 refreshes" models a FIFO screen of exactly 60 or
+120 Hz at 100 phases, as the drift would sweep them; the rest are mostly frames the presenter
+dropped, below):
+
+| Run (race) | Presents within 0.15 ms of the frame period | Present after the frame's start, p1 / p50 / p99 | Frames held exactly 3 refreshes: mean / worst phase |
+| --- | --- | --- | --- |
+| 20 fps, 40 Hz vblank, no pacing (26 s) | 2.9% | 25.52 / 26.23 / 26.88 ms | 95.8% / 25.2% (60 Hz) |
+| 20 fps, 60 Hz vblank, paced (75 s) | 99.1% | 18.46 / 19.19 / 19.92 ms | 99.1% / 98.3% (60 Hz) |
+| 40 fps, 120 Hz vblank, no pacing (75 s) | 90.3% | 10.76 / 18.67 / 19.82 ms | 90.9% / 90.2% (120 Hz) |
+| 40 fps, 120 Hz vblank, paced (75 s) | 99.3% | 17.73 / 18.43 / 19.25 ms | 99.4% / 97.5% (120 Hz); 99.5% one refresh at 40 Hz |
+
+`forza-recomp/tests/frame_pacing_test.cpp` checks the dividers, that the counter is released every
+third vblank whatever its count, and the pacing on modeled 20 and 40 fps frames (the share of
+frames held exactly 3 refreshes at the worst screen phase: 49% unpaced, 98% paced at 20 fps).
+
+**Windows native qualification (2026-10-23).** A host-only probe ran the actual Windows
+`PreciseWait` implementation without game files or a GPU. For 100 samples each at requested
+0.1, 0.5, 1, 3 and 10 ms waits, median overshoot was about 0.4–0.55 ms in the initial runs;
+the wait is subject to scheduler latency, not a 0.1 ms precision guarantee. These measurements
+do not establish the Linux table's screen-pacing percentages on Windows.
+
+The native disc/TU4 fixture `forza-recomp/tests/frame_time_hook_test.cpp` executes the real
+vblank hook with sparse guest memory and a modeled original counter. It covers the disabled
+divider state left by a one-vblank rate (such as 144 fps with the older 240 Hz SDK limit),
+then 20, 40 and 60 fps, plus an option parser disabling the divider. The hook must restore `mainthread30fps` for dividers
+two and three; leaving it disabled released 200 rather than 100 frames over 300 vblanks
+at 20 fps. The corrected hook releases exactly 100 at both 20 and 40 fps.
+
+Build this Windows fixture with `clang-cl /std:c++latest /O2 /Gy /MD /UNDEBUG`, the patched
+SDK include paths and `forza-recomp/src` on the include path, and
+`/D_USE_STD_VECTOR_ALGORITHMS=0 /DFORZA_TITLE_UPDATE=0` (then `4`). Link `rexruntime.lib`
+with `/OPT:REF`, and put the SDK's runtime DLL folder on `PATH` before running it.
+
+Left:
+
+- The guest clock is not locked to the screen. At a phase where the paced presents (a band of
+  about 0.1 ms per frame in the Linux runs; Windows wait latency differs) cross a refresh deadline, a frame or two still
+  takes 2 or 4 refreshes; that happens once per refresh period of drift (seconds to minutes).
+  Locking it needs the display's timing from the driver (`VK_KHR_present_wait` or
+  `VK_EXT_present_timing`, an SDK change).
+- The presenter drops a guest frame now and then (two presents 2-3 frames apart, while every
+  guest frame was swapped on time): 11-17 a minute in the race at 20, 30 and 40 fps, paced or
+  not, 30-33 a minute in free roam at 20 and 30, in headless gamescope; not from this change.
+- A frame later than the period cannot be paced: a PC that cannot hold 20 still judders.
+- These runs are on a Ryzen 7 7800X3D, where even one core held 30 fps in the race
+  (`taskset`); the player's 4-core laptop was not reproduced.
 
 ## Measurements
 
@@ -277,6 +407,29 @@ dt still sums to real time; a late frame gets its real length as before. When th
 keeps up, nothing waits (at 60: 0 waits, dt 16.667 ms on 100% of frames, as before). At 30 (the
 default) the hook does nothing. `FORZA_RENDER_SYNC=0` turns it off; the FRAMETIME line counts the
 waits.
+
+For the persistent garage slowdown reported in #187, `FORZA_FRAMETIME_LOG=1`
+also reports `timeouts=`: waits that reached 50 ms without either a new swap
+or the matching render-loop idle acknowledgment added by #240. A normal
+swap or idle acknowledgment ends the wait without increasing this counter. A
+steady 18.2 FPS alone does not establish that this wait is responsible. The
+timeout count and total wait time distinguish render-sync delays from slow
+rendering or presentation. `FORZA_RENDER_SYNC=0` provides a comparison run;
+it can bring back the HUD/judder problem described above, so it is a diagnostic
+comparison rather than a recommended permanent setting.
+
+Local testing on 21 October reached South Beaumont's outpost with a copied
+Golf R save, entered through the normal X prompt, opened Garage and Custom
+Upgrade, then left through the normal confirmation. At a 240 FPS cap the
+persistent 18.2 FPS lock did not occur. The developer pacing options stayed
+unchanged; briefly forcing `framesperrender=2` separately also did not reproduce
+the lock. Those tests used an instrumented TU4 development host, offline
+Windows/NVIDIA/Vulkan, 720p/render scale 1. Other game processes were running,
+so the FPS values are not benchmark results. No pacing reset or timeout
+workaround was justified by that local result. Those tests predate #240's
+independent Linux reproduction and render-loop fix below; the reporter's
+South Beaumont trigger remains unconfirmed. The 22 October integration keeps
+#240's per-wait identifier and swap-or-idle predicate unchanged.
 
 Measured: race scenario (Millennia Masters, 7 AI cars, 26 s at full throttle), TU4 build, warm
 cache, the reporter's settings (`--frame_rate=240 --resolution_scale=2 --anisotropic_override=5

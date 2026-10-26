@@ -1,8 +1,9 @@
 """Press-to-bind controls (#279): the bindings the Controls page edits, free of Qt and SDL.
 
 Wheels keep the SDK wheel driver's settings and formats (patches 0074, 0099, 0101):
-`wheel_axes` ("steer=0,throttle=2,..."), `wheel_buttons` ("a=0,b=1,..."), `wheel_shifter_buttons`
-("1=12,...,r=18" or "up=..,down=.."), plus the rotation, deadzone and invert switches. A field the
+`wheel_axes` ("steer=0,throttle=2,...", and "handbrake=3" for an analog handbrake, patch 0133),
+`wheel_buttons` ("a=0,b=1,..."), `wheel_shifter_buttons` ("1=12,...,r=18" or "up=..,down=.."),
+plus the rotation, deadzone and invert switches. A field the
 string leaves out keeps the driver's default, which this module ports (known Logitech wheels by
 vendor:product) so the editor can show it.
 
@@ -65,7 +66,8 @@ WHEEL_ACTIONS = [
     Action("rb", "Shift up (RB, right paddle)", "button", _W, "rb", "Buttons"),
     Action("lb", "Shift down (LB, left paddle)", "button", _W, "lb", "Buttons"),
     Action("a", "Clutch button (A)", "button", _W, "a", "Buttons"),
-    Action("b", "Handbrake (B)", "button", _W, "b", "Buttons"),
+    # A button (B) and an analog axis, both at once (#303): see the handbrake section below.
+    Action("b", "Handbrake (B, or an axis)", "button", _W, "b", "Buttons"),
     Action("x", "Activate / enter event (X)", "button", _W, "x", "Buttons"),
     Action("y", "Rewind (Y)", "button", _W, "y", "Buttons"),
     Action("back", "Change camera (Back)", "button", _W, "back", "Buttons"),
@@ -107,7 +109,7 @@ CONTROLLER_ACTIONS = [
     Action("right", "D-pad right (radio)", "button", _C, "right", "Menus and camera"),
 ]
 
-AXIS_ORDER = ("steer", "throttle", "brake", "clutch")
+AXIS_ORDER = ("steer", "throttle", "brake", "clutch", "handbrake")
 BUTTON_ORDER = ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs", "up", "down", "left", "right")
 SHIFTER_ORDER = ("1", "2", "3", "4", "5", "6", "7", "r", "up", "down")
 # An axis number past every wheel's axes: the driver reads no axis for it. Negative numbers mean
@@ -126,20 +128,78 @@ WHEEL_WORDS = ("wheel", "racing", "driving force", "g25", "g27", "g29", "g920", 
                "ts-xw")
 
 
-def known_wheel(vid, pid):
+# Thrustmaster wheels (patch 0135, #308): the SDK's kThrustmasterModels (src/input/wheel/
+# wheel_thrustmaster.h; test_wheel_thrustmaster.py checks they match), from Project Motor Racing's
+# device maps (Pitwall PMR/shared/inputDevices, commit 01acf41). The axes hold only with the axis
+# count the map assumes; where the pedals rest is read from the wheel.
+@dataclass(frozen=True)
+class ThrustmasterModel:
+    pid: int
+    name: str
+    axes: int
+    steer: int
+    throttle: int
+    brake: int
+    clutch: int
+    a: int
+    b: int
+    x: int
+    y: int
+    lb: int
+    rb: int
+    back: int
+    start: int
+    ls: int
+    rs: int
+
+
+_THRUSTMASTER = 0x044F
+THRUSTMASTER_MODELS = [
+    ThrustmasterModel(0xB67F, "Thrustmaster TMX", 4, 0, 2, 1, 3, 4, 8, 2, 9, 0, 1, 6, 7, 5, 10),
+    ThrustmasterModel(0xB669, "Thrustmaster TX", 4, 0, 2, 1, 3, 4, 8, 2, 9, 0, 1, 3, 5, -1, -1),
+    ThrustmasterModel(0xB692, "Thrustmaster TS-XW", 4, 0, 2, 1, 3, 12, 8, 2, 9, 0, 1, 6, 7, -1, -1),
+    ThrustmasterModel(0xB689, "Thrustmaster TS-PC Racer", 4, 0, 2, 1, 3, 12, 8, 2, 9, 0, 1, 6, 7,
+                      -1, -1),
+    ThrustmasterModel(0xB66E, "Thrustmaster T300 RS", 4, 0, 2, 1, 3, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+    ThrustmasterModel(0xB677, "Thrustmaster T150", 4, 0, 2, 1, 3, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+    ThrustmasterModel(0xB684, "Thrustmaster T-GT", 8, 0, 5, 1, 6, 5, 4, 3, 2, 0, 1, 6, 7, 10, 11),
+]
+
+
+def thrustmaster(vid, pid):
+    if vid != _THRUSTMASTER:
+        return None
+    return next((m for m in THRUSTMASTER_MODELS if m.pid == pid), None)
+
+
+def known_logitech(vid, pid):
+    """A Logitech wheel with a built-in profile: fixed axes, pedals that rest at the maximum."""
     return KNOWN_WHEELS.get(pid) if vid == _LOGITECH else None
 
 
-def looks_like_wheel(name, vid=0, sdl_wheel=False):
-    """The driver's wheel_mode = auto test (IsWheelDevice): Microsoft pads never are."""
+def known_wheel(vid, pid):
+    m = thrustmaster(vid, pid)
+    return known_logitech(vid, pid) or (m.name if m else None)
+
+
+def looks_like_wheel(name, vid=0, sdl_wheel=False, pid=0):
+    """The driver's wheel_mode = auto test (IsWheelDevice): Microsoft pads never are; a known
+    Thrustmaster always is (a TMX has no name on Windows: "44F B67F")."""
     if vid == 0x045E:
         return False
-    return bool(sdl_wheel) or any(w in (name or "").lower() for w in WHEEL_WORDS)
+    return bool(sdl_wheel) or any(w in (name or "").lower() for w in WHEEL_WORDS) or \
+        thrustmaster(vid, pid) is not None
 
 
-def default_axes(vid, pid, windows):
-    """A known wheel's fixed axes; {} for others (the driver detects them when it opens the wheel)."""
-    if not known_wheel(vid, pid):
+def default_axes(vid, pid, windows, num_axes=None):
+    """A known wheel's fixed axes; {} for others (the driver detects them when it opens the wheel).
+    A Thrustmaster's hold only with the axis count its map has (num_axes, when known)."""
+    m = thrustmaster(vid, pid)
+    if m:
+        if num_axes and num_axes != m.axes:
+            return {}
+        return {"steer": m.steer, "throttle": m.throttle, "brake": m.brake, "clutch": m.clutch}
+    if not known_logitech(vid, pid):
         return {}
     if windows:
         return {"steer": 0, "throttle": 1, "brake": 2, "clutch": 3}
@@ -149,7 +209,10 @@ def default_axes(vid, pid, windows):
 def default_buttons(vid, pid):
     m = {"a": 0, "b": 1, "x": 2, "y": 3, "rb": 4, "lb": 5, "back": 8, "start": 9, "rs": 10,
          "ls": 11, "up": -1, "down": -1, "left": -1, "right": -1}
-    if vid == _LOGITECH and pid in _PLAYSTATION:
+    t = thrustmaster(vid, pid)
+    if t:
+        m.update({k: getattr(t, k) for k in ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs")})
+    elif vid == _LOGITECH and pid in _PLAYSTATION:
         m.update(b=2, x=1)
     elif vid == _LOGITECH and pid in _XBOX:
         m.update(start=6, back=7, rs=8, ls=9)
@@ -180,7 +243,7 @@ def wheel_binding(action, settings, wheel):
     if action.setting == "wheel_axes":
         if own is not None and own >= 0:
             return (None if own >= NO_AXIS else own), False
-        return default_axes(wheel.vid, wheel.pid, wheel.windows).get(action.field), True
+        return default_axes(wheel.vid, wheel.pid, wheel.windows, wheel.num_axes).get(action.field), True
     if action.setting == "wheel_buttons":
         if own is not None:
             return (own if own >= 0 else None), False
@@ -192,19 +255,22 @@ def wheel_binding(action, settings, wheel):
     return (n if n >= 0 else None), True
 
 
-def wheel_binding_text(action, settings, wheel):
-    n, default = wheel_binding(action, settings, wheel)
-    if action.kind == "axis":
-        if n is None:
-            text = "Detected at start" if default else "Not bound"
-        else:
-            text = f"Axis {n}"
-    elif n is None:
-        text = "Hat (d-pad)" if action.field in ("up", "down", "left", "right") and default \
-            and wheel.num_hats else "Not bound"
-    else:
-        text = f"Button {n}"
-    return text + (" (default)" if default and n is not None else "")
+def combined_pedals(settings):
+    """One axis for both pedals: the driver reads throttle and brake from the `throttle` axis, one
+    on each side, and ignores `brake`."""
+    return settings.get("wheel_pedals") == "combined"
+
+
+def wheel_action_label(action, settings):
+    if action.key == "throttle" and combined_pedals(settings):
+        return "Throttle and brake (combined pedals)"
+    return action.label
+
+
+def wheel_action_editable(action, settings):
+    """With combined pedals the brake is the throttle axis's other side: it has no binding of its
+    own to bind or clear (the throttle row does both)."""
+    return not (action.key == "brake" and combined_pedals(settings))
 
 
 def set_wheel_binding(settings, action, number):
@@ -221,26 +287,643 @@ def set_wheel_binding(settings, action, number):
     return {action.setting: format_kv(values, order)}
 
 
-def wheel_conflicts(settings, wheel):
-    """[(input text, [row labels])] for every axis or button that more than one row uses. Shifter
-    rows count only for the shifter mode that reads them."""
+def wheel_conflicts(settings, wheel, aux=None):
+    """[(input text, [row labels])] for every axis or button of one device that more than one row
+    uses. Shifter rows count only for the shifter mode that reads them, the brake not with combined
+    pedals."""
     shifter = settings.get("wheel_shifter", "off")
     used = {}
     for action in WHEEL_ACTIONS:
+        if not wheel_action_editable(action, settings):
+            continue
         if action.setting == "wheel_shifter_buttons":
             sequential = action.field in ("up", "down")
             if shifter == "off" or (shifter == "h") == sequential:
                 continue
-        n, _ = wheel_binding(action, settings, wheel)
+        if is_handbrake_row(action):
+            axis, device, _ = handbrake_axis(settings, aux)
+            if axis is not None:
+                where = f" on {device.name}" if device else ""
+                used.setdefault((where, "axis", axis), []).append(wheel_action_label(action, settings))
+        device = row_device(action, settings, aux)
+        n, _ = aux_binding(action, settings, device) if device else \
+            wheel_binding(action, settings, wheel)
         if n is None:
             continue
-        used.setdefault((action.kind, n), []).append(action.label)
-    return [(f"{'Axis' if kind == 'axis' else 'Button'} {n}", labels)
-            for (kind, n), labels in sorted(used.items()) if len(labels) > 1]
+        where = f" on {device.name}" if device else ""
+        used.setdefault((where, action.kind, n), []).append(wheel_action_label(action, settings))
+    return [(f"{'Axis' if kind == 'axis' else 'Button'} {n}{where}", labels)
+            for (where, kind, n), labels in sorted(used.items()) if len(labels) > 1]
+
+
+# --- pedals and shifters on their own USB device (#272, patch 0128) ---------------------------
+# The driver reads a pedal set and a shifter on their own USB devices with the first wheel:
+# `wheel_pedal_device` / `wheel_shifter_device` pick them ("" finds a known one or one named like
+# one, "none" reads the wheel's own, anything else names one: its name, SDL GUID or vid:pid), with
+# `wheel_pedal_axes` ("throttle=2,brake=1,clutch=0") and `wheel_shifter_device_buttons`
+# ("1=0,...,r=8"). A pedal set in wheel_pedal_axes reads the pedal device, one set in wheel_axes
+# the wheel, others the pedal device while one is connected. While a shifter device is connected
+# every gear comes from it. This ports src/input/wheel/wheel_devices.h.
+PEDAL_KEYS = ("throttle", "brake", "clutch")
+
+
+@dataclass(frozen=True)
+class AuxModel:
+    vid: int
+    pid: int
+    role: str  # "pedals", "shifter", "other" (a handbrake: no wheel of its own)
+    name: str
+    axes: int = 0  # pedals: the layout below holds with exactly this many axes
+    throttle: int = -1
+    brake: int = -1
+    clutch: int = -1
+    first_gear: int = -1  # shifter: button of gear 1, the next gears on the next buttons
+    gears: int = 0
+    reverse: int = -1
+    up: int = -1
+    down: int = -1
+
+
+_P, _S, _O = "pedals", "shifter", "other"
+# The SDK's kAuxModels (test_wheel_devices.py checks they match). Sources: docs/sdk_patches.md 0128.
+AUX_MODELS = [
+    AuxModel(0x0483, 0x0525, _P, "Simagic P1000", 3, 2, 1, 0),
+    AuxModel(0x0483, 0x0524, _P, "Simagic P2000", 3, 2, 1, 0),
+    AuxModel(0x3670, 0x0902, _P, "Simagic P2000 (haptic)", 3, 2, 1, 0),
+    AuxModel(0x3670, 0x0903, _P, "Simagic P500"),
+    AuxModel(0x3670, 0x0905, _P, "Simagic P700"),
+    AuxModel(0x0483, 0x0531, _S, "Simagic DS-8X", first_gear=0, gears=7, reverse=8, up=10, down=9),
+    AuxModel(0x0483, 0x0530, _O, "Simagic TB-1 handbrake"),
+    AuxModel(0x3670, 0x0A04, _O, "Simagic TB-RS handbrake"),
+    AuxModel(0x0EB7, 0x6204, _P, "Fanatec CSL Elite Pedals LC", 3, 0, 1, 2),
+    AuxModel(0x0EB7, 0x6205, _P, "Fanatec CSL Pedals"),
+    AuxModel(0x0EB7, 0x6206, _P, "Fanatec CSL Elite Pedals LC V2", 3, 0, 1, 2),
+    AuxModel(0x0EB7, 0x183B, _P, "Fanatec ClubSport Pedals V3", 3, 0, 1, 2),
+    AuxModel(0x0EB7, 0x1A92, _S, "Fanatec ClubSport Shifter SQ", first_gear=1, gears=7, reverse=0,
+             up=9, down=8),
+    AuxModel(0x0EB7, 0x1A93, _O, "Fanatec ClubSport Handbrake"),
+    AuxModel(0x044F, 0xB371, _P, "Thrustmaster T-LCM", 3, 0, 2, 1),
+    AuxModel(0x044F, 0xB660, _S, "Thrustmaster TH8 RS", first_gear=0, gears=7, reverse=7, up=9,
+             down=8),
+    AuxModel(0x044F, 0xB695, _O, "Thrustmaster TSS handbrake"),
+    AuxModel(0x046D, 0xC26A, _P, "Logitech G PRO Racing Pedals", 3, 0, 1, 2),
+    AuxModel(0x046D, 0xC277, _P, "Logitech RS Pedals"),
+    AuxModel(0x046D, 0xC278, _S, "Logitech RS Shifter and Handbrake"),
+    AuxModel(0x046D, 0xC273, _S, "Logitech Driving Force Shifter (USB adapter)", first_gear=0,
+             gears=6, reverse=6),
+    AuxModel(0x30B7, 0x1001, _P, "Heusinkveld Sprint", 3, 0, 1, 2),
+    AuxModel(0x30B7, 0x1003, _P, "Heusinkveld Ultimate", 3, 0, 1, 2),
+    AuxModel(0x30B7, 0x1004, _P, "Heusinkveld Race Center", 3, 0, 1, 2),
+    AuxModel(0x10C4, 0x8B02, _P, "Heusinkveld Pedals (DC)", 3, 0, 1, 2),
+    AuxModel(0xA020, 0x3142, _S, "Heusinkveld Sequential Shifter"),
+    AuxModel(0x30B7, 0x1005, _S, "Heusinkveld Shifter"),
+    AuxModel(0x30B7, 0x1006, _S, "Heusinkveld Shifter"),
+    AuxModel(0x346E, 0x0003, _P, "Moza SR-P", 3, 0, 1, 2),
+    AuxModel(0x346E, 0x0001, _P, "Moza CRP", 3, 0, 1, 2),
+    AuxModel(0x346E, 0x0008, _P, "Moza mBooster", 3, 0, 1, 2),
+    AuxModel(0x346E, 0x0013, _P, "Moza mBooster", 3, 0, 1, 2),
+    AuxModel(0x346E, 0x001E, _S, "Moza HGP", first_gear=5, gears=7, reverse=4),
+    AuxModel(0x346E, 0x0023, _S, "Moza SGP"),
+]
+
+
+def find_aux_model(vid, pid):
+    return next((m for m in AUX_MODELS if m.vid == vid and m.pid == pid), None)
+
+
+def _squash(text):
+    return " ".join(str(text or "").lower().split())
+
+
+def aux_role_by_name(name):
+    """What a device's name says it is (the driver's AuxRoleByName); None: nothing."""
+    n = _squash(name)
+    if "wheel" in n:
+        return None
+    if "pedal" in n:
+        return _P
+    if any(w in n for w in ("shifter", "th8a", "th8 rs", "gear shift")):
+        return _S
+    if "handbrake" in n or "hand brake" in n:
+        return _O
+    return None
+
+
+def detect_aux_role(vid, pid, name):
+    m = find_aux_model(vid, pid)
+    return m.role if m else aux_role_by_name(name)
+
+
+def device_choice(setting):
+    s = _squash(setting)
+    if s in ("", "auto"):
+        return "auto"
+    return "none" if s in ("none", "off", "wheel") else "named"
+
+
+def device_match(setting, device):
+    """2: the setting is the device's name, GUID or vid:pid; 1: part of its name; 0: neither."""
+    s = _squash(setting)
+    if not s:
+        return 0
+    # SDL2's vJoy name differs from SDL3's Windows HID product name (#306).
+    # Preserve existing saved bindings, restricted to the device's reported USB id.
+    if s == "vjoy device" and (device.vid, device.pid) == (0x1234, 0xBEAD):
+        return 2
+    if s in (_squash(device.name), _squash(device.guid), f"{device.vid:04x}:{device.pid:04x}"):
+        return 2
+    return 1 if s in _squash(device.name) else 0
+
+
+@dataclass(frozen=True)
+class AuxPick:
+    pedals: int | None = None   # index into the device list
+    shifter: int | None = None
+    other: tuple = ()
+
+    def is_aux(self, i):
+        return i in (self.pedals, self.shifter) or i in self.other
+
+
+def pick_aux(devices, settings):
+    """The pedal device and the shifter device among `devices` (DeviceInfo, SDL order), as the
+    driver picks them (PickAuxDevices)."""
+    def named(setting):
+        best, score = None, 0
+        for i, d in enumerate(devices):
+            m = device_match(setting, d)
+            s = m * 2 + (0 if d.sdl_wheel else 1) if m else 0
+            if s > score:
+                best, score = i, s
+        return best
+    pedal_setting = settings.get("wheel_pedal_device", "")
+    shifter_setting = settings.get("wheel_shifter_device", "")
+    pc, sc = device_choice(pedal_setting), device_choice(shifter_setting)
+    pedals = named(pedal_setting) if pc == "named" else None
+    shifter = named(shifter_setting) if sc == "named" else None
+    other = []
+    for i, d in enumerate(devices):
+        role = detect_aux_role(d.vid, d.pid, d.name)
+        if role == _P and pc == "auto" and pedals is None:
+            pedals = i
+        elif role == _S and sc == "auto" and shifter is None:
+            shifter = i
+        elif role and i not in (pedals, shifter):
+            other.append(i)
+    return AuxPick(pedals, shifter, tuple(other))
+
+
+# --- which device is the wheel (#306, patch 0134) -------------------------------------------
+# Every wheel the driver takes is a controller of its own; the first is the first player's and the
+# one pedal, shifter and handbrake devices are read with. `wheel_device` names it (a name, GUID or
+# vid:pid; it then is a wheel even when it does not look like one); otherwise the driver puts wheels
+# with force feedback first, then those SDL lists as wheels, then SDL's order. A pedal, shifter or
+# handbrake device is no wheel unless wheel_device names it. This ports
+# src/input/wheel/wheel_primary.h; the launcher does not see force feedback without opening every
+# device, so `ffb` is optional (the game's log names the wheel it took: "Wheel: ... is the wheel").
+def wheel_device_match(settings, device):
+    setting = settings.get("wheel_device", "")
+    return device_match(setting, device) if device_choice(setting) == "named" else 0
+
+
+def wheel_like(device, settings):
+    """The driver's IsWheelDevice for one device, without the pedal and shifter settings."""
+    mode = settings.get("wheel_mode", "auto")
+    if mode == "off":
+        return False
+    return looks_like_wheel(device.name, device.vid, device.sdl_wheel, device.pid) or \
+        (mode == "on" and not device.gamepad) or wheel_device_match(settings, device) > 0
+
+
+def wheel_order(devices, settings, ffb=None):
+    """Indices of the devices the driver takes as wheels, the wheel first (WheelOrder)."""
+    if settings.get("wheel_mode", "auto") == "off":
+        return []
+    pick = pick_aux(devices, settings)
+    handbrake = pick_handbrake(devices, settings)
+    ffb = ffb or {}
+    out = [i for i, d in enumerate(devices)
+           if wheel_device_match(settings, d) or
+           (wheel_like(d, settings) and not pick.is_aux(i) and i != handbrake)]
+    def key(i):
+        d = devices[i]
+        return (wheel_device_match(settings, d) * 4 + (2 if ffb.get(d.instance) else 0)
+                + (1 if d.sdl_wheel else 0))
+    return sorted(out, key=lambda i: -key(i))
+
+
+def primary_wheel(devices, settings, ffb=None):
+    """The index of the wheel the first player drives with, or None."""
+    order = wheel_order(devices, settings, ffb)
+    return order[0] if order else None
+
+
+@dataclass(frozen=True)
+class AuxInfo:
+    """A connected pedal or shifter device as the bindings show it."""
+    name: str
+    vid: int = 0
+    pid: int = 0
+    num_axes: int = 0
+    num_buttons: int = 0
+
+
+def model_pedal_axis(info, field):
+    """A known pedal set's axis for `field` when it has the axes its layout assumes, else None."""
+    m = find_aux_model(info.vid, info.pid) if info else None
+    if not m or m.role != _P or not m.axes or info.num_axes != m.axes:
+        return None
+    return {"throttle": m.throttle, "brake": m.brake, "clutch": m.clutch}[field]
+
+
+def model_shifter(info):
+    """A known shifter's buttons, as default_shifter gives a wheel's."""
+    out = {k: -1 for k in SHIFTER_ORDER}
+    m = find_aux_model(info.vid, info.pid) if info else None
+    if m and m.role == _S and m.first_gear >= 0:
+        for g in range(1, min(m.gears, 7) + 1):
+            out[str(g)] = m.first_gear + g - 1
+        out.update(r=m.reverse, up=m.up, down=m.down)
+    return out
+
+
+def is_pedal_row(action):
+    return action.setting == "wheel_axes" and action.field in PEDAL_KEYS
+
+
+def is_gear_row(action):
+    return action.setting == "wheel_shifter_buttons"
+
+
+def row_device(action, settings, aux):
+    """The device a wheel row reads: None for the wheel, else aux["pedals"] / aux["shifter"] (an
+    AuxInfo, or one named after the setting while that device is not connected)."""
+    aux = aux or {}
+    if is_pedal_row(action):
+        own = parse_kv(settings.get("wheel_pedal_axes", "")).get(action.field, -1)
+        wheel = parse_kv(settings.get("wheel_axes", "")).get(action.field, -1)
+        if own >= 0:
+            return aux.get("pedals") or AuxInfo(settings.get("wheel_pedal_device") or "the pedal device")
+        if wheel < 0 and aux.get("pedals"):
+            return aux["pedals"]
+    elif is_gear_row(action) and aux.get("shifter"):
+        return aux["shifter"]
+    return None
+
+
+def aux_binding(action, settings, device):
+    """(number or None, is_default) for a row read on a pedal or shifter device."""
+    if is_pedal_row(action):
+        own = parse_kv(settings.get("wheel_pedal_axes", "")).get(action.field, -1)
+        if own >= 0:
+            return (None if own >= NO_AXIS else own), False
+        return model_pedal_axis(device, action.field), True
+    own = parse_kv(settings.get("wheel_shifter_device_buttons", "")).get(action.field)
+    if own is not None:
+        return (own if own >= 0 else None), False
+    n = model_shifter(device)[action.field]
+    return (n if n >= 0 else None), True
+
+
+def wheel_binding_text(action, settings, wheel, aux=None):
+    if is_handbrake_row(action):
+        return handbrake_text(settings, wheel, aux)
+    if not wheel_action_editable(action, settings):
+        return "The throttle axis's other side (combined pedals)"
+    device = row_device(action, settings, aux)
+    if device is not None:
+        n, default = aux_binding(action, settings, device)
+    else:
+        n, default = wheel_binding(action, settings, wheel)
+    if action.kind == "axis":
+        if n is None:
+            text = "Detected at start" if default else "Not bound"
+        else:
+            text = f"Axis {n}"
+    elif n is None:
+        # A d-pad direction set in wheel_buttons replaces the hat's (patch 0127): only the
+        # default reads the hat, and -1 turns the direction off.
+        text = "Hat (d-pad)" if action.field in ("up", "down", "left", "right") and default \
+            and wheel.num_hats and device is None else "Not bound"
+    else:
+        text = f"Button {n}"
+    if device is not None:
+        text += f" on {device.name}"
+    return text + (" (default)" if default and n is not None else "")
+
+
+def set_aux_binding(settings, action, device_name, number):
+    """The settings changes that bind a pedal or gear row on its own device `device_name`: it
+    becomes the pedal or shifter device, and bindings made on another one are dropped. None clears
+    the row there, "default" goes back to the device's default."""
+    pedal = is_pedal_row(action)
+    device_key = "wheel_pedal_device" if pedal else "wheel_shifter_device"
+    key = "wheel_pedal_axes" if pedal else "wheel_shifter_device_buttons"
+    values = parse_kv(settings.get(key, ""))
+    out = {}
+    if device_name is not None and _squash(settings.get(device_key, "")) != _squash(device_name):
+        values = {}  # those were another device's numbers
+        out[device_key] = device_name
+    if number == "default":
+        values.pop(action.field, None)
+    elif number is None:
+        values[action.field] = NO_AXIS if pedal else -1
+    else:
+        values[action.field] = int(number)
+    out[key] = format_kv(values, PEDAL_KEYS if pedal else SHIFTER_ORDER)
+    if pedal:  # the wheel's own number for it would only confuse
+        axes = parse_kv(settings.get("wheel_axes", ""))
+        if action.field in axes:
+            axes.pop(action.field)
+            out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    return out
+
+
+def set_row_on_wheel(settings, action, number, aux=None):
+    """Binding (or clearing, or resetting) a row on the wheel itself. A pedal row leaves the pedal
+    device; a gear row while a shifter device is connected reads the whole shifter from the wheel
+    again (wheel_shifter_device = none)."""
+    out = set_wheel_binding(settings, action, number)
+    if is_pedal_row(action):
+        values = parse_kv(settings.get("wheel_pedal_axes", ""))
+        if action.field in values:
+            values.pop(action.field)
+            out["wheel_pedal_axes"] = format_kv(values, PEDAL_KEYS)
+    elif is_gear_row(action) and (aux or {}).get("shifter") and number != "default":
+        out["wheel_shifter_device"] = "none"
+    return out
+
+
+def reset_row(settings, action):
+    """A row back to the driver's default: off the wheel's and the device's settings."""
+    if is_handbrake_row(action):
+        return reset_handbrake(settings)
+    out = set_wheel_binding(settings, action, "default")
+    other = {"wheel_axes": "wheel_pedal_axes",
+             "wheel_shifter_buttons": "wheel_shifter_device_buttons"}.get(action.setting)
+    if other and (is_pedal_row(action) or is_gear_row(action)):
+        values = parse_kv(settings.get(other, ""))
+        if action.field in values:
+            values.pop(action.field)
+            out[other] = format_kv(values, PEDAL_KEYS if other == "wheel_pedal_axes" else SHIFTER_ORDER)
+    return out
+
+
+RESET_ALL_WHEEL = {"wheel_axes": "", "wheel_buttons": "", "wheel_shifter_buttons": "",
+                   "wheel_pedal_device": "", "wheel_pedal_axes": "", "wheel_shifter_device": "",
+                   "wheel_shifter_device_buttons": "", "wheel_handbrake_device": "",
+                   "wheel_handbrake_axis": 0, "wheel_invert_handbrake": False}
+
+
+# --- the handbrake: a button and an analog axis (#303, patch 0133) ----------------------------
+# FH1's wheel layouts bind the Handbrake to B and to the left stick up and down, the Xbox 360
+# wheel's analog handbrake, and the game takes the stronger of them. The driver sends an axis
+# there: one on the wheel (`wheel_axes` handbrake=N, a handbrake plugged into the wheel base) or on
+# a handbrake device (`wheel_handbrake_device`: "" finds a known handbrake or one named like one, a
+# name, GUID or vid:pid picks one, which may also be the pedal or shifter device, "none" none; its
+# axis `wheel_handbrake_axis`). One set in wheel_axes wins; 99 there is "not bound" and turns a
+# handbrake device off too. The Handbrake row binds the button and the axis: binding one keeps the
+# other. This ports src/input/wheel/wheel_handbrake.h.
+def is_handbrake_row(action):
+    return action.setting == "wheel_buttons" and action.field == "b"
+
+
+def pick_handbrake(devices, settings):
+    """The index of the handbrake device among `devices` (DeviceInfo, SDL order), as the driver
+    picks it (PickHandbrakeDevice); None for none."""
+    setting = settings.get("wheel_handbrake_device", "")
+    choice = device_choice(setting)
+    if choice == "none":
+        return None
+    if choice == "named":
+        best, score = None, 0
+        for i, d in enumerate(devices):
+            m = device_match(setting, d)
+            s = m * 2 + (0 if d.sdl_wheel else 1) if m else 0
+            if s > score:
+                best, score = i, s
+        return best
+    return next((i for i, d in enumerate(devices) if detect_aux_role(d.vid, d.pid, d.name) == _O), None)
+
+
+def handbrake_axis(settings, aux=None):
+    """(axis number or None, the device it is on (an AuxInfo) or None for the wheel, is_default)."""
+    own = parse_kv(settings.get("wheel_axes", "")).get("handbrake", -1)
+    if own >= 0:
+        return (None if own >= NO_AXIS else own), None, False
+    device = (aux or {}).get("handbrake")
+    if device is None:
+        return None, None, True
+    try:
+        axis = int(settings.get("wheel_handbrake_axis", 0) or 0)
+    except (TypeError, ValueError):
+        axis = 0
+    named = device_choice(settings.get("wheel_handbrake_device", "")) == "named"
+    return (axis if 0 <= axis < NO_AXIS else None), device, not named and axis == 0
+
+
+def handbrake_text(settings, wheel, aux=None):
+    """The Handbrake row's value: its button and its axis, e.g. "Button 1 (default) + Axis 0 on
+    SIMAGIC TB-RS Handbrake"."""
+    button, default = wheel_binding(next(a for a in WHEEL_ACTIONS if is_handbrake_row(a)),
+                                    settings, wheel)
+    out = []
+    if button is not None:
+        out.append(f"Button {button}" + (" (default)" if default else ""))
+    axis, device, axis_default = handbrake_axis(settings, aux)
+    if axis is not None:
+        out.append(f"Axis {axis}" + (f" on {device.name}" if device else "")
+                   + (" (default)" if axis_default else ""))
+    return " + ".join(out) or "Not bound"
+
+
+def set_handbrake_binding(settings, kind, number, device_name=""):
+    """The settings changes binding the Handbrake row's button (kind "button", on the wheel) or its
+    axis (kind "axis", on the wheel, or on the device `device_name`, which becomes the handbrake
+    device); the other input stays."""
+    if kind == "button":
+        return set_wheel_binding(settings, next(a for a in WHEEL_ACTIONS if is_handbrake_row(a)),
+                                 number)
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    out = {}
+    if device_name:
+        axes.pop("handbrake", None)
+        out["wheel_handbrake_device"] = device_name
+        out["wheel_handbrake_axis"] = int(number)
+    else:
+        axes["handbrake"] = int(number)
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    return out
+
+
+def clear_handbrake(settings):
+    """No handbrake input at all: no button, and the axis "not bound" (a handbrake device too)."""
+    out = set_handbrake_binding(settings, "button", None)
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    axes["handbrake"] = NO_AXIS
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    return out
+
+
+def reset_handbrake(settings):
+    """The Handbrake row back to the driver's defaults: the wheel's B button and a handbrake device
+    found by itself."""
+    out = set_handbrake_binding(settings, "button", "default")
+    axes = parse_kv(settings.get("wheel_axes", ""))
+    axes.pop("handbrake", None)
+    out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+    out.update(wheel_handbrake_device="", wheel_handbrake_axis=0, wheel_invert_handbrake=False)
+    return out
+
+
+@dataclass(frozen=True)
+class Part:
+    """One device in a merged snapshot: its axes and buttons follow the previous parts'."""
+    instance: int
+    name: str
+    axes: int
+    buttons: int
+
+
+def merge(parts, snaps):
+    """One Snapshot of several devices (each part's snap, in order); hats are the first's."""
+    axes, buttons = [], []
+    for part, snap in zip(parts, snaps):
+        axes += list(snap.axes[:part.axes]) + [0] * max(0, part.axes - len(snap.axes))
+        buttons += list(snap.buttons[:part.buttons]) + [False] * max(0, part.buttons - len(snap.buttons))
+    return Snapshot(tuple(axes), tuple(buttons), snaps[0].hats if snaps else ())
+
+
+def split(parts, kind, number):
+    """(part index, the number on that device) for a merged axis or button number."""
+    for i, part in enumerate(parts):
+        count = part.axes if kind == "axis" else part.buttons
+        if number < count:
+            return i, number
+        number -= count
+    return None, None
+
+
+# --- the live view (#306) ---------------------------------------------------------------------
+# The Controls page graphs one device. Pedals, a shifter or a handbrake on their own device are
+# read with the wheel (the same choice as the game: pick_aux, pick_handbrake, PlanPedals), and a
+# pedal moving has to show on that row or it looks unbound. With none of those devices contributing,
+# the view stays the wheel's own axes and buttons.
+_LIVE_AXIS = {"throttle": "Throttle", "brake": "Brake", "clutch": "Clutch"}
+_LIVE_GEAR = {**{str(g): str(g) for g in range(1, 8)}, "r": "R", "up": "Up", "down": "Down"}
+_GEAR_KEY = {**{str(g): f"gear{g}" for g in range(1, 8)}, "r": "gearr", "up": "seq_up",
+             "down": "seq_down"}
+_LIVE_FIELDS = {"h": [str(g) for g in range(1, 8)] + ["r"], "sequential": ["up", "down"]}
+
+
+def _snap_axis(snap, number):
+    if snap is None or number is None or number < 0 or number >= len(snap.axes):
+        return 0
+    return snap.axes[number]
+
+
+def _snap_button(snap, number):
+    if snap is None or number is None or number < 0 or number >= len(snap.buttons):
+        return False
+    return bool(snap.buttons[number])
+
+
+def _pedal_from_device(settings, field):
+    """Whether the game reads this pedal from the pedal device while one is connected (PlanPedals):
+    a wheel_pedal_axes number, otherwise the device unless wheel_axes gives the pedal."""
+    pedal = parse_kv(settings.get("wheel_pedal_axes", "")).get(field, -1)
+    wheel = parse_kv(settings.get("wheel_axes", "")).get(field, -1)
+    return pedal >= 0 or wheel < 0
+
+
+@dataclass(frozen=True)
+class LiveInputs:
+    """Axis bars `(label, raw)` and button lamps `(label, down)` for a wheel that also reads a
+    pedal, shifter or handbrake device. The wheel's own axes and buttons come first; hats are the
+    wheel's."""
+    axes: tuple
+    buttons: tuple
+    hats: tuple = ()
+
+
+def live_inputs(settings, wheel_snap, aux=None, snaps=None):
+    """The Controls page's live view of a wheel, with its auxiliary devices combined in.
+
+    `aux` is {"pedals": AuxInfo, "shifter": AuxInfo, "handbrake": AuxInfo} for the devices the
+    game reads with the wheel (leave a role out when it is not connected). `snaps` is the same
+    keys to Snapshots. None when nothing is read from those devices, so the view stays the wheel's
+    own axes and buttons. Otherwise those, then Throttle, Brake, Clutch, Handbrake and the
+    shifter's gears, from the device the game uses for each."""
+    aux, snaps = aux or {}, snaps or {}
+    if wheel_snap is None:
+        wheel_snap = Snapshot()
+    actions = {a.key: a for a in WHEEL_ACTIONS}
+    axes = [(f"Axis {n}", raw) for n, raw in enumerate(wheel_snap.axes)]
+    buttons = [(str(n), bool(down)) for n, down in enumerate(wheel_snap.buttons)]
+    added = False
+
+    device = aux.get("pedals")
+    if device is not None:
+        snap = snaps.get("pedals")
+        combined = combined_pedals(settings)
+        named, unmapped = [], False
+        for field in PEDAL_KEYS:
+            if combined and field == "brake":
+                continue  # combined pedals: brake is the throttle axis's other side
+            if not _pedal_from_device(settings, field):
+                continue
+            number, default = aux_binding(actions[field], settings, device)
+            if number is not None:
+                named.append((_LIVE_AXIS[field], number))
+            elif default:
+                unmapped = True  # the game detects this pedal when it starts
+        if unmapped:
+            labels = {}
+            for label, number in named:
+                labels.setdefault(number, label)
+            count = len(snap.axes) if snap is not None else 0
+            if named:
+                count = max(count, max(number for _, number in named) + 1)
+            for i in range(count):
+                axes.append((labels.get(i, f"Axis {i}"), _snap_axis(snap, i)))
+            added = added or count > 0
+        elif named:
+            axes.extend((label, _snap_axis(snap, number)) for label, number in named)
+            added = True
+
+    if "handbrake" in aux:
+        axis, where, _ = handbrake_axis(settings, aux)
+        if where is not None and axis is not None:
+            axes.append(("Handbrake", _snap_axis(snaps.get("handbrake"), axis)))
+            added = True
+
+    device = aux.get("shifter")
+    fields = _LIVE_FIELDS.get(settings.get("wheel_shifter", "off"))
+    if device is not None and fields:
+        snap = snaps.get("shifter")
+        model = find_aux_model(device.vid, device.pid)
+        known = model is not None and model.role == _S and model.first_gear >= 0
+        mapped = False
+        for field in fields:
+            number, _default = aux_binding(actions[_GEAR_KEY[field]], settings, device)
+            if number is None:
+                continue
+            buttons.append((_LIVE_GEAR[field], _snap_button(snap, number)))
+            mapped = True
+        if mapped:
+            added = True
+        elif not known and snap is not None and snap.buttons:
+            # No gear map yet: show the shifter's buttons so a press is visible.
+            buttons.extend((str(i), bool(down)) for i, down in enumerate(snap.buttons))
+            added = True
+
+    if not added:
+        return None
+    return LiveInputs(tuple(axes), tuple(buttons), tuple(wheel_snap.hats))
 
 
 # --- controller remap --------------------------------------------------------------------------
-PAD_BUTTONS = ("a", "b", "x", "y", "back", "guide", "start", "ls", "rs", "lb", "rb", "up", "down",
+PAD_BUTTONS =("a", "b", "x", "y", "back", "guide", "start", "ls", "rs", "lb", "rb", "up", "down",
                "left", "right")
 EXTRA_BUTTONS = ("misc1", "paddle1", "paddle2", "paddle3", "paddle4", "touchpad")
 STICK_AXES = ("lx", "ly", "rx", "ry")
@@ -520,7 +1203,8 @@ def rest_text(raw):
 
 class Detector:
     """Waits for the first input that changes from where it was when binding started. kind: a
-    wheel row's kind ("axis", "button"; "steer" takes a smaller turn) or, with controller, a
+    wheel row's kind ("axis", "button"; "steer" takes a smaller turn; "any" a button or an axis,
+    the handbrake) or, with controller, a
     controller target's ("button", "trigger", "stick"; the mapped gamepad inputs).
     Inputs held at the start count only after they were released."""
     def __init__(self, baseline, kind, controller=False, threshold=None):
@@ -534,20 +1218,20 @@ class Detector:
     def feed(self, snap):
         if self.controller:
             return self._pad(snap)
-        if self.kind in ("axis", "steer"):
+        if self.kind in ("button", "any"):
+            for n, down in enumerate(snap.buttons):
+                held = n < len(self.base.buttons) and self.base.buttons[n]
+                if held and not down:
+                    self.released.add(n)
+                if down and (not held or n in self.released):
+                    return Detection("button", n)
+        if self.kind in ("axis", "steer", "any"):
             for n, raw in enumerate(snap.axes):
                 if n >= len(self.base.axes):
                     break
                 delta = norm(raw) - norm(self.base.axes[n])
                 if abs(delta) >= self.threshold:
                     return Detection("axis", n, 1 if delta > 0 else -1, self.base.axes[n])
-            return None
-        for n, down in enumerate(snap.buttons):
-            held = n < len(self.base.buttons) and self.base.buttons[n]
-            if held and not down:
-                self.released.add(n)
-            if down and (not held or n in self.released):
-                return Detection("button", n)
         return None
 
     def _pad(self, snap):
@@ -654,7 +1338,9 @@ class Calibration:
     right lock (the steering axis, its direction and travel), a quarter turn (the rotation), then
     each pedal pressed fully (its axis, travel and invert switch). Any step but the first can be
     skipped, which keeps what the settings have for it. `known`: a wheel with a built-in profile
-    (its pedals are taken to rest at the maximum)."""
+    (its pedals are taken to rest at the maximum). `parts`: the wheel and the devices merged after
+    it in the snapshots fed (merge), so the pedals can be found on a pedal device (#272); the
+    steering is the wheel's."""
     STEPS = ("centre", "left", "right", "quarter", "throttle", "brake", "clutch", "finish")
     PROMPTS = {
         "centre": "Centre the wheel and release every pedal, then press Next.",
@@ -670,8 +1356,9 @@ class Calibration:
     }
     MIN_MOVE = {"left": 0.3, "right": 0.3, "quarter": 0.02, "throttle": 0.3, "brake": 0.3, "clutch": 0.3}
 
-    def __init__(self, known=False):
+    def __init__(self, known=False, parts=None):
         self.known = known
+        self.parts = list(parts or [])
         self.index = 0
         self.base = None
         self.steer = None   # axis
@@ -685,6 +1372,23 @@ class Calibration:
     @property
     def step(self):
         return self.STEPS[self.index]
+
+    def steer_exclude(self):
+        """Axes the steering is not looked for on: the pedals found, the other devices' axes."""
+        out = {p[0] for p in self.pedals.values()}
+        if len(self.parts) > 1:
+            out |= set(range(self.parts[0].axes, sum(p.axes for p in self.parts)))
+        return out
+
+    def where(self, axis):
+        """(part index, axis on that device); (0, axis) without parts."""
+        if not self.parts:
+            return 0, axis
+        return split(self.parts, "axis", axis)
+
+    def axis_text(self, axis):
+        part, n = self.where(axis)
+        return f"axis {n}" + (f" on {self.parts[part].name}" if part else "")
 
     @property
     def done(self):
@@ -705,7 +1409,7 @@ class Calibration:
         if step in ("left", "right", "quarter"):
             axis = self.steer
             if axis is None:
-                axis, _ = busiest_axis(self.base, snap, {p[0] for p in self.pedals.values()})
+                axis, _ = busiest_axis(self.base, snap, self.steer_exclude())
             if axis is None or axis >= len(snap.axes):
                 return ""
             return f"Steering: axis {axis} at {round(norm(snap.axes[axis]) * 100)}%"
@@ -727,7 +1431,7 @@ class Calibration:
             return "Waiting for a pedal…"
         axis, raw = self.peak
         travel = abs(norm(raw) - norm(self.base.axes[axis])) / 2
-        return f"{step.capitalize()}: axis {axis}, pressed {round(travel * 100)}% of its travel"
+        return f"{step.capitalize()}: {self.axis_text(axis)}, pressed {round(travel * 100)}% of its travel"
 
     def can_advance(self):
         step = self.step
@@ -740,7 +1444,7 @@ class Calibration:
                 return False
             axis = self.steer
             if axis is None:
-                axis, delta = busiest_axis(self.base, self.last, {p[0] for p in self.pedals.values()})
+                axis, delta = busiest_axis(self.base, self.last, self.steer_exclude())
             else:
                 delta = abs(norm(self.last.axes[axis]) - norm(self.base.axes[axis]))
             return axis is not None and delta >= self.MIN_MOVE[step]
@@ -756,7 +1460,7 @@ class Calibration:
             self.base = snap
         elif step in ("left", "right", "quarter"):
             if self.steer is None:
-                self.steer, _ = busiest_axis(self.base, snap, {p[0] for p in self.pedals.values()})
+                self.steer, _ = busiest_axis(self.base, snap, self.steer_exclude())
             setattr(self, step, snap.axes[self.steer])
         else:
             axis, raw = self.peak
@@ -814,16 +1518,20 @@ class Calibration:
                 continue
             axis, rest, full = self.pedals[name]
             if self.combined() and name == "brake":
-                lines.append(f"Brake: the other side of axis {axis} (combined pedals)")
+                lines.append(f"Brake: the other side of {self.axis_text(axis)} (combined pedals)")
                 continue
-            invert, travel = pedal_calibration(rest, full, self.known)
-            lines.append(f"{name.capitalize()}: axis {axis}, rests at {rest_text(rest)}"
+            invert, travel = pedal_calibration(rest, full, self.known and self.where(axis)[0] == 0)
+            lines.append(f"{name.capitalize()}: {self.axis_text(axis)}, rests at {rest_text(rest)}"
                          f"{', inverted' if invert else ''}")
             if travel < 0.9 and not (self.combined() and name == "throttle"):
                 warnings.append(f"The {name} reaches only {int(travel * 100)}% of its axis, so a "
                                 f"full press gives {int(travel * 100)}% {name}: check the pedal's "
                                 "range in the wheel's own software.")
-        if not self.known and self.pedals:
+        devices = {self.where(p[0])[0] for p in self.pedals.values()} - {0}
+        if len(devices) > 1:
+            warnings.append("The pedals were found on more than one device: the game reads one "
+                            "pedal device, the first one's.")
+        if (not self.known or devices) and self.pedals:
             warnings.append("Keep the pedals released while the game starts: it reads where they "
                             "rest then.")
         return lines, warnings
@@ -840,10 +1548,38 @@ class Calibration:
             out["wheel_rotation"] = rotation
             if int(settings.get("wheel_lock", 900)) > rotation:
                 out["wheel_lock"] = rotation  # full lock must still give full steering
+        # Each pedal on the wheel (wheel_axes) or on the pedal device (wheel_pedal_axes, #272): the
+        # first other device a pedal was found on becomes the pedal device.
+        pedal_axes = parse_kv(settings.get("wheel_pedal_axes", ""))
+        old_device = settings.get("wheel_pedal_device", "")
+        device = None
+
+        def place(name, axis):
+            nonlocal device, pedal_axes
+            part, n = self.where(axis)
+            if part == 0:
+                axes[name] = n
+                pedal_axes.pop(name, None)
+                return True
+            part_name = self.parts[part].name
+            if device is None:
+                device = part_name
+                if _squash(old_device) != _squash(device):
+                    pedal_axes = {}
+            if part_name != device:
+                return False
+            pedal_axes[name] = n
+            axes.pop(name, None)
+            return True
+
+        def known(axis):
+            return self.known and self.where(axis)[0] == 0
+
         if self.combined():
             axis, rest, full = self.pedals["throttle"]
-            axes["throttle"] = axis
+            place("throttle", axis)
             axes.pop("brake", None)
+            pedal_axes.pop("brake", None)
             out["wheel_pedals"] = "combined"
             # Combined: the driver takes the axis below its centre as throttle unless inverted.
             out["wheel_invert_throttle"] = norm(full) > norm(rest)
@@ -851,17 +1587,21 @@ class Calibration:
             for name in ("throttle", "brake"):
                 if name in self.pedals:
                     axis, rest, full = self.pedals[name]
-                    axes[name] = axis
-                    out[f"wheel_invert_{name}"], _ = pedal_calibration(rest, full, self.known)
+                    if place(name, axis):
+                        out[f"wheel_invert_{name}"], _ = pedal_calibration(rest, full, known(axis))
             if "throttle" in self.pedals and "brake" in self.pedals and \
                     settings.get("wheel_pedals") == "combined":
                 out["wheel_pedals"] = "auto"
         if "clutch" in self.pedals:
             axis, rest, full = self.pedals["clutch"]
-            axes["clutch"] = axis
-            out["wheel_invert_clutch"], _ = pedal_calibration(rest, full, self.known)
+            if place("clutch", axis):
+                out["wheel_invert_clutch"], _ = pedal_calibration(rest, full, known(axis))
         if axes != parse_kv(settings.get("wheel_axes", "")):
             out["wheel_axes"] = format_kv(axes, AXIS_ORDER)
+        if device is not None and _squash(old_device) != _squash(device):
+            out["wheel_pedal_device"] = device
+        if pedal_axes != parse_kv(settings.get("wheel_pedal_axes", "")):
+            out["wheel_pedal_axes"] = format_kv(pedal_axes, PEDAL_KEYS)
         if deadzone is not None:
             out["wheel_deadzone"] = round(float(deadzone), 2)
         return out

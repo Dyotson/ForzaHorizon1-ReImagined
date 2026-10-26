@@ -65,6 +65,22 @@ class LiveryCodecTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             codec.derive(image, 0x82000000, b'bad')
 
+    def test_generic_wrapper_rekeys_without_changing_opaque_content(self):
+        original=codec.decode(self.raw,self.keys)
+        target=(bytes(range(16,32)),bytes(range(32,64)))
+        raw=codec.encode_stream(original.body,target)
+        self.assertEqual(codec.decode(raw,(target,)).body,self.body)
+        with self.assertRaises(ValueError):codec.decode(raw,self.keys)
+        with self.assertRaises(ValueError):codec.encode_stream(b'',target)
+
+    def test_catalog_index_uses_its_own_identity_derivation(self):
+        image=bytes(i % 251 for i in range(0x20000))
+        owner=bytes(range(8))
+        self.assertNotEqual(codec.derive(image,0x82000000,owner,index=True),
+                            codec.derive(image,0x82000000,owner))
+        self.assertNotEqual(codec.derive(image,0x82000000,owner,index=True),
+                            codec.derive(image,0x82000000,bytes(8),index=True))
+
 
 if __name__ == '__main__':
     unittest.main()

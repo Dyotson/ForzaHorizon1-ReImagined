@@ -9,9 +9,13 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
+from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "VR", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
+# The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
+# 120 Hz screens, so every frame stays on screen for the same number of refreshes.
+LOW_FRAME_RATES = (20, 30, 40)
 
 
 @dataclass
@@ -29,6 +33,7 @@ class Setting:
     step: float = 1
     platform: str = ""  # "linux" or "windows": shown only there
     restart: bool = False
+    max_length: int | None = None  # optional string input limit
     legacy: dict = field(default_factory=dict)  # value an older version offered -> the one it became
 
     def applies(self) -> bool:
@@ -50,10 +55,19 @@ def add(*a, **k):
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
-    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS.", "Frame rate")
+    "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
+    "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60, and on a Steam Deck with its "
+    "screen at 40 Hz or 80 Hz; Match display picks 40 there).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
+add("battery_saver", "Battery saver", "Display", "choice", "off",
+    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off) and Scene "
+    "anti-aliasing Off, the lightest settings, without changing yours: they apply again at the next "
+    "start on mains power. A frame rate of 20 or 40 (for a screen at 40 Hz) stays. Auto applies it "
+    "when a Steam Deck runs on its battery as the game starts.",
+    "Frame rate", choices=list(power.MODES), platform="linux", restart=True)
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
 add("video_mode_refresh_rate", "Guest refresh rate (Hz)", "Display", "float", 0.0,
@@ -109,6 +123,14 @@ add("resolution_scale", "Render scale", "Display", "int", 1,
     "Draws at 1x to 8x the guest resolution. 1 with FSR 1 is the fast default; 2 is real extra detail "
     "for about 40% fewer fps; above 2 is experimental (flicker on NVIDIA, issue #47).", "Picture",
     lo=1, hi=8, restart=True)
+add("scene_resolution", "3D scene resolution", "Display", "choice", "720",
+    "For integrated graphics that can't hold the frame rate: 540p draws the 3D scene at 960x540 "
+    "(about half the pixels) and scales it to 720p; the HUD, text and menus stay at 720p, and the "
+    "upscaling filter (AMD FSR 1 is the sharpest) takes the picture to the window. It saves GPU time "
+    "only: a PC limited by its CPU (Steam Deck) gets nothing. The scene is drawn in one pass with 2x "
+    "MSAA (Scene anti-aliasing Off removes it). Not with AMD FSR 3, NVIDIA DLSS, a separate "
+    "anti-aliasing method or Ultrawide gameplay, which keep 720p.", "Picture",
+    choices=[("720", "720p (game)"), ("540", "540p")], restart=True)
 add("anisotropic_override", "Anisotropic filtering", "Display", "choice", 3,
     "Texture sharpness at oblique angles.", "Picture",
     choices=[(-1, "Game default"), (0, "Off"), (1, "1x"), (2, "2x"), (3, "4x"), (4, "8x"),
@@ -161,6 +183,12 @@ add("present_cas_additional_sharpness", "CAS extra sharpness", "Display", "float
     "0 to 1, for the CAS filter.", "Picture", lo=0, hi=1, step=0.05)
 add("present_dither", "Output dithering", "Display", "bool", False,
     "Dither the final image to hide banding.", "Picture", restart=True)
+add("scene_msaa", "Scene anti-aliasing (MSAA)", "Display", "choice", "game",
+    "The game draws the 3D scene with 4x MSAA in three parts, which costs the most CPU time on "
+    "4-core PCs and the Steam Deck. 2x draws it in two parts with 2x MSAA, as the game does for "
+    "its largest races. Off draws it in one pass without MSAA: about a fifth less CPU time in "
+    "the GPU emulation and less GPU time, with more jagged edges.", "Picture",
+    choices=[("game", "4x (game)"), ("2x", "2x"), ("off", "Off (fastest)")], restart=True)
 add("native_2x_msaa", "Native 2x MSAA implementation", "Display", "bool", True,
     "Implement guest-requested 2x targets using native GPU multisampling. This does not force MSAA or choose the game's sample count.", "Picture")
 add("cockpit_gauges_lit", "Cockpit gauges always lit", "Display", "bool", False,
@@ -174,6 +202,45 @@ if IS_WINDOWS:
         choices=[("vulkan", "Vulkan"), ("d3d12", "Direct3D 12")], platform="windows",
         restart=True)
 
+add("world_shadow_detail", "Shadow detail", "Display", "choice", "console",
+    "How far away small objects (trees on a hillside, posts, rocks, bushes) still cast a shadow. "
+    "Console is the game's own range; High casts them 3 times as far, Ultra 10 times. A few "
+    "hundred more shadow draws a frame; see docs/graphics-detail.md for the measured cost.",
+    "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_texture_detail", "Distant texture detail", "Display", "choice", "console",
+    "Sharper terrain, road and scenery textures in the distance (the track's texture LOD bias: "
+    "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
+    "shimmer slightly on fine patterns.", "World detail",
+    choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
+    "Softer, smoother edges on the shadows of trees, cars and scenery: Soft filters each shadow "
+    "over a 1.5 times wider area, Softer twice as wide with a wider blur. Measured on an RX 9060 XT: "
+    "no measurable increase for Soft, about 0.5 ms per frame for Softer at 2560x1440; other GPUs may differ. "
+    "Console is the game's own filter. Also in the "
+    "in-game Graphics screen, where it applies without a restart.", "World detail",
+    choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
+add("world_ambient_occlusion", "Ambient occlusion", "Display", "choice", "off",
+    "Darker sunlight where surfaces meet: under cars, along curbs and rails, at the foot of walls "
+    "and in creases of the ground (screen-space ambient occlusion on the world's sunlight; the cars "
+    "and trees keep their own shading). Low or High strength, the same cost: about 0.5 ms "
+    "per frame at 2560x1440 on an RX 9060 XT, nothing measurable under a 60 fps cap; other GPUs "
+    "may differ. Off is the game's lighting. Vulkan only. Also in the in-game Graphics screen, "
+    "where it applies without a restart.", "World detail",
+    choices=[("off", "Off"), ("low", "Low"), ("high", "High")])
+# Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
+# --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
+add("texture_dump", "Dump textures", "Display", "bool", False,
+    "Save each texture the game loads, once, to textures/dump in the game's data folder, named "
+    "by its fingerprint: a .dds and a .png to look at. A replacement must have the same name. "
+    "Takes disk space (about 200 MB for the first race) and a little time as textures "
+    "load. The files are the game's art: never share them.", "Texture packs",
+    restart=True)
+add("texture_replace", "Use texture packs", "Display", "bool", False,
+    "Draw textures from the .dds and .png files in the textures folder (and folders inside it) "
+    "instead of the game's: higher resolution, same aspect ratio, named like the dumped "
+    "texture. Uses graphics memory, not the game's. Vulkan only.", "Texture packs",
+    restart=True)
 # scRGB requires an HDR-enabled desktop and a surface advertising the format.
 add("present_hdr", "HDR output", "Display", "bool", False,
     "Expand SDR scene highlights into an scRGB output. Requires Vulkan, an HDR display and HDR "
@@ -199,6 +266,21 @@ add("present_hdr_test_pattern", "HDR calibration", "Display", "choice", 0,
     "Show a calibration strip over the picture. Turn off when finished. "
     "An SDR screenshot cannot show the physical brightness.", "HDR",
     choices=[(0, "Off"), (1, "Near black"), (2, "Paper white"), (3, "Display peak")], restart=True)
+
+# VR through OpenXR (forza-recomp/src/platform/xr.h, docs/vr.md, #333). Launcher-only: the values
+# go to the game as arguments of "Play in VR" (vr.py), so Play always starts flat.
+add("vr_mode", "Mode", "VR", "choice", "cockpit",
+    "Cockpit puts you in the driver's seat and turns the in-car camera with your head. "
+    "Big screen shows the game on a screen in front of you, in any camera.", "VR (experimental)",
+    choices=[("cockpit", "Cockpit (recommended)"), ("screen", "Big screen")])
+add("vr_picture", "Sharpness", "VR", "choice", "game",
+    "How sharp the cockpit looks. Higher is clearer but needs a stronger graphics card; "
+    "if the headset stutters, go back a step.", "VR (experimental)",
+    choices=[("game", "Standard"), ("sharp", "Sharp (needs a stronger graphics card)"),
+             ("sharpest", "Sharpest (needs a much stronger graphics card)")])
+add("vr_seat_height_cm", "Seat height (cm)", "VR", "float", -4.0,
+    "Raises or lowers your eye in the cockpit. Lower it if your head pokes through the roof.",
+    "VR (experimental)", lo=-30, hi=30, step=1)
 
 # --- Controls --------------------------------------------------------------------------
 add("mnk_mode", "Keyboard and mouse", "Controls", "bool", False,
@@ -240,6 +322,12 @@ add("wheel_mode", "Racing wheel", "Controls", "choice", "auto",
     "Auto: a controller SDL reports as a wheel (or named like one) is used as the 360 racing "
     "wheel. On: every controller without a gamepad mapping counts as a wheel.", "Racing wheel",
     choices=[("auto", "Auto"), ("on", "On"), ("off", "Off")], restart=True)
+# The primary wheel (patch 0134, #306).
+add("wheel_device", "Wheel device", "Controls", "str", "",
+    "The wheel the first player drives with, and the one pedals, a shifter or a handbrake on their "
+    "own USB device are read with. Empty picks one with force feedback first (a wheel base before "
+    "a vJoy or button box); a device name as Bindings lists it (Use as the wheel), SDL GUID or "
+    "vid:pid picks that one, and makes it a wheel.", "Racing wheel", restart=True)
 add("wheel_rotation", "Wheel rotation (degrees)", "Controls", "int", 900,
     "Lock to lock, as set in the wheel's own driver.", "Racing wheel", lo=90, hi=2520, step=10)
 add("wheel_lock", "Steering lock (degrees)", "Controls", "int", 900,
@@ -272,12 +360,35 @@ add("wheel_brake_curve", "Brake curve", "Controls", "float", 1.0,
 add("wheel_axes", "Axis numbers", "Controls", "str", "",
     "Overrides, e.g. steer=0,throttle=2,brake=5,clutch=1. Empty uses the built-in profile of a "
     "known Logitech wheel (G25, G27, G29, G920, G923, Driving Force GT), else detects them from "
-    "where each axis rests when the wheel is plugged in (pedals released).", "Racing wheel")
+    "where each axis rests when the wheel is plugged in (pedals released). handbrake=3 reads an "
+    "analog handbrake plugged into the wheel (99: none).", "Racing wheel")
 add("wheel_buttons", "Button numbers", "Controls", "str", "",
     "Overrides, e.g. a=0,b=1,x=2,y=3,lb=5,rb=4,back=8,start=9,ls=11,rs=10,up=12,down=13,"
-    "left=14,right=15. The d-pad hat is used as is. The G29, G920 and G923 have their own maps "
+    "left=14,right=15. The hat is the d-pad unless a direction is set here (-1 turns it off). "
+    "The G29, G920 and G923 have their own maps "
     "built in. A button the shifter uses never presses one of these.",
     "Racing wheel")
+# Pedals on their own USB device (patch 0128, #272): read with the wheel.
+add("wheel_pedal_device", "Pedal device", "Controls", "str", "",
+    "Pedals on their own USB device, read with the wheel. Empty finds known pedals (Simagic, "
+    "Fanatec, Thrustmaster T-LCM, Heusinkveld, Moza, Logitech) or a device named like pedals; a "
+    "device name as Bindings lists it picks one; none reads the wheel's own pedals. Binding a "
+    "pedal row by pressing the pedal sets it.", "Racing wheel")
+add("wheel_pedal_axes", "Pedal device axes", "Controls", "str", "",
+    "Axis numbers on the pedal device, e.g. throttle=0,brake=1,clutch=2. Empty uses known pedals' "
+    "layout, else detects them from where each axis rests when the game starts (pedals "
+    "released).", "Racing wheel")
+# An analog handbrake (patch 0133, #303): the game's 360 wheel handbrake axis, next to the B button.
+add("wheel_handbrake_device", "Handbrake device", "Controls", "str", "",
+    "An analog handbrake on its own USB device, read with the wheel. Empty finds known handbrakes "
+    "(Simagic TB-1 and TB-RS, Fanatec ClubSport Handbrake, Thrustmaster TSS) or a device named "
+    "like one; a device name as Bindings lists it picks one (also the pedal or shifter device); "
+    "none reads none. Binding the Handbrake row by pulling the handbrake sets it.",
+    "Racing wheel")
+add("wheel_handbrake_axis", "Handbrake device axis", "Controls", "int", 0,
+    "The handbrake's axis number on the handbrake device.", "Racing wheel", lo=0, hi=99)
+add("wheel_invert_handbrake", "Invert handbrake", "Controls", "bool", False,
+    "Turn on when the analog handbrake works backwards.", "Racing wheel")
 add("wheel_ffb", "Force feedback", "Controls", "bool", True,
     "The game's own wheel forces: the car's steering force, a centring spring that grows with "
     "speed, a light damper, and its rumble as a vibration. They fade out while you are not "
@@ -288,17 +399,30 @@ add("wheel_ffb_reverse", "Reverse force direction", "Controls", "bool", False,
     "drivers disagree about the direction).", "Racing wheel")
 add("wheel_ffb_strength", "Force feedback strength (%)", "Controls", "int", 60,
     "0 to 100.", "Racing wheel", lo=0, hi=100, step=5)
+# A minimum steering force (patch 0131, #303).
+add("wheel_ffb_min_strength", "Minimum force (%)", "Controls", "int", 0,
+    "Gives a light car some weight in the wheel: the game's steering forces weaker than this share "
+    "of the full force are scaled up (smoothly, up to 4 times near the centre), stronger ones stay "
+    "as they are. 0 is off. Try 10 to 30. The centring spring and the rumble do not change.",
+    "Racing wheel", lo=0, hi=100, step=5)
 add("wheel_ffb_spring_strength", "Centring strength (%)", "Controls", "int", 100,
     "The game's centring spring and damper, 0 to 100 percent of the force feedback strength. "
     "Lower it if small turns feel heavy at speed: the steering force and the road feel stay.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 50,
     "The vibration from the game's engine motor (its right motor), 0 to 100 percent of the force "
-    "feedback strength. Lower it if the engine near the redline drowns out the road.",
+    "feedback strength. The game runs it at half or more whenever the car accelerates, so it "
+    "starts at 50; lower it if the engine drowns out the road.",
     "Racing wheel", lo=0, hi=100, step=5)
-add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 100,
+add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 80,
     "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
     "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
+add("wheel_rumble_style", "Rumble style", "Controls", "choice", "fine",
+    "How the game's rumble plays on the wheel's motor. Fine: the engine and the road each as a "
+    "light, quick vibration (about 70 and 40 Hz). Classic: one strong, slower vibration, as the "
+    "Xbox 360 wheel's rim motors felt; it shakes a force feedback wheel hard. A wheel without "
+    "room for the fine effects plays classic.", "Racing wheel",
+    choices=[("fine", "Fine"), ("classic", "Classic")], restart=True)
 # Clutch and shifter (patch 0099): the game reads the 360 wheel's analog clutch and H-pattern shifter.
 add("wheel_clutch", "Clutch pedal", "Controls", "bool", True,
     "The clutch pedal works as the game's clutch (choose Manual with clutch in the game's options).",
@@ -322,6 +446,22 @@ add("wheel_shifter_clutch", "Gears need the clutch", "Controls", "bool", False,
 add("wheel_clutch_threshold", "Clutch threshold", "Controls", "float", 0.5,
     "How far the clutch must be pressed to engage a gear, 0.1 to 1.", "Shifter and clutch",
     lo=0.1, hi=1, step=0.05)
+# H-pattern: the lever's slot, or gears on lever moves (patch 0132, #303).
+add("wheel_shifter_follow_slot", "Gear follows the lever's slot", "Controls", "bool", True,
+    "H-pattern. On (default, as on the Xbox): the game takes the gear the lever sits in whenever it "
+    "sets the gear itself, at race and event starts and finishes. Off, for switching to the "
+    "paddles: a gear engages only when the lever moves into a slot or out to neutral, so the "
+    "paddles keep the gear they chose and a race start keeps the game's.", "Shifter and clutch")
+# A shifter on its own USB device (patch 0128, #272): read with the wheel.
+add("wheel_shifter_device", "Shifter device", "Controls", "str", "",
+    "A shifter on its own USB device, read with the wheel. Empty finds known shifters (Simagic "
+    "DS-8X, Fanatec ClubSport SQ, Thrustmaster TH8 RS, Moza HGP, Heusinkveld, Logitech) or a "
+    "device named like one (a TH8A); a device name as Bindings lists it picks one; none reads "
+    "the wheel's own buttons. Binding a gear row by pressing it on the shifter sets it.",
+    "Shifter and clutch", restart=True)
+add("wheel_shifter_device_buttons", "Shifter device buttons", "Controls", "str", "",
+    "Button numbers on the shifter device, e.g. 1=0,2=1,3=2,4=3,5=4,6=5,r=6 or up=..,down=.. "
+    "Empty uses a known shifter's layout.", "Shifter and clutch", restart=True)
 
 KEYBINDS = [
     ("a", "A", "Semicolon,Space"), ("b", "B", "Quote,Backspace"), ("x", "X", "L"),
@@ -343,10 +483,38 @@ for _k, _label, _default in KEYBINDS:
         "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
 
+# --- Gameplay --------------------------------------------------------------------------
+add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
+    "Game: as the game shipped, a CPU driver ahead of you eases off (the weaker ones down to "
+    "a fifth of their power) and one behind you brakes and corners better to catch up. Off: "
+    "every CPU driver races at its own skill wherever you are, so the faster car pulls away "
+    "on the straights and the better-handling one in the corners; the difficulty still sets "
+    "how good they are. Single-player races and free roam only: online races and Co-op "
+    "Festival rounds always play as shipped.",
+    "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
+
+add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
+    "Add Car Tuning to the stock pause menu for your owned car in Colorado free roam. "
+    "Requires Settings > Online > Sign in to Xbox LIVE: off, including when playing solo while signed in to Forza Live. "
+    "Supports named setups "
+    "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
+    "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
+
+add("skip_startup_movies", "Skip startup videos", "Gameplay", "bool", False,
+    "Skips the videos at the start (Microsoft Studios, Dolby, Playground Games, about 45 s) "
+    "and goes to the title screen. The in-game videos (the festival intro, the 1000 Club "
+    "introduction) still play. Applies on the next game launch.", "Startup", restart=True)
+
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
+add("radio_station_switch", "Station changes", "Audio", "choice", "game",
+    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
+    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
+    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
+    "0.25 s fades for player changes; quick presses end on the last station picked.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
 
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
@@ -375,8 +543,9 @@ add("world_challenges", "Head-to-head challenges", "Online", "bool", True,
 add("world_event_wait_seconds", "Event lobby wait (s)", "Online", "int", 30,
     "How long the wait lobby before an event lasts.", "Horizon World", lo=0, hi=600)
 add("world_event_cpu_with_peers", "AI drivers in multi-player world events", "Online", "bool",
-    True, "Only the Horizon World events the server starts; playlist and custom races have no AI "
-    "drivers, as on the Xbox 360. Off: only a solo event gets them.", "Horizon World")
+    True, "Horizon World events and the Co-op Festival's /event races (also alone on This PC); "
+    "playlist and custom races have no AI drivers, as on the Xbox 360. Off: only a solo event "
+    "gets them.", "Horizon World")
 add("world_event_cpu_ready", "Do not wait for AI after events", "Online", "bool", True,
     "The results screen returns to the lobby without waiting for them.", "Horizon World")
 add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
@@ -384,11 +553,18 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
-    "Up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
-    "Identity")
+    "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
+    "Identity", max_length=15)
+add("game_language", "Game language", "Profile", "choice", "",
+    "The language of the game's menus and text. Automatic uses the Language ID and Country ID "
+    "below (English, United States by default). Any other choice sets both for you; Hungarian, "
+    "Czech, Dutch, Danish, Finnish, Norwegian and Swedish pick English with their country, as "
+    "the game does. A language that has no Country ID of its own uses yours.", "Identity",
+    choices=languages.CHOICES, restart=True)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
-    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
+    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian. "
+    "Used when Game language is Automatic.",
     "Identity", lo=0, hi=20)
 add("user_country", "Country ID", "Profile", "int", 103, "Xbox country code.", "Identity",
     lo=0, hi=300)
@@ -396,6 +572,10 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
+add("forza_native_pause", "Native pause menu (experimental)", "Advanced", "bool", False,
+    "Use Home, Cars, Social and Settings pages. Requires FH1 Title Update 4 and menu resources "
+    "prepared by the launcher during a build. The original pause menu remains available "
+    "if these resources are missing. Applies on the next game launch.", "Menu", restart=True)
 add("log_level", "Log level", "Advanced", "choice", "info",
     "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
     "lower the frame rate a lot (#174).", "Log",
@@ -440,15 +620,25 @@ add("video_mode_width", "Guest video width", "Advanced", "int", 1280,
 add("video_mode_height", "Guest video height", "Advanced", "int", 720,
     "Overridden by the resolution preset.", "GPU", lo=480, hi=4095, restart=True)
 
+# Launcher only (never written to forza.toml): see shader_share.py, #276.
+add("share_shader_list", "Share shader list", "Online", "bool", True,
+    "After a game session, send the shader hashes and render settings from your pipeline cache to the "
+    "server you play on (the public server or your own), once per entry. No game data and nothing "
+    "personal is sent, only pipeline descriptions: which shaders were used and how. The server publishes "
+    "the entries several players reported, and Prebuild shaders builds that list from your own game files, "
+    "so new places and cars stop compiling shaders while you drive. Nothing is sent offline or to a "
+    "server on this PC.", "Shader prebuild")
 # Discord status display is opt-in. The application ID is public maintainer setup,
 # separated from the ordinary sharing switch. Never request a token or secret.
-add("discord_presence", "Share activity on Discord", "Online", "bool", False,
+add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
-    "Requires a Discord application ID in Advanced. Applies on the next game launch.", "Discord",
+    "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "
+    "Applies on the next game launch.", "Discord",
     restart=True)
-add("discord_application_id", "Discord application ID", "Advanced", "str", "",
-    "One-time Rich Presence setup: the public numeric Application ID from the Discord Developer Portal. "
-    "Leave empty to disable the connection. Never enter a bot token or client secret.", "Discord setup",
+add("discord_application_id", "Discord application ID", "Advanced", "str", "1563015276583460934",
+    "The public Application ID Discord shows as the game (the project's own, set by default). "
+    "Change it only to use another Discord application; empty disables the connection. "
+    "Never enter a bot token or client secret.", "Discord setup",
     restart=True)
 
 BY_KEY = {s.key: s for s in S}
@@ -465,12 +655,18 @@ def defaults():
 def coerce(setting, value):
     """Make a value (from JSON, TOML or a widget) fit the setting's type, or the default."""
     try:
+        if setting.key == "gamertag":
+            return gamertag.clean_name(value)
         if setting.kind == "bool":
             return bool(value)
         if setting.kind in ("int", "fps"):
             v = int(float(value))
             if setting.kind == "fps":    # 0 = Match display, resolved by the launcher at launch
-                return 0 if v == 0 else 30 if v < 60 else min(v, 240)
+                if v == 0:
+                    return 0
+                if v < 60:    # below 60 the game runs 20, 30 or 40: the highest not above v
+                    return max([r for r in LOW_FRAME_RATES if r <= v], default=LOW_FRAME_RATES[0])
+                return min(v, 240)
             lo = -(10 ** 9) if setting.lo is None else int(setting.lo)
             hi = 10 ** 9 if setting.hi is None else int(setting.hi)
             return max(lo, min(hi, v))
@@ -490,6 +686,7 @@ def coerce(setting, value):
                 if str(c) == str(value):
                     return c
             return setting.default
-        return str(value)
+        text = str(value)
+        return text[:setting.max_length] if setting.max_length is not None else text
     except (TypeError, ValueError):
         return setting.default

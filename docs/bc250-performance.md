@@ -3,7 +3,7 @@
 ## Scope and evidence
 
 Current main includes #233's guarded `FORZA_CPU_TARGET=x86-64-v3` path, which the
-launcher selects on supported CPUs. This draft retains the narrower Linux-only
+launcher selects on supported CPUs. This PR retains the narrower Linux-only
 `FORZA_GUEST_FMA` option for manual comparisons with `FORZA_CPU_TARGET=baseline`;
 it is not the launcher's CPU-target implementation. BC-250 runtime validation is
 still pending for both paths.
@@ -157,3 +157,22 @@ synthetic timing evidence above is historical and is not an FPS prediction.
 4. Test code-model changes and topology-aware thread placement independently.
    Keep experiments reversible and reject changes whose improvement is within
    repeated-run noise.
+
+## Current-main review preparation (26 October)
+
+Integrated main `b560528` without changing the FMA implementation or CPU-target
+selection. Fresh Fedora WSL/GCC 16.2.1 configure, compile, link and arithmetic
+tests pass for all four baseline/v3 and FMA OFF/ON combinations. The existing
+Clang FMA-enabled fixture also rebuilds and passes. Each arithmetic test covers
+4,334,912 cases with all four rounding modes and FTZ/DAZ combinations; NaN
+payloads and floating-point exception flags remain outside this comparison.
+
+A Linux CI job now builds and runs the same four combinations using the
+production CMake modules and startup guards, without game files or an SDK.
+It is an arithmetic/build check, not an FPS benchmark or a BC-250 acceptance run.
+The earlier missing-feature injection and disassembly results were not repeated.
+
+The bounded, manually enabled experiment is ready for source review. It stays
+off by default. Current-head game boot, driving, graphics/audio behavior and
+BC-250 performance remain unqualified; the proposed device experiments above
+remain necessary before making a performance claim or changing defaults.

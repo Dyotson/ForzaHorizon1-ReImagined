@@ -1,20 +1,57 @@
-"""The main window: Play, Photo gallery, Setup, Settings, Controls and About."""
+"""Play, gallery, catalogs, setup, settings, controls and saves."""
 import sys
 import threading
+import time
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, crash_report, game, paths, dlss
+from .. import APP_NAME, __version__, builder, cleanenv, coop_grant, crash_report, game, paths, dlss, shader_share
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
 from .settings_page import SettingsPage
 from .gallery_page import GalleryPage
+from .catalogs import CatalogsPage, CATALOG_PAGE_ID
 from .controls_page import ControlsPage
 from .saves_page import SavesPage
+from .mods_page import ModsPage
+from .texture_packs_page import TexturePacksPage
+from .widgets import label
+
+MODS_PAGE_ID = 8
+TEXTURE_PACKS_PAGE_ID = 9
+
+
+class VrChecklist(QDialog):
+    """The first "Play in VR": three steps, and "Don't show again"."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Play in VR")
+        lay = QVBoxLayout(self)
+        lay.setSpacing(12)
+        warning = label("VR is experimental: it is playable, but expect rough edges. "
+                        "Take a break if you feel motion sickness.", "warn")
+        lay.addWidget(warning)
+        lay.addWidget(QLabel("Before you start:"))
+        for text in ("1. Start your VR app (WiVRn, SteamVR, Meta Quest Link or Virtual Desktop) "
+                     "and connect the headset.",
+                     "2. Put the headset on.",
+                     "3. Press Play in VR."):
+            step = QLabel(text)
+            step.setWordWrap(True)
+            lay.addWidget(step)
+        self.dont_show = QCheckBox("Don't show again")
+        lay.addWidget(self.dont_show)
+        buttons = QDialogButtonBox()
+        go = buttons.addButton("Play in VR", QDialogButtonBox.AcceptRole)
+        go.setDefault(True)
+        buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +75,7 @@ class MainWindow(QMainWindow):
         self._dlss_session_status = None
         self._shader_warmup_status = None
         self._busy = False
+        self._close_after_game = False
         self._dlss_task = None
         self._dlss_prepared = None
         self._dlss_result = (False, "")
@@ -101,28 +139,28 @@ class MainWindow(QMainWindow):
         self.controls.settings_requested.connect(self.show_control_settings)
         self._close_after_gallery = False
         self.gallery.idle.connect(self._gallery_idle)
+        self.catalogs = CatalogsPage(cfg, self)
         self.saves = SavesPage(cfg, self)
+        self.mods = ModsPage(cfg, self)
+        self.texture_packs = TexturePacksPage(cfg, self)
         self.navs = QButtonGroup(self)
-        for i, (name, page) in enumerate((("Play", self.play), ("Setup", self.setup),
-                                          ("Settings", self.settings), ("About", self.about),
-                                          ("Photo gallery", self.gallery), ("Controls", self.controls),
-                                          ("Saves", self.saves))):
+        self._pages = {0: self.play, 1: self.setup, 2: self.settings, 3: self.about,
+                       4: self.gallery, 5: self.controls, 6: self.saves,
+                       CATALOG_PAGE_ID: self.catalogs, MODS_PAGE_ID: self.mods,
+                       TEXTURE_PACKS_PAGE_ID: self.texture_packs}
+        # In id order, so a page's stack index is its id.
+        for page in self._pages.values():
+            self.stack.addWidget(page)
+        for i, name in ((0, "Play"), (4, "Photo gallery"),
+                        (CATALOG_PAGE_ID, "Designs && vinyls"), (1, "Setup"),
+                        (5, "Controls"), (2, "Settings"), (6, "Saves"), (MODS_PAGE_ID, "Mods"),
+                        (TEXTURE_PACKS_PAGE_ID, "Texture packs"), (3, "About")):
             btn = QPushButton(name)
             btn.setObjectName("nav")
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self.navs.addButton(btn, i)
-            # Keep the existing page IDs used by setup/update links; place Gallery
-            # beside Play in the sidebar without renumbering those destinations.
-            if page is self.gallery:
-                sl.insertWidget(2, btn)
-            elif page is self.controls:
-                sl.insertWidget(5, btn)
-            else:
-                sl.addWidget(btn)
-            self.stack.addWidget(page)
-        sl.insertWidget(sl.indexOf(self.navs.button(self.stack.indexOf(self.about))),
-                        self.navs.button(self.stack.indexOf(self.saves)))
+            sl.addWidget(btn)
         self.navs.idClicked.connect(self.show_page)
         sl.addStretch(1)
         self.version = QLabel(f"Launcher {__version__}")
@@ -150,12 +188,18 @@ class MainWindow(QMainWindow):
         h.addWidget(body, 1)
 
         self.play.goto_setup.connect(lambda: self.show_page(1))
-        self.play.play_requested.connect(self.start_game)
+        self.play.play_requested.connect(lambda: self.start_game(False))
+        self.play.play_vr_requested.connect(self.play_in_vr)
         self.setup.changed.connect(self.refresh_all)
         self.settings.changed.connect(self.play.refresh)
         self.poll = QTimer(self)
         self.poll.setInterval(500)
         self.poll.timeout.connect(self._poll)
+        self._coop_notes = []    # what the co-op results thread applied or keeps waiting (#309)
+        self._coop_thread = None
+        self._coop_timer = QTimer(self)
+        self._coop_timer.setInterval(500)
+        self._coop_timer.timeout.connect(self._show_coop_notes)
         self._first_run()
         self.show_page(0)
         self.refresh_all()
@@ -175,7 +219,7 @@ class MainWindow(QMainWindow):
 
     # ---- navigation -------------------------------------------------------------------
     def show_page(self, i):
-        self.stack.setCurrentIndex(i)
+        self.stack.setCurrentWidget(self._pages[i])
         self.navs.button(i).setChecked(True)
         self.navs.button(i).setFocus(Qt.OtherFocusReason)
         if i == 0:
@@ -186,8 +230,12 @@ class MainWindow(QMainWindow):
             self.about.refresh()
         elif i == 4:
             self.gallery.refresh()
-        elif self.stack.widget(i) is self.saves:
+        elif self._pages[i] is self.saves:
             self.saves.refresh()
+        elif self._pages[i] is self.mods:
+            self.mods.refresh()
+        elif self._pages[i] is self.texture_packs:
+            self.texture_packs.refresh()
         self.status("")
 
     def refresh_all(self):
@@ -211,6 +259,12 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self.catalogs.busy():
+            self.catalogs.closing = True
+            self.catalogs.cancel_task()
+            self.status("Stopping the catalog operation before closing…")
+            e.ignore()
+            return
         if not self.saves.shutdown():
             e.ignore()
             return
@@ -237,6 +291,14 @@ class MainWindow(QMainWindow):
                 return
             self.setup.task.cancel()
             self.setup.task.wait(15000)
+        if self.texture_packs.busy():
+            what = ("Make HD pack is still running. Stop it and quit? It continues where it stopped next time."
+                    if self.texture_packs.hd_busy() else
+                    "A texture pack is being compressed. Stop it and quit? What is compressed stays.")
+            if QMessageBox.question(self, "Quit", what) != QMessageBox.Yes:
+                e.ignore()
+                return
+            self.texture_packs.shutdown()
         if not self.gallery.shutdown():
             self._close_after_gallery = True
             self.status("Finishing photo tasks before closing…")
@@ -259,7 +321,6 @@ class MainWindow(QMainWindow):
             return
         if not self.about.updates.restarting:
             self.settings.flush()
-        self.stop_game()
         super().closeEvent(e)
 
     def _gallery_idle(self):
@@ -328,7 +389,26 @@ class MainWindow(QMainWindow):
     def running(self):
         return self.session is not None and self.session.poll() is None
 
-    def start_game(self):
+    def play_in_vr(self):
+        """Play in VR: the first time, the checklist; then a start with the VR values."""
+        if not self.cfg.d["vr"].get("checklist_hidden"):
+            dialog = VrChecklist(self)
+            if not dialog.exec():
+                return
+            if dialog.dont_show.isChecked():
+                self.cfg.d["vr"]["checklist_hidden"] = True
+                try:
+                    self.cfg.save()
+                except OSError:
+                    pass
+        self.start_game(True)
+
+    def start_game(self, vr=None):
+        if vr is not None:   # the DLSS download starts the game again without asking: keep the choice
+            self._vr_start = vr
+        if self.catalogs.busy():
+            self.play.show_message('Wait for the catalog operation to finish before starting the game.', True)
+            return
         if (self.running() or self._dlss_task is not None or self._crash_probe is not None
                 or self.saves.busy() or self._busy):
             return
@@ -351,7 +431,8 @@ class MainWindow(QMainWindow):
             return
         self._dlss_prepared = None
         try:
-            plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t))
+            plan = game.build_plan(self.cfg, install, write=True, log=lambda t: self.status(t),
+                                   vr=getattr(self, "_vr_start", False))
         except (RuntimeError, OSError) as e:
             self._start_failed(e)
             return
@@ -361,19 +442,20 @@ class MainWindow(QMainWindow):
         if str(error) != self._last_start_error:
             self._last_start_error = str(error)
             paths.log_error("start the game", error)
-        self.play.show_message(f"Could not start the game: {error}\nLog: {paths.launcher_log()}", True, keep=True)
+        self.play.show_message(f"Could not start the game: {error}\nLauncher log: {paths.launcher_log()}", True, keep=True)
 
     def _start_plan(self, plan):
         try:
             context = crash_report.launch_context(self.cfg, plan)
             session = game.Session(plan)
             session.start()
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError, ValueError) as e:
             self._start_failed(e)
             return
         self._last_start_error = None
         self.session = session
         self.session_plan = plan
+        self._session_started = time.time()  # co-op results earned now belong to this save
         self._report_context = context
         self._crash_report = None
         self.play.crash_report.hide()
@@ -469,6 +551,18 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.session.stop()
 
+    def _show_coop_notes(self):
+        """When the co-op results thread is done: what it added to the career, and the results
+        that wait (an event this career has not unlocked), under the Play page's last message."""
+        if self._coop_thread is not None and self._coop_thread.is_alive():
+            return
+        self._coop_timer.stop()
+        self._coop_thread = None
+        notes, self._coop_notes = self._coop_notes, []
+        if notes and self.session is None:
+            current = self.play.msg.text()
+            self.play.show_message("\n".join(([current] if current else []) + notes))
+
     def update_haptics(self, settings):
         if self.session:
             self.session.update_haptics(settings)
@@ -494,12 +588,27 @@ class MainWindow(QMainWindow):
             try:
                 if self.session.relaunch():
                     return
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 paths.log_error("start the game again", e)
         self.poll.stop()
         stopped = getattr(self.session, "stop_requested", False) is True
         self.session.cleanup()
         self.session = None
+        try:  # shader lists from play (#276): in the background, silent, never holds up Play
+            shader_share.share_in_background(self.cfg, self.session_plan)
+        except Exception as e:
+            paths.log_error("start the shader list upload", e)
+        try:  # co-op campaign results (#309): the player's own festival event results to its save
+            profile = getattr(self.session_plan, "save_profile", None)
+            coop_grant.record_session(self.cfg, profile, getattr(self, "_session_started", 0),
+                                      time.time())
+            notes = self._coop_notes = []
+            self._coop_thread = coop_grant.after_session_in_background(
+                self.cfg, profile, lambda line: (print(line), notes.append(line)))
+            if self._coop_thread is not None:
+                self._coop_timer.start()
+        except Exception as e:
+            paths.log_error("start applying co-op results", e)
         self._shader_warmup_status = None
         self.play.set_shader_warmup(None)
         plan = self.session_plan

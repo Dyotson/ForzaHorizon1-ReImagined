@@ -6,7 +6,7 @@ import platform
 import re
 from urllib.parse import urlencode
 
-from . import GITHUB_URL, __version__, game, paths, specs
+from . import GITHUB_URL, __version__, dlccheck, game, paths, specs
 from .config import flatten, parse_toml
 
 # Deliberately exclude profile IDs, paths, custom servers and arbitrary extra settings.
@@ -14,10 +14,14 @@ SETTING_KEYS = (
     "gpu", "gpu_backend", "gpu_vendor", "vulkan_device", "d3d12_adapter", "frame_rate", "vsync",
     "window_width", "window_height", "resolution_scale", "present_mode",
     "internal_display_resolution", "draw_resolution_scale_x", "draw_resolution_scale_y",
-    "present_effect", "swap_post_effect", "native_2x_msaa", "anisotropic_override",
+    "present_effect", "swap_post_effect", "native_2x_msaa", "scene_msaa", "scene_resolution",
+    "anisotropic_override",
+    "world_shadow_detail", "world_texture_detail", "world_shadow_filter", "world_ambient_occlusion",
+    "texture_dump", "texture_replace",
     "fh1_upscaler", "fh1_output_resolution", "fsr3_mode", "fsr3_output_resolution",
     "fh1_upscale_quality", "fh1_aa", "resolution", "forza_ultrawide",
-    "fullscreen", "audio", "apu", "audio_driver", "time_scalar",
+    "fullscreen", "audio", "apu", "audio_driver", "time_scalar", "ai_rubber_banding",
+    "forza_car_tuning", "skip_startup_movies",
 )
 MAX_ISSUE_URL = 7500
 
@@ -133,6 +137,11 @@ def collect(plan, code, context):
     except OSError:
         version = "unknown build"
     settings = "\n".join(f"{k} = {v}" for k, v in context["settings"].items()) or "Not available"
+    heap_failure = game.heap_failure_summary(tail)
+    diagnosis = f"## Internal heap allocation failure\n{heap_failure}\n\n" if heap_failure else ""
+    short_read = dlccheck.short_read_summary(tail)
+    if short_read:
+        diagnosis += f"## Damaged game file\n{short_read}\n\n"
     body = (
         "## What happened\nThe game closed unexpectedly.\n\n"
         "## Steps to reproduce\nDescribe what you were doing when it crashed.\n\n"
@@ -147,6 +156,7 @@ def collect(plan, code, context):
         f"- Exit code: {code} (0x{code & 0xFFFFFFFF:08X})\n"
         f"- Report time (UTC): {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n\n"
         f"## Fault\n```text\n{fault}\n```\n\n"
+        f"{diagnosis}"
         f"## Call chain\n```text\n{clean(chr(10).join(chain)) or 'Not recorded'}\n```\n\n"
         f"## Graphics device from log\n```text\n{clean(chr(10).join(device)) or 'Not recorded'}\n```\n\n"
         f"## Launch settings\n```text\n{clean(settings)}\n```\n\n"

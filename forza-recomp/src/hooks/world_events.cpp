@@ -31,6 +31,16 @@
 //    teardown (sub_82CF7278) pumps the session's messages, a queued second removal ended
 //    the game again inside it and tore the session down under it, and the outer teardown
 //    read the freed session (null). The nested removal is dropped.
+// 5. Campaign rounds (#309, docs/coop_campaign.md): in a Co-op Festival world (playlist 20)
+//    the host's /event makes a festival event the next round (server/forza_campaign.py).
+//    The server sends every console of the world the event's own CPU skill (WORLD_EVENT
+//    op 2: its AISkillMed / AITemperamentMed rows, the career's Medium); the online AI's
+//    levels come from MPAIDifficultyMap (Easy 20/8 is stronger than a festival event's Pro).
+//    For a round on that event's track the host's AI difficulty is Medium, and each CPU
+//    driver gets the event's rows wherever its driver data is set (sub_82568BD8, the
+//    MPAIDifficultyMap lookup) and on every console at the round start, before the load.
+//    The career adds each named driver's AIPlayers modifiers (mostly 0); these drivers are
+//    the online fill's, so the event's values are used as they are.
 //
 // FORZA_EVENT_TRACE=1 logs the round options, AI fill, intermission and launch, the
 // players' status changes and removals, and the CPU drivers (which console runs them,
@@ -72,7 +82,6 @@ REXCVAR_DEFINE_INT32(world_event_ai_grid, 0, "Network/Forza Live",
                      "uses (0: the event's grid; e.g. 4 makes 2 humans Medium, 3 Hard)");
 
 namespace {
-constexpr uint32_t kWorldPlaylist = 3;  // server/forza_live_lsp.py WORLD_HOPPER
 constexpr uint32_t kModeFindGame = 7;
 constexpr uint8_t kPresetFreeRoam = 7;
 constexpr uint32_t kOnlineGame = FORZA_ADDR(0x83305CC4);  // pointer to the online game object
@@ -137,9 +146,18 @@ bool intermission_changed = false;
 uint8_t last_difficulty = 0xFF;
 uint8_t event_max_ai = 0xFF;  // the event round's MaxAIPlayers (0xFF: none seen)
 
+// A campaign round's CPU skill (WORLD_EVENT op 2, network thread -> game thread): the
+// event, its track and the AISkills / AITemperaments row ids its CPU drivers get.
+std::atomic<uint32_t> campaign_event{0}, campaign_track{0}, campaign_skill{0},
+    campaign_temperament{0};
+uint32_t campaign_logged = 0;  // the event whose skill was last logged as applied
+// Driver data (player vfunc 0x78): level, AISkills row, AITemperaments row (sub_82568BD8).
+constexpr uint32_t kDriverLevel = 0x25B, kDriverSkill = 0x260, kDriverTemperament = 0x264;
+constexpr uint8_t kAiMedium = 1;
+
 // The online game while Find Game runs the world playlist, else 0.
 uint32_t WorldPlaylistGame(uint8_t* base) {
-  if (forza::LiveMatchPlaylist() != kWorldPlaylist) return 0;
+  if (!forza::LiveIsWorldPlaylist(forza::LiveMatchPlaylist())) return 0;
   const uint32_t game = Load32(forza::GuestPtr(base, kOnlineGame));
   if (!game || Load32(forza::GuestPtr(base, game + kMode)) != kModeFindGame) return 0;
   return game;
@@ -164,6 +182,27 @@ uint8_t AiDifficulty(uint32_t humans, uint32_t grid) {
   if (3 * humans <= grid) return 0;
   if (3 * humans >= 2 * grid) return 2;
   return 1;
+}
+
+// The online world game when its round is the campaign round the server described (an
+// event round on that event's track), else 0.
+uint32_t CampaignGame(uint8_t* base) {
+  constexpr uint32_t kCoopPlaylist = 20;  // server/forza_live_lsp.py COOP_HOPPER
+  if (forza::LiveMatchPlaylist() != kCoopPlaylist) return 0;
+  const uint32_t game = REXCVAR_GET(world_events) ? WorldPlaylistGame(base) : 0;
+  if (!game || !campaign_event.load() || !campaign_skill.load()) return 0;
+  const uint8_t* g = forza::GuestPtr(base, game);
+  if (g[kPreset] == kPresetFreeRoam || Load32(g + kTrack) != campaign_track.load()) return 0;
+  return game;
+}
+
+// Gives a CPU driver's driver data the campaign event's skill (the level stays Medium).
+void SetCampaignSkill(uint8_t* base, uint32_t driver) {
+  if (!driver) return;
+  uint8_t* d = forza::GuestPtr(base, driver);
+  d[kDriverLevel] = kAiMedium;
+  Store32(d + kDriverSkill, campaign_skill.load());
+  Store32(d + kDriverTemperament, campaign_temperament.load());
 }
 
 void LogGame(const char* what, uint8_t* base, uint32_t game, uint32_t lr) {
@@ -291,6 +330,25 @@ void LogCpuDrivers(PPCContext& ctx, uint8_t* base, const char* what) {
   }
   REXLOG_INFO("EVENT: {}: CPU drivers{}", what, out.empty() ? " none" : out);
 }
+
+// A campaign round: every CPU driver this console has gets the event's skill (the host's
+// and those another console runs; the race's AI reads them when it loads).
+void ApplyCampaignSkill(PPCContext& ctx, uint8_t* base, const char* what) {
+  if (!CampaignGame(base)) return;
+  int count = 0;
+  for (const uint32_t p : ManagerPlayers(ctx, base, 0x1C)) {
+    const uint32_t record = StatusRecord(ctx, base, p);
+    if (!record || forza::GuestPtr(base, record)[7] != 1) continue;
+    SetCampaignSkill(base, CallVirtual(ctx, base, p, 0x78));
+    ++count;
+  }
+  if (count && (campaign_logged != campaign_event.load() || Trace())) {
+    campaign_logged = campaign_event.load();
+    REXLOG_INFO("WORLD: campaign event {} ({}): {} CPU driver(s) at the event's skill {} "
+                "temperament {}", campaign_event.load(), what, count, campaign_skill.load(),
+                campaign_temperament.load());
+  }
+}
 }  // namespace
 
 // sub_8286A800(game, skip): the host asks for the next round's options (Find Game: the
@@ -369,7 +427,9 @@ extern "C" REX_FUNC(sub_82878800) {
 extern "C" REX_FUNC(sub_82875840) {
   const uint32_t game = ctx.r3.u32, lr = uint32_t(ctx.lr);
   if (Trace()) LogGame("round start", base, game, lr);
+  ApplyCampaignSkill(ctx, base, "round start");
   __imp__sub_82875840(ctx, base);
+  ApplyCampaignSkill(ctx, base, "round started");
   if (Trace()) {
     LogGame("round start done", base, game, lr);
     if (WorldPlaylistGame(base)) LogCpuDrivers(ctx, base, "round start");
@@ -398,6 +458,9 @@ extern "C" REX_FUNC(sub_8286A468) {
   }
   __imp__sub_8286A468(ctx, base);
   if (status != 4 || !REXCVAR_GET(world_events) || game != WorldPlaylistGame(base)) return;
+  if (player == CallGuest(ctx, base, __imp__sub_828653D8, game)) {
+    ApplyCampaignSkill(ctx, base, "in game");
+  }
   if (Trace() && forza::GuestPtr(base, game)[kPreset] != kPresetFreeRoam &&
       player == CallGuest(ctx, base, __imp__sub_828653D8, game)) {
     LogCpuDrivers(ctx, base, "in game");
@@ -553,17 +616,29 @@ extern "C" REX_FUNC(sub_82877470) {
       const uint32_t humans = Humans(ctx, base, game);
       const int32_t knob = REXCVAR_GET(world_event_ai_grid);
       const uint32_t grid = knob > 0 ? uint32_t(knob) : g[kMaxPlayers] ? g[kMaxPlayers] : 8;
-      const uint8_t level = AiDifficulty(humans, grid);
+      // a campaign round: the event's own skill at Medium (sub_82568BD8 below)
+      const uint8_t level = CampaignGame(base) ? kAiMedium : AiDifficulty(humans, grid);
       g[kAiDifficulty] = level;
       if (level != last_difficulty) {
         static const char* const kNames[] = {"Easy", "Medium", "Hard"};
-        REXLOG_INFO("WORLD: {} human(s) of {}: CPU drivers {}", humans, grid, kNames[level]);
+        REXLOG_INFO("WORLD: {} human(s) of {}: CPU drivers {}{}", humans, grid, kNames[level],
+                    CampaignGame(base) ? " (campaign event)" : "");
         last_difficulty = level;
       }
     }
   }
   __imp__sub_82877470(ctx, base);
   if (Trace() && WorldPlaylistGame(base)) LogCpuDrivers(ctx, base, "AI difficulty applied");
+}
+
+// sub_82568BD8(driver, level): a CPU driver's level and its MPAIDifficultyMap rows (skill,
+// temperament), from the online AI fill (sub_82877470) and wherever else a driver's level
+// is set. In a campaign round the driver gets the event's rows instead.
+extern "C" REX_FUNC(__imp__sub_82568BD8);
+extern "C" REX_FUNC(sub_82568BD8) {
+  const uint32_t driver = ctx.r3.u32;
+  __imp__sub_82568BD8(ctx, base);
+  if (CampaignGame(base)) SetCampaignSkill(base, driver);
 }
 
 // sub_82876378(game, player, flag): kick a player (CKickFailedLoadPlayers, vote kicks).
@@ -692,8 +767,22 @@ extern "C" REX_FUNC(sub_82CF7278) {
 
 namespace forza {
 // WORLD_EVENT from the server (net.cpp): op u8 (1: an event waits for this world's host),
-// event id u32, world session id (8 bytes).
+// event id u32, world session id (8 bytes). Op 2 (to every console of a Co-op Festival
+// world, server/forza_campaign.py ai_message): the campaign round's event id u32, world
+// session id, track u32, AISkills row u32, AITemperaments row u32.
 void LiveWorldEvent(const uint8_t* p, size_t n) {
+  if (n >= 25 && p[0] == 2) {
+    const uint32_t event = Load32(p + 1), track = Load32(p + 13), skill = Load32(p + 17),
+                   temperament = Load32(p + 21);
+    if (campaign_event.exchange(event) != event || campaign_skill.load() != skill) {
+      REXLOG_INFO("FORZA_LIVE: campaign event {} on track {}: CPU drivers at skill {} "
+                  "temperament {}", event, track, skill, temperament);
+    }
+    campaign_track.store(track);
+    campaign_temperament.store(temperament);
+    campaign_skill.store(skill);
+    return;
+  }
   if (n < 5 || p[0] != 1) return;
   const uint32_t event = Load32(p + 1);
   if (requested_event.exchange(event) != event || Trace()) {

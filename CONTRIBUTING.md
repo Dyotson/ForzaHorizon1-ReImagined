@@ -32,21 +32,33 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
 
 ## Code
 
-- **SDK changes** are patches in `patches/rexglue-sdk/`, numbered in order (`NNNN-short-name.patch`,
-  LF line endings) and listed in `docs/sdk_patches.md`. Check `main` for the next free
-  number before you add one. CI applies the whole series on Linux and Windows. Change
-  behaviour on every GPU only on purpose: gate vendor-specific fixes on the vendor or a
-  cvar, and keep debug options off by default.
+- **SDK changes** go to [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's
+  fork of the ReXGlue SDK: one commit per change on its `main`, the subject starting with the
+  next free number (`NNNN Area: what`) and the message saying what changes and why. A new
+  ReIGlue tag is then pinned in `tools/build_rexglue_sdk.sh` (`REIGLUE_TAG`), which CI builds on
+  Linux, Windows and macOS. To try a change locally, build your ReIGlue checkout with
+  `REIGLUE_DEV=1 REXSDK_SRC=<checkout> tools/build_rexglue_sdk.sh` (its source and submodules
+  are used as checked out; initialize and prepare submodules separately). Change behaviour on every
+  GPU only on purpose: gate vendor-specific fixes on the vendor or a cvar, and keep debug
+  options off by default. (`patches/rexglue-sdk/` and `docs/sdk_patches.md` are the old patch
+  series, kept for reference; they are no longer applied.)
 - **Game hooks** go in `forza-recomp/src/`. Title Update 4 is the default build: hooks use
   base-game names and get TU4 addresses through `forza-recomp/src/tu4_addresses.h`
   (`tools/tu_address_map.py`, `docs/dlc.md`). Both builds must compile.
 - **Launcher** code is in `launcher/` (`docs/launcher.md`), with unit tests in
   `launcher/test_*.py`. Long work never runs on the GUI thread, and errors stay visible with
   the log path.
-- **Server** code is in `server/` with tests (`cd server && python3 -m unittest discover -p 'test_*.py'`).
+- **Server**: the Forza Live server is its own repository,
+  [FH1-ReImagined/forza-live](https://github.com/FH1-ReImagined/forza-live), checked out here as the `server/` submodule
+  (`git clone --recurse-submodules`, or `git submodule update --init` in an existing clone).
+  Server changes are pull requests there; then a pull request here moves `server/` to the
+  new commit (`git -C server fetch && git -C server checkout <commit> && git add server`).
+  Tests: `cd server && python3 -m unittest discover -p 'test_*.py'`.
 
 ## Testing
 
+- Launcher link-preservation tests require file and directory symlink support in the temporary
+  folder. They skip when the filesystem or Windows account lacks it; copy-fallback tests still run.
 - `tools/prerelease.sh` runs the local checks in one go: SDK overlay, both builds, unit
   tests, booting to the main menu with each upscaling filter, a local Forza Live server and
   the launcher's disc check (`--only <check>`, `--skip-build`, `docs/PROJECT.md`).

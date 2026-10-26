@@ -57,15 +57,17 @@ instructions; both read `extracted/analysis/`.
 | `forza-recomp/hints/` | Function boundaries, rexcrt mappings, per-module hints |
 | `forza-recomp/src/` | Runtime code: app class, kernel/XAM overrides, debug tools |
 | `forza-recomp/generated/` | Codegen output; only `rexglue.cmake` is tracked here, the rest goes to the private `RecompiledForzaHorizon-generated` repo (`tools/sync_generated_repo.sh`) |
-| `patches/rexglue-sdk/` | SDK patches (started as Reach's 19 GPU patches) |
+| `patches/rexglue-sdk/` | the former SDK patch series, now commits in [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue) (kept for reference, not applied) |
 | `ghidra_projects/ForzaHorizon` | Ghidra project with `default.xex` (gitignored) |
 
 ## Tooling
 
 - ReXGlue SDK nightly 0.10.0.24 (`nightly-20261002-bd833a2a`) at
   `~/rexglue-sdk-nightly/0.10.0.24/linux-amd64`.
-- Patched Xenos GPU plugin: `tools/build_rexglue_sdk.sh` builds it into this project's own
-  overlay `~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64` from its own clone
+- Patched Xenos GPU plugin, runtime and codegen tool: `tools/build_rexglue_sdk.sh` builds them
+  from [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue) (the project's fork of the SDK, at
+  the tag the script pins) into this project's own overlay
+  `~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64` from its own clone
   `~/rexglue-sdk-src-forza` (never Reach's `~/rexglue-sdk-src`/`~/rexglue-sdk-patched`).
   Until Forza needs a patch of its own, CMake and the run scripts fall back to Reach's
   overlay, which has the same patch set.
@@ -91,7 +93,7 @@ failing check's log, full logs in `~/.cache/forza-prerelease/<timestamp>/`, exit
 
 | Check | What |
 |---|---|
-| sdk | the SDK overlay matches `patches/rexglue-sdk` (reinstalled by `tools/build_rexglue_sdk.sh` only when the patches changed since the last install; a game running from the overlay is affected) |
+| sdk | the SDK overlay matches the ReIGlue tag `tools/build_rexglue_sdk.sh` pins (reinstalled only when that script changed since the last install; a game running from the overlay is affected) |
 | build | ninja of `linux-tu4` and `linux`, then restores `generated/rexglue.cmake` |
 | unit | `launcher/test_*.py` and `server/test_*.py` |
 | boot | TU4 build to the main menu on a scratch copy of the Xenia save (never `~/.local/share/forza`) with `present_effect` bilinear, cas and fsr, then the base build: no fault, frame rate above 5 fps, a non-flat presenter image that changed after START (the screenshot hook captures the guest output before the upscaling filter, so the filter itself is not seen; a crash or Presenter layout mismatch with the SDK would show) |
@@ -111,6 +113,25 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   (the run scripts refuse with less than 10 GB available); kill by PID.
 
 ## Status log
+
+- 2026-10-23: **Internal heap stop in the NVIDIA-labelled crash #299.** Read-only
+  disassembly identifies TU4 `sub_82423000` (base `sub_823F3048`) as the memory
+  manager's allocation loop. When no allocator succeeds, it compares heap `+0x154`
+  minus bytes in use (`+0x44`) with the request. With the heap's stop flag (`+0x174`)
+  enabled, it deliberately stores to guest address 4 if capacity is insufficient,
+  or address 5 if capacity is sufficient but no suitable block was returned. The
+  stores are TU4 `0x824230C0/C8`, base `0x823F3108/10`.
+  The #299 registers identify a 16,384-byte request (`r29=0x4000`), alignment 32
+  (`r27=0x20`), and final heap `r30=0x83396AF0`: category `0x21`, arena 1's high
+  heap, from table `0x8339664C` plus `0x314 + 0x190`. This is distinct from the
+  movie allocator's guest-address-6 stop (#262). The local crash explanation and
+  report now recognize the matching fault, thread, saved link register and register
+  state, preserving the raw fault and call chain. Synthetic base/TU4 logs and the
+  original report's log tail validate recognition; unrelated/incomplete faults
+  remain generic. This classifies an internal heap allocation failure, not an
+  NVIDIA device loss or proof of exhausted system RAM/VRAM. The cause of the
+  unsuitable free blocks and a safe runtime fix remain unproven; no game/GPU
+  reproduction was performed for this change.
 
 - 2026-10-10: project started. Game extracted from the GOD container (base version, see
   above). Codegen of `default.xex` + both facade DLLs succeeds: 76,788 functions in
@@ -732,7 +753,7 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   of 28426 read`, at `+D728A` of a different cache block each time, then guest access
   violations (the loader going on with a short resource). The only member of that size in
   our DLC is `coloradodirtout.09183.rmb.bin` in the Rally pack's `ColoradoDirt_pri_65.zip`
-  (data at 0x5743A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
+  (data at 0x5742A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
   compressed bytes and a last one of 16,256 bytes out. Not a Windows codegen difference: the
   game's XMemDecompressStream (TU4 `sub_831AE7D8`) with its 66 callees, cut out of the
   generated code into a harness (context made as `sub_82D38810` makes it: `sub_831AFBE8` /
@@ -883,6 +904,35 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   4 quits that way on the base game (209 blocks: the boot videos, title and menu movies) and
   2 on Title Update 4 (151) played right, every block of a finished movie went back, no
   fault. `=0` switches the hook off. Unit test: `forza-recomp/tests/game_heap_test.cpp`.
+
+- 2026-10-22: **Typing a name with a controller (#294).** `XamShowKeyboardUI` (photo, tune
+  and livery names) is answered by `src/kernel/xam_keyboard.cpp` instead of the SDK's text
+  window, which needed a keyboard: an on-screen keyboard in the HUD overlay, 360 style
+  (`live_osk.h`, layout `kPrompt`; the friends screen's `kFriends` layout is unchanged). It
+  runs on the kernel's deferred-completion thread like the SDK's dialogs (XN_SYS_UI, and
+  `XamIsUIActive` is overridden too); the input hook hands player 1's pad to it and the game
+  reads a neutral pad. Names take letters, digits, space and ASCII punctuation a Windows folder
+  name keeps. Every keystroke is logged (`Keyboard UI: ...`). Checked on Linux (TU4, the test
+  save, scripted pad): photo mode, SAVE, the prompt "NAME SAVE FILE" (default `PHOTO1`, at
+  most 15): deleted the default, typed `Max! 7` with the pad (case and symbol pages, LB/RB),
+  Start: **SAVE SUCCESSFUL** and `photo/Max! 7/` in the save; a second prompt cancelled with B
+  on the empty name returned to the slot picker. Unit test: `forza-recomp/tests/osk_test.cpp`.
+
+- 2026-10-23: **Hitches after loads on Title Update 4: the car view query (#167).** In a player's
+  log, 14 of 17 long frames (0.27-0.32 s, two or three after every load) had the main loop in the
+  game's SQLite 3.6.19 by their `FORZA_STALL` chains (TU4 `sqlite3_step` `sub_83146F20`), running
+  `SELECT * FROM Restrictions_Data_Car WHERE IsCarInstalled(ModelId) ORDER BY ModelId` through the
+  database's query method (`sub_82CD8FD8`, base `sub_82C19130`). That view is TU4's (the Rally
+  Expansion): LEFT JOINs to three derived tables, which 3.6.19 materializes and scans once per
+  car (no automatic indexes). 131 ms per query here with all DLC (251 cars), twice after every
+  load into free roam; an event's sign-up runs three more (103-105 ms) on another thread while
+  the main loop waits for the lock. `src/hooks/database_query.cpp` creates the view with the same
+  columns and rows from joins on the tables plus four indexes: 16-18 ms and 6-7 ms; the frames
+  that held the query went from 155-193 to 32-74 ms (2 runs each, docs/perf.md).
+  `tools/check_car_view.py` compares both views on the local game files (PASS with the 17 DLC
+  database patches and edge cases); in the game every value read back was the same.
+  `FORZA_GAME_CAR_VIEW=1` keeps the game's view. Every query of 50 ms or more now logs a
+  `FORZA_SQL` line (`FORZA_SQL_LOG=1`: all of them).
 
 ## Debugging recipes
 
