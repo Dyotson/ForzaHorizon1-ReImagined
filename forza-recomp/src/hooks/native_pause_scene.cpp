@@ -291,7 +291,10 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   if (card.progress_track) PaperUV(ui, card.donor, card.progress_track);
   return Require("card", "BigPane01.Material866", card.material);
 }
-std::string Description(std::string_view id) {
+std::string Description(std::string_view id, bool enabled) {
+  if (!enabled && (id == "my_cars" || id == "change_car" || id == "car_tuning"))
+    return NetworkOn() ? "Offline free roam only" : "Unavailable here";
+  if (!enabled && (id == "garage" || id == "autoshow")) return "Unavailable here";
   if (id == "world_map") return "Explore Colorado";
   if (id == "friends") return state.friends_summary;
   if (id == "chat") return state.chat_summary;
@@ -1263,7 +1266,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
         Label(ui, card.donor, card.caption,
               {tile.bounds.x + 24, tile.bounds.y + (compact ? 54 : 62),
                tile.bounds.width - (tile.id=="social_connection"?104:48), social?(compact?36.:tile.bounds.height-80):compact ? 26. : 32.},
-              social?(state.social_help||tile.id=="session_players"?14:16):compact ? 16 : 18, Description(tile.id), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
+              social?(state.social_help||tile.id=="session_players"?14:16):compact ? 16 : 18, Description(tile.id, tile.enabled), tile.enabled ? (focus&&*focus==tile.id?kTextColor:kSecondaryTextColor) : kDisabledTextColor);
       }
       if (i == 4) {
         const bool progress = tile.id == "festival_progress";

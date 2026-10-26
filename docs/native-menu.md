@@ -49,9 +49,13 @@ rebuild. Failed preparation removes only that preparer's stale output, keeping
 the stock and other independent overlay intact. Build/runtime directory links
 are allowed; links on individual publication targets are rejected.
 
-MY CARS and the Cars page require known Colorado free roam, virtual networking
-off and no current Live session. Capabilities, activation and the native garage
-Open helper re-check this gate; a stock World Map action cannot unlock it.
+The Cars page remains selectable while signed in and when individual actions
+are unavailable. Its current-car panel is informational; each action retains
+its own availability check. MY CARS and CHANGE CAR require known Colorado free
+roam, virtual networking off and no current Live session. Capabilities,
+activation and the native garage Open helper re-check this gate; a stock World
+Map action cannot unlock it. Disabled car-change/tuning tiles identify the
+offline requirement when networking is enabled.
 Tuning uses the same offline gate. Changing cars records host-side intent scoped
 to the pause owner. Only native Resume consumes it and sets the guest reload
 byte. Other transitions, confirmed exits and teardown clear it. Resume also
