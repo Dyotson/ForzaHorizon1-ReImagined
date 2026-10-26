@@ -165,6 +165,81 @@ class VrSettingTest(unittest.TestCase):
         manifest.write_text("{}")
         self.assertEqual(vr.active_runtime_manifest(home, {"HOST_XDG_CONFIG_HOME": str(other)}), manifest)
 
+    def test_explicit_runtime_precedes_registry_and_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            chosen = home / "chosen.json"
+            chosen.write_text('{"runtime":{"name":"WiVRn"}}')
+            registry = mock.Mock(return_value="unused.json")
+            for windows in (False, True):
+                with self.subTest(windows=windows):
+                    found = vr.detect(home, {"XR_RUNTIME_JSON": str(chosen)}, windows=windows, registry=registry)
+                    self.assertIsNotNone(found)
+                    self.assertEqual(found.path, str(chosen))
+            registry.assert_not_called()
+            default = home / ".config/openxr/1/active_runtime.json"
+            default.parent.mkdir(parents=True)
+            default.write_text("{}")
+            for windows in (False, True):
+                self.assertIsNone(vr.detect(home, {"XR_RUNTIME_JSON": str(home / "missing.json")},
+                                            windows=windows, registry=registry))
+            registry.assert_not_called()  # an invalid explicit choice never falls back
+
+    def test_native_xdg_and_architecture_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("platform.machine", return_value="x86_64"):
+            home = Path(tmp)
+            first, second = home / "first", home / "second"
+            manifests = []
+            for folder in (first, second):
+                manifest = folder / "openxr/1/active_runtime.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text("{}")
+                manifests.append(manifest)
+            env = {"XDG_CONFIG_HOME": str(first), "XDG_CONFIG_DIRS": str(second)}
+            self.assertEqual(vr.active_runtime_manifest(home, env), manifests[0])
+            decorated = first / "openxr/1/active_runtime.x86_64.json"
+            decorated.write_text("{}")
+            self.assertEqual(vr.active_runtime_manifest(home, env), decorated)
+            decorated.unlink()
+            manifests[0].unlink()
+            self.assertEqual(vr.active_runtime_manifest(home, env), manifests[1])
+
+    def test_flatpak_ignores_sandbox_xdg_and_uses_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            host, sandbox = home / "host", home / "sandbox"
+            for folder in (host, sandbox):
+                manifest = folder / "openxr/1/active_runtime.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text("{}")
+            env = {"XDG_CONFIG_HOME": str(sandbox), "HOST_XDG_CONFIG_HOME": str(host)}
+            with mock.patch.object(paths, "IN_FLATPAK", True):
+                found = vr.detect(home, env, windows=False)
+                self.assertEqual(found.path, str(host / "openxr/1/active_runtime.json"))
+                default = home / ".config/openxr/1/active_runtime.json"
+                default.parent.mkdir(parents=True)
+                default.write_text("{}")
+                found = vr.detect(home, {"XDG_CONFIG_HOME": str(sandbox)}, windows=False)
+                self.assertEqual(found.path, str(default))
+            cfg = self.config()
+            for explicit in (str(host / "missing.json"), str(host / "openxr/1/active_runtime.json")):
+                output = {}
+                vr.configure(cfg, output, [], [], in_flatpak=True, home=home,
+                             environ={**env, "XR_RUNTIME_JSON": explicit}, session=True)
+                self.assertNotIn("XR_RUNTIME_JSON", output)  # keep the exact inherited selection
+            output = {}
+            vr.configure(cfg, output, [], [], in_flatpak=True, home=home,
+                         environ={**env, "XR_RUNTIME_JSON": ""}, session=True)
+            self.assertEqual(output["XR_RUNTIME_JSON"], str(host / "openxr/1/active_runtime.json"))
+
+    def test_relative_xdg_home_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            manifest = home / ".config/openxr/1/active_runtime.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("{}")
+            self.assertEqual(vr.active_runtime_manifest(home, {"XDG_CONFIG_HOME": "relative"}), manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

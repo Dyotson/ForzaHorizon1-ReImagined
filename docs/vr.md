@@ -12,6 +12,12 @@ Sharpest: sharper needs a stronger graphics card) and **Seat height**. Recentre 
 sticks pressed for a second. Play in VR sets what the headset needs (72 frames a second, no scene anti-aliasing,
 a higher render scale) for that session only; your normal settings are not changed.
 
+Runtime detection follows the pinned OpenXR loader: a nonempty `XR_RUNTIME_JSON` takes precedence
+over the Windows registry or Linux defaults, including when that explicit file is missing (no
+fallback to another runtime). Native Linux installs use `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, then
+`/etc`; each directory prefers `active_runtime.<architecture>.json` over `active_runtime.json`.
+The Flatpak uses the host configuration instead of the sandbox's application configuration.
+
 To make it sharper in WiVRn: stream HEVC or AV1 at 10-bit, raise the bitrate (50 Mbit/s an eye worked on a Quest 3),
 and raise the resolution in the WiVRn app on the headset.
 

@@ -8,6 +8,7 @@ XR_RUNTIME_JSON (the sandbox can read it, flatpak/ manifest's finish-args).
 """
 import json
 import os
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,17 +38,26 @@ class Runtime:
     path: str
 
 
-def active_runtime_manifest(home: Path, environ=None):
+def active_runtime_manifest(home: Path, environ=None, in_flatpak=None):
     """The runtime manifest the OpenXR loader picks on the host, or None: XDG_CONFIG_HOME (the
     host's, ~/.config by default), then the XDG_CONFIG_DIRS and /etc."""
     environ = os.environ if environ is None else environ
-    config_home = Path(environ.get("HOST_XDG_CONFIG_HOME") or home / ".config")
-    dirs = [config_home] + [Path(d) for d in (environ.get("HOST_XDG_CONFIG_DIRS") or "/etc/xdg").split(":") if d]
+    in_flatpak = paths.IN_FLATPAK if in_flatpak is None else in_flatpak
+    # In a sandbox XDG_CONFIG_* name the app's folders, not the host's runtime install.
+    config = environ.get("HOST_XDG_CONFIG_HOME") or (None if in_flatpak else environ.get("XDG_CONFIG_HOME"))
+    config_home = Path(config) if config and Path(config).is_absolute() else home / ".config"
+    search = environ.get("HOST_XDG_CONFIG_DIRS") or (None if in_flatpak else environ.get("XDG_CONFIG_DIRS"))
+    dirs = [config_home] + [Path(d) for d in (search or "/etc/xdg").split(os.pathsep)
+                            if d and Path(d).is_absolute()]
     dirs.append(Path("/etc"))
+    machine = platform.machine().lower()
+    abi = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
     for d in dirs:
-        manifest = d / "openxr" / "1" / "active_runtime.json"
-        if manifest.exists():
-            return manifest
+        # OpenXR-SDK 1.1.62 prefers the architecture-specific name within each directory.
+        for name in (f"active_runtime.{abi}.json", "active_runtime.json"):
+            manifest = d / "openxr" / "1" / name
+            if manifest.exists():
+                return manifest
     return None
 
 
@@ -91,8 +101,15 @@ def detect(home=None, environ=None, windows=None, registry=None):
     host's manifest); Windows: the registry's ActiveRuntime. `registry` is a function returning that
     value, for tests."""
     windows = paths.IS_WINDOWS if windows is None else windows
+    environ = os.environ if environ is None else environ
     try:
-        if windows:
+        # The loader's explicit override wins on both platforms, even if it is broken. Never
+        # advertise a different registry/default runtime after an invalid explicit selection.
+        if environ.get("XR_RUNTIME_JSON"):
+            manifest = Path(environ["XR_RUNTIME_JSON"])
+            if not manifest.is_file():
+                return None
+        elif windows:
             value = (registry or read_windows_runtime)()
             if not value:
                 return None
@@ -135,8 +152,8 @@ def configure(cfg, env: dict, args: list, notes: list, in_flatpak=None, home=Non
         # The OpenXR path is Vulkan only (XR_KHR_vulkan_enable2).
         args[:] = [a for a in args if not a.startswith("--gpu_backend=")]
         args.append("--gpu_backend=vulkan")
-    if in_flatpak and "XR_RUNTIME_JSON" not in env and "XR_RUNTIME_JSON" not in environ:
-        manifest = active_runtime_manifest(Path(home or Path.home()), environ)
+    if in_flatpak and not env.get("XR_RUNTIME_JSON") and not environ.get("XR_RUNTIME_JSON"):
+        manifest = active_runtime_manifest(Path(home or Path.home()), environ, in_flatpak=True)
         if manifest is not None:
             env["XR_RUNTIME_JSON"] = str(manifest)
     picture = cfg.settings.get("vr_picture", "game")
