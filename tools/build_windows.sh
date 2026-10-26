@@ -26,7 +26,7 @@ PREFIX="${REXSDK_WIN_PREFIX:-$HOME/rexglue-sdk-patched-forza/0.10.0.24/win-amd64
 JOBS="${JOBS:-$(nproc)}"
 
 [ -d "$XWIN/crt/include" ] || { echo "no MSVC CRT at $XWIN (run xwin splat, see above)" >&2; exit 1; }
-[ -d "$SRC/.git" ] || { echo "no SDK source at $SRC (run tools/build_rexglue_sdk.sh [--source-only] first)" >&2; exit 1; }
+[ -e "$SRC/.git" ] || { echo "no SDK source at $SRC (run tools/build_rexglue_sdk.sh [--source-only] first)" >&2; exit 1; }
 [ -f "$ROOT/forza-recomp/generated/default/sources.cmake" ] ||
     { echo "no generated code (build the Linux version first)" >&2; exit 1; }
 

@@ -25,7 +25,7 @@
 #                   (default ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64)
 #   REIGLUE_URL     where to fetch ReIGlue from (default its GitHub repository)
 #   REIGLUE_DEV     1: build REXSDK_SRC as it is checked out (SDK development on a ReIGlue
-#                   branch) instead of checking out the pinned tag
+#                   branch), including its submodules; initialize/prepare those separately
 #
 # The defaults are this project's own clone and overlay: RecompiledHaloReach uses
 # ~/rexglue-sdk-src and ~/rexglue-sdk-patched, and the two may differ.
@@ -38,6 +38,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
 REIGLUE_TAG=fh1-0.10.0.24-r1  # ReIGlue on SDK_COMMIT (its docs/reiglue/commits.md lists the changes)
+REIGLUE_COMMIT=53624002cdad6fbf3264fb1a619fd61c5855de7c  # immutable target of REIGLUE_TAG
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
@@ -48,12 +49,39 @@ SOURCE_ONLY=0
 [ "${1:-}" = --source-only ] && SOURCE_ONLY=1
 [ "$SOURCE_ONLY" = 1 ] || [ -d "$NIGHTLY/lib" ] || { echo "nightly SDK not found at $NIGHTLY" >&2; exit 1; }
 
+# The old applied series may be dirty relative to HEAD, but its files already match the
+# target tree. Preserve those and unrelated untracked files; refuse other local work before
+# changing HEAD, the index or any source. This also protects SDL development edits.
+require_expected_changes() {
+    local repo="$1" target="$2" label="$3" file expected actual
+    while IFS= read -r -d '' file; do
+        git -C "$repo" diff --cached --quiet "$target" -- "$file" ||
+            { echo "$label has staged changes in $file; preserve them or use REIGLUE_DEV=1" >&2; return 1; }
+    done < <(git -C "$repo" diff --cached --name-only -z HEAD)
+    while IFS= read -r -d '' file; do
+        # Target additions must also be checked for ignored untracked collisions. An
+        # absent, untracked addition is normal and will be created by the checkout.
+        if [ ! -e "$repo/$file" ] && [ ! -L "$repo/$file" ]; then
+            git -C "$repo" ls-files --error-unmatch -- "$file" > /dev/null 2>&1 || continue
+        fi
+        expected="$(git -C "$repo" rev-parse --verify "$target:$file" 2>/dev/null || true)"
+        if [ -z "$expected" ]; then
+            # Untracked build/output files outside the target are left alone.
+            git -C "$repo" ls-files --error-unmatch -- "$file" > /dev/null 2>&1 || continue
+            [ -e "$repo/$file" ] || [ -L "$repo/$file" ] || continue
+        fi
+        actual="$(git -C "$repo" hash-object --path="$file" "$repo/$file" 2>/dev/null || true)"
+        [ -n "$expected" ] && [ "$actual" = "$expected" ] ||
+            { echo "$label has local changes in $file; preserve them or use REIGLUE_DEV=1" >&2; return 1; }
+    done < <(git -C "$repo" diff --ignore-submodules --name-only -z HEAD; git -C "$repo" ls-files --others --exclude-standard -z; git -C "$repo" diff --diff-filter=A --name-only -z HEAD "$target")
+}
+
 if [ "${REIGLUE_DEV:-0}" = 1 ]; then
-    [ -d "$SRC/.git" ] || { echo "REIGLUE_DEV=1 needs a ReIGlue checkout at $SRC" >&2; exit 1; }
+    [ -e "$SRC/.git" ] || { echo "REIGLUE_DEV=1 needs a ReIGlue checkout at $SRC" >&2; exit 1; }
     echo "building $SRC as checked out: $(git -C "$SRC" describe --always --dirty)"
 else
     fresh=0
-    if [ ! -d "$SRC/.git" ]; then
+    if [ ! -e "$SRC/.git" ]; then
         # Checked out below (a clone --branch of an annotated tag warns that it is not a commit)
         git clone --quiet --no-checkout "$REIGLUE_URL" "$SRC"
         fresh=1
@@ -61,12 +89,15 @@ else
     git -C "$SRC" rev-parse --quiet --verify "refs/tags/$REIGLUE_TAG" > /dev/null ||
         git -C "$SRC" fetch --quiet "$REIGLUE_URL" "+refs/tags/$REIGLUE_TAG:refs/tags/$REIGLUE_TAG"
     target="$(git -C "$SRC" rev-parse "$REIGLUE_TAG^{commit}")"
+    [ "$target" = "$REIGLUE_COMMIT" ] ||
+        { echo "$REIGLUE_TAG resolves to $target, expected $REIGLUE_COMMIT" >&2; exit 1; }
     git -C "$SRC" merge-base --is-ancestor "$SDK_COMMIT" "$target" ||
         { echo "$REIGLUE_TAG is not based on the nightly's commit $SDK_COMMIT" >&2; exit 1; }
     # Check out the tag without touching files that already match it: HEAD and the index go to
     # the tag, then only the files whose content differs are rewritten. Files that already match
     # keep their timestamps, so a re-run changes no source file, and a clone that had the old
     # patch series applied (the same content) is taken over without rebuilding the SDK.
+    [ "$fresh" = 1 ] || require_expected_changes "$SRC" "$target" SDK
     if [ "$fresh" = 1 ] || [ "$(git -C "$SRC" rev-parse HEAD)" != "$target" ]; then
         git -C "$SRC" update-ref --no-deref HEAD "$target"
         git -C "$SRC" read-tree "$target"
@@ -79,7 +110,7 @@ else
     fi
     echo "SDK source at $REIGLUE_TAG ($changed file(s) updated)"
 fi
-git -C "$SRC" submodule update --init --recursive --depth 1 --quiet
+[ "${REIGLUE_DEV:-0}" = 1 ] || git -C "$SRC" submodule update --init --recursive --depth 1 --quiet
 
 # SDL (the SDK's thirdparty/sdl3 submodule, built into the runtime): ReIGlue keeps its changes
 # as patches in patches/sdl3/, against the commit the SDK records for the submodule. Applied
@@ -98,6 +129,9 @@ apply_series() {
             rm -f "$patched_index"; exit 1
         fi
     done
+    if ! require_expected_changes "$repo" "$(GIT_INDEX_FILE="$patched_index" git -C "$repo" write-tree)" "$label"; then
+        rm -f "$patched_index"; return 1
+    fi
     GIT_INDEX_FILE="$patched_index" git -C "$repo" update-index -q --refresh > /dev/null || true
     changed="$(GIT_INDEX_FILE="$patched_index" git -C "$repo" diff-files --ignore-submodules --name-only)"
     if [ -z "$changed" ]; then
@@ -110,8 +144,10 @@ apply_series() {
     fi
     rm -f "$patched_index"
 }
-apply_series "$SRC/thirdparty/sdl3" "$(git -C "$SRC" rev-parse "HEAD:thirdparty/sdl3")" SDL \
-    "$SRC"/patches/sdl3/*.patch
+if [ "${REIGLUE_DEV:-0}" != 1 ]; then
+    apply_series "$SRC/thirdparty/sdl3" "$(git -C "$SRC" rev-parse "HEAD:thirdparty/sdl3")" SDL \
+        "$SRC"/patches/sdl3/*.patch
+fi
 [ "$SOURCE_ONLY" = 0 ] || exit 0
 
 # Building the SDK needs X11/XCB and Wayland headers (its UI module and SDL3

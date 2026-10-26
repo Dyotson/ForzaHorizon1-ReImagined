@@ -37,7 +37,8 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
   next free number (`NNNN Area: what`) and the message saying what changes and why. A new
   ReIGlue tag is then pinned in `tools/build_rexglue_sdk.sh` (`REIGLUE_TAG`), which CI builds on
   Linux, Windows and macOS. To try a change locally, build your ReIGlue checkout with
-  `REIGLUE_DEV=1 REXSDK_SRC=<checkout> tools/build_rexglue_sdk.sh`. Change behaviour on every
+  `REIGLUE_DEV=1 REXSDK_SRC=<checkout> tools/build_rexglue_sdk.sh` (its source and submodules
+  are used as checked out; initialize and prepare submodules separately). Change behaviour on every
   GPU only on purpose: gate vendor-specific fixes on the vendor or a cvar, and keep debug
   options off by default. (`patches/rexglue-sdk/` and `docs/sdk_patches.md` are the old patch
   series, kept for reference; they are no longer applied.)
