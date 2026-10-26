@@ -488,6 +488,12 @@ def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
     return game.dir / "update"
 
 
+def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
+    """Warn about an enabled feature whose automatic resources have not been built."""
+    return (native_update_requested(cfg, render_toml(cfg)) and
+            not (install.dir / "update-native").is_dir())
+
+
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver) -> LaunchPlan:
     from . import ingame
     if cfg.gamertag_cleaned:

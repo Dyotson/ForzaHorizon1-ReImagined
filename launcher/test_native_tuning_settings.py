@@ -20,7 +20,7 @@ class NativeTuningSettings(unittest.TestCase):
     def test_tuning_is_independently_opt_in_and_reaches_game_configuration(self):
         setting = schema.BY_KEY["forza_car_tuning"]
         self.assertEqual((setting.label, setting.group, setting.section, setting.platform),
-                         ("Native car tuning", "Advanced", "Menu", ""))
+                         ("Native car tuning", "Gameplay", "Car tuning", ""))
         self.assertNotIn("forza_native_pause", schema.BY_KEY)
         self.assertIs(self.cfg.settings[setting.key], False)
         self.assertNotIn(setting.key, config.parse_toml(config.render_toml(self.cfg)))

@@ -1,5 +1,6 @@
 """Native tuning preparation and installation using only synthetic files; no game data."""
 import json
+import errno
 import os
 import runpy
 import shutil
@@ -209,29 +210,50 @@ class NativeTuningInstall(unittest.TestCase):
         run.assert_not_called()
 
     def link(self, link, target):
+        # An existing destination is a broken fixture, not unavailable link support.
+        self.assertFalse(os.path.lexists(link), f"Link destination already exists: {link}")
         try:
             link.symlink_to(target, target_is_directory=True)
         except OSError as error:
+            if isinstance(error, FileExistsError):
+                raise
             if os.name == "nt":
                 result = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(link), str(target)],
                                         capture_output=True, text=True)
                 if result.returncode == 0:
                     return
-                error = f"{error}; junction creation: {result.stdout} {result.stderr}"
+                self.fail(f"Junction fixture creation failed: {result.stdout} {result.stderr}")
+            if error.errno not in (errno.EPERM, errno.EACCES, errno.ENOSYS, errno.ENOTSUP):
+                raise
             self.skipTest(f"Directory symlinks unavailable: {error}")
 
     def test_linked_runtime_and_build_are_supported(self):
         with tempfile.TemporaryDirectory() as outside:
             external = Path(outside)
             runtime = self.target.parent
+            build = builder.build_dir(self.root)
+            # Create the source once, before moving it; never mkdir the link destination.
+            build.mkdir(exist_ok=True)
+            (build / "linked-build-marker").write_text("retained")
             shutil.move(runtime, external / "runtime")
             self.link(runtime, external / "runtime")
-            shutil.move(builder.build_dir(self.root), external / "build")
-            self.link(builder.build_dir(self.root), external / "build")
-            with mock.patch.object(builder, "run", side_effect=self.prepare):
+            shutil.move(build, external / "build")
+            self.link(build, external / "build")
+            for link in (build, runtime):
+                self.assertTrue(link.is_symlink() or
+                                (hasattr(link, "is_junction") and link.is_junction()))
+            with mock.patch.object(builder, "run", side_effect=self.prepare) as run:
                 self.assertTrue(builder.stage_runtime_update(self.opts, self.rep, self.tu))
+            run.assert_called_once()
+            self.assertEqual(build.resolve(), (external / "build").resolve())
+            self.assertEqual(runtime.resolve(), (external / "runtime").resolve())
+            self.assertEqual((build / "linked-build-marker").read_text(), "retained")
             self.assertEqual(snapshot(self.stock), self.original)
             self.assertEqual((self.target / "media.zip").read_bytes(), b"prepared synthetic resources")
+
+    def test_existing_link_destination_is_a_fixture_error_not_a_skip(self):
+        with self.assertRaisesRegex(AssertionError, "Link destination already exists"):
+            self.link(builder.build_dir(self.root), self.root / "elsewhere")
 
     def test_update_child_links_are_rejected_without_touching_target(self):
         for name in ("update", "update-native"):

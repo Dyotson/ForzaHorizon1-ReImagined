@@ -18,7 +18,7 @@ unavailable and marked Coming soon.
 ## Standalone integration
 
 This feature is independent of the tabbed pause-menu work in #235. Enable
-**Advanced > Menu > Native car tuning** in the launcher and restart the game.
+**Settings > Gameplay > Native car tuning** in the launcher and restart the game.
 After updating the launcher, rebuild once with your own Title Update 4 selected
 to prepare the tuning resources automatically. The stock FH1 pause list offers **Car Tuning** above
 Graphics and Quit only for the paused, primary-user, offline Colorado free-roam
@@ -26,6 +26,14 @@ context with an owned current car. The existing native availability checks run
 again on entry and Apply. Missing donor aliases keep the stock pause screen
 available. Discard/Back and teardown restore its native list and focus through
 the existing FH1 refresh callback.
+
+Select **Settings > Online > Offline** before launching. The current gate also
+excludes solo free roam while signed in to Forza Live: network-enabled mode is
+broader than active multiplayer participation. This conservative restriction
+remains in place because current presence and session records do not reliably
+distinguish solo play from joining or leaving a live session. Supporting signed-in
+solo play needs a reliable session lifecycle snapshot and transition tests;
+removing the network check alone would not preserve the live-session boundary.
 
 The build retains the unmodified title update in `runtime/update` and prepares
 only the tuning donor aliases in a separate `runtime/update-native`. Turning the
@@ -35,6 +43,10 @@ bytes. An explicit `--update_data_root` remains authoritative; tuning CLI and
 unsupported preparation falls back to the stock update and reports the reason
 in the build log. No new pause menu, Change Car overlay, or other game's files
 are required.
+
+If tuning is enabled but the installed build has no `update-native` folder,
+Play shows a warning and an **Open Setup → Build** action. Select Title Update 4
+and build again to prepare the resources. The warning does not block ordinary play.
 
 The isolation starts on current main and carries tuning from the combined
 `d877a127cc301c9bcc23e06f64d5427c9e0519de` checkpoint, including its native footer,
