@@ -7,7 +7,11 @@
 
 namespace {
 uint32_t sequence = 0;
+bool xr_running = false;
 uint32_t Sequence(uint32_t) { return sequence; }
+}
+namespace forza::xr {
+bool SessionRunning() { return xr_running; }
 }
 namespace forza {
 void* SdkSymbol(const char*) { return reinterpret_cast<void*>(Sequence); }
@@ -26,6 +30,14 @@ int main() {
   REXCVAR_SET(forza_pause_on_focus_loss, true);
   REXCVAR_SET(forza_pause_on_controller_disconnect, true);
   assert(!auto_pause::Poll(base, 0, 15));
+  xr_running = true;
+  ++auto_pause::focus_losses;
+  assert(!auto_pause::Poll(base, 0, 15));  // VR consumes focus loss without pausing
+  ++sequence;
+  assert(auto_pause::Poll(base, 0, 15));  // physical disconnect remains active in VR
+  auto_pause::Cancel();
+  xr_running = false;
+  assert(!auto_pause::Poll(base, 0, 15));  // leaving VR does not replay its focus edge
   ++auto_pause::focus_losses;
   assert(auto_pause::Poll(base, 0, 15));
   world[0x0c] = 1;  // game has paused, debounced gate still says driving

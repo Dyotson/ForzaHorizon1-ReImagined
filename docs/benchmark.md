@@ -22,6 +22,16 @@ Each run writes an independent profile and its reports under `user_data_root/ben
 
 Writable profiles are copied byte-for-byte; no profile is hard-linked. Installed DLC packages may be hard-linked as immutable inputs. No downloaded profile, game assets or screenshots are needed in the source repository.
 
+On Windows, the DLC setup uses extended filesystem paths. Adding the benchmark's
+timestamped directory to a deep DLC installation can exceed the traditional 260-character
+path limit: `create_hard_link` then fails with "The system cannot find the path specified",
+and the setup prompt reappears after the restart (#374, related #364). A filesystem-only
+fixture reproduced the error at a 285-character destination and succeeded with the
+extended path form. The regression links a deeply nested synthetic DLC file, verifies
+the linked bytes and checks that writable profile copies remain independent. It also
+covers extended-path reuse and UNC path conversion without accessing a network share.
+This validates the setup failure path; a complete benchmark run still needs a game retest.
+
 ## Focused tests
 
 Compile and run `forza-recomp/tests/benchmark_stats_test.cpp` and `benchmark_profile_test.cpp` as standalone C++20 programs. They check time-weighted FPS, percentile/1% low behavior, real stalls, invalid samples and save-copy independence. End-to-end validation additionally needs the user's TU4 game data and a disposable saved profile.
@@ -39,7 +49,11 @@ ctest --test-dir build/benchmark-tests --output-on-failure
 
 The title regression repeats each stock choice 20 times with both one and two
 extra rows, checking local/world transforms and child geometry after every
-modal, plus benchmark setup, departure and restoration. It does not exercise
+modal, plus benchmark setup, departure and restoration. Graphics activation
+also goes through the actual open/hide code with a mocked native allocator and
+page queue: failed allocations keep the visible rows shifted, successful opens
+restore only when hiding the rows, and ten open/hide/Back/layout cycles do not
+accumulate offsets or retain hidden row references. It does not exercise
 native input repeat, render labels or emulate a physical controller. The
 release workflow runs these tests in `sdk-linux`.
 
@@ -58,6 +72,9 @@ Repeatedly select and dismiss each stock choice that opens a dialog, including
 Horizon Rally's Xbox LIVE profile dialog and Multiplayer Unavailable. Check that
 each highlighted label remains on its own row while the dialog is open and after
 dismissal. When Single Player leaves the title, return to a fresh title screen
-before repeating. Also open Graphics, go Back and repeat the navigation. Record
+before repeating. Also inspect Rally while moving focus onto Graphics, then
+activate Graphics and inspect the opening transition frame by frame: Rally
+must stay in its own row until the title list is hidden. Go Back and repeat the
+navigation and opening transition. Record
 physical-controller testing separately from scripted taps, including OS, GPU,
 build SHA and hold duration for scripts.

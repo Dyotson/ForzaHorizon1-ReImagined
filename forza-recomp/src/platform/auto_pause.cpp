@@ -3,6 +3,7 @@
 #include "driving_gate.h"
 #include "guest_memory.h"
 #include "sdk_import.h"
+#include "xr.h"
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/memory/utils.h>
@@ -52,7 +53,9 @@ bool CanPause(uint8_t* base) {
 struct WindowObserver::Impl final : rex::ui::WindowListener {
   explicit Impl(rex::ui::Window* w) : window(w) { if (window) window->AddListener(this); }
   ~Impl() override { Detach(); }
-  void OnLostFocus(rex::ui::UISetupEvent&) override { ++focus_losses; }
+  void OnLostFocus(rex::ui::UISetupEvent&) override {
+    if (!xr::SessionRunning()) ++focus_losses;
+  }
   void OnClosing(rex::ui::UIEvent&) override { Detach(); }
   void Detach() { if (window) window->RemoveListener(this); window = nullptr; }
   rex::ui::Window* window;
@@ -72,7 +75,8 @@ bool Poll(uint8_t* base, uint16_t buttons, uint32_t user_mask) {
   std::lock_guard lock(mutex);
   const bool request = policy.Poll(telemetry::DrivingNowMs(), focus_losses.load(),
       sequence ? std::optional<uint32_t>(sequence(user_mask)) : std::nullopt,
-      on_focus, on_disconnect, (on_focus || on_disconnect) && CanPause(base), (buttons & 0x10) != 0);
+      on_focus, on_disconnect, (on_focus || on_disconnect) && CanPause(base), (buttons & 0x10) != 0,
+      xr::SessionRunning());
   if (request && !was_requesting) REXLOG_INFO("Auto-pause: requesting the game's pause menu; resume manually");
   was_requesting = request;
   return request;

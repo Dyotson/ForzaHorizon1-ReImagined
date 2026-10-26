@@ -57,15 +57,17 @@ instructions; both read `extracted/analysis/`.
 | `forza-recomp/hints/` | Function boundaries, rexcrt mappings, per-module hints |
 | `forza-recomp/src/` | Runtime code: app class, kernel/XAM overrides, debug tools |
 | `forza-recomp/generated/` | Codegen output; only `rexglue.cmake` is tracked here, the rest goes to the private `RecompiledForzaHorizon-generated` repo (`tools/sync_generated_repo.sh`) |
-| `patches/rexglue-sdk/` | SDK patches (started as Reach's 19 GPU patches) |
+| `patches/rexglue-sdk/` | the former SDK patch series, now commits in [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue) (kept for reference, not applied) |
 | `ghidra_projects/ForzaHorizon` | Ghidra project with `default.xex` (gitignored) |
 
 ## Tooling
 
 - ReXGlue SDK nightly 0.10.0.24 (`nightly-20261002-bd833a2a`) at
   `~/rexglue-sdk-nightly/0.10.0.24/linux-amd64`.
-- Patched Xenos GPU plugin: `tools/build_rexglue_sdk.sh` builds it into this project's own
-  overlay `~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64` from its own clone
+- Patched Xenos GPU plugin, runtime and codegen tool: `tools/build_rexglue_sdk.sh` builds them
+  from [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue) (the project's fork of the SDK, at
+  the tag the script pins) into this project's own overlay
+  `~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64` from its own clone
   `~/rexglue-sdk-src-forza` (never Reach's `~/rexglue-sdk-src`/`~/rexglue-sdk-patched`).
   Until Forza needs a patch of its own, CMake and the run scripts fall back to Reach's
   overlay, which has the same patch set.
@@ -91,7 +93,7 @@ failing check's log, full logs in `~/.cache/forza-prerelease/<timestamp>/`, exit
 
 | Check | What |
 |---|---|
-| sdk | the SDK overlay matches `patches/rexglue-sdk` (reinstalled by `tools/build_rexglue_sdk.sh` only when the patches changed since the last install; a game running from the overlay is affected) |
+| sdk | the SDK overlay matches the ReIGlue tag `tools/build_rexglue_sdk.sh` pins (reinstalled only when that script changed since the last install; a game running from the overlay is affected) |
 | build | ninja of `linux-tu4` and `linux`, then restores `generated/rexglue.cmake` |
 | unit | `launcher/test_*.py` and `server/test_*.py` |
 | boot | TU4 build to the main menu on a scratch copy of the Xenia save (never `~/.local/share/forza`) with `present_effect` bilinear, cas and fsr, then the base build: no fault, frame rate above 5 fps, a non-flat presenter image that changed after START (the screenshot hook captures the guest output before the upscaling filter, so the filter itself is not seen; a crash or Presenter layout mismatch with the SDK would show) |
@@ -751,7 +753,7 @@ Leaderboard screens, Windows and Steam Deck are not scripted: a hand run in the 
   of 28426 read`, at `+D728A` of a different cache block each time, then guest access
   violations (the loader going on with a short resource). The only member of that size in
   our DLC is `coloradodirtout.09183.rmb.bin` in the Rally pack's `ColoradoDirt_pri_65.zip`
-  (data at 0x5743A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
+  (data at 0x5742A8A, CRC 988ea569): two full 32 KB LZX frames of 14,998 and 11,928
   compressed bytes and a last one of 16,256 bytes out. Not a Windows codegen difference: the
   game's XMemDecompressStream (TU4 `sub_831AE7D8`) with its 66 callees, cut out of the
   generated code into a harness (context made as `sub_82D38810` makes it: `sub_831AFBE8` /

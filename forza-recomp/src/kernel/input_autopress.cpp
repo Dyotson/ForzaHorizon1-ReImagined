@@ -34,6 +34,7 @@
 
 #include "../platform/telemetry.h"
 #include "../platform/wheel_bridge.h"
+#include "../platform/xr.h"
 #include "../platform/sdk_import.h"
 #include "../debug/cpu_profile.h"
 #include "../debug/frame_stats.h"
@@ -410,6 +411,7 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       }
     }
   }
+  if (user == 0) forza::xr::OnPad(state.buttons);  // VR: both sticks held recentre
   if (user == 0) forza::telemetry::Input(true, state.triggers[0], state.triggers[1], state.buttons, state.sticks[0]);
   if (buffer) {
     // The packet number changes whenever the state does.

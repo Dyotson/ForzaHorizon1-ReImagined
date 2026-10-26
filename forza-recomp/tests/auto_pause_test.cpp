@@ -27,5 +27,15 @@ int main() {
   assert(legacy.Poll(1, 1, std::nullopt, true, true, true, false));  // focus works on an old SDK
   assert(!legacy.Poll(2, 1, 0xffffffffu, false, true, true, false));
   assert(legacy.Poll(3, 1, 0u, false, true, true, false));  // sequence wrap remains an edge
+  Policy vr;
+  assert(!vr.Poll(0, 0, 0, true, true, true, false));
+  assert(vr.Poll(1, 1, 0, true, true, true, false));  // focus pulse before VR starts
+  assert(!vr.Poll(2, 1, 0, true, true, true, false, true));  // VR cancels pending focus
+  assert(!vr.Poll(3, 2, 0, true, true, true, false, true));  // screen/cockpit/menu focus ignored
+  assert(!vr.Poll(4, 2, 0, true, true, true, false));  // no delayed focus pause when VR stops
+  assert(vr.Poll(5, 2, 1, true, true, true, false, true));  // physical loss still pauses in VR
+  assert(!vr.Poll(6, 2, 1, true, true, true, true, true));  // START still wins in VR
+  assert(!vr.Poll(7, 2, 1, true, true, true, false, true));
+  assert(vr.Poll(8, 3, 1, true, true, true, false));  // flat focus loss works again
   std::puts("auto-pause policy: focus/disconnect edges, guards, release and legacy SDK pass");
 }

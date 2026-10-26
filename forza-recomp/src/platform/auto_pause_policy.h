@@ -8,7 +8,11 @@ namespace forza::auto_pause {
 class Policy {
  public:
   bool Poll(uint64_t now, uint32_t focus, std::optional<uint32_t> disconnect,
-            bool on_focus, bool on_disconnect, bool driving, bool start_held) {
+            bool on_focus, bool on_disconnect, bool driving, bool start_held,
+            bool xr_session_running = false) {
+    // Consume focus events and cancel a pending focus pulse while VR owns focus. Physical
+    // disconnect detection remains active, including when VR uses a flat virtual screen.
+    on_focus = on_focus && !xr_session_running;
     const bool lost_focus = focus_ && *focus_ != focus;
     const bool lost_pad = disconnect_ && disconnect && *disconnect_ != *disconnect;
     focus_ = focus;

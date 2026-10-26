@@ -564,6 +564,23 @@ GT-R R34s; CPU Delta S4, Impreza 22B, ML 63, Lancer Evo VI) and a garage of "3 a
   world gets a notice like "DriverA starts FR05: B class, AWD, 7 CPU drivers, 2 laps, Sunset".
   `/events [level|street]` lists the codes; any other "/" line is chat. The scheduled world
   events (`--world-event-minutes`) leave co-op worlds alone.
+- **Elsewhere `/event` says where it works** (#395: the host of a Custom Free Roam typed
+  `/event FR05` in World chat and got only "You are not in a Horizon World"). A custom game,
+  another playlist or single player: "/event needs a Co-op Festival world (custom games have
+  none): Multiplayer > Find Game > Co-op Festival"; the public Horizon World: "... not the
+  Horizon World: ..."; Session chat: "Type /event in World chat (To: Horizon World), in a
+  Co-op Festival world". World chat outside a world: "World chat is for a Horizon World or
+  Co-op Festival world (Find Game): use Session chat here". The menu names are the game's
+  (MULTIPLAYER, FIND GAME, CO-OP FESTIVAL) and the chat panel's ("To: Horizon World").
+- **Not in a Custom Free Roam, even a private one among friends.** An event is the world's
+  next round: the host's game asks the server for that round's options (`GetGameOptions`,
+  Find Game's playlist; `world_events.cpp` ends the free roam only while Find Game runs a
+  world playlist, `LiveIsWorldPlaylist`). A custom game's rounds come from its host's own
+  Setup Game and never ask the server, so `/event` there would need the client to rewrite a
+  custom game's setup (track, game type, restrictions, CPU drivers, which Create Custom Game
+  does not offer for festival events) and to end its free roam: not done. A private
+  Co-op Festival is what a Custom Free Roam among friends is for: its placement already takes
+  only the host's friends.
 - **The round** (`campaign_xml`): the event's track, laps, preset (1 circuit, 2 point to point,
   198 street with `--coop-street`), `TargetClass` and decoded restrictions in the bucket,
   `NumberOfDrivers` CPU drivers (`MaxAIPlayers`, `MaxPlayers` one more), `PIWithPlayerLast`,

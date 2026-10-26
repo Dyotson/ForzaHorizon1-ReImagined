@@ -224,14 +224,37 @@ options: `--world-events 4,26` (pick from these `Events.Id`), `--world-event-lap
 event gets CPU drivers), `world_event_cpu_ready` (on: the results screen doesn't wait for
 the CPU drivers), `world_event_ai_grid` (0; a test knob, below).
 
-CPU drivers online are this project's addition and exist only in these world events
-(#67). The original game's online races have none: every online preset in
+CPU drivers online are this project's addition and exist only in these world events and
+the Co-op Festival's events (#67). The original game's online races have none: every online preset in
 `GameOptionPresets.xml` and both default playlists (`Default*HopperOptions.xml`) set
 `MaxAIPlayers="0"` (the Playground presets even lock it), and Create Custom Game's GAME
 SETUP (RULES, ADVANCED RULES, OVERRIDES) offers no AI option (checked in the game; the
 lobby's `IDS_OptionMaxAIPlayers` / "REMOVE AI PLAYER" strings, dated 2011, are unused
 in it). The server's playlist rounds keep `MaxAIPlayers="0"` too. The launcher's
-"This PC" server schedules no world events, so a player alone there never meets one.
+"This PC" server schedules no world events; it offers the Co-op Festival, whose `/event`
+races a festival event with CPU drivers, alone too. That needs the game's database, which
+the launcher passes to it (`--game-db`, its game folder's `media/db/gamedb.slt`) since #67:
+the server only finds it itself in a source checkout, and without it lists no Co-op Festival.
+
+Checked again 2026-10-25 (two TU4 games, a local server; the game's own options for the
+round, `FORZA_EVENT_TRACE`): a custom Circuit Race (`max AI 0`; GAME SETUP's three pages
+have no AI option) and the Races playlist (`max AI 0`) raced with the two humans only (PLACE
+1/2, 2/2); a Horizon World event had 2 humans and 6 CPU drivers (PLACE 8/8); and on a server
+started the way the launcher's "This PC" one is, the Co-op Festival was missing from Find Game
+without the database and listed with it, where DriverA alone sent `/event FR05` in World chat
+and raced 7 CPU drivers (`1 human(s) of 8: CPU drivers Medium (campaign event)`, PLACE 8/8;
+`screenshots/2026-10-25_coop_festival_solo_this_pc_7_cpu_drivers.jpg`).
+
+**Traffic.** The world's rounds say `UseTraffic="false"`, as the game's own free roam preset
+(`IDS_PresetFreeRoam`) and its Quick Match playlist do, and the online free roam follows it:
+with `false` the host's car list held no traffic car, and with `UseTraffic="true"` (served
+from `DATA_DIR/hoppers/3.xml`) the game made its pool of 16 traffic cars (car list kind 4) and
+civilians drove on the roads around the host (a pickup and a bus ahead of it,
+`screenshots/2026-10-25_world_traffic_on_usetraffic_true.jpg`). Each console
+spawns its own: DriverB's game, in the same world, listed DriverA's car but none of the 7
+traffic cars around it (its own pool stayed unplaced at the festival), so a car one player
+meets is not there for the others. The server keeps it off; an operator can serve
+`UseTraffic="true"` in `hoppers/3.xml` with that caveat.
 
 Code: `server/forza_world.py` (events, world state, the AI rule), `forza_live_server.py`
 (`WORLD_EVENT` message, `/world/event`, the `worlds` of the status page),
