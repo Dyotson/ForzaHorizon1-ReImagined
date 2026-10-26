@@ -534,6 +534,10 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
+add("forza_car_tuning", "Native car tuning", "Advanced", "bool", False,
+    "Add Car Tuning to the stock pause menu for your owned car in offline free roam. Supports named setups "
+    "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
+    "by the launcher during a build. Applies on the next game launch.", "Menu", restart=True)
 add("log_level", "Log level", "Advanced", "choice", "info",
     "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
     "lower the frame rate a lot (#174).", "Log",

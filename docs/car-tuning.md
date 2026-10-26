@@ -17,13 +17,24 @@ unavailable and marked Coming soon.
 
 ## Standalone integration
 
-This change is independent of the tabbed pause-menu work in #235. With
-`--forza_car_tuning=true`, the stock FH1 pause list offers **Car Tuning** above
+This feature is independent of the tabbed pause-menu work in #235. Enable
+**Advanced > Menu > Native car tuning** in the launcher and restart the game.
+After updating the launcher, rebuild once with your own Title Update 4 selected
+to prepare the tuning resources automatically. The stock FH1 pause list offers **Car Tuning** above
 Graphics and Quit only for the paused, primary-user, offline Colorado free-roam
 context with an owned current car. The existing native availability checks run
 again on entry and Apply. Missing donor aliases keep the stock pause screen
 available. Discard/Back and teardown restore its native list and focus through
 the existing FH1 refresh callback.
+
+The build retains the unmodified title update in `runtime/update` and prepares
+only the tuning donor aliases in a separate `runtime/update-native`. Turning the
+switch off selects the stock update again, without rebuilding or changing its
+bytes. An explicit `--update_data_root` remains authoritative; tuning CLI and
+`REX_FORZA_CAR_TUNING` overrides follow the runtime's precedence. Failed or
+unsupported preparation falls back to the stock update and reports the reason
+in the build log. No new pause menu, Change Car overlay, or other game's files
+are required.
 
 The isolation starts on current main and carries tuning from the combined
 `d877a127cc301c9bcc23e06f64d5427c9e0519de` checkpoint, including its native footer,
@@ -173,12 +184,14 @@ The underlying stock screen retains native dispatcher and datasource ownership;
 its presentation and the parent pause presentation are suppressed only after
 the dedicated component donors validate, then restored on teardown.
 
+The launcher's build runs `tools/native_tuning_assets.py` to prepare 22 independent
+aliases of the player's pristine FH1 garage triplet. For a development build,
 `tools/native_tuning_assets.py ORIGINAL_FH1_TU4 --output NEW_PRIVATE_DIRECTORY`
-prepares 22 independent aliases of the player's pristine FH1 garage triplet.
+remains available.
 It checks the original archive hash and TU4 executable identity, copies opaque
 compressed scene payloads without modification, and records provenance. It does
-not patch pause flow or embed game resources in source control. Pass the new
-directory as the runtime update data root. Before requesting any donor, native
+not patch pause flow or embed game resources in source control. The launcher
+selects the prepared directory when tuning is enabled. Before requesting any donor, native
 preflight requires all 66 alias members and rejects unsupported directory,
 encryption and compression layouts. Native binding validates required nodes
 and isolates original controllers. `fh1_menu_components.h` supplies reusable stable-ID tabs, independent focus and
