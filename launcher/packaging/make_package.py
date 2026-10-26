@@ -61,6 +61,8 @@ def main():
         copy(REPO / "forza-recomp" / rel, stage / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, stage / "project" / "tools" / "cmake" / f.name)
+    for resource in builder.NATIVE_MENU_FILES:
+        copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
     for resource in builder.NATIVE_TUNING_FILES:
         copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
     if not (REPO / "server" / "forza_live_server.py").is_file():

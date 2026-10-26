@@ -286,7 +286,7 @@ class NativeTuningDistribution(unittest.TestCase):
         # Release staging requires the initialized local-server payload.
         (self.project / "server").mkdir()
         (self.project / "server" / "forza_live_server.py").write_text("# synthetic server\n")
-        for name in builder.NATIVE_TUNING_FILES:
+        for name in (*builder.NATIVE_TUNING_FILES, *builder.NATIVE_MENU_FILES):
             path = self.project / "tools" / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("synthetic " + name)
@@ -294,7 +294,7 @@ class NativeTuningDistribution(unittest.TestCase):
     def test_preparation_script_or_manifest_changes_request_rebuild(self):
         digest = builder.sources_hash(self.project)
         self.assertEqual(builder.sources_hash(self.project), digest)
-        for name in builder.NATIVE_TUNING_FILES:
+        for name in (*builder.NATIVE_TUNING_FILES, *builder.NATIVE_MENU_FILES):
             path = self.project / "tools" / name
             path.write_text(path.read_text() + " changed")
             changed = builder.sources_hash(self.project)
@@ -326,7 +326,7 @@ class NativeTuningDistribution(unittest.TestCase):
                                             "--pyinstaller-dist", str(frozen), "--out", str(output)]):
             package["main"]()
         installed = output / "ForzaHorizon1-ReImagined" / "project" / "tools"
-        for name in builder.NATIVE_TUNING_FILES:
+        for name in (*builder.NATIVE_TUNING_FILES, *builder.NATIVE_MENU_FILES):
             self.assertEqual((installed / name).read_bytes(), (self.project / "tools" / name).read_bytes())
 
     def test_flatpak_package_contains_original_preparation_resources(self):
@@ -346,7 +346,7 @@ class NativeTuningDistribution(unittest.TestCase):
         output = self.root / "flatpak-stage"
         with mock.patch.object(sys, "argv", ["stage.py", "--overlay", str(overlay), "--out", str(output)]):
             package["main"]()
-        for name in builder.NATIVE_TUNING_FILES:
+        for name in (*builder.NATIVE_TUNING_FILES, *builder.NATIVE_MENU_FILES):
             self.assertEqual((output / "project" / "tools" / name).read_bytes(),
                              (self.project / "tools" / name).read_bytes())
 

@@ -299,6 +299,13 @@ jobs:
             -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64"
           "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/benchmark-tests" --parallel 2
           "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/benchmark-tests" --output-on-failure
+      - name: Native quit allocation, forwarding and save-completion adapter
+        run: |
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/native-quit -B "$RUNNER_TEMP/native-quit-tests" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/native-quit-tests" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/native-quit-tests" --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: sdk-overlay-linux

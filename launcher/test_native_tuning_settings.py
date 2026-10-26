@@ -21,7 +21,8 @@ class NativeTuningSettings(unittest.TestCase):
         setting = schema.BY_KEY["forza_car_tuning"]
         self.assertEqual((setting.label, setting.group, setting.section, setting.platform),
                          ("Native car tuning", "Gameplay", "Car tuning", ""))
-        self.assertNotIn("forza_native_pause", schema.BY_KEY)
+        self.assertIs(self.cfg.settings["forza_native_pause"], False)
+        self.assertNotIn("forza_native_pause", config.parse_toml(config.render_toml(self.cfg)))
         self.assertIs(self.cfg.settings[setting.key], False)
         self.assertNotIn(setting.key, config.parse_toml(config.render_toml(self.cfg)))
         self.assertTrue(setting.restart)
@@ -33,7 +34,7 @@ class NativeTuningSettings(unittest.TestCase):
     def test_switch_selects_stock_or_tuning_overlay_without_menu_dependency(self):
         folder = Path(self.temp.name) / "runtime"
         install = game.GameInstall(folder, folder / game.EXE)
-        for name in ("update", "update-native"):
+        for name in ("update", "update-native", "update-menu"):
             (folder / name).mkdir(parents=True)
         with mock.patch.dict(game.os.environ, {}, clear=True):
             for tuning, menu in ((False, False), (True, False), (True, True), (False, True), (False, False)):
@@ -41,7 +42,8 @@ class NativeTuningSettings(unittest.TestCase):
                     self.cfg.settings["forza_car_tuning"] = tuning
                     self.cfg.advanced["extras_toml"] = f"forza_native_pause = {str(menu).lower()}"
                     chosen = game.update_data_root(self.cfg, install, config.render_toml(self.cfg))
-                    self.assertEqual(chosen.name, "update-native" if tuning else "update")
+                    self.assertEqual(chosen.name, "update-menu" if menu else "update-native" if tuning else "update")
+            self.cfg.advanced["extras_toml"] = ""
             (folder / "update-native").rmdir()
             self.cfg.settings["forza_car_tuning"] = True
             self.assertEqual(game.update_data_root(self.cfg, install, config.render_toml(self.cfg)).name, "update")
@@ -67,7 +69,7 @@ class NativeTuningSettings(unittest.TestCase):
 
     def test_launch_plan_selects_overlay_and_respects_explicit_update_path(self):
         folder = Path(self.temp.name) / "runtime"
-        for name in ("update", "update-native"):
+        for name in ("update", "update-native", "update-menu"):
             (folder / name).mkdir(parents=True)
         install = game.GameInstall(folder, folder / game.EXE)
         self.cfg.online["mode"] = "offline"

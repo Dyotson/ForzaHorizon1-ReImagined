@@ -44,7 +44,7 @@ unsupported preparation falls back to the stock update and reports the reason
 in the build log. No new pause menu, Change Car overlay, or other game's files
 are required.
 
-If tuning is enabled but the installed build has no `update-native` folder,
+If tuning is enabled but its prepared resources are unavailable,
 Play shows a warning and an **Open Setup → Build** action. Select Title Update 4
 and build again to prepare the resources. The warning does not block ordinary play.
 
@@ -203,7 +203,9 @@ remains available.
 It checks the original archive hash and TU4 executable identity, copies opaque
 compressed scene payloads without modification, and records provenance. It does
 not patch pause flow or embed game resources in source control. The launcher
-selects the prepared directory when tuning is enabled. Before requesting any donor, native
+selects `runtime/update-native` for standalone tuning. If the full native pause
+menu is enabled, it selects `runtime/update-menu`, which also contains the tuning
+aliases. With both options off, it selects the unmodified `runtime/update`. Before requesting any donor, native
 preflight requires all 66 alias members and rejects unsupported directory,
 encryption and compression layouts. Native binding validates required nodes
 and isolates original controllers. `fh1_menu_components.h` supplies reusable stable-ID tabs, independent focus and
