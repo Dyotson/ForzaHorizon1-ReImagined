@@ -52,6 +52,7 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs,
 // only once the plugin is loaded.
 void ApplyForzaCvarDefaults();
 void ApplyForzaGpuCvarDefaults();
+void LogForzaPerformanceSettings();
 
 // GPU backend on Windows (the gpu_backend setting, src/main.cpp).
 std::string ForzaGpuBackend();
@@ -179,6 +180,7 @@ class ForzaApp : public rex::ReXApp {
     forza::PatchMotionBlurStencilThreshold();
     // The 3D scene below 720p (scene_resolution, #347): scenario and screen texture tables.
     forza::PatchSceneResolution();
+    LogForzaPerformanceSettings();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
     // Texture packs (#384, docs/texture_packs.md): dumps and replacements live in

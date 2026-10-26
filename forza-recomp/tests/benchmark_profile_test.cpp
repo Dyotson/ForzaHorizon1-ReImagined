@@ -41,6 +41,32 @@ int main() {
     rejected = true;
   }
   assert(rejected);
-  fs::remove_all(root);
+  // #374: installed DLC can fit under MAX_PATH while the timestamped benchmark
+  // destination does not. Exercise the actual package-link helper, not just path text.
+  const auto packages = root / "dlc-source";
+  const auto run = root / "benchmarks" / "recaro-17928413896901674";
+  const auto package_file = fs::path("0000000000000000") / "4D5309C9" / "00000002" /
+      "113E2064584A4BA7759BA105051C2199ABC5FA5554D" / "Media/DLCZips/2500_pri_65" /
+      "Media/audio/cars/Engines/Soundbanks" / std::string(64, 'a') / "fixture.fsb";
+  const auto source_file = forza::benchmark::BenchmarkFilePath(packages / package_file);
+  const auto linked_file = forza::benchmark::BenchmarkFilePath(run / package_file);
+  fs::create_directories(source_file.parent_path());
+  std::ofstream(source_file) << "immutable DLC fixture";
+  forza::benchmark::LinkPackages(packages, run);
+  assert(fs::equivalent(source_file, linked_file));
+  assert(fs::hard_link_count(source_file) == 2);
+  std::string linked_bytes;
+  std::getline(std::ifstream(linked_file), linked_bytes);
+  assert(linked_bytes == "immutable DLC fixture");
+  // Missing DLC is valid, and saves are still independent files (checked above).
+  forza::benchmark::LinkPackages(root / "no-dlc", root / "no-dlc-copy");
+  assert(!fs::exists(root / "no-dlc-copy"));
+#ifdef _WIN32
+  assert((run / package_file).native().size() > 260);
+  assert(forza::benchmark::BenchmarkFilePath(fs::path(L"\\\\server\\share\\file")) ==
+         fs::path(L"\\\\?\\UNC\\server\\share\\file"));
+  assert(forza::benchmark::BenchmarkFilePath(linked_file) == linked_file);
+#endif
+  fs::remove_all(forza::benchmark::BenchmarkFilePath(root));
   std::cout << "Benchmark save isolation passed\n";
 }

@@ -549,6 +549,7 @@ class SettingsPage(QWidget):
         leads = {
             "Display": "Window, frame rate and picture.",
             "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
+            "Gameplay": "How the game plays in single player. Online games always play as shipped.",
             "Audio": "",
             "Online": "Xbox LIVE is gone, so the game signs in to a Forza Live server instead.",
             "Profile": "Your saves live in the game's data folder. You can also continue a Xenia Canary save.",
@@ -587,8 +588,20 @@ class SettingsPage(QWidget):
         self.texture_folder_button.setToolTip(str(folder))
         self.texture_folder_button.clicked.connect(self._open_texture_folder)
         row.addWidget(self.texture_folder_button)
+        self.texture_page_button = QPushButton("Texture packs page…")
+        self.texture_page_button.setToolTip("Add, order and turn packs on or off, and make an HD pack "
+                                            "from your dump.")
+        self.texture_page_button.clicked.connect(self._show_texture_packs)
+        row.addWidget(self.texture_page_button)
         row.addStretch(1)
         content.addLayout(row)
+
+    def _show_texture_packs(self):
+        from .window import TEXTURE_PACKS_PAGE_ID
+        show = getattr(self.window, "show_page", None)
+        if show is not None:
+            self.flush()
+            show(TEXTURE_PACKS_PAGE_ID)
 
     def _open_texture_folder(self):
         folder = game.texture_pack_folder(self.cfg)
@@ -660,10 +673,11 @@ class SettingsPage(QWidget):
         p = gpu.preset(vendor)
         apply_ = force_apply
         if not force_apply and p is not None:
+            names = [schema.BY_KEY[k].label for k in gpu.settings_for(vendor)
+                     if k in schema.BY_KEY and schema.BY_KEY[k].applies()]
             apply_ = QMessageBox.question(
                 self, "Graphics card", f"Use the recommended settings for {p.label} now?\n\n{p.summary}\n\n"
-                "This changes the backend, render scale, upscaling filter and frame rate; every other "
-                "setting stays as it is.") == QMessageBox.Yes
+                f"This changes {', '.join(names)}; every other setting stays as it is.") == QMessageBox.Yes
         self.cfg.set_gpu_vendor(vendor, apply_)
         if self.cfg.settings.get("fh1_upscaler", "off") != "off":
             self.set_value("fh1_upscaler", self.cfg.settings["fh1_upscaler"])
@@ -716,7 +730,10 @@ class SettingsPage(QWidget):
         root.addWidget(self.banner)
 
     def _refresh_banner(self):
-        self.banner.setVisible(self.cfg.specs_banner_due())
+        due = self.cfg.specs_banner_due()
+        if due:
+            self.banner_text.setText(self.cfg.specs_banner_text())
+        self.banner.setVisible(due)
 
     def _use_recommended(self):
         changed = self.cfg.use_recommended()
@@ -772,7 +789,7 @@ class SettingsPage(QWidget):
                                           "rivals. You forward no ports."),
             ("local", "This PC", "Starts a Forza Live server just for this session (127.0.0.1:21200). "
                                   "Online features work, but only you are in it."),
-            ("custom", "My own server", "A server you or a friend host (docs/hosting.md)."),
+            ("custom", "My own server", "A server you or a friend host (forza-live's docs/hosting.md on GitHub)."),
             ("offline", "Offline", "No Xbox LIVE and no server."),
         ]
         self.radios = {}

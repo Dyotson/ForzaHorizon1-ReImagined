@@ -1,5 +1,16 @@
 # Event-earned unicorns in multiplayer: investigation
 
+## Repository split — 2026-10-26
+
+The server service, organizer tool and API tests moved to
+[forza-live PR #3](https://github.com/FH1-ReImagined/forza-live/pull/3).
+The game keeps its native client and pins that server revision through `server/`.
+The integrated TU4 client advertises `0x3F`, retaining current lobby support
+(`0x10`) alongside event enforcement (`0x20`); base-game builds keep `0x1F`
+and do not advertise the TU4-only event hook. This repository split does not
+repeat or replace the historical live validation below; remaining acceptance
+gates keep the feature in draft.
+
 Status: source trace against main `3e975fd`, followed by one-client native TU4
 tests on a loopback-only server, 2026-10-20. The local experiment and the subsequent
 organizer-controlled server reward service passed the native cases below.

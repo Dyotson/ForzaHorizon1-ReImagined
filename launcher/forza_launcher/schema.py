@@ -9,10 +9,10 @@ for the game (a few use 0/"" as "automatic").
 from dataclasses import dataclass, field
 import math
 
-from . import gamertag, power
+from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -56,14 +56,16 @@ add("frame_rate", "Frame rate", "Display", "fps", 30,
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
     "the game runs on (see Monitor), up to what this PC is likely to hold; if it cannot be read, 60 FPS. "
     "20 FPS: for PCs that can't hold 30, every frame stays on screen equally long on a 60 Hz screen "
-    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60).", "Frame rate")
+    "(40 FPS does the same on a 120 Hz screen for PCs that can't hold 60, and on a Steam Deck with its "
+    "screen at 40 Hz or 80 Hz; Match display picks 40 there).", "Frame rate")
 add("forza_performance_overlay", "Performance overlay", "Display", "choice", "off",
     "Measured game FPS, optionally with a frame-time graph. Does not count UI redraws.",
     "Frame rate", choices=[("off", "Off"), ("fps", "FPS"), ("graph", "FPS + frame-time graph")])
 add("battery_saver", "Battery saver", "Display", "choice", "off",
-    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off), the "
-    "lightest settings, without changing yours: they apply again at the next start on mains "
-    "power. Auto applies it when a Steam Deck runs on its battery as the game starts.",
+    "Starts the game at 30 FPS and render scale 1 with AMD FSR 1 (FSR 3 and SMAA off) and Scene "
+    "anti-aliasing Off, the lightest settings, without changing yours: they apply again at the next "
+    "start on mains power. A frame rate of 20 or 40 (for a screen at 40 Hz) stays. Auto applies it "
+    "when a Steam Deck runs on its battery as the game starts.",
     "Frame rate", choices=list(power.MODES), platform="linux", restart=True)
 add("vsync", "Vertical sync", "Display", "bool", True,
     "Wait for the display's refresh. Turn off only for testing.", "Frame rate")
@@ -210,6 +212,21 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
     "shimmer slightly on fine patterns.", "World detail",
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
+    "Softer, smoother edges on the shadows of trees, cars and scenery: Soft filters each shadow "
+    "over a 1.5 times wider area, Softer twice as wide with a wider blur. Measured on an RX 9060 XT: "
+    "no measurable increase for Soft, about 0.5 ms per frame for Softer at 2560x1440; other GPUs may differ. "
+    "Console is the game's own filter. Also in the "
+    "in-game Graphics screen, where it applies without a restart.", "World detail",
+    choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
+add("world_ambient_occlusion", "Ambient occlusion", "Display", "choice", "off",
+    "Darker sunlight where surfaces meet: under cars, along curbs and rails, at the foot of walls "
+    "and in creases of the ground (screen-space ambient occlusion on the world's sunlight; the cars "
+    "and trees keep their own shading). Low or High strength, the same cost: about 0.5 ms "
+    "per frame at 2560x1440 on an RX 9060 XT, nothing measurable under a 60 fps cap; other GPUs "
+    "may differ. Off is the game's lighting. Vulkan only. Also in the in-game Graphics screen, "
+    "where it applies without a restart.", "World detail",
+    choices=[("off", "Off"), ("low", "Low"), ("high", "High")])
 # Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
 # --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
 add("texture_dump", "Dump textures", "Display", "bool", False,
@@ -450,10 +467,33 @@ for _k, _label, _default in KEYBINDS:
         "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
 
+# --- Gameplay --------------------------------------------------------------------------
+add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
+    "Game: as the game shipped, a CPU driver ahead of you eases off (the weaker ones down to "
+    "a fifth of their power) and one behind you brakes and corners better to catch up. Off: "
+    "every CPU driver races at its own skill wherever you are, so the faster car pulls away "
+    "on the straights and the better-handling one in the corners; the difficulty still sets "
+    "how good they are. Single-player races and free roam only: online races and Co-op "
+    "Festival rounds always play as shipped.",
+    "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
+
+add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
+    "Add Car Tuning to the stock pause menu for your owned car in Colorado free roam. "
+    "Requires Settings > Online > Sign in to Xbox LIVE: off, including when playing solo while signed in to Forza Live. "
+    "Supports named setups "
+    "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
+    "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
+
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
+add("radio_station_switch", "Station changes", "Audio", "choice", "game",
+    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
+    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
+    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
+    "0.25 s fades for player changes; quick presses end on the last station picked.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
 
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
@@ -482,8 +522,9 @@ add("world_challenges", "Head-to-head challenges", "Online", "bool", True,
 add("world_event_wait_seconds", "Event lobby wait (s)", "Online", "int", 30,
     "How long the wait lobby before an event lasts.", "Horizon World", lo=0, hi=600)
 add("world_event_cpu_with_peers", "AI drivers in multi-player world events", "Online", "bool",
-    True, "Only the Horizon World events the server starts; playlist and custom races have no AI "
-    "drivers, as on the Xbox 360. Off: only a solo event gets them.", "Horizon World")
+    True, "Horizon World events and the Co-op Festival's /event races (also alone on This PC); "
+    "playlist and custom races have no AI drivers, as on the Xbox 360. Off: only a solo event "
+    "gets them.", "Horizon World")
 add("world_event_cpu_ready", "Do not wait for AI after events", "Online", "bool", True,
     "The results screen returns to the lobby without waiting for them.", "Horizon World")
 add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
@@ -493,9 +534,16 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 add("gamertag", "Gamertag", "Profile", "str", "",
     "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
     "Identity")
+add("game_language", "Game language", "Profile", "choice", "",
+    "The language of the game's menus and text. Automatic uses the Language ID and Country ID "
+    "below (English, United States by default). Any other choice sets both for you; Hungarian, "
+    "Czech, Dutch, Danish, Finnish, Norwegian and Swedish pick English with their country, as "
+    "the game does. A language that has no Country ID of its own uses yours.", "Identity",
+    choices=languages.CHOICES, restart=True)
 add("user_language", "Language ID", "Profile", "int", 1,
     "Xbox language code: 1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian, "
-    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian.",
+    "7 Korean, 8 Chinese (Traditional), 9 Portuguese, 10 Chinese (Simplified), 11 Polish, 12 Russian. "
+    "Used when Game language is Automatic.",
     "Identity", lo=0, hi=20)
 add("user_country", "Country ID", "Profile", "int", 103, "Xbox country code.", "Identity",
     lo=0, hi=300)

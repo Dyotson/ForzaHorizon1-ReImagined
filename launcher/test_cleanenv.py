@@ -135,7 +135,9 @@ class EveryLaunchPath(unittest.TestCase):
         with frozen(frozen_env()), mock.patch.object(gpu.subprocess, "run") as run:
             run.return_value = mock.Mock(stdout="")
             gpu._run(["lspci"])
-            self.assertClean(run.call_args.kwargs["env"])
+            ours = [c for c in run.call_args_list if c.args and c.args[0] == ["lspci"]]
+            self.assertEqual(len(ours), 1)
+            self.assertClean(ours[0].kwargs["env"])
 
     def test_the_game_and_the_server(self):
         with tempfile.TemporaryDirectory() as d:
@@ -195,7 +197,10 @@ class EveryLaunchPath(unittest.TestCase):
                             mock.Mock(cancelled=lambda: False))
             except Exception:
                 pass
-            self.assertClean(popen.call_args.kwargs["env"])
+            # other threads may use the shared subprocess module meanwhile: pick our call
+            ours = [c for c in popen.call_args_list if c.args and c.args[0] == ["rexglue", "--version"]]
+            self.assertEqual(len(ours), 1)
+            self.assertClean(ours[0].kwargs["env"])
 
 
 if __name__ == "__main__":
