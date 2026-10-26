@@ -3,6 +3,7 @@
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
 #include "../platform/native_pause_scene.h"
+#include "../platform/native_quit.h"
 #include "../platform/native_car_tuning_menu.h"
 #include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
@@ -1025,6 +1026,7 @@ extern "C" REX_FUNC(sub_8283CB68) {
   title_offsets.clear();
   __imp__sub_8283CB68(ctx, base);
   main_menu = menu;
+  forza::native_quit::Title(ctx,base,menu);
   const auto source = Read(base, menu + 0x174);
   Native ui(ctx, base);
   if (source && ui) {
@@ -1041,6 +1043,7 @@ extern "C" REX_FUNC(sub_82836928) {
   using namespace forza::graphics_menu;
   const bool title_choice = ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
                             Read(base, main_menu + 0x260) == 12;
+  if(title_choice)forza::native_quit::Cancel();
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kBenchmark &&
       Read(base, main_menu + 0x260) == 12) {
     forza::benchmark::Show();

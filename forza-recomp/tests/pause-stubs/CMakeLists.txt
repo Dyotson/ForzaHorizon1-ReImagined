@@ -7,6 +7,7 @@ foreach(tu IN ITEMS 0 4)
     set(target pause_stubs_tu${tu})
     add_executable(${target}
         ../pause_stubs_test.cpp
+        ../../src/platform/native_quit.cpp
         ../../src/hooks/pause_menu.cpp
         ../../src/hooks/native_pause_scene.cpp
         ../../src/hooks/native_pause_edges.cpp

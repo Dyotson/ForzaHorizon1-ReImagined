@@ -2,6 +2,7 @@
 // page geometry and controller. No second game's assets or translated code.
 // tu_address_map: TU4 addresses
 #include "../platform/native_pause_scene.h"
+#include "../platform/native_quit.h"
 #include "../platform/guest_addr.h"
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/fh1_menu_widgets.h"
@@ -79,7 +80,7 @@ struct State {
   Donor header;
   Donor stock_footer;
   std::vector<std::pair<uint32_t,bool>> stock_nodes;
-  bool footer_bound=false, footer_recovery=false;
+  bool footer_bound=false, footer_recovery=false, footer_quit=false;
   Car car;
   uint32_t player_bar = 0, credits = 0, username = 0, username_paper = 0;
   uint32_t header_paper=0,header_material=0,credits_text=0,credits_display=0,username_material=0;
@@ -595,10 +596,12 @@ void HeaderLayout(Native& ui) {
   for (auto node : {state.footer,state.bumpers[0],state.bumpers[1]})
     ui.Show(d.presentation,node,false);
   const bool subpage=state.social_help||state.social_session;
-  if (!state.footer_bound || state.footer_recovery!=state.recovery || state.footer_social_help!=subpage) {
+  const bool quit=native_quit::Available(ui.base,state.screen)&&ActionAvailable(ui.base,17);
+  if (!state.footer_bound || state.footer_recovery!=state.recovery || state.footer_social_help!=subpage || state.footer_quit!=quit) {
     state.footer_bound=FooterButtons(ui,state.screen,
         {{0,"SELECT"},{1,subpage?"BACK":"RESUME"},{8,"PREV TAB"},{9,"NEXT TAB"},
-         {14,state.recovery?"RESET CAR POSITION":""}});
+         {14,state.recovery?"RESET CAR POSITION":""},{3,quit?"QUIT":""}});
+    state.footer_quit=quit;
     state.footer_recovery=state.recovery;
     state.footer_social_help=subpage;
   }
@@ -947,6 +950,17 @@ void Activate(Native& ui, const std::string& id) {
     Page(ui.ctx, ui.base, screen, true);
   }
 }
+void OpenQuit(Native& ui) {
+  const auto screen=state.screen;
+  if(!ActionAvailable(ui.base,17)||!native_quit::Available(ui.base,screen))return;
+  return_bookmark=ReturnBookmark{Read(ui.base,screen+0x10c),
+      state.controller.page_id().value_or("home"),state.controller.focused_tile_id().value_or(""),
+      state.social_help,state.social_return,state.social_session,state.help_from_session};
+  Page(ui.ctx,ui.base,screen,false);state.exit_dialog=2;
+  if(!native_quit::Open(ui.ctx,ui.base,screen,Read(ui.base,screen+0x10c))){
+    native_quit::Cancel();state.exit_dialog=0;return_bookmark.reset();Page(ui.ctx,ui.base,screen,true);
+  }
+}
 std::optional<uint16_t> Pad(Native& ui) {
   ui.ctx.r3.u64 = 0; ui.ctx.r4.u64 = 0; ui.ctx.r5.u64 = ui.scratch;
   __imp__XamInputGetState(ui.ctx, ui.base);
@@ -970,8 +984,10 @@ void PollInput(Native& ui, double elapsed) {
   if (held & 0x1000) mapped |= menu::Mask(menu::Button::Confirm);
   if (held & (0x2000 | 0x10)) mapped |= menu::Mask(menu::Button::Back);
   const auto result = state.controller.Update(mapped, elapsed);
+  const bool quit = (held & 0x8000) && !(state.previous_pad & 0x8000);
   const bool reset = (held & 0x40) && !(state.previous_pad & 0x40);
   state.previous_pad = held;
+  if(quit){OpenQuit(ui);return;}
   if (result.back) {
     if(state.social_help)SocialHelp(ui,false);
     else if(state.social_session)SocialSession(ui,false);
@@ -1030,6 +1046,7 @@ void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (ui.scratch) Release(ui, false);
 }
 void AfterBind(PPCContext& ctx, uint8_t* base, uint32_t screen) {
+  native_quit::Cancel();
   if (rex::cvar::GetFlagByName("forza_native_pause") != "true") return;
   const auto* kernel = REX_KERNEL_STATE();
   const auto* runtime = kernel ? kernel->emulator() : nullptr;
@@ -1349,8 +1366,11 @@ extern "C" REX_FUNC(sub_827DE0D0) {
 }
 extern "C" REX_FUNC(sub_827E5CA8) {
   const auto screen=ctx.r3.u32;
-  const bool cancelled=forza::native_pause_scene::BeforeExitDialog(ctx,base);
-  __imp__sub_827E5CA8(ctx,base);
+  bool cancelled=false;
+  forza::native_quit::WithChoice(ctx,base,[&]{
+    cancelled=forza::native_pause_scene::BeforeExitDialog(ctx,base);
+    __imp__sub_827E5CA8(ctx,base);
+  });
   // Modal cancellation does not rebind the parent or run its setup callback.
   if(cancelled)forza::native_pause_scene::Page(ctx,base,screen,true);
 }

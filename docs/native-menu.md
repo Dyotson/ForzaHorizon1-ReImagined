@@ -14,6 +14,23 @@ comes from the standalone implementation merged in #363; this feature adds only
 the parent visibility bridge needed to enter and return from the Cars tile.
 Bucket List is excluded. The feature remains opt-in.
 
+### Native quit dialog
+
+In offline free roam, **Y Quit** opens FH1's native confirmation box. **A Quit to
+main menu** and **B Cancel** keep their original buttons; **X Quit to desktop**
+adds a game-window exit. Cancel restores the originating tab and selection.
+Online Leave Session and End Free Roam keep their existing dialogs and behavior.
+
+Desktop exit follows the original quit-to-title transition and waits for the
+matching native profile serialization, successful prior I/O, synchronous content
+flush and newly bound title screen. It then requests game-window closure on the
+host UI thread. Save errors, incomplete I/O, allocation failures, cancellation
+and changed ownership prevent desktop closure. It does not close the launcher
+or inject another profile save. Native quit fixtures cover reference ownership,
+allocation fallback, one original forward per result and save-completion gates.
+Runtime qualification of these new choices is pending; earlier four-tab images
+and quit traces establish only the revisions and behaviors attributed below.
+
 ### Review corrections - 2026-10-25
 
 The launcher keeps the unmodified FH1 TU4 files in `runtime/update`. Standalone
