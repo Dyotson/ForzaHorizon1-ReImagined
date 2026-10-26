@@ -594,6 +594,11 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
       return;
     ui.Call(0x828EED20, {empty_pause_source});
   }
+  // Graphics is created asynchronously. Keep the title's shifted transforms
+  // while its rows are still visible, including their unfocus animations.
+  // Restore only when the new page is ready to hide them, before rebinding
+  // the component can retire or reuse those row nodes.
+  if (!show && from_main_menu) RestoreTitle(base);
   ui.Call(0x828B82C8,
           {component, show ? source : empty_pause_source});
   ui.Call(Read(base, Read(base, component + 0x6C) + 0x28), {component + 0x6C});
@@ -1037,7 +1042,6 @@ extern "C" REX_FUNC(sub_82836928) {
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics &&
       Read(base, main_menu + 0x260) == 12) {
     title_layout_pending = false;
-    RestoreTitle(base);
     active_menu = main_menu;
     from_main_menu = true;
     OpenGraphics(ctx, base);
