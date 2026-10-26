@@ -1,37 +1,44 @@
 #!/usr/bin/env bash
-# Build the ReXGlue Xenos GPU plugin (librexgpu-xenos.so) and the codegen tool
-# (rexglue) from source with the fixes in patches/rexglue-sdk/, and install them
-# into an overlay of the nightly SDK so the forza build (its codegen step and the
-# plugin it ships) and tools/run_forza.sh pick them up. Adapted from
-# RecompiledHaloReach; the patch set started as Reach's.
+# Build the ReXGlue Xenos GPU plugin (librexgpu-xenos.so), the runtime and the codegen tool
+# (rexglue) from ReIGlue, this project's fork of the ReXGlue SDK
+# (https://github.com/FH1-ReImagined/ReIGlue), at the tag pinned below, and install them
+# into an overlay of the nightly SDK so the forza build (its codegen step and the plugin it
+# ships) and tools/run_forza.sh pick them up. Adapted from RecompiledHaloReach.
 #
 # Usage: tools/build_rexglue_sdk.sh [--source-only]
-#   --source-only  only check out and patch the SDK source (all tools/build_windows.sh needs)
+#   --source-only  only check out the SDK source (all tools/build_windows.sh needs)
 #
-# Why: the SDK's Xenos emulation lacks many Xenia fixes; the first one found
+# Why a fork: the SDK's Xenos emulation lacks many Xenia fixes; the first one found
 # (in Halo: Reach) was the SPIR-V translator reading the texture-fetch exponent
 # bias from fetch-constant word 4 instead of word 3, which darkens textures 256x.
-# Upstream closed the report (rexglue/rexglue-sdk#456) without taking GPU
-# changes, so we carry the patches (docs/sdk_patches.md).
+# Upstream closed the report (rexglue/rexglue-sdk#456) without taking GPU changes.
+# ReIGlue is the nightly's commit with one commit per change on top (they used to be
+# patches/rexglue-sdk/, which docs/sdk_patches.md still describes).
 #
 # Environment:
 #   REXSDK_NIGHTLY  installed nightly SDK the overlay is based on
 #                   (default ~/rexglue-sdk-nightly/0.10.0.24/linux-amd64)
-#   REXSDK_SRC      source checkout (default ~/rexglue-sdk-src-forza/sdk)
+#   REXSDK_SRC      source checkout (default ~/rexglue-sdk-src-forza/sdk; a clone of upstream
+#                   ReXGlue that the patch series was applied to is taken over as it is)
 #   REXSDK_JOBS     parallel compile jobs (default 4; the build runs at nice 15)
 #   REXSDK_PATCHED  overlay prefix to create
 #                   (default ~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64)
+#   REIGLUE_URL     where to fetch ReIGlue from (default its GitHub repository)
+#   REIGLUE_DEV     1: build REXSDK_SRC as it is checked out (SDK development on a ReIGlue
+#                   branch) instead of checking out the pinned tag
 #
 # The defaults are this project's own clone and overlay: RecompiledHaloReach uses
-# ~/rexglue-sdk-src and ~/rexglue-sdk-patched, and the two patch sets may differ.
+# ~/rexglue-sdk-src and ~/rexglue-sdk-patched, and the two may differ.
 #
-# Only the plugin and bin/rexglue are taken from this build; every other SDK file
-# in the overlay is a symlink into the nightly, so both must be built from the
-# nightly's exact commit to stay ABI-compatible with its librexruntime.so.
+# Only the plugin, the runtime and bin/rexglue are taken from this build; every other SDK
+# file in the overlay is a symlink into the nightly, so they must be built from a ReIGlue
+# tag based on the nightly's exact commit to stay ABI-compatible with it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
+REIGLUE_TAG=fh1-0.10.0.24-r1  # ReIGlue on SDK_COMMIT (its docs/reiglue/commits.md lists the changes)
+REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
 OVERLAY="${REXSDK_PATCHED:-$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64}"
@@ -41,21 +48,43 @@ SOURCE_ONLY=0
 [ "${1:-}" = --source-only ] && SOURCE_ONLY=1
 [ "$SOURCE_ONLY" = 1 ] || [ -d "$NIGHTLY/lib" ] || { echo "nightly SDK not found at $NIGHTLY" >&2; exit 1; }
 
-if [ ! -d "$SRC/.git" ]; then
-    git clone https://github.com/rexglue/rexglue-sdk "$SRC"
+if [ "${REIGLUE_DEV:-0}" = 1 ]; then
+    [ -d "$SRC/.git" ] || { echo "REIGLUE_DEV=1 needs a ReIGlue checkout at $SRC" >&2; exit 1; }
+    echo "building $SRC as checked out: $(git -C "$SRC" describe --always --dirty)"
+else
+    fresh=0
+    if [ ! -d "$SRC/.git" ]; then
+        # Checked out below (a clone --branch of an annotated tag warns that it is not a commit)
+        git clone --quiet --no-checkout "$REIGLUE_URL" "$SRC"
+        fresh=1
+    fi
+    git -C "$SRC" rev-parse --quiet --verify "refs/tags/$REIGLUE_TAG" > /dev/null ||
+        git -C "$SRC" fetch --quiet "$REIGLUE_URL" "+refs/tags/$REIGLUE_TAG:refs/tags/$REIGLUE_TAG"
+    target="$(git -C "$SRC" rev-parse "$REIGLUE_TAG^{commit}")"
+    git -C "$SRC" merge-base --is-ancestor "$SDK_COMMIT" "$target" ||
+        { echo "$REIGLUE_TAG is not based on the nightly's commit $SDK_COMMIT" >&2; exit 1; }
+    # Check out the tag without touching files that already match it: HEAD and the index go to
+    # the tag, then only the files whose content differs are rewritten. Files that already match
+    # keep their timestamps, so a re-run changes no source file, and a clone that had the old
+    # patch series applied (the same content) is taken over without rebuilding the SDK.
+    if [ "$fresh" = 1 ] || [ "$(git -C "$SRC" rev-parse HEAD)" != "$target" ]; then
+        git -C "$SRC" update-ref --no-deref HEAD "$target"
+        git -C "$SRC" read-tree "$target"
+    fi
+    git -C "$SRC" update-index -q --refresh > /dev/null || true
+    changed="$(git -C "$SRC" diff-files --ignore-submodules --name-only | wc -l)"
+    if [ "$changed" -gt 0 ]; then
+        git -C "$SRC" diff-files -z --ignore-submodules --name-only |
+            git -C "$SRC" checkout-index -f -z --stdin
+    fi
+    echo "SDK source at $REIGLUE_TAG ($changed file(s) updated)"
 fi
-git -C "$SRC" fetch --quiet origin "$SDK_COMMIT" 2>/dev/null || true
-git -C "$SRC" checkout --quiet "$SDK_COMMIT"
 git -C "$SRC" submodule update --init --recursive --depth 1 --quiet
 
-# Apply the patch series idempotently: build the patched tree (the SDK commit plus every
-# patch, in a temporary index), then rewrite only the files whose content differs from it.
-# Patches are not checked one by one against the working tree: later patches change the
-# context of earlier ones (0035 that of 0018), so on a clone with the whole series applied
-# neither the forward nor the reverse check of 0018 passes. Files that already match keep
-# their timestamps, so a re-run rebuilds nothing; a changed, added or dropped patch rewrites
-# just the files it touches.
-# apply_series REPO COMMIT LABEL PATCH...: that for one repository (the SDK or a submodule).
+# SDL (the SDK's thirdparty/sdl3 submodule, built into the runtime): ReIGlue keeps its changes
+# as patches in patches/sdl3/, against the commit the SDK records for the submodule. Applied
+# idempotently: the patched tree is built in a temporary index, then only the files whose
+# content differs from it are rewritten (files that already match keep their timestamps).
 apply_series() {
     local repo="$1" commit="$2" label="$3"
     shift 3
@@ -81,11 +110,8 @@ apply_series() {
     fi
     rm -f "$patched_index"
 }
-apply_series "$SRC" "$SDK_COMMIT" SDK "$ROOT"/patches/rexglue-sdk/*.patch
-# SDL (the SDK's thirdparty/sdl3 submodule, built into the runtime): patches/rexglue-sdk/sdl3,
-# against the commit the SDK records for it.
-apply_series "$SRC/thirdparty/sdl3" "$(git -C "$SRC" rev-parse "$SDK_COMMIT:thirdparty/sdl3")" SDL \
-    "$ROOT"/patches/rexglue-sdk/sdl3/*.patch
+apply_series "$SRC/thirdparty/sdl3" "$(git -C "$SRC" rev-parse "HEAD:thirdparty/sdl3")" SDL \
+    "$SRC"/patches/sdl3/*.patch
 [ "$SOURCE_ONLY" = 0 ] || exit 0
 
 # Building the SDK needs X11/XCB and Wayland headers (its UI module and SDL3
@@ -139,8 +165,8 @@ if [ -f "$SRC/out/linux-amd64/Release/SMAA-LICENSE.txt" ]; then
     cp "$SRC/out/linux-amd64/Release/SMAA-LICENSE.txt" "$OVERLAY/fh1-licenses/SMAA.txt"
 fi
 
-# The runtime (patch 0028: faster memory protection queries). Same commit as the nightly's,
-# so it is a drop-in; give it the nightly's RUNPATH (its own is the build tree's).
+# The runtime (ReIGlue 0028: faster memory protection queries, and others). Built on the
+# nightly's commit, so it is a drop-in; give it the nightly's RUNPATH (its own is the build tree's).
 runtime_new="$OVERLAY/lib/.librexruntime.new"
 cp "$SRC/out/linux-amd64/Release/librexruntime.so" "$runtime_new"
 rpath_script="$(mktemp)"
@@ -150,7 +176,7 @@ rm -f "$rpath_script"
 mv -f "$runtime_new" "$OVERLAY/lib/librexruntime.so"
 echo "patched runtime: $OVERLAY/lib/librexruntime.so"
 
-# The codegen tool: patches change the generated code too (0025: Xenon's dot-product
+# The codegen tool: ReIGlue changes the generated code too (0025: Xenon's dot-product
 # overflow). Older overlays linked bin/ to the nightly's; it is a directory now.
 [ -L "$OVERLAY/bin" ] && rm "$OVERLAY/bin"
 mkdir -p "$OVERLAY/bin"
