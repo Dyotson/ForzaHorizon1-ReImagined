@@ -490,6 +490,10 @@ def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
 
 def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
     """Warn about an enabled feature whose automatic resources have not been built."""
+    # The launch plan leaves explicit roots authoritative. Rebuilding the managed
+    # overlay cannot repair or replace the user's explicitly selected directory.
+    if any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", ""))):
+        return False
     return (native_update_requested(cfg, render_toml(cfg)) and
             not (install.dir / "update-native").is_dir())
 

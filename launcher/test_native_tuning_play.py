@@ -83,6 +83,18 @@ class TuningPlayTests(unittest.TestCase):
         self.refresh()
         self.assertTrue(self.page.tuning_notice.isHidden())
 
+    def test_explicit_update_root_does_not_offer_an_ineffective_managed_rebuild(self):
+        self.cfg.settings["forza_car_tuning"] = True
+        external = self.root / "external-prepared"
+        external.mkdir()
+        self.assertFalse((self.install.dir / "update-native").exists())
+        for flag in (f"--update_data_root={external}", f'--update_data_root "{external}"'):
+            with self.subTest(flag=flag):
+                self.cfg.advanced["extra_args"] = flag
+                self.refresh()
+                self.assertTrue(self.page.tuning_notice.isHidden())
+                self.assertTrue(self.page.tuning_setup.isHidden())
+
 
 if __name__ == "__main__":
     unittest.main()
