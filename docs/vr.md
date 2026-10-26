@@ -321,6 +321,40 @@ run time, never linked.
    frame; repeated: it drew the last one again. Latency is measured on cockpit frames only
    (`latency -` without any).
 
+### Copy ownership and shutdown
+
+A swapchain wait timeout does not make an image writable. The bridge keeps that
+acquisition and retries its wait on the next frame, without copying or releasing
+the image until the wait succeeds. A session error stops new copies. Submitted
+copies retain their guest-image holds until their fences complete, including when
+releasing the image to OpenXR fails.
+
+Resize and session cleanup retain all resources while a copy fence times out;
+cleanup retries rather than destroying an in-use image, command pool or fence.
+Vulkan device loss permits resource cleanup under the Vulkan lifetime rules and
+stops further copies.
+
+App close joins the OpenXR worker before the SDK destroys its presenter and
+Vulkan device. The worker is never detached with a raw SDK device pointer.
+OpenXR calls such as `xrWaitFrame`, `xrEndFrame` and `xrCreateSession` have no
+application-controlled cancellation timeout: a runtime stalled inside one of
+them can prevent safe shutdown. The three-second warning is diagnostic, not a
+shutdown deadline. This does not terminate the process or discard unsaved data.
+
+The actual bridge can be checked with mock SDK/OpenXR/Vulkan calls, without a
+runtime or headset:
+
+```sh
+cmake -S forza-recomp/tests/xr_lifecycle -B out/xr-lifecycle \
+  -DFORZA_VULKAN_INCLUDE_DIR=/path/to/vulkan-headers/include
+cmake --build out/xr-lifecycle
+ctest --test-dir out/xr-lifecycle --output-on-failure
+```
+
+These fixtures cover timeout/retry ownership, fence-deferred destruction,
+session/device loss, failed submission/release, stop and join-before-teardown.
+They do not qualify a physical headset or comfort.
+
 ### Tested without a headset (Linux, TU4, RX 9060 XT, RADV)
 
 - **VR off:** no OpenXR library mapped, no `VR:` line, frame rate as before (the off paths are

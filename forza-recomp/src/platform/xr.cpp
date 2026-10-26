@@ -253,6 +253,8 @@ struct State {
   // The swapchain for the game's picture, sized as the guest output.
   XrSwapchain swapchain = XR_NULL_HANDLE;
   std::vector<VkImage> swapchain_images;
+  bool image_acquired = false;  // a timed-out wait must resume this same acquisition
+  uint32_t acquired_index = 0;
   uint32_t width = 0, height = 0;
   uint32_t failed_width = 0, failed_height = 0;
   VkImage staging = VK_NULL_HANDLE;
@@ -540,15 +542,21 @@ bool CreateCopySlots() {
 bool FinishSlot(CopySlot& slot, uint64_t timeout_ns) {
   if (!slot.busy) return true;
   const VkDevice device = g.device->device();
-  if (g.vk.WaitForFences(device, 1, &slot.fence, VK_TRUE, timeout_ns) != VK_SUCCESS) return false;
-  g.vk.ResetFences(device, 1, &slot.fence);
+  const VkResult waited = g.vk.WaitForFences(device, 1, &slot.fence, VK_TRUE, timeout_ns);
+  if (waited != VK_SUCCESS && waited != VK_ERROR_DEVICE_LOST) return false;
+  // Vulkan defines device loss as completion for resource lifetime purposes.
+  // It permits cleanup, but never another copy on this device.
+  if (waited == VK_ERROR_DEVICE_LOST) g.stop = true;
+  else if (g.vk.ResetFences(device, 1, &slot.fence) != VK_SUCCESS) g.stop = true;
   if (slot.hold) g.release_frame(slot.hold);
   slot.hold = 0;
   slot.busy = false;
   return true;
 }
-void FinishAllSlots() {
-  for (CopySlot& slot : g.slots) FinishSlot(slot, 2'000'000'000);
+bool FinishAllSlots() {
+  bool finished = true;
+  for (CopySlot& slot : g.slots) finished &= FinishSlot(slot, 100'000'000);
+  return finished;
 }
 // Copies whose fence has signalled.
 void ReapSlots() {
@@ -559,18 +567,22 @@ void ReapSlots() {
   }
 }
 
-void DestroySwapchain() {
-  FinishAllSlots();
+bool DestroySwapchain() {
+  // A timeout is not completion. Retain the swapchain, staging image, pools,
+  // fences and guest-image holds until every submitted copy has finished.
+  if (!FinishAllSlots()) return false;
   const VkDevice device = g.device->device();
   if (g.swapchain != XR_NULL_HANDLE) g.xr.DestroySwapchain(g.swapchain);
   g.swapchain = XR_NULL_HANDLE;
   g.swapchain_images.clear();
+  g.image_acquired = false;
   if (g.staging != VK_NULL_HANDLE) g.vk.DestroyImage(device, g.staging, nullptr);
   if (g.staging_memory != VK_NULL_HANDLE) g.vk.FreeMemory(device, g.staging_memory, nullptr);
   g.staging = VK_NULL_HANDLE;
   g.staging_memory = VK_NULL_HANDLE;
   g.width = g.height = 0;
   g.have_image = false;
+  return true;
 }
 
 // The cockpit view's size and its pixel density in the middle of the picture (the guest output's
@@ -594,7 +606,10 @@ void LogCockpitView() {
 }
 
 bool CreateSwapchain(uint32_t width, uint32_t height) {
-  DestroySwapchain();
+  if (!DestroySwapchain()) {
+    g.stop = true;  // stop copying; session cleanup will retry the pending fences
+    return false;
+  }
   XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
   info.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
   info.format = g.swapchain_format;
@@ -684,6 +699,7 @@ VkImageMemoryBarrier Barrier(VkImage image, VkAccessFlags src, VkAccessFlags dst
 // the headset's pixels across, and the runtime samples its layers without mipmaps, so a full
 // 2560-pixel picture would shimmer.
 bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
+  if (g.stop) return false;
   if (frame.width != g.width || frame.height != g.height) {
     if (frame.width == g.failed_width && frame.height == g.failed_height) return false;
     if (!CreateSwapchain(frame.width, frame.height)) {
@@ -694,31 +710,34 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
   }
   CopySlot& slot = g.slots[g.next_slot];
   if (!FinishSlot(slot, 100'000'000)) return false;
-  g.next_slot = (g.next_slot + 1) % 3;
+  if (g.stop) return false;
 
-  uint32_t index = 0;
-  XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
   XrResult r;
-  {
+  if (!g.image_acquired) {
+    XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
-    r = g.xr.AcquireSwapchainImage(g.swapchain, &acquire, &index);
+    r = g.xr.AcquireSwapchainImage(g.swapchain, &acquire, &g.acquired_index);
+    if (XR_FAILED(r)) return false;
+    g.image_acquired = true;
   }
-  if (XR_FAILED(r)) return false;
   XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
   wait.timeout = 100'000'000;
-  if (XR_FAILED(g.xr.WaitSwapchainImage(g.swapchain, &wait))) {
-    const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
-    XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    g.xr.ReleaseSwapchainImage(g.swapchain, &release);
+  r = g.xr.WaitSwapchainImage(g.swapchain, &wait);
+  if (r != XR_SUCCESS) {
+    // XR_TIMEOUT_EXPIRED is positive, but the runtime still owns the image.
+    // Retry the same acquisition next frame; never copy or release it yet.
+    // On session loss/error, retire it by destroying the session instead.
+    if (r != XR_TIMEOUT_EXPIRED) g.stop = true;
     return false;
   }
+  if (g.stop) return false;
 
   const VkDevice device = g.device->device();
   g.vk.ResetCommandPool(device, slot.pool, 0);
   VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   g.vk.BeginCommandBuffer(slot.buffer, &begin);
-  const VkImage target = g.swapchain_images[index];
+  const VkImage target = g.swapchain_images[g.acquired_index];
   const uint32_t divisor = for_screen && g.linear_blit ? std::max(1u, frame.width / 1280) : 1;
   const uint32_t out_width = std::max(1u, g.width / divisor), out_height = std::max(1u, g.height / divisor);
   // As the presenter's own guest output capture: the guest output leaves and returns to
@@ -774,15 +793,28 @@ bool CopyFrame(const RexGuestOutputFrame& frame, bool for_screen) {
   {
     const auto queue = g.device->AcquireQueue(g.device->queue_family_graphics_compute(), 0);
     submitted = g.vk.QueueSubmit(queue.queue(), 1, &submit, slot.fence);
+    if (submitted == VK_SUCCESS) {
+      slot.hold = frame.handle;
+      slot.busy = true;
+      g.next_slot = (g.next_slot + 1) % 3;
+    }
     XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    g.xr.ReleaseSwapchainImage(g.swapchain, &release);
+    r = g.xr.ReleaseSwapchainImage(g.swapchain, &release);
+    if (XR_SUCCEEDED(r)) g.image_acquired = false;
   }
   if (submitted != VK_SUCCESS) {
     REXLOG_WARN("VR: vkQueueSubmit of the copy failed ({})", int(submitted));
+    g.stop = true;
     return false;
   }
-  slot.hold = frame.handle;
-  slot.busy = true;
+  if (XR_FAILED(r)) {
+    // Submission already owns the guest frame: keep its hold until the fence
+    // completes even though the image could not be handed to the compositor.
+    REXLOG_WARN("VR: xrReleaseSwapchainImage failed ({})", ResultName(r));
+    g.have_image = false;
+    g.stop = true;
+    return true;
+  }
   g.have_image = true;
   g.shown_extent = {int32_t(out_width), int32_t(out_height)};
   ++g.stat_copies;
@@ -894,12 +926,12 @@ void PadsWithoutFocus(bool on) {
   if (g.set_pads_without_focus) g.set_pads_without_focus(on ? 1 : 0);
 }
 
-void DestroySession() {
+bool DestroySession() {
   g.cockpit_active = false;
   PadsWithoutFocus(false);
   {
     std::lock_guard lock(g.pose_mutex);  // no CockpitView is locating now
-    if (g.session != XR_NULL_HANDLE) DestroySwapchain();
+    if (g.session != XR_NULL_HANDLE && !DestroySwapchain()) return false;
     if (g.view != XR_NULL_HANDLE) g.xr.DestroySpace(g.view);
     if (g.local != XR_NULL_HANDLE) g.xr.DestroySpace(g.local);
     g.view = g.local = XR_NULL_HANDLE;
@@ -916,6 +948,17 @@ void DestroySession() {
     if (slot.pool) g.vk.DestroyCommandPool(g.device->device(), slot.pool, nullptr);
     slot = {};
   }
+  return true;
+}
+
+void FinishSession() {
+  bool warned = false;
+  while (!DestroySession()) {
+    if (!warned) REXLOG_WARN("VR: waiting for pending GPU copies before destroying session resources");
+    warned = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  g.finished = true;
 }
 
 const char* StateName(XrSessionState s) {
@@ -1124,7 +1167,7 @@ bool Frame() {
       REXLOG_INFO("VR: recentred (head at {:.2f} {:.2f} {:.2f} m)", head.p.x, head.p.y, head.p.z);
     }
   }
-  g.cockpit_active = g.mode == Mode::kCockpit && g.origin_set &&
+  g.cockpit_active = !g.stop && g.mode == Mode::kCockpit && g.origin_set &&
                      (g.state == XR_SESSION_STATE_VISIBLE || g.state == XR_SESSION_STATE_FOCUSED);
 
   if (frame_state.shouldRender) {
@@ -1232,13 +1275,11 @@ void Run() {
 #endif
   if (!LoadDeviceFunctions() || !CreateCopySlots()) {
     REXLOG_WARN("VR: Vulkan functions or command buffers missing - playing flat");
-    DestroySession();
-    g.finished = true;
+    FinishSession();
     return;
   }
   if (!CreateSession()) {
-    DestroySession();
-    g.finished = true;
+    FinishSession();
     return;
   }
   bool exit_requested = false;
@@ -1268,9 +1309,8 @@ void Run() {
       break;
     }
   }
-  DestroySession();
+  FinishSession();
   REXLOG_INFO("VR: OpenXR thread stopped");
-  g.finished = true;
 }
 
 Mode RequestedMode() {
@@ -1525,13 +1565,13 @@ void Start(rex::system::IGraphicsSystem* graphics) {
 void Shutdown() {
   if (!g.thread.joinable()) return;
   g.stop = true;
-  // The thread asks the runtime to end the session and leaves within about a second; one stuck
-  // in a runtime that stopped answering is left behind (the process is exiting).
+  g.cockpit_active = false;
+  // The thread requests exit when its current runtime call returns. This is an
+  // app-close hook, before the SDK destroys the presenter and its Vulkan device.
+  // Never detach: a runtime call may still resume and use those SDK resources.
   for (int i = 0; i < 300 && !g.finished; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
   if (!g.finished) {
-    REXLOG_WARN("VR: the OpenXR thread did not stop in 3 s");
-    g.thread.detach();
-    return;
+    REXLOG_WARN("VR: still waiting for OpenXR shutdown; a stalled runtime can prevent the game from closing safely");
   }
   g.thread.join();
   if (g.instance != XR_NULL_HANDLE) g.xr.DestroyInstance(g.instance);
