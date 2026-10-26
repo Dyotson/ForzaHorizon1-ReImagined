@@ -91,6 +91,29 @@ class NativeTuningSettings(unittest.TestCase):
             self.cfg.advanced["extra_args"] = "--forza_car_tuning=true"
             self.assertTrue(game.native_update_requested(self.cfg, ""))
 
+    def test_environment_bool_matches_case_sensitive_sdk_conversion(self):
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            for value, expected in (("yes", True), ("true", True), ("1", True),
+                                    ("YES", False), ("TRUE", False), ("on", False),
+                                    ("false", False), ("0", False)):
+                with self.subTest(value=value):
+                    self.cfg.advanced["extra_env"] = "REX_FORZA_CAR_TUNING=" + value
+                    self.assertEqual(game.native_update_requested(self.cfg, ""), expected)
+
+    def test_registered_cli_bool_is_case_insensitive_and_separate_from_environment(self):
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            self.cfg.advanced["extra_env"] = "REX_FORZA_CAR_TUNING=FALSE"
+            for value in ("yes", "YES", "TRUE", "on", "ENABLE", "t", "Y", "+"):
+                with self.subTest(value=value):
+                    self.cfg.advanced["extra_args"] = "--forza_car_tuning=" + value
+                    self.assertTrue(game.native_update_requested(self.cfg, ""))
+            for flags, expected in (("--forza_car_tuning=2", True),
+                                    ("--forza_car_tuning=false --forza_car_tuning=true", False),
+                                    ("--forza_car_tuning=2 --no-forza_car_tuning", True),
+                                    ("--forza_car_tuning=-2", False)):
+                self.cfg.advanced["extra_args"] = flags
+                self.assertEqual(game.native_update_requested(self.cfg, ""), expected)
+
     def test_import_is_managed_setting_and_disabling_restores_default(self):
         config.import_toml(self.cfg, "forza_car_tuning = true\n")
         self.assertIs(self.cfg.settings["forza_car_tuning"], True)

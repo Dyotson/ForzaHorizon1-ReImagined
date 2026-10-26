@@ -420,7 +420,23 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
     for key in ("forza_car_tuning",):
         name = "REX_" + key.upper()
         if name in environment:
-            values[key] = environment[name].lower() in ("true", "1")
+            # rex::string::from_string<bool> is case-sensitive (numeric.h).
+            values[key] = environment[name] in ("true", "1", "yes")
+    # CLI11 add_flag_function uses case-insensitive counts and sums repeated
+    # registered flags. The environment conversion is intentionally separate.
+    def flag_count(value):
+        value = value.lower()
+        if value in ("true", "yes", "on", "enable", "t", "y", "+"):
+            return 1
+        if value in ("false", "no", "off", "disable", "f", "n", "-", "0"):
+            return -1
+        if re.fullmatch(r"[+-]?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)", value):
+            digits = value.lstrip("+-")
+            base = 16 if digits.startswith("0x") else 8 if digits.startswith("0") else 10
+            return int(value, base)
+        return None  # Invalid CLI values are reported by the runtime.
+
+    cli_count = None
     extra = split_args(cfg.advanced.get("extra_args", ""))
     for arg in extra:
         if not arg.startswith("--"):
@@ -433,7 +449,11 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
             continue
         if not equal:
             value = "true"
-        values[key] = (value.lower() in ("true", "1")) != negated
+        count = flag_count(value)
+        if count is not None:
+            cli_count = (cli_count or 0) + (-count if negated else count)
+    if cli_count is not None:
+        values["forza_car_tuning"] = cli_count > 0
     return any(values.get(key) is True for key in ("forza_car_tuning",))
 
 
