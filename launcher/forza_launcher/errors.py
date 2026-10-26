@@ -31,7 +31,9 @@ def next_step(error, operation):
         # SSL's errno is an SSL_ERROR_* value, not a POSIX errno (1 collides
         # with EPERM). Classify it before filesystem/memory error numbers.
         if isinstance(current, ssl.SSLCertVerificationError) or type(current).__name__ == "CertificateError":
-            return "Check your system date/time and certificate trust. Keep certificate verification enabled; send the launcher log if it persists."
+            return ("Check this computer's date/time and trusted certificates, and whether an antivirus program "
+                    "scans HTTPS traffic or a proxy replaces certificates (turn off its HTTPS scanning or add "
+                    "the launcher as an exception). Keep certificate verification enabled; send the launcher log if it persists.")
         if isinstance(current, ssl.SSLError):
             return "The secure connection failed. Check your connection and server address; send the launcher log if it persists. Keep certificate verification enabled."
         winerror = getattr(current, "winerror", None)

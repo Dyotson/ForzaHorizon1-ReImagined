@@ -38,9 +38,13 @@ class ErrorMessages(unittest.TestCase):
 
     def test_ssl_error_number_is_not_a_filesystem_errno(self):
         error = ssl.SSLCertVerificationError(1, "certificate verify failed")
-        for wrapped in (error, URLError(error)):
+        for wrapped in (error, URLError(error), fetch.CertificateError("certificate verify failed")):
             text = errors.next_step(wrapped, "build")
             self.assertIn("verification enabled", text)
+            self.assertIn("date/time and trusted certificates", text)
+            self.assertIn("antivirus program scans HTTPS traffic", text)
+            self.assertIn("proxy replaces certificates", text)
+            self.assertIn("turn off its HTTPS scanning or add the launcher as an exception", text)
             self.assertNotIn("writable data folder", text)
 
     def test_other_tls_failures_do_not_claim_certificate_cause(self):

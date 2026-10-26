@@ -111,8 +111,9 @@ def urlopen(req, timeout=60):
     host = _host(req)
     raise CertificateError(
         f"The certificate of {host} could not be verified ({getattr(last, 'reason', last)}). "
-        "Check this computer's date/time and trusted certificates, and whether the network uses an "
-        "HTTPS proxy. Certificate verification remains enabled. Details are in launcher.log.") from last
+        "Check this computer's date/time and trusted certificates, and whether an antivirus program "
+        "scans HTTPS traffic or a proxy replaces certificates (turn off its HTTPS scanning or add "
+        "the launcher as an exception). Certificate verification remains enabled. Details are in launcher.log.") from last
 
 
 def _host(req) -> str:
