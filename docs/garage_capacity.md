@@ -1,6 +1,7 @@
 # Garage capacity investigation
 
-Status: source audit in progress, 2026-10-25. No capacity change is enabled.
+Status: 1,000-car implementation in progress, 2026-10-26; native runtime
+save/restart validation remains outstanding.
 The audit started at main `0e1717ba898bc4fc086b2cb51dcd7721a9445e8a`.
 The existing native pause-menu work is separate.
 
@@ -78,40 +79,50 @@ The existing launcher encoder preserves the allocated container size and
 refuses an edit that will not fit. Its 32 MiB decode safety ceiling is not the
 native save allocation and must not be used to justify a larger garage.
 
-The launcher's existing authenticated unicorn editor currently has no logical
-550-row check. Any supported limit policy must also cover that editor. Preserve
-its game-data-derived stock builder, authenticated decode/encode, ID guard,
-full backup, concurrency checks, and atomic replacement. Do not manufacture
-boundary saves by changing arbitrary garage fields.
+The original authenticated unicorn editor had no logical row check. The
+implementation below adds the 1,000-row guard while preserving its
+game-data-derived stock builder, authenticated decode/encode, ID guard, full
+backup, concurrency checks and atomic replacement. Native boundary profiles
+must use supported native additions rather than arbitrary garage-field edits.
 
-## Proposed implementation and evidence gates
+## 1,000-car implementation and evidence gates
 
-First candidate: an optional **1,000**-car limit, retaining **550** as the default
-until testing establishes compatibility. Only validated choices should be
-accepted; no unbounded setting. This is a proposal, not a supported limit yet.
+The requested limit is **1,000** by default. `src/hooks/garage_capacity.cpp`
+replaces the central full predicate for TU0 and TU4 and calls the executable's
+original database-count helper. It snapshots the native pending vector before
+that call, matching the original order. `src/platform/garage_capacity.h` counts
+stored and pending cars with wide arithmetic and rejects malformed vector
+descriptors. There is no unbounded setting.
 
-Use one policy for the central native full predicate and launcher additions,
-with TU0/TU4 address mapping. Keep the original full behavior at the default,
-all storage-space checks, native add/remove and save functions, and fail-closed
-handling for invalid counts or queue pointers. Changing the full predicate
-would reach all nine callers; patching individual acquisition screens would
-leave inconsistent behavior. Do not alter the save format or enlarge its
-container as an incidental part of this change.
+The authenticated launcher editor uses the same 1,000-car limit. It counts
+rows, including repeated models, and refuses the entire missing-unicorn batch
+before modifying the database if that batch would exceed the limit. A full
+garage already owning all seven cars remains a no-op. Existing ID, container
+size, authentication, backup and atomic replacement checks are retained.
+Native storage-space checks, add/remove functions and save functions remain
+in place. Replacing the central predicate covers all nine observed callers.
 
-Before implementation, finish queue insertion, import/gift quotas, list variants,
-and serialization failure propagation. Establish full-save headroom at the
-candidate size, including substantial purchased-parts and career data. If a
-valid populated profile cannot fit, lower or withdraw the candidate.
+Runtime verification remains required for queue insertion, import/gift quotas,
+list variants and serialization failure propagation. Establish full-save
+headroom at 1,000 cars, including substantial purchased-parts and career data.
 
 Disposable copied profiles must then cover 549/550/551 and 999/1000/1001,
 including pending additions. Exercise actual native add/purchase/reward paths,
 save and normal exit, restart, car selection, thumbnails, sorting/filtering,
 remove and re-add. Compare every saved ID/model and the ID counter across
 restart; rejection must preserve credits, cars and existing files. A populated
-profile loaded with the default limit must retain every existing car while
+profile above the limit must retain every existing car while
 rejecting further additions. Check TU0 as well as TU4 and inspect timing/memory
 changes. Source review and unit checks cannot replace these native boundaries.
 
 Private decoded binaries, generated function extracts, profile copies, hashes
 and audit metadata stay outside Git under `build/garage-capacity-20261025`.
-No build or game launch has been performed for this investigation.
+Local validation on 2026-10-26: all **18** `launcher/test_garage.py` tests passed
+with no skips. The SDK-free capacity fixture compiled and passed, including
+stored/pending boundaries, integer overflow and invalid vector descriptors.
+The production hook also compiled and executed against the installed runtime
+SDK for **TU0 and TU4** with a stubbed SQL count helper. Those checks verify
+big-endian descriptor reads, pending snapshots and caller context preservation.
+Authenticated synthetic saves cover additions through slot 1,000 and refusal
+without writes above the limit. These checks do not establish native runtime
+save/restart or UI behavior; record that evidence separately before release.
