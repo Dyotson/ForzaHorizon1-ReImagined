@@ -171,6 +171,7 @@ set(FORZA_SOURCES
     src/hooks/world_challenge.cpp
     src/hooks/ambient_leaderboard.cpp
     src/hooks/teleport_velocity.cpp
+    src/hooks/custom_race.cpp
     src/hooks/challenge_hud.cpp
     src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
