@@ -129,6 +129,8 @@ using 1.5-2.5 cores. Rules:
   plays them; a flag after the script's arguments wins). The in-game videos (the festival
   intro) are still skipped through the input FIFO, and each scene is only labelled once
   it is reached.
+  The tools emit one startup flag (the last explicit startup option wins over the
+  environment), and the scenario's boot input sequence follows that same effective value.
 
 ## Results
 
