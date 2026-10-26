@@ -35,7 +35,8 @@ where a point fixed to the car must appear after the head moved can be predicted
    6 cm outside its 10 cm snap shows 14-19).
  3 no flick: a head path from a VR trace (the user's) replayed in steps of at most 1 cm and 3 degrees;
    the left eye's change per step (mean absolute difference at 1/8 size). PASS: no step changes more
-   than 3 times the path's median step + 8 (a cabin that jumps changes the picture by several times that).
+   than 1.75 times the median of its 3 neighbours on each side (the game's own 10 cm snap jumps 1.85-2.16
+   times at each crossing).
  4 driving: the throttle held 4 s, the head still: the cabin patches' shift from the standing picture.
    PASS: median under 1 px and most patches under 1 px (no camera shake, lean or bob).
  5 performance: the VR status lines' game frames a second. PASS: at least 70 at 72 Hz.
@@ -69,6 +70,11 @@ LIGHT_GLOBAL = 0.05  # the cabin's overall brightness (exposure) may change this
 # game's own moving camera shows too (measured: 14-19 points for a 6 cm move outside its 10 cm snap),
 # so 20 points; v7's cabin that follows the head while its light stays put measured 29-59.
 LIGHT_EXCESS_TURN = 0.05
+# Test 3: a step is a jump when it changes the picture this many times as much as its neighbours.
+# Measured on the user's version 6 path: the game's own 10 cm snap ("parallax 0") jumps 1.85-2.16 times
+# its neighbours at each crossing of 10 cm; version 8 at most 1.64. (Traffic passing a side window can
+# also do it: look at the flagged steps' pictures.)
+JUMP_RATIO = 1.75
 LIGHT_EXCESS_MOVE = 0.20
 FAR = 8.0
 
@@ -100,9 +106,14 @@ class EmuRig:
         self.settle = a.settle
 
     def set(self, yaw=0, pitch=0, roll=0, x=0, y=0, z=0, turn=0):
-        subprocess.run([sys.executable, "-I", self.poses, "set", "yaw=%g" % yaw, "pitch=%g" % pitch,
-                        "roll=%g" % roll, "x=%g" % x, "y=%g" % y, "z=%g" % z], check=True,
-                       stdout=subprocess.DEVNULL)
+        cmd = [sys.executable, "-I", self.poses, "set", "yaw=%g" % yaw, "pitch=%g" % pitch,
+               "roll=%g" % roll, "x=%g" % x, "y=%g" % y, "z=%g" % z]
+        for attempt in range(4):  # the emulator's pose port refuses a connection now and then
+            if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            raise SystemExit("poses.py set failed: " + " ".join(cmd[3:]))
         time.sleep(self.settle)
 
     def capture(self, out, name):
@@ -533,8 +544,9 @@ def test4(out, res, cache):
 # ----------------------------------------------------------------------------------- replay
 def replay_metric(out):
     """The left eye's change from each step of the replayed path to the next (mean absolute difference
-    at 1/8 size), and the steps whose change is a jump: more than 3 times the path's median step
-    change plus 8, between poses at most 1 cm and 3 degrees apart."""
+    at 1/8 size), and the steps whose change is a jump: more than JUMP_RATIO times the median of the 3
+    steps before and after it (and over 5), between poses at most 1 cm and 3 degrees apart (a step that
+    turns the view across detailed scenery changes it as much as its neighbours do)."""
     fs = sorted(glob.glob(os.path.join(out, "full_*_L.png")))
     prev = None; d = []
     for f in fs:
@@ -545,8 +557,13 @@ def replay_metric(out):
     if not d:
         return d, 0.0, []
     med = float(np.median(d))
-    limit = 3 * med + 8
-    return d, med, [(i + 1, x, limit) for i, x in enumerate(d) if x > limit]
+    flicks = []
+    for i, x in enumerate(d):
+        around = d[max(0, i - 3):i] + d[i + 1:i + 4]
+        limit = JUMP_RATIO * float(np.median(around))
+        if x > max(limit, 5.0):
+            flicks.append((i + 1, x, limit))
+    return d, med, flicks
 
 
 def analyze_replay(out):
@@ -554,8 +571,10 @@ def analyze_replay(out):
     if not d:
         print("3 no flick: no replay pictures"); return None
     good = not flicks
-    print("3 no flick (%s): %d steps of at most 1 cm / 3 deg; change per step median %.1f, largest %.1f (jump limit %.1f); jumps: %d%s  %s"
-          % (os.path.basename(out), len(d), med, max(d), 3 * med + 8, len(flicks),
+    big = int(np.argmax(d))
+    around = d[max(0, big - 3):big] + d[big + 1:big + 4]
+    print("3 no flick (%s): %d steps of at most 1 cm / 3 deg; change per step median %.1f, largest %.1f (its neighbours %.1f); jumps (%.2f x the neighbours): %d%s  %s"
+          % (os.path.basename(out), len(d), med, max(d), float(np.median(around)) if around else 0.0, JUMP_RATIO, len(flicks),
              "".join(" [step %d: %.1f]" % f[:2] for f in flicks[:4]), "PASS" if good else "FAIL"))
     json.dump({"changes": d, "median": med, "flicks": flicks, "pass": good}, open(os.path.join(out, "replay.json"), "w"))
     return good
@@ -632,6 +651,9 @@ def cmd_run(a):
 
 
 def cmd_analyze(a):
+    global SCALE, PATCH
+    if getattr(a, "scale", 2) != 2:
+        SCALE, PATCH = a.scale, 10
     res = {}
     summary = []
     tests = a.tests if hasattr(a, "tests") else "124"
@@ -648,7 +670,7 @@ def cmd_analyze(a):
         summary.append((title, ok))
     if os.path.exists(os.path.join(a.out, "replay.json")) or glob.glob(os.path.join(a.out, "full_*_L.png")):
         analyze_replay(a.out)
-    json.dump(res, open(os.path.join(a.out, "results.json"), "w"), indent=1)
+    json.dump(res, open(os.path.join(a.out, "results%s.json" % ("" if SCALE == 2 else "_s%d" % SCALE)), "w"), indent=1)
 
 
 def cmd_perf(a):
@@ -680,6 +702,8 @@ def main():
         p.add_argument("--settle", type=float, default=1.2)
         p.add_argument("--origin", default="", help="k=v,...: added to every pose (a control: x=0.12)")
     p = sub.add_parser("analyze"); p.add_argument("out"); p.add_argument("--tests", default="124")
+    p.add_argument("--scale", type=int, default=2,
+                   help="compare the pictures at 1/SCALE size (4: the scene's aliasing averaged out)")
     p = sub.add_parser("perf"); p.add_argument("log"); p.add_argument("--secs", type=float, default=30)
     a = ap.parse_args()
     {"run": cmd_run, "replay": cmd_replay, "analyze": cmd_analyze, "perf": cmd_perf}[a.cmd](a)
