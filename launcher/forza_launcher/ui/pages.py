@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
+from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, errors, game, installer, paths, pins,
                shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
@@ -1095,10 +1095,12 @@ class SetupPage(QWidget):
         """Show a failure in red and keep it there: refresh() runs right after a task ends and
         used to wipe the message, so a failed extraction just looked like the bar vanishing."""
         self.fail[key] = message
+        label_widget.setTextFormat(Qt.PlainText)
         label_widget.setText(message)
         label_widget.setStyleSheet(f"color: {theme.ERR};")
 
     def _finished(self, ok, message):
+        failure_title = errors.title(getattr(self.task, "name", "setup"))
         self.timer.stop()
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
@@ -1114,8 +1116,8 @@ class SetupPage(QWidget):
         elif ok and self._bar is self.bar3 and self.cfg.advanced.get("blocked_root"):
             self.cfg.advanced["blocked_root"] = ""
             self.cfg.save()
-        if not ok and self._bar is self.bar3 and not blocked:
-            message += "  Press Resume build to continue."
+        if failed and self._bar is self.bar3 and not blocked:
+            message += "\nAfter addressing the error, use Resume build to retry."
         if failed:
             self.tabs.setCurrentIndex(2 if self._bar in (self.bar3, self.bar4) else 1 if self._bar is self.bar2 else 0)
             self._show_fail(key, self._msg, message)
@@ -1134,11 +1136,11 @@ class SetupPage(QWidget):
         self.refresh()
         self.changed.emit()
         if failed and blocked:
-            if QMessageBox.question(self, "The folder is blocked", message + "\n\nChoose another folder now?") \
+            if QMessageBox.question(self, "The folder is blocked", errors.dialog_text(message + "\n\nChoose another folder now?")) \
                     == QMessageBox.Yes:
                 self.change_folder()
         elif failed:
-            QMessageBox.warning(self, "Something went wrong", message)
+            QMessageBox.warning(self, failure_title, errors.dialog_text(message))
         elif warn:
             QMessageBox.warning(self, "Damaged DLC", message)
 
