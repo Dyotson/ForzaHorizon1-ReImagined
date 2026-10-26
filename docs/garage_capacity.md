@@ -1,7 +1,7 @@
 # Garage capacity investigation
 
-Status: 1,000-car implementation in progress, 2026-10-26; native runtime
-save/restart validation remains outstanding.
+Status: 1,000-car implementation validated at the native TU4 purchase/refusal
+boundary and across normal save/restart, 2026-10-26.
 The audit started at main `0e1717ba898bc4fc086b2cb51dcd7721a9445e8a`.
 The existing native pause-menu work is separate.
 
@@ -102,27 +102,52 @@ size, authentication, backup and atomic replacement checks are retained.
 Native storage-space checks, add/remove functions and save functions remain
 in place. Replacing the central predicate covers all nine observed callers.
 
-Runtime verification remains required for queue insertion, import/gift quotas,
-list variants and serialization failure propagation. Establish full-save
-headroom at 1,000 cars, including substantial purchased-parts and career data.
+Native TU4 validation used disposable copied profiles and ordinary controller
+input. Starting with 999 cars and 37,780 credits, an Autoshow purchase of the
+15,000-credit Volkswagen Beetle created exactly garage ID 1,000 (car 1523),
+advanced the stored ID counter to 1,000, and left 22,780 credits. The next
+purchase displayed the native full-garage message before a payment choice;
+credits remained unchanged. Normal Quit returned to the main menu before the
+host window was closed. Read-only authenticated profile/database inspection
+confirmed all previous 999 ID/model pairs and the one new car.
 
-Disposable copied profiles must then cover 549/550/551 and 999/1000/1001,
-including pending additions. Exercise actual native add/purchase/reward paths,
-save and normal exit, restart, car selection, thumbnails, sorting/filtering,
-remove and re-add. Compare every saved ID/model and the ID counter across
-restart; rejection must preserve credits, cars and existing files. A populated
-profile above the limit must retain every existing car while
-rejecting further additions. Check TU0 as well as TU4 and inspect timing/memory
-changes. Source review and unit checks cannot replace these native boundaries.
+A fresh process loaded that saved profile into free roam with the Beetle.
+The native Stats screen displayed **NUMBER OF CARS IN GARAGE: 1,000**, and the
+HUD showed 22,780 credits. A second normal Quit and host closure were followed
+by authenticated inspection: all 1,000 ID/model pairs, the ID counter, credits,
+and the original 6,291,464-byte container allocation were preserved. Both hosts
+exited with code zero and empty owned jobs. The observer reported a partial
+memory-read error during host teardown; raw records retain that error, while
+closure and save correctness were checked independently. Original source
+profiles remained unchanged.
+
+This runtime check used a private capture/input derivative of the production
+build with the same capacity implementation, immutable SDK121 and verified
+unchanged generated code. It qualifies the TU4 native save/acquisition flow
+and ABI, without making a current-renderer performance claim. TU0 hook behavior
+is covered by the compiled fixture, not a native TU0 play session.
+
+Practical headroom samples at 1,000 cars used a 543,744-byte SQLite database
+and about 44 KiB of the compressed container for repeated stock models; a
+seven-model sample used about 65 KiB compressed. A legitimate purchased-parts
+checkpoint and the schema were also inspected. These are bounded samples,
+not a worst-case guarantee for arbitrary purchased parts, career history or
+strings. External thumbnails and liveries are separate files. The encoder's
+allocation guard and native device-space check remain intact.
+
+Further coverage can exercise gift/reward paths, sustained pending queues,
+list sorting/filtering, thumbnail pressure, remove/re-add and extensively
+modified careers. Those paths share the central predicate, but the native
+purchase/save/restart result does not establish every UI or performance case.
 
 Private decoded binaries, generated function extracts, profile copies, hashes
 and audit metadata stay outside Git under `build/garage-capacity-20261025`.
-Local validation on 2026-10-26: all **18** `launcher/test_garage.py` tests passed
+Local validation on 2026-10-26: all **19** `launcher/test_garage.py` tests passed
 with no skips. The SDK-free capacity fixture compiled and passed, including
 stored/pending boundaries, integer overflow and invalid vector descriptors.
 The production hook also compiled and executed against the installed runtime
 SDK for **TU0 and TU4** with a stubbed SQL count helper. Those checks verify
 big-endian descriptor reads, pending snapshots and caller context preservation.
 Authenticated synthetic saves cover additions through slot 1,000 and refusal
-without writes above the limit. These checks do not establish native runtime
-save/restart or UI behavior; record that evidence separately before release.
+without writes above the limit. The native TU4 purchase/refusal/save/restart evidence is recorded above; the
+synthetic and stubbed checks cover additional policy and ABI boundaries.
