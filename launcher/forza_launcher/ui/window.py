@@ -8,7 +8,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__, builder, cleanenv, coop_grant, crash_report, game, paths, dlss, shader_share
+from .. import APP_NAME, __version__, builder, cleanenv, coop_grant, crash_report, errors, game, paths, dlss, shader_share
 from ..config import Config, import_toml, render_toml
 from . import theme
 from .pages import AboutPage, PlayPage, SetupPage
@@ -442,7 +442,8 @@ class MainWindow(QMainWindow):
         if str(error) != self._last_start_error:
             self._last_start_error = str(error)
             paths.log_error("start the game", error)
-        self.play.show_message(f"Could not start the game: {error}\nLauncher log: {paths.launcher_log()}", True, keep=True)
+        self.play.warn.setTextFormat(Qt.PlainText)
+        self.play.show_message(errors.message(error, "start the game", paths.launcher_log()), True, keep=True)
 
     def _start_plan(self, plan):
         try:
