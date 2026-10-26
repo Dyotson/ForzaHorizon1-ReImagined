@@ -56,6 +56,8 @@ def main():
         copy(REPO / "docs" / "images" / n, out / "assets" / n)
     for n in TOOLS:
         copy(REPO / "tools" / n, out / "tools" / n)
+    for resource in builder.NATIVE_TUNING_FILES:
+        copy(REPO / "tools" / resource, out / "project" / "tools" / resource)
     for rel in builder.source_files(REPO):
         copy(REPO / "forza-recomp" / rel, out / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
