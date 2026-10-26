@@ -34,6 +34,8 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# The Forza Live server is the server/ submodule (FH1-ReImagined/forza-live).
+[ -f server/forza_live_server.py ] || git submodule update --init server || { echo "server/ is empty: git submodule update --init server"; exit 1; }
 STATE="$HOME/.cache/forza-prerelease"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="$STATE/$STAMP"

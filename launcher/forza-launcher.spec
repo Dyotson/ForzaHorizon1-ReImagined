@@ -15,6 +15,8 @@ images = repo / "docs" / "images"
 
 stdlib = set(sys.stdlib_module_names)
 hidden = set()
+if not (repo / "server" / "forza_live_server.py").is_file():
+    raise SystemExit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
 for f in (repo / "server").glob("*.py"):
     if f.name.startswith("test_"):
         continue

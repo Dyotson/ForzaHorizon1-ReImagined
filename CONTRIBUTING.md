@@ -43,7 +43,12 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
 - **Launcher** code is in `launcher/` (`docs/launcher.md`), with unit tests in
   `launcher/test_*.py`. Long work never runs on the GUI thread, and errors stay visible with
   the log path.
-- **Server** code is in `server/` with tests (`cd server && python3 -m unittest discover -p 'test_*.py'`).
+- **Server**: the Forza Live server is its own repository,
+  [FH1-ReImagined/forza-live](https://github.com/FH1-ReImagined/forza-live), checked out here as the `server/` submodule
+  (`git clone --recurse-submodules`, or `git submodule update --init` in an existing clone).
+  Server changes are pull requests there; then a pull request here moves `server/` to the
+  new commit (`git -C server fetch && git -C server checkout <commit> && git add server`).
+  Tests: `cd server && python3 -m unittest discover -p 'test_*.py'`.
 
 ## Testing
 

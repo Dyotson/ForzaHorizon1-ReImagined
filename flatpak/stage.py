@@ -6,7 +6,7 @@
     assets/                          logo.svg, logo.png, social-preview.png
     tools/                           the Python tools the launcher runs (extraction, DLC, title update)
     project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
-    server/                          the Forza Live server
+    server/                          the Forza Live server (the server/ submodule, FH1-ReImagined/forza-live)
     sdk-overlay/rexglue-overlay-linux-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
     licenses/
     wheels/                          not here: the manifest downloads the PySide6 wheels itself
@@ -62,6 +62,8 @@ def main():
         copy(REPO / "forza-recomp" / rel, out / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, out / "project" / "tools" / "cmake" / f.name)
+    if not (REPO / "server" / "forza_live_server.py").is_file():
+        sys.exit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
             copy(f, out / "server" / f.name)
