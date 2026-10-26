@@ -41,6 +41,7 @@
 #include "gamertag_text.h"
 #include "identity.h"
 #include "live.h"
+#include "live_connection.h"
 #include "live_tcp.h"
 #include "../platform/socket.h"
 
@@ -635,6 +636,12 @@ class VNet {
     return true;
   }
 
+  bool LiveConnected() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return forza::live_connection::IsFresh(
+        live_, live_id_, last_welcome_received_, Clock::now());
+  }
+
   std::vector<forza::LiveFriend> Roster() {
     std::lock_guard<std::mutex> lock(mutex_);
     return roster_;
@@ -1100,6 +1107,7 @@ class VNet {
           live_epoch_ = epoch;
           public_ep_ = {public_ip, public_port};
           last_welcome_ = Clock::now();
+          last_welcome_received_ = last_welcome_;
           cv_.notify_all();
         }
         if (rejoining_.exchange(false) || changed) {
@@ -1372,6 +1380,8 @@ class VNet {
   Endpoint public_ep_;
   uint16_t http_port_ = 0;  // the server's title servers (HTTP), from its welcome
   Clock::time_point last_welcome_{};
+  // Receipt-only timestamp: reconnect logging must never refresh UI liveness.
+  Clock::time_point last_welcome_received_{};
   std::atomic<double> resumed_{0};  // seconds the machine slept (LiveResumed), 0: none
   std::atomic<bool> rejoining_{false};  // back after a stop or a sleep, not welcomed yet
   std::atomic<bool> server_heard_{false};  // any datagram from the server so far
@@ -1394,6 +1404,8 @@ void SetError(uint32_t error) { rex::system::XThread::SetLastError(error); }
 
 namespace forza {
 bool NetworkOn() { return NetOn(); }
+
+bool LiveConnected() { return NetOn() && VNet::Get().LiveConnected(); }
 
 bool LiveServerHttp(uint32_t& ip, uint16_t& port) {
   return NetOn() && VNet::Get().LiveServerHttp(ip, port);

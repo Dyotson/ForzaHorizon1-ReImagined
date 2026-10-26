@@ -70,7 +70,11 @@ hashes separately from these fixtures.
 
 The title regression repeats each stock choice 20 times with both one and two
 extra rows, checking local/world transforms and child geometry after every
-modal, plus benchmark setup, departure and restoration. It does not exercise
+modal, plus benchmark setup, departure and restoration. Graphics activation
+also goes through the actual open/hide code with a mocked native allocator and
+page queue: failed allocations keep the visible rows shifted, successful opens
+restore only when hiding the rows, and ten open/hide/Back/layout cycles do not
+accumulate offsets or retain hidden row references. It does not exercise
 native input repeat, render labels or emulate a physical controller. The
 release workflow runs these tests in `sdk-linux`.
 
@@ -89,6 +93,25 @@ Repeatedly select and dismiss each stock choice that opens a dialog, including
 Horizon Rally's Xbox LIVE profile dialog and Multiplayer Unavailable. Check that
 each highlighted label remains on its own row while the dialog is open and after
 dismissal. When Single Player leaves the title, return to a fresh title screen
-before repeating. Also open Graphics, go Back and repeat the navigation. Record
+before repeating. Also inspect Rally while moving focus onto Graphics, then
+activate Graphics and inspect the opening transition frame by frame: Rally
+must stay in its own row until the title list is hidden. Go Back and repeat the
+navigation and opening transition. Record
 physical-controller testing separately from scripted taps, including OS, GPU,
 build SHA and hold duration for scripts.
+
+
+## Confirmation fix integration (2026-10-26)
+
+Integrated main `b560528`, including the ReIGlue r2 build path and current title,
+graphics and VR code. The 14 focused Windows CTest cases pass on the integrated
+source, including actual production-session TU0/TU4 close/reopen/hold/fresh-press
+regressions, independent profile copies and setup/marker failures. These tests
+link the immutable earlier local SDK; the relevant PPC, cvar, logging, memory,
+app and kernel-state headers match exact pinned ReIGlue r2 source. They do not
+qualify a current r2 game executable.
+
+The rendered B-close/reopen-A/hold/fresh-confirm sequence and a complete
+benchmark run/return remain pending. Earlier timed title navigation did not reach
+Benchmark and is not acceptance evidence. A fresh current host and observed,
+bounded native-input session are required before claiming runtime validation.

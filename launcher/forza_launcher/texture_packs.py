@@ -59,6 +59,8 @@ class Pack:
     files: int = 0           # texture files the game will use
     size: int = 0            # their bytes on disk
     gpu_bytes: int = 0       # about what they take in graphics memory, with mips
+    png_files: int = 0       # of files, PNGs (RGBA8 in graphics memory: texture_compress.py makes DDS)
+    png_gpu_bytes: int = 0   # their share of gpu_bytes
     problem: str = ""        # why the game would use nothing of it ("" when it is used)
     note: str = ""           # a warning that does not stop it being used
     enabled: bool = True
@@ -286,12 +288,15 @@ def _read_files(folder: Path, pack: Pack, check=True, top_only=False):
                 if key >= chosen[fp][0]:
                     continue
             chosen[fp] = (key, p, t)
-    for fp, (_key, p, t) in sorted(chosen.items()):
+    for fp, (key, p, t) in sorted(chosen.items()):
         pack.names.append(fp)
         pack.files += 1
+        png = key[0] and p.suffix.lower() == ".png"
+        pack.png_files += png
         if check:
             pack.size += p.stat().st_size
             pack.gpu_bytes += t.gpu_bytes()
+            pack.png_gpu_bytes += t.gpu_bytes() if png else 0
     notes = []
     if unusable:
         notes.append(f"{len(unusable)} file(s) the game cannot use: " + "; ".join(unusable[:3]) +

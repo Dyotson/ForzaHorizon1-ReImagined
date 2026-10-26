@@ -9,7 +9,7 @@ A **texture pack** is a folder of such files. Packs come from two places, and th
 neither (they are derived from the game's art):
 
 - **Make HD pack**: the launcher upscales the textures *you* dumped, on your PC, with an AI
-  upscaler (Real-ESRGAN). Nothing of the game is downloaded or shared.
+  upscaler (Real-ESRGAN), and compresses them. Nothing of the game is downloaded or shared.
 - **Community packs**: packs other players made by hand, added with **Add pack…**.
 
 ## The Texture packs page
@@ -80,13 +80,27 @@ read, a size over 16384, a file shorter than its header), files not named by a f
 texture in a pack twice, and files that are byte for byte the game's own dumped textures (they
 change nothing, and a pack must not contain them).
 
+### Compress PNGs
+
+A PNG becomes RGBA8 in graphics memory (4 bytes a texel, a third more for the mips the game makes),
+a BC7 DDS file 1 byte a texel. **Compress PNGs** (under the list) turns the selected pack's PNGs into
+DDS files with their mip levels, with the compressor Make HD pack uses ([Compression](#compression)):
+about a quarter of the graphics memory. It runs in the background with a progress bar and
+**Cancel**; each PNG is deleted only once its DDS file is written, so a stopped run leaves a pack
+that works, part compressed. The pack's details say how many of its textures are PNGs and how much
+graphics memory they take. **Compress the PNG textures of packs I add** (on by default,
+`"texture_packs_compress"` in launcher.json) does the same right after **Add pack…**. The change
+applies from the next start of the game. A pack's PNG with a `.dds` of the same name beside it is
+left alone (the game uses the `.dds`).
+
 ## Make HD pack
 
 **Make HD pack** upscales your dump into the pack "HD pack (made on this PC)" (`textures/hd-pack`),
-at **2x** (default) or **4x**. Each choice shows how much graphics memory its pack takes. 4x is
-offered only on a graphics card with at least 10 GB of its own memory (the launcher's GPU
-detection, as for the recommended settings); otherwise it is greyed out and the page says why
-(the card's memory, integrated graphics, or memory the launcher could not read). Turn on **Dump textures**, play where you want sharper textures (a
+at **2x** (default) or **4x**, and compresses it. Each choice shows how much graphics memory its
+pack takes. 4x is offered only on a graphics card with at least 6 GB of its own memory (10 GB when
+the pack is written as PNGs, see below; the launcher's GPU detection, as for the recommended
+settings); otherwise it is greyed out and the page says why (the card's memory, integrated
+graphics, or memory the launcher could not read). Turn on **Dump textures**, play where you want sharper textures (a
 race from the festival dumps about 1,300), then press **Make HD pack**. It runs in the background
 (the rest of the launcher and Play work meanwhile; the game can run, more slowly while both use
 the graphics card), with a progress bar, the time left and **Cancel**. What is made stays: the next
@@ -112,9 +126,13 @@ What it upscales, from the dump's `index.tsv`:
 - **Colours**: the model shifts colours a little (darker, less saturated); each texture's mean and
   contrast per channel are matched back to the original's over the texels it shows (not the filled
   cut-out holes), so upscaled and original textures still match side by side. New detail stays.
-- **Files**: `hd-pack/<fingerprint>.png` (the game makes the mips) and a `pack.toml` with the
-  scale. Each is written to a temporary file and renamed, so a cancelled or interrupted run
-  leaves no half-written texture.
+- **Files**: `hd-pack/<fingerprint>.dds`, compressed with its mip levels ([Compression](#compression)),
+  and a `pack.toml` with the scale and `format = "dds"`. Each is written to a temporary file and
+  renamed, so a cancelled or interrupted run leaves no half-written texture. A build of the game
+  from before the compressor has none: then the textures are written as `<fingerprint>.png` (the
+  game makes the mips), take 4 times the graphics memory, and the page says to build the game
+  again; the next Make HD pack after that compresses the PNGs first (named **Compress HD pack**
+  when nothing is left to upscale).
 
 ### The upscaler
 
@@ -135,33 +153,85 @@ naming the source and licences, and deletes the archive. Before every run each f
 against the SHA-256 recorded when it was unpacked; a changed file is not run. The project's
 repository and releases never contain the upscaler.
 
+### Compression
+
+Make HD pack and Compress PNGs write DDS files: **BC7**, or **BC1** where BC1 keeps a texture nearly
+as well, each with all its mip levels down to 1x1. The game uploads them as they are (SDK patch 0280
+reads BC1-5 and BC7), so a texture takes a quarter (BC7) or an eighth (BC1) of the graphics memory of
+the same PNG, loads faster (no PNG to decode, no mips to make, a quarter of the data to upload at
+the 32 MiB a frame) and is drawn the same way.
+
+| | Chosen: bc7enc_rdo, built with the game | Also considered |
+| --- | --- | --- |
+| What | `forza-texcompress` (`forza-recomp/texcompress`), a small program built next to the game, with Rich Geldreich's encoders from [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo): `bc7enc.cpp` for BC7 (modes 1 and 6 for opaque blocks, 5, 6 and 7 with alpha), `rgbcx` for BC1 | Compressonator CLI (MIT): a prebuilt program per system to download, pin and check, far larger than the two encoders; Intel's ISPC Texture Compressor (MIT) and `bc7e.ispc`: need the ISPC compiler, which the launcher's toolchain does not have, and run on x86 only; basis_universal's scalar port of bc7e: Apache-2.0 |
+| Runs on | wherever the game builds (Windows, Linux, the Flatpak): the launcher's build compiles it with the same toolchain, so nothing is downloaded, and it needs no Python, CUDA or graphics card | |
+| Licence | MIT or public domain (Unlicense), whichever the user prefers: [LICENSE](https://github.com/richgel999/bc7enc_rdo/blob/master/LICENSE), copied to the game's `licenses/bc7enc_rdo.txt` | |
+| From | vendored, unchanged, in `forza-recomp/thirdparty/bc7enc_rdo` at commit `b9438627` (archive SHA-256 in `forza-recomp/thirdparty/README.md`): only the BC7 and BC1 encoders and the BC7 decoder; not `bc7e.ispc` (Apache-2.0) nor LodePNG | |
+
+How each texture is compressed:
+
+- **Mip levels**: the game's own box filter (2x2, the same rounding as it uses for a PNG), so a
+  compressed texture differs from its PNG only by the compression.
+- **Alpha** (cut-outs, glass, decals): BC7, with alpha weighted twice as much as luma, so the
+  edge an alpha test cuts at stays where it was.
+- **Opaque**: BC1 when its largest level keeps at least 40 dB (RGB PSNR), no 4x4 block has an
+  RMS error over 12, and at most 2% of its smooth blocks (every channel within 12 levels:
+  gradients, sky, flat paint) are off by 4 levels or more; otherwise BC7. BC1 has two 5:6:5
+  colours and four levels a block: it is near lossless on flat paint and signs, but bands smooth
+  areas and smears the fine grain the upscaler adds.
+- **Threads**: up to 8, below normal priority (the game can run meanwhile); while the graphics card
+  upscales a batch, the processor compresses the one before.
+
+Measured on the 2x pack of the festival race's dump (738 textures, 320 million texels in their
+largest levels), each texture compared with its uncompressed upscale:
+
+| | BC7 as chosen | BC7, alpha weighted as luma | BC1 for every opaque texture |
+| --- | --- | --- | --- |
+| RGB PSNR, median of the opaque / alpha textures | 49.5 / 46.8 dB | 49.5 / 47.4 dB | 40.0 dB (opaque) |
+| Smooth blocks off by 4 levels or more (opaque) | 0.9% | 0.9% | 14.1% |
+| Texels across half alpha (of the 155 million in the alpha textures) | 299k (0.19%), 72 of them 32 or more from half | 370k, 314 | |
+
+The texels that cross half alpha are next to an edge (its alpha ramp), so an alpha test's cut moves
+by less than a texel; no hole opens. bc7enc's slower settings (uber levels 1 and 2) gained under
+0.1 dB at 1.5 and 3 times the time. As chosen, 60 of the 520 opaque textures are BC1 (flat colours,
+signs: median 67.8 dB), the rest BC7 (median 48.6 dB over all of them): BC1 for every opaque
+texture would save another quarter of the memory, at the cost above.
+
 ### Measured
 
 Ryzen 7 7800X3D with a Radeon RX 9060 XT (16 GB, Linux, RADV), the dump of a festival race (1,228
 textures): 738 upscaled, 490 left as they are (423 small, 25 masks, 22 normal maps, 20 data maps:
-the red and green blend maps). The times are for 758 textures (the data maps were still upscaled
-then); the game runs are the race of the Cost section below (`tools/perf_scenario.sh race` inputs,
-720p, 3 minutes, 30 fps cap), one each.
+the red and green blend maps). Compressed, 678 of the 738 are BC7 and 60 BC1. The game runs are
+`tools/perf_scenario.sh`'s race (3 minutes from the start to 26 s of racing) and free roam (90 s of
+driving) inputs, 720p, 30 fps cap, a warm shader cache, one each, back to back with nothing else
+running (the desktop held 1.0 GB of the card before each):
 
-| | Without packs | HD pack 2x | HD pack 4x |
-| --- | --- | --- | --- |
-| Making the pack | | 9 min 4 s | 9 min 50 s |
-| On disk | | 369 MB | 1.3 GB |
-| Graphics memory of the whole pack | | 1.6 GB | 6.4 GB |
-| In the race: textures drawn from the pack, their graphics memory | | 725, 1,604 MiB | 718, 6,172 MiB |
-| Race: fps, p99 frame (`PERF` race line) | 29.7, 53.4 ms | 29.7, 34.9 ms | 29.7, 35.7 ms |
-| Minute 3 (racing): fps, 1% low, worst frame | 29.8, 18.2, 152 ms | 30.0, 29.3, 34 ms | 30.0, 29.1, 38 ms |
-| The card's used memory at its peak (all programs) | 4.1 GB | 7.4 GB | 11.8 GB |
+| | HD pack 2x, PNG | HD pack 2x, compressed | HD pack 4x, PNG | HD pack 4x, compressed |
+| --- | --- | --- | --- | --- |
+| Making the pack | 9 min 4 s | 8 min 36 s | 9 min 50 s | 8 min 41 s |
+| Compressing a PNG pack that is there (8 threads) | | 29 s | | 1 min 56 s |
+| On disk | 369 MB | 423 MB | 1.3 GB | 1.7 GB |
+| Graphics memory of the whole pack | 1.6 GB | 0.4 GB | 6.4 GB | 1.6 GB |
+| Race: textures drawn from the pack, their graphics memory | 705, 1,580 MiB | 709, 408 MiB | 705, 6,118 MiB | 709, 1,552 MiB |
+| Race: textures read in the first two minutes | 512 | 513 | 412 | 516 |
+| Race: fps, p99 frame (`PERF` race line) | 30.0, 34.1 ms | 30.0, 34.1 ms | 30.0, 34.1 ms | 30.0, 34.2 ms |
+| Race, minute 3: fps, 1% low, worst frame | 30.0, 29.6, 34 ms | 30.0, 29.6, 34 ms | 30.0, 29.6, 34 ms | 30.0, 29.5, 34 ms |
+| Free roam: textures drawn from the pack, their graphics memory | 274, 645 MiB | 264, 157 MiB | 245, 2,586 MiB | 274, 618 MiB |
+| Free roam: fps, p99 frame | 29.9, 34.1 ms | 29.8, 34.2 ms | 29.9, 34.0 ms | 29.9, 34.1 ms |
+| The card's used memory at its peak (all programs), race / free roam | 3.7 / 2.7 GB | 2.5 / 2.2 GB | 8.1 / 4.5 GB | 3.5 / 2.7 GB |
 
-The frame rate held the game's 30 fps with either pack (the run without packs had one 152 ms
-hitch, which is noise: the packs add no work per frame). The replacements are read on a worker and
-uploaded at 32 MiB a frame, so at 4x they come in more slowly (401 of 610 read in the second
-minute, against 523 at 2x). The card's used memory is the driver's total (the desktop and a
-browser held 1.3 GB before the first run, and the driver gave memory back slowly between runs, so
-the later runs' peaks include up to 3 GB left over); the pack's own share is the line above it.
-What changes: tiled ground textures (road, gravel, dirt) lose their DXT blocks and gain fine
-grit, rock faces get sharper cracks, bark and foliage cards show more detail; from the chase
-camera at 1440p the difference is clear on the near road and foliage, small on distant terrain.
+Compressed, a pack takes a quarter of the graphics memory (a compressed 4x pack as much as a PNG 2x
+one), and its textures load faster: a PNG 4x pack had read 412 textures two minutes into the race
+(245 in free roam, against 274 compressed), a compressed one 516. The frame rate held the game's
+30 fps in every run: the packs add no work per frame. Making the pack takes no longer, as the
+processor compresses one batch while the graphics card upscales the next (the PNG times are from
+before the data maps were left out: 758 textures). The compressed pack is a little larger on disk
+than the PNGs: a DDS file holds its texture as the card does, and the mip levels.
+What changes with the pack: tiled ground textures (road, gravel, dirt) lose their DXT blocks and
+gain fine grit, rock faces get sharper cracks, bark and foliage cards show more detail; from the
+chase camera at 1440p the difference is clear on the near road and foliage, small on distant
+terrain. Compressed and PNG packs look the same in the game: the shots at the spawn point differ
+only where something moved between runs (foliage in the wind, traffic's tyre tracks on the dirt).
 
 ## Making and sharing a pack
 
@@ -179,7 +249,8 @@ Rocks HD/
    in `textures/dump/` as `<fingerprint>.dds` and `.png` (to look at), listed in `index.tsv`.
 2. Make your replacement from the dumped file (paint it, redraw it, make it larger) and save it
    with **the same file name** in your pack folder, as described below (same aspect ratio; DDS
-   BC1/BC3/BC7 with mips is smallest in graphics memory, PNG works too).
+   BC1/BC3/BC7 with mips is smallest in graphics memory, PNG works too, and **Compress PNGs**
+   makes BC7 DDS files of PNGs).
 3. Put the folder in `textures/` (or **Add pack…**), tick it, turn on **Use texture packs** and play.
 4. To share it, zip the folder. Name the files by fingerprint only; the fingerprint is the same on
    every PC and in every run.
@@ -316,4 +387,11 @@ sets `texture_pack_root` (`src/forza_app.h`); the launcher's options are in
 `launcher/forza_launcher/schema.py`, the packs in `texture_packs.py` (tests:
 `launcher/test_texture_packs.py`), Make HD pack in `hd_pack.py` (tests: `launcher/test_hd_pack.py`,
 with a stand-in for the upscaler), the page in `ui/texture_packs_page.py` (its list is the Mods
-page's, `ui/mods_page.py` `FolderListPage`).
+page's, `ui/mods_page.py` `FolderListPage`). The compressor (#413) is `forza-recomp/texcompress`
+(`texcompress.{h,cpp}`: mips, encoding, DDS; `main.cpp`: the program and its job list; built by the
+game's CMake and staged next to the game by `builder.stage_runtime`), tested by
+`texcompress_test.cpp` (`cmake -S forza-recomp/texcompress -B build && cmake --build build && ctest
+--test-dir build`: the files decode back within set errors, cut-outs keep their edges, gradients do
+not band); the launcher runs it through `texture_compress.py` (tests: `launcher/test_texture_compress.py`,
+which builds it with the system's C++ compiler, or takes `FORZA_TEXCOMPRESS`, and decodes its files
+back with its `--decode`).

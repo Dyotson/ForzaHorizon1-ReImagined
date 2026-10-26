@@ -14,8 +14,10 @@ masks: red and green blend maps, black and white). Alpha is kept apart: the
 transparent texels' colour is filled from their neighbours before upscaling (so cutout edges do
 not turn dark), and the alpha channel is scaled smoothly on its own. The output's colours are
 matched to the original's (the model shifts them a little). Each texture is written as
-hd-pack/<fingerprint>.png (the game makes its mips), through a temporary file, so a stopped run
-resumes where it stopped."""
+hd-pack/<fingerprint>.dds, compressed by forza-texcompress (texture_compress.py: BC7, or BC1 where
+it keeps the texture nearly as well, with the mip levels; a quarter of the graphics memory of a
+PNG, #413), or as hd-pack/<fingerprint>.png when the game was built without it (the game then
+makes the mips). Each goes through a temporary file, so a stopped run resumes where it stopped."""
 import hashlib
 import json
 import os
@@ -29,7 +31,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import cleanenv, fetch, pins, texture_packs
+from . import cleanenv, fetch, pins, texture_compress, texture_packs
 
 VERSION = "20220424"             # Real-ESRGAN v0.2.5.0's ncnn-Vulkan build
 MODEL = "realesrgan-x4plus"
@@ -38,7 +40,10 @@ TOOL_NAME = f"realesrgan-ncnn-vulkan-{VERSION}"
 RELEASE_URL = "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0"
 PROGRAM_LICENCE_URL = "https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/blob/master/LICENSE"   # MIT
 MODEL_LICENCE_URL = "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE"                # BSD-3-Clause
-MIN_VRAM_GB_4X = 10              # 4x is offered on cards with at least this much of their own memory
+# 4x is offered on cards with at least this much of their own memory: a compressed 4x pack takes
+# about 1.7 GB of graphics memory (as much as an uncompressed 2x one), an uncompressed one 6.4 GB.
+MIN_VRAM_GB_4X = 6
+MIN_VRAM_GB_4X_PNG = 10
 SCALES = (2, 4)
 MAX_SIDE = 4096                  # an output side at most this long (a lower factor for big ones)
 MIN_SIDE = 32                    # textures with a shorter side are left as they are
@@ -48,7 +53,9 @@ BATCH_PIXELS = 4 << 20           # source pixels per upscaler run (progress and 
 BATCH_MAX = 48
 # Measured on a race's dump (docs/texture_packs.md): PNG bytes per output pixel (1.19 at 2x,
 # 1.07 at 4x), and the whole job's time per source megapixel on a Radeon RX 9060 XT (544 s for
-# 758 textures, 81 megapixels, at 2x; 590 s at 4x).
+# 758 textures, 81 megapixels, at 2x; 590 s at 4x). Compressing runs on the CPU while the
+# graphics card upscales the next batch (8 threads of a Ryzen 7 7800X3D: 29 s for the 2x pack,
+# 116 s for the 4x one), so it adds little.
 PNG_BYTES_PER_PIXEL = 1.15
 SECONDS_PER_MEGAPIXEL = 7.0
 
@@ -182,6 +189,10 @@ class Item:
     out_height: int
 
 
+def min_vram_gb_4x(compressed: bool) -> int:
+    return MIN_VRAM_GB_4X if compressed else MIN_VRAM_GB_4X_PNG
+
+
 @dataclass
 class Plan:
     scale: int
@@ -191,16 +202,23 @@ class Plan:
     dumped: int = 0                                # textures in the dump
     out_pixels: int = 0                            # of todo and done
     replaces: int = 0                              # the scale of the pack it replaces (0: none)
+    compressed: bool = False                       # written as BC7/BC1 DDS (else PNG)
+    png_done: int = 0                              # of done, PNGs (compressed first when compressing)
 
     @property
     def count(self) -> int:
         return len(self.todo) + self.done
 
     def disk_bytes(self) -> int:
+        if self.compressed:   # a DDS file is its graphics memory and a header
+            return self.gpu_bytes()
         return int(self.out_pixels * PNG_BYTES_PER_PIXEL)
 
     def gpu_bytes(self) -> int:
-        """Graphics memory of the whole pack: RGBA8 with mips, as the game uploads a PNG."""
+        """Graphics memory of the whole pack: BC7/BC1 with mips as they are in the DDS files, or
+        RGBA8 with mips, as the game uploads a PNG."""
+        if self.compressed:
+            return texture_compress.gpu_bytes(self.out_pixels)
         return self.out_pixels * 4 * 4 // 3
 
     def seconds(self) -> float:
@@ -248,10 +266,12 @@ def read_left_out(pack: Path) -> dict:
     return dict(line.split("\t", 1) for line in lines if "\t" in line)
 
 
-def plan(cfg, scale: int) -> Plan:
+def plan(cfg, scale: int, compressed=None) -> Plan:
     """What making the pack at `scale` does. A pack made at another scale is replaced as a whole:
-    nothing of it counts as made (Plan.replaces names its scale)."""
-    p = Plan(scale=scale)
+    nothing of it counts as made, whether its files are DDS or PNG (Plan.replaces names its
+    scale). `compressed`: whether it writes DDS files (default: whether this PC has the
+    compressor); a PNG made at this scale then counts as made and is compressed first."""
+    p = Plan(scale=scale, compressed=texture_compress.available(cfg) if compressed is None else compressed)
     dump, pack = dump_dir(cfg), pack_dir(cfg)
     index = read_index(dump)
     left_out = read_left_out(pack)
@@ -277,8 +297,13 @@ def plan(cfg, scale: int) -> Plan:
             p.skipped["without a .png in the dump"] += 1
             continue
         p.out_pixels += size[0] * size[1]
-        if same_scale and (pack / f"{fp}.png").is_file():
+        if not same_scale:
+            p.todo.append(Item(fp, w, h, *size))
+        elif (pack / f"{fp}.dds").is_file():
             p.done += 1
+        elif (pack / f"{fp}.png").is_file():
+            p.done += 1
+            p.png_done += 1
         else:
             p.todo.append(Item(fp, w, h, *size))
     return p
@@ -426,9 +451,11 @@ def prepare(source_png: Path, input_png: Path):
     return {"alpha": None if opaque else alpha, "width": w, "height": h}
 
 
-def finish(prepared: dict, input_png: Path, output_png: Path, item: Item, target: Path):
+def finish(prepared: dict, input_png: Path, output_png: Path, item: Item, target: Path, raw: Path = None):
     """Turns the upscaler's output into the pack's file: its size (halved for 2x), the source's
-    colours, the alpha (scaled smoothly), written as target through a temporary file."""
+    colours, the alpha (scaled smoothly), written as target (a PNG) through a temporary file; with
+    `raw`, written there as RGBA8 for the compressor instead, and returns its texture_compress.Job
+    (to write target, a .dds)."""
     from PySide6.QtCore import Qt
     QImage = _qimage()
     out = QImage(str(output_png))
@@ -451,6 +478,13 @@ def finish(prepared: dict, input_png: Path, output_png: Path, item: Item, target
         scaled = _from_rgba(bytes(grey), prepared["width"], prepared["height"]).scaled(
             item.out_width, item.out_height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         data[3::4] = _rgba(scaled)[1][0::4]
+    if raw is not None:
+        if alpha is None:
+            data[3::4] = b"\xff" * (item.out_width * item.out_height)
+        texture_compress.write_raw(raw, bytes(data))
+        # Cut-outs and other alpha: BC7. Opaque: BC1 when it keeps the texture nearly as well.
+        return texture_compress.Job("bc7" if alpha is not None else "auto", item.out_width,
+                                    item.out_height, raw, target)
     image = _from_rgba(bytes(data), item.out_width, item.out_height)
     if alpha is None:
         image = image.convertToFormat(QImage.Format_RGB888)
@@ -463,14 +497,16 @@ def finish(prepared: dict, input_png: Path, output_png: Path, item: Item, target
 
 # --- the job -----------------------------------------------------------------------------------
 
-def _manifest(cfg, scale):
+def _manifest(cfg, scale, compressed=False):
     pack = pack_dir(cfg)
     pack.mkdir(parents=True, exist_ok=True)
+    how = " and compressed (BC7/BC1)" if compressed else ""
     (pack / texture_packs.MANIFEST).write_text(
         'name = "HD pack (made on this PC)"\n'
-        f'description = "Your texture dump upscaled {scale}x by Real-ESRGAN ({MODEL}) on this PC. '
+        f'description = "Your texture dump upscaled {scale}x by Real-ESRGAN ({MODEL}){how} on this PC. '
         'Made from the game\'s art: keep it to yourself."\n'
-        f"scale = {scale}\nmodel = \"{MODEL}\"\n", encoding="utf-8")
+        f"scale = {scale}\nmodel = \"{MODEL}\"\nformat = \"{'dds' if compressed else 'png'}\"\n",
+        encoding="utf-8")
 
 
 def _command(cfg, src: Path, dest: Path) -> list:
@@ -521,6 +557,9 @@ class Result:
         self.left_out = Counter()   # "normal map" / "data map" -> textures
         self.failed = []
         self.seconds = 0.0
+        self.compressed = False
+        self.formats = Counter()    # "BC7" / "BC1" -> textures written so
+        self.converted = 0          # PNGs made before, compressed
 
 
 def make(cfg, scale: int, progress=lambda fraction, text: None, cancelled=lambda: False,
@@ -532,9 +571,19 @@ def make(cfg, scale: int, progress=lambda fraction, text: None, cancelled=lambda
     verify(cfg)
     p = plan(cfg, scale)
     result = Result()
+    result.compressed = compress = p.compressed
     start = time.monotonic()
-    _manifest(cfg, scale)
+    _manifest(cfg, scale, compress)
     pack, work = pack_dir(cfg), work_dir(cfg)
+    if compress and p.png_done:
+        # PNGs an earlier run made (or a build without the compressor): compressed first, so the
+        # whole pack takes a quarter of the memory.
+        log(f"HD pack: compressing the {p.png_done} textures made before as PNG")
+        folder = texture_compress.compress_folder(
+            cfg, pack, work / "compress", lambda n, t: progress(
+                0.0, f"Compressing the textures made before: {n} of {t}"), cancelled, top_only=True)
+        result.converted = folder.compressed
+        result.failed += folder.failed
     total = len(p.todo)
     total_pixels = sum(i.width * i.height for i in p.todo) or 1
     done_pixels = 0
@@ -549,6 +598,7 @@ def make(cfg, scale: int, progress=lambda fraction, text: None, cancelled=lambda
         shutil.rmtree(stage(n), ignore_errors=True)
         (stage(n) / "in").mkdir(parents=True)
         (stage(n) / "out").mkdir()
+        (stage(n) / "raw").mkdir()
         ready = []
         for item in batch:
             if cancelled():
@@ -568,16 +618,33 @@ def make(cfg, scale: int, progress=lambda fraction, text: None, cancelled=lambda
 
     def finish_batch(n, ready):
         nonlocal done_pixels
+        jobs = []
         for item, info in ready:
             if cancelled():
                 raise fetch.Cancelled()
             fp = item.fingerprint
             try:
-                finish(info, stage(n) / "in" / f"{fp}.png", stage(n) / "out" / f"{fp}.png", item,
-                       pack / f"{fp}.png")
-                result.made += 1
+                if compress:
+                    jobs.append(finish(info, stage(n) / "in" / f"{fp}.png", stage(n) / "out" / f"{fp}.png",
+                                       item, pack / f"{fp}.dds", raw=stage(n) / "raw" / f"{fp}.rgba"))
+                else:
+                    finish(info, stage(n) / "in" / f"{fp}.png", stage(n) / "out" / f"{fp}.png", item,
+                           pack / f"{fp}.png")
+                    # A DDS of another scale would be used before the new PNG.
+                    (pack / f"{fp}.dds").unlink(missing_ok=True)
+                    result.made += 1
             except OSError as e:
                 result.failed.append(f"{fp}: {e}")
+        if jobs:
+            outcome = texture_compress.run(cfg, jobs, stage(n) / "compress", cancelled=cancelled)
+            for job in jobs:
+                done = outcome.done.get(str(job.output))
+                if done is None:
+                    result.failed.append(f"{job.output.stem}: {outcome.failed.get(str(job.output), 'not written')}")
+                    continue
+                job.output.with_suffix(".png").unlink(missing_ok=True)   # a PNG an older run left (any scale)
+                result.made += 1
+                result.formats[done.format] += 1
         shutil.rmtree(stage(n), ignore_errors=True)
 
     def report(n_done, pixels_done, text):
@@ -624,6 +691,7 @@ def make(cfg, scale: int, progress=lambda fraction, text: None, cancelled=lambda
         shutil.rmtree(work, ignore_errors=True)
     result.seconds = time.monotonic() - start
     progress(1.0, f"Made {result.made} of {total}")
-    log(f"HD pack: {result.made} made in {result.seconds:.0f} s, left out {dict(result.left_out)}, "
-        f"{len(result.failed)} failed")
+    log(f"HD pack: {result.made} made in {result.seconds:.0f} s"
+        + (f" ({dict(result.formats)}, {result.converted} PNGs compressed)" if compress else " (PNG)")
+        + f", left out {dict(result.left_out)}, {len(result.failed)} failed")
     return result

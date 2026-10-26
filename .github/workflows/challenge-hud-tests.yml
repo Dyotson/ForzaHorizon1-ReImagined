@@ -2,10 +2,30 @@ name: challenge-hud-tests
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'screenshots/**'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  garage-capacity-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cmake -S forza-recomp/tests/garage-capacity -B garage-capacity-tests
+      - run: cmake --build garage-capacity-tests --config Debug
+      - run: ctest --test-dir garage-capacity-tests -C Debug --output-on-failure
+      - run: python -m unittest discover -s launcher -p test_garage.py
   native-message-tests:
     runs-on: ${{ matrix.os }}
     strategy:

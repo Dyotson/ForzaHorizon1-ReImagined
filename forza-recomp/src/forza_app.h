@@ -12,13 +12,16 @@
 #include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
 #include "platform/resume.h"
+#include "platform/native_quit.h"
 #include "platform/graphics_menu.h"
 #include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
+#include "platform/xr.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
 #include <rex/cvar.h>
 #include <array>
+#include <atomic>
 
 #include <string>
 
@@ -52,6 +55,7 @@ void InstallMods(rex::filesystem::VirtualFileSystem* vfs,
 // only once the plugin is loaded.
 void ApplyForzaCvarDefaults();
 void ApplyForzaGpuCvarDefaults();
+void LogForzaPerformanceSettings();
 
 // GPU backend on Windows (the gpu_backend setting, src/main.cpp).
 std::string ForzaGpuBackend();
@@ -75,6 +79,9 @@ class ForzaApp : public rex::ReXApp {
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    // VR (vr_mode): the OpenXR runtime must create the Vulkan instance and device, so it is set
+    // up before the GPU plugin makes its provider (src/platform/xr.h).
+    forza::xr::Prepare();
     if (!config.graphics && config.gpu_plugin.empty()) {
       config.gpu_plugin = "xenos";
     }
@@ -96,7 +103,17 @@ class ForzaApp : public rex::ReXApp {
   // Friends/chat/invite overlays remain separate from native HUD notifications.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     forza::InstallVulkanHooks(graphics_);
+    forza::xr::Start(graphics_);  // VR: the session, once the device exists
     forza::InstallHud(drawer, app_context(), window());
+    quit_lifetime_=std::make_shared<std::atomic_bool>(true);
+    std::weak_ptr<std::atomic_bool> lifetime=quit_lifetime_;
+    forza::native_quit::InstallHost([context=&app_context(),game_window=window(),lifetime](uint64_t generation){
+      const auto alive=lifetime.lock();if(!alive||!alive->load())return;
+      context->CallInUIThread([game_window,lifetime,generation]{
+        const auto current=lifetime.lock();
+        if(current&&current->load()&&forza::native_quit::Consume(generation))game_window->RequestClose();
+      });
+    });
     forza::InstallFriendsKey();
     cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
   }
@@ -116,6 +133,10 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    forza::xr::Shutdown();
+    if(quit_lifetime_)quit_lifetime_->store(false);
+    forza::native_quit::InstallHost({});
+    quit_lifetime_.reset();
     cursor_idle_.reset();
     stall_watchdog_.Stop();
     resume_watcher_.Stop();
@@ -129,10 +150,12 @@ class ForzaApp : public rex::ReXApp {
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    forza::native_quit::Cancel();
     // The SDK terminates guest threads immediately after accepting this request.
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
     resume_watcher_.Stop();
+    forza::xr::Shutdown();  // ends the headset session before the SDK exits
     forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
@@ -179,6 +202,7 @@ class ForzaApp : public rex::ReXApp {
     forza::PatchMotionBlurStencilThreshold();
     // The 3D scene below 720p (scene_resolution, #347): scenario and screen texture tables.
     forza::PatchSceneResolution();
+    LogForzaPerformanceSettings();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
     // Texture packs (#384, docs/texture_packs.md): dumps and replacements live in
@@ -239,6 +263,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  std::shared_ptr<std::atomic_bool> quit_lifetime_;
   std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
   forza::resume::Watcher resume_watcher_;
