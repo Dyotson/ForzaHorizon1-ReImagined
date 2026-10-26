@@ -1,5 +1,6 @@
 """The "VR headset (experimental)" setting (#333): the cvar, the launch arguments and the Flatpak runtime path."""
 from pathlib import Path
+import os
 import re
 import sys
 import tempfile
@@ -232,13 +233,19 @@ class VrSettingTest(unittest.TestCase):
                          environ={**env, "XR_RUNTIME_JSON": ""}, session=True)
             self.assertEqual(output["XR_RUNTIME_JSON"], str(host / "openxr/1/active_runtime.json"))
 
-    def test_relative_xdg_home_uses_default(self):
+    def test_relative_xdg_home_matches_pinned_loader(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            manifest = home / ".config/openxr/1/active_runtime.json"
+            manifest = home / "relative/openxr/1/active_runtime.json"
             manifest.parent.mkdir(parents=True)
             manifest.write_text("{}")
-            self.assertEqual(vr.active_runtime_manifest(home, {"XDG_CONFIG_HOME": "relative"}), manifest)
+            previous = Path.cwd()
+            try:
+                os.chdir(home)
+                self.assertEqual(vr.active_runtime_manifest(home, {"XDG_CONFIG_HOME": "relative"}),
+                                 Path("relative/openxr/1/active_runtime.json"))
+            finally:
+                os.chdir(previous)
 
 
 if __name__ == "__main__":

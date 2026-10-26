@@ -45,10 +45,9 @@ def active_runtime_manifest(home: Path, environ=None, in_flatpak=None):
     in_flatpak = paths.IN_FLATPAK if in_flatpak is None else in_flatpak
     # In a sandbox XDG_CONFIG_* name the app's folders, not the host's runtime install.
     config = environ.get("HOST_XDG_CONFIG_HOME") or (None if in_flatpak else environ.get("XDG_CONFIG_HOME"))
-    config_home = Path(config) if config and Path(config).is_absolute() else home / ".config"
+    config_home = Path(config) if config else home / ".config"
     search = environ.get("HOST_XDG_CONFIG_DIRS") or (None if in_flatpak else environ.get("XDG_CONFIG_DIRS"))
-    dirs = [config_home] + [Path(d) for d in (search or "/etc/xdg").split(os.pathsep)
-                            if d and Path(d).is_absolute()]
+    dirs = [config_home] + [Path(d) for d in (search or "/etc/xdg").split(os.pathsep) if d]
     dirs.append(Path("/etc"))
     machine = platform.machine().lower()
     abi = {"amd64": "x86_64", "arm64": "aarch64"}.get(machine, machine)
