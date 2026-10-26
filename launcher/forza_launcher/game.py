@@ -413,11 +413,11 @@ def texture_packs_used(cfg: Config) -> bool:
     return bool(settings.get("texture_dump")) or bool(settings.get("texture_replace"))
 
 
-def native_update_requested(cfg: Config, toml_text: str) -> bool:
+def native_update_requested(cfg: Config, toml_text: str, keys=("forza_car_tuning",)) -> bool:
     """Use the same config/environment/CLI precedence as the runtime flags."""
     values = parse_toml(toml_text)
     environment = {**os.environ, **parse_env(cfg.advanced.get("extra_env", ""))}
-    for key in ("forza_car_tuning",):
+    for key in keys:
         name = "REX_" + key.upper()
         if name in environment:
             # rex::string::from_string<bool> is case-sensitive (numeric.h).
@@ -448,8 +448,8 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
             except ValueError:
                 return flag_count(value)
 
-    cli_count = None
-    invalid_count = False
+    cli_counts = {}
+    invalid_counts = set()
     extra = split_args(cfg.advanced.get("extra_args", ""))
     for arg in extra:
         if arg == "--":
@@ -460,7 +460,7 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
         negated = key.startswith("no-")
         if negated:
             key = key[3:]
-        if key not in ("forza_car_tuning",):
+        if key not in keys:
             continue
         if not equal or value in ("", "{}"):
             value = "false" if negated else "true"
@@ -471,17 +471,20 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
             if count is not None:
                 value = str(-count)
         count = summed_count(value)
-        invalid_count |= count is None
-        cli_count = (cli_count or 0) + (count or 0)
-    if cli_count is not None:
-        # The registered callback receives an int64 after CLI11 formats its
-        # floating-point sum. Fractional counts below one therefore stay off.
-        integer = re.match(r"[+-]?\d+", format(cli_count, ".16g"))
-        values["forza_car_tuning"] = not invalid_count and integer is not None and int(integer[0]) > 0
-    return any(values.get(key) is True for key in ("forza_car_tuning",))
+        if count is None:
+            invalid_counts.add(key)
+        cli_counts[key] = cli_counts.get(key, 0) + (count or 0)
+    for key, count in cli_counts.items():
+        # CLI11 formats its floating-point sum before the int64 callback.
+        integer = re.match(r"[+-]?\d+", format(count, ".16g"))
+        values[key] = key not in invalid_counts and integer is not None and int(integer[0]) > 0
+    return any(values.get(key) is True for key in keys)
 
 
 def update_data_root(cfg: Config, game: GameInstall, toml_text: str) -> Path:
+    menu = game.dir / "update-menu"
+    if native_update_requested(cfg, toml_text, ("forza_native_pause",)):
+        return menu if menu.is_dir() else game.dir / "update"
     prepared = game.dir / "update-native"
     if native_update_requested(cfg, toml_text) and prepared.is_dir():
         return prepared
@@ -494,8 +497,9 @@ def native_tuning_needs_build(cfg: Config, install: GameInstall) -> bool:
     # overlay cannot repair or replace the user's explicitly selected directory.
     if any(a.startswith("--update_data_root") for a in split_args(cfg.advanced.get("extra_args", ""))):
         return False
-    return (native_update_requested(cfg, render_toml(cfg)) and
-            not (install.dir / "update-native").is_dir())
+    text = render_toml(cfg)
+    return (native_update_requested(cfg, text) and
+            update_data_root(cfg, install, text) == install.dir / "update")
 
 
 def _build_plan(cfg: Config, game: GameInstall, write, refresh_xenia, log, saver, vr=False) -> LaunchPlan:

@@ -438,7 +438,7 @@ class MainWindow(QMainWindow):
         if str(error) != self._last_start_error:
             self._last_start_error = str(error)
             paths.log_error("start the game", error)
-        self.play.show_message(f"Could not start the game: {error}\nLog: {paths.launcher_log()}", True, keep=True)
+        self.play.show_message(f"Could not start the game: {error}\nLauncher log: {paths.launcher_log()}", True, keep=True)
 
     def _start_plan(self, plan):
         try:

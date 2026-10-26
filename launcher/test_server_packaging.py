@@ -32,7 +32,7 @@ class ServerPackaging(unittest.TestCase):
             self.write(name)
         for name in flatpak.ASSETS:
             self.write("docs/images/" + name)
-        for name in set(flatpak.TOOLS) | set(package.builder.NATIVE_TUNING_FILES):
+        for name in set(flatpak.TOOLS) | set(package.builder.NATIVE_TUNING_FILES) | set(package.builder.NATIVE_MENU_FILES):
             self.write("tools/" + name)
         self.dist = self.base / "pyinstaller"
         self.dist.mkdir()

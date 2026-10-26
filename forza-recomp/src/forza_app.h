@@ -12,6 +12,7 @@
 #include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
 #include "platform/resume.h"
+#include "platform/native_quit.h"
 #include "platform/graphics_menu.h"
 #include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
@@ -20,6 +21,7 @@
 #include <rex/ui/window.h>
 #include <rex/cvar.h>
 #include <array>
+#include <atomic>
 
 #include <string>
 
@@ -103,6 +105,15 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallVulkanHooks(graphics_);
     forza::xr::Start(graphics_);  // VR: the session, once the device exists
     forza::InstallHud(drawer, app_context(), window());
+    quit_lifetime_=std::make_shared<std::atomic_bool>(true);
+    std::weak_ptr<std::atomic_bool> lifetime=quit_lifetime_;
+    forza::native_quit::InstallHost([context=&app_context(),game_window=window(),lifetime](uint64_t generation){
+      const auto alive=lifetime.lock();if(!alive||!alive->load())return;
+      context->CallInUIThread([game_window,lifetime,generation]{
+        const auto current=lifetime.lock();
+        if(current&&current->load()&&forza::native_quit::Consume(generation))game_window->RequestClose();
+      });
+    });
     forza::InstallFriendsKey();
     cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
   }
@@ -123,6 +134,9 @@ class ForzaApp : public rex::ReXApp {
 
   void OnShutdown() override {
     forza::xr::Shutdown();
+    if(quit_lifetime_)quit_lifetime_->store(false);
+    forza::native_quit::InstallHost({});
+    quit_lifetime_.reset();
     cursor_idle_.reset();
     stall_watchdog_.Stop();
     resume_watcher_.Stop();
@@ -136,6 +150,7 @@ class ForzaApp : public rex::ReXApp {
   // frame statistics summary is written here, and where each guest thread is (a game that
   // loads forever is closed this way, #76).
   bool OnWindowCloseRequested() override {
+    forza::native_quit::Cancel();
     // The SDK terminates guest threads immediately after accepting this request.
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
@@ -248,6 +263,7 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  std::shared_ptr<std::atomic_bool> quit_lifetime_;
   std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
   forza::resume::Watcher resume_watcher_;

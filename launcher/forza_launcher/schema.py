@@ -33,6 +33,7 @@ class Setting:
     step: float = 1
     platform: str = ""  # "linux" or "windows": shown only there
     restart: bool = False
+    max_length: int | None = None  # optional string input limit
     legacy: dict = field(default_factory=dict)  # value an older version offered -> the one it became
 
     def applies(self) -> bool:
@@ -553,7 +554,7 @@ add("world_event_ai_grid", "AI difficulty grid size (test)", "Online", "int", 0,
 # --- Profile ---------------------------------------------------------------------------
 add("gamertag", "Gamertag", "Profile", "str", "",
     "Letters, digits and spaces only, up to 15 characters. Empty uses the one kept in live_identity.txt (your login name).",
-    "Identity")
+    "Identity", max_length=15)
 add("game_language", "Game language", "Profile", "choice", "",
     "The language of the game's menus and text. Automatic uses the Language ID and Country ID "
     "below (English, United States by default). Any other choice sets both for you; Hungarian, "
@@ -571,6 +572,10 @@ add("license_mask", "DLC license mask", "Profile", "int", 0,
     "Licence mask for activated content.", "Identity", lo=0, hi=2147483647)
 
 # --- Advanced --------------------------------------------------------------------------
+add("forza_native_pause", "Native pause menu (experimental)", "Advanced", "bool", False,
+    "Use Home, Cars, Social and Settings pages. Requires FH1 Title Update 4 and menu resources "
+    "prepared by the launcher during a build. The original pause menu remains available "
+    "if these resources are missing. Applies on the next game launch.", "Menu", restart=True)
 add("log_level", "Log level", "Advanced", "choice", "info",
     "Keep info unless a bug report asks for more: trace and debug write millions of lines and "
     "lower the frame rate a lot (#174).", "Log",
@@ -681,6 +686,7 @@ def coerce(setting, value):
                 if str(c) == str(value):
                     return c
             return setting.default
-        return str(value)
+        text = str(value)
+        return text[:setting.max_length] if setting.max_length is not None else text
     except (TypeError, ValueError):
         return setting.default

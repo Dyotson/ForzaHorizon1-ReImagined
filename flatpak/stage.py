@@ -62,6 +62,8 @@ def main():
         copy(REPO / "forza-recomp" / rel, out / "project" / "forza-recomp" / rel)
     for f in sorted((REPO / "tools" / "cmake").glob("*.cmake")):
         copy(f, out / "project" / "tools" / "cmake" / f.name)
+    for name in builder.NATIVE_MENU_FILES:
+        copy(REPO / "tools" / name, out / "project" / "tools" / name)
     if not (REPO / "server" / "forza_live_server.py").is_file():
         sys.exit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
     for f in sorted((REPO / "server").glob("*.py")):

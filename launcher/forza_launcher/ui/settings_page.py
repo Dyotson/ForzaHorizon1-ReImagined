@@ -164,6 +164,8 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         w.lineEdit().editingFinished.connect(changed)
         return w
     w = QLineEdit(str(value))  # str, keys
+    if s.max_length is not None:
+        w.setMaxLength(s.max_length)
     w.setMinimumWidth(240)
     if s.key == "gamertag":
         # Limits while typing too: 15 characters, and anything but ASCII letters, digits and
@@ -187,7 +189,7 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
             on_change(cleaned)
         w.editingFinished.connect(gamertag_done)
         return w
-    w.editingFinished.connect(lambda w=w: on_change(w.text().strip()))
+    w.editingFinished.connect(lambda w=w: on_change(schema.coerce(s, w.text().strip())))
     return w
 
 
