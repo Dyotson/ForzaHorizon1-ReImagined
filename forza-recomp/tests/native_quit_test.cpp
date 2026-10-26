@@ -18,7 +18,10 @@ struct Heap {
 namespace forza {
 inline uint8_t* FixtureGuestPtr(uint8_t* base,uint32_t address){
   // One read-only global manager slot used by the adapter, in this fixture.
-  return base+(address==0x833EAACC?0xe000:address==0x82036984?0xf000:address);
+  if(address==0x833CAACC)return base+0xe000; // CSaveProfile's lis/lwz target.
+  if(address==0x82036984)return base+0xf000;
+  assert(address<memory.size());
+  return base+address;
 }
 }
 #undef REX_KERNEL_MEMORY

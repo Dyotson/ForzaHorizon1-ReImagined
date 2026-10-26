@@ -21,7 +21,8 @@ extern "C" REX_FUNC(__imp__sub_82A3DB58);
 namespace forza::native_quit {
 namespace {
 using namespace fh1_menu_widgets;
-constexpr uint32_t kSaveManager=0x833EAACC;
+// CSaveProfile (829F4B80): lis r11,-31939; lwz r3,-21812(r11).
+constexpr uint32_t kSaveManager=0x833CAACC;
 std::mutex mutex;
 Flow flow;
 std::function<void(uint64_t)> host;
