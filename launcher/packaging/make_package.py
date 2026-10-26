@@ -4,7 +4,7 @@
   ForzaHorizon1-ReImagined/
     forza-launcher(.exe) + _internal/      the launcher
     project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
-    server/                                the Forza Live server
+    server/                                the Forza Live server (the server/ submodule, FH1-ReImagined/forza-live)
     sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
     licenses/, README.txt
   (Linux also: install.sh, uninstall.sh, forza-reimagined.desktop, forza-reimagined.png)
@@ -63,6 +63,8 @@ def main():
         copy(f, stage / "project" / "tools" / "cmake" / f.name)
     for resource in builder.NATIVE_TUNING_FILES:
         copy(REPO / "tools" / resource, stage / "project" / "tools" / resource)
+    if (REPO / "server").is_dir() and not (REPO / "server" / "forza_live_server.py").is_file():
+        sys.exit("server/ is empty: the Forza Live server is a git submodule (git submodule update --init server)")
     for f in sorted((REPO / "server").glob("*.py")):
         if not f.name.startswith("test_"):
             copy(f, stage / "server" / f.name)
