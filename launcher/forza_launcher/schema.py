@@ -479,7 +479,7 @@ add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
 
 add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
     "Add Car Tuning to the stock pause menu for your owned car in Colorado free roam. "
-    "Requires Settings > Online > Offline, including when playing solo while signed in to Forza Live. "
+    "Requires Settings > Online > Sign in to Xbox LIVE: off, including when playing solo while signed in to Forza Live. "
     "Supports named setups "
     "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
     "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
