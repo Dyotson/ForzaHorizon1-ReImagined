@@ -197,7 +197,7 @@ Setup's **Build log** is collapsed initially, continues recording while hidden,
 and opens automatically on a build failure. Cancelling a build does not force it open.
 
 Setup has top tabs for **Game files**, **Updates & DLC**, and **Build**. Settings
-has top tabs for its six categories. Each tab switches to a separate page with its
+has top tabs for its seven categories. Each tab switches to a separate page with its
 own scroll position; tabs are not scroll shortcuts. Related settings are grouped
 in padded cards, with space between descriptions and controls. File-location
 controls in Advanced and Profile sit below their descriptions. Setup's **Build
@@ -640,7 +640,7 @@ no list when nothing else is left. Tests: `launcher/test_game_exit.py`.
 range and help text: Display (frame rate, vsync, fullscreen, window, resolution preset, render
 scale, filtering, FSR/CAS, FXAA, ...), Controls (keyboard and mouse `mnk_*` with the steering ramp, 25 keybinds,
 racing wheel `wheel_*` (mode, rotation, pedals, curves, buttons, force feedback and its centring, engine rumble and road rumble strengths, rumble style, clutch and shifter, pedal and shifter devices; [playing.md](playing.md#racing-wheels-issue-4)), controller bindings `controller_remap` (written by Controls, Bindings; [playing.md](playing.md#remapping-a-controller-279)),
-deadzones, vibration, `FORZA_PAD_PER_USER`), Audio, Online (server mode, live room, Horizon
+deadzones, vibration, `FORZA_PAD_PER_USER`), Gameplay (the CPU drivers' rubber banding), Audio, Online (server mode, live room, Horizon
 World switches), Profile (own save or a copy of a Xenia Canary save, gamertag, language),
 Advanced (log, GPU, game/data folders, extra command-line flags, environment variables,
 a free-form "other settings" box for any further `forza.toml` key, a live preview of the
@@ -651,6 +651,9 @@ stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
 Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
 a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
 0.5 s ([playing.md](playing.md#running-the-game)).
+Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
+races every CPU driver at its own skill wherever you are, in single-player races and free roam;
+online races keep the game's AI ([playing.md](playing.md#running-the-game)).
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3
@@ -846,9 +849,9 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   generated uninstaller or the separately bundled Microsoft redistributable. If
   payload signing is added, generate this manifest after signing. The installer
   smoke test verifies that the installed launcher matches its recorded hash.
-* `pages.yml` (push to main touching `site/`): copies `docs/images` next to `site/` and
-  deploys it to GitHub Pages. Enable Pages (source: GitHub Actions) in the repository settings.
-* Preview the page: `tools/preview_site.sh`.
+* The website (forza.dyotson.dev) is its own repository,
+  [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website), with its Pages workflow
+  and `tools/preview_site.sh`. Screenshots it shows from `docs/images` are copied there.
 
 ## Developing
 

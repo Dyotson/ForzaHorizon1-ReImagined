@@ -5,7 +5,7 @@
 <h1 align="center">Forza Horizon 1: ReImagined</h1>
 
 > [!TIP]
-> **Install with the launcher: [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest).**
+> **Install with the launcher: [latest release](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/releases/latest).**
 > Windows installer, Linux Flatpak (recommended on SteamOS: [Steam Deck steps](docs/steam_deck.md)), or the Linux `.tar.gz`.
 > It updates itself, and it builds the game on your PC from your own copy.
 > [Website](https://forza.dyotson.dev) · [Discord](https://discord.gg/yu7zScdcWw)
@@ -17,7 +17,7 @@
 
 <p align="center">
   The original 2012 Forza Horizon, running natively on PC: single player, online free roam,
-  leaderboards and rivals. Windows is what most players use now. Linux works too.
+  leaderboards and rivals, on Windows and Linux.
 </p>
 
 **Forza Horizon 1: ReImagined** runs **Forza Horizon (Xbox 360)** natively on Windows and Linux.
@@ -25,9 +25,11 @@ The original PowerPC executable is statically recompiled to C++ with the
 [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk), the same approach as
 [RecompiledHaloReach](https://github.com/Dyotson/RecompiledHaloReach). On top of that build the project adds:
 
-- **The whole festival, single player.** Free roam, festival events, showcase events, audio and saves have been played through on ReImagined. A Xenia Canary save can be continued. Title Update 4 (the default) adds Horizon Rally and the 1000 Club, and all 23 DLC packages can be installed. The Rally co-driver is heard. [`docs/dlc.md`](docs/dlc.md)
-- **Online through Forza Live.** Xbox LIVE and Turn 10's services are gone. The game signs in to the Forza Live server (`server/`): Horizon World, the friends list and chat, leaderboards and Rivals, car clubs and the Message Center. There is a public server, and you can host your own. [`docs/online_vision.md`](docs/online_vision.md)
-- **A frame rate you set.** The original game is 30 fps. The setting goes up to 240 for a PC that can hold the higher rate. The high numbers further down were measured on one desktop. A Steam Deck or a low-end PC is much slower.
+- **Single player, Title Update 4 and DLC.** The whole festival, Horizon Rally, the 1000 Club and all 23 DLC packages. [`docs/dlc.md`](docs/dlc.md)
+- **Online through Forza Live.** Horizon World, friends, leaderboards and Rivals, on a public server or your own. [`docs/online_vision.md`](docs/online_vision.md)
+- **Co-op campaign.** Friends race festival events together; the launcher applies eligible career results after the game closes. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Mods and HD texture packs.** [`docs/modding.md`](docs/modding.md) · [`docs/texture_packs.md`](docs/texture_packs.md)
+- **A frame rate you set.** 30 fps is the original; the setting goes up to 240 on a PC that can hold it.
 
 This repository contains **no game code and no game data**. You need your own copy of the
 game (a disc image, a Games on Demand package, or an extracted folder). The recompiled
@@ -50,20 +52,27 @@ C++ is generated from that copy on your machine. No game binaries are published 
 
 ## Screenshots
 
-Captured from the recompiled game running natively on Linux.
+Captured from the recompiled game and its launcher.
 
 | | |
 |---|---|
 | ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
-| ![Prologue drive](docs/images/forza-prologue-drive.jpg)<br>Free roam, Colorado mountains | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist: race lobby and races |
+| ![Co-op Festival race](docs/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
+| ![Original and HD 2x textures](docs/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](docs/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
+| ![Mods page](docs/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](docs/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
 
 ## What you can play
 
-- **Single player, Title Update 4 and DLC.** TU4 is the default when you give the launcher your update. Horizon Rally and the 1000 Club need it. All 23 DLC packages count as installed, including the Rally Expansion's cars and the 1000 Club's cars. [`docs/dlc.md`](docs/dlc.md)
-- **Controls.** Keyboard and mouse (menus, free roam, a race, the pause menu, the map and photo mode). Throttle and brake are on/off, and the menus have no pointer. [`docs/playing.md`](docs/playing.md#keyboard-and-mouse). A gamepad works. Racing wheels are presented as the Xbox 360 Wireless Racing Wheel, with the game's force feedback, an H-pattern shifter and a clutch pedal. Logitech G29, G920 and G923 are tested; other wheels go through **Settings > Controls > Axis numbers** and **Settings > Controls > Button numbers**. Press-to-bind mapping and calibration are in progress ([#279](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/279)). On the launcher's Controls page, **DualSense adaptive triggers** (**Enable adaptive triggers while driving**) adds throttle and brake resistance on a DualSense or DualSense Edge. It follows how far the trigger is pressed. RPM, tire slip, ABS and road effects are not available yet. [`docs/playing.md`](docs/playing.md#racing-wheels-issue-4)
-- **Picture.** **Settings > Display > Upscaling filter:** Bilinear, AMD CAS (sharpen), AMD FSR 1, or AMD FSR 3 (temporal), on any GPU under Vulkan. On Windows, an RTX GPU can use **Settings > Display > NVIDIA DLSS** (Quality, Balanced, Performance) and DLAA. **Settings > Display > Anti-aliasing:** the game's MSAA, SMAA 1x, FSR Native AA, and on Windows NVIDIA DLAA. A separate anti-aliasing method applies when upscaling is off. **Settings > Display > Render scale** draws at 1x to 8x the game's 1280x720. **Settings > Display > Frame rate** lists 20, 30, 40, 60, 75, 90, 100, 120, 144, 165, 180, 200 and 240 fps, or a rate you type from 60 to 240. 20 is for a PC that can't hold 30: every frame stays on a 60 Hz screen equally long. The first entry is **Match display**, which follows the monitor the game runs on, up to what that PC is likely to hold. **Settings > Display > HDR output** is Vulkan only: an HDR display with HDR turned on in the OS. It brightens the existing SDR picture. It does not add HDR detail the game never stored, and Direct3D 12 does not use it. **Settings > Display > Ultrawide gameplay** widens the view under Vulkan. Menus and the map stay 16:9. Title Update 4 also has a Graphics page in the pause menu. [`docs/rendering.md`](docs/rendering.md) · [`docs/hdr.md`](docs/hdr.md) · [`docs/ultrawide.md`](docs/ultrawide.md) · [`docs/antialiasing.md`](docs/antialiasing.md)
-- **Photos, the minimap, unicorn cars.** Photo mode saves into your profile. The launcher's Photo gallery browses those pictures and can export a PNG or JPEG. The minimap uses the full-size map icons. **Saves** backs up the profile before Play (on by default) and can restore a backup. **Edit profile…** can change credits, XP and the wristband offline, and **Add missing unicorns** adds the seven unicorn cars the save does not already have. [`docs/unicorn_cars.md`](docs/unicorn_cars.md)
-- **Crash reports.** After an unexpected exit, **Play > Review crash report…** shows a report you can edit, copy or save. Nothing is uploaded unless you choose to open a GitHub issue.
+- **Single player, Title Update 4 and DLC.** TU4 is the default when you give the launcher your update; Horizon Rally and the 1000 Club need it. All 23 DLC packages count as installed. [`docs/dlc.md`](docs/dlc.md)
+- **Co-op Festival** (Multiplayer > Find Game). The host types `/event FR05` in chat and everyone races that event. Start through the launcher: it applies eligible career results after the game closes. A loaner car is lent if you have none that fits. [`docs/coop_campaign.md`](docs/coop_campaign.md)
+- **Mods.** The **Mods** page: **Add mod...**, on or off, load order. [`docs/modding.md`](docs/modding.md)
+- **HD texture packs** (Vulkan). Add a community pack, or **Make HD pack** with a local AI upscaler. Packs are compressed. [`docs/texture_packs.md`](docs/texture_packs.md)
+- **Controls.** Keyboard and mouse, gamepad, or a wheel with force feedback (Logitech G29, G920 and G923 tested). DualSense adaptive triggers are optional. [`docs/playing.md`](docs/playing.md)
+- **Picture.** AMD FSR 1 and 3, CAS, SMAA, NVIDIA DLSS and DLAA (Windows, RTX), render scale, HDR, ultrawide. [`docs/rendering.md`](docs/rendering.md) · [`docs/hdr.md`](docs/hdr.md) · [`docs/ultrawide.md`](docs/ultrawide.md) · [`docs/antialiasing.md`](docs/antialiasing.md)
+- **Weak PCs.** A 540p 3D scene (about 44% more fps when the graphics card is the limit), **World detail** (shadows, distant textures) and scene anti-aliasing (MSAA) Off or 2x. Steam Deck: [`docs/steam_deck.md`](docs/steam_deck.md)
+- **Frame rate.** 20 to 240 fps, or Match display.
+- **Radio.** **Settings > Audio > Radio > Station changes: Fast** flips stations quickly.
+- **Photos, saves, unicorn cars.** Photo gallery, automatic save backups, a profile editor and the seven unicorn cars. [`docs/unicorn_cars.md`](docs/unicorn_cars.md)
 - **Online.** See [Playing online](#playing-online).
 
 ## Performance
@@ -78,18 +87,18 @@ These numbers are from one machine, a Ryzen 7 7800X3D with a Radeon RX 9060 XT (
 | 120 | 115.2 fps | 75.7 fps |
 | 144 | 111.5 fps | 70.1 fps |
 
-Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is render scale 1 with AMD FSR 1, 30 fps (40 with the screen at 40 Hz), Scene anti-aliasing Off and Console detail. Higher render scales and 60 fps cost more than the Deck has to spare. Install, settings, controls and suspend: [`docs/steam_deck.md`](docs/steam_deck.md).
+Steam Deck players report about 15–20 fps in free roam, and less in a big race ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/140)). A Deck test of 0.1.27 was about 17 fps in free roam and about 8 fps in an 8-car race. 4-core laptops and integrated GPUs report about 15–25 fps ([#263](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/268)). The launcher's Deck preset is render scale 1 with AMD FSR 1, 30 fps (40 with the screen at 40 Hz), Scene anti-aliasing Off and Console detail. Higher render scales and 60 fps cost more than the Deck has to spare. Install, settings, controls and suspend: [`docs/steam_deck.md`](docs/steam_deck.md).
 
-Shader prebuild and the shader-cache fixes shipped in 0.1.28. Further CPU savings for 4-core systems are in testing ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45)). [`docs/shader_prebuild.md`](docs/shader_prebuild.md) · [`docs/perf.md`](docs/perf.md)
+Shader prebuild and the shader-cache fixes shipped in 0.1.28. Further CPU savings for 4-core systems are in testing ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45)). [`docs/shader_prebuild.md`](docs/shader_prebuild.md) · [`docs/perf.md`](docs/perf.md)
 
 ## Known issues
 
-- **Low-end CPUs and the Steam Deck.** Free roam is about 15–20 fps on a Deck and about 15–25 fps on a 4-core laptop or an integrated GPU. Big races are slower. Use 30 fps. Work is in progress ([#45](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/140), [#263](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/268)).
-- **NVIDIA.** Stutter on Vulkan with a warm shader cache ([#49](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/49), [#158](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/158)), green texture glitches ([#106](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/106)), flicker and coloured artifacts at render scale 3 ([#47](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/47)), and flicker and greenish reflections on Direct3D 12 ([#46](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/46)). On Windows, **Settings > Display > Graphics API** should stay on Vulkan unless you are comparing. Some fast NVIDIA PCs also report the game barely using the machine ([#181](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/181), [#34](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/34)).
-- **Crashes.** A bad guest read during a race is still open ([#83](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/83)). Quitting to the title screen can crash ([#262](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/262)). Alt-tab on some NVIDIA systems aborts the game ([#221](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/221)). A race crash that exited with code 134 ([#182](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/182)) is fixed in 0.1.28; if you still hit it, comment there. Flashing or black video is still open on some AMD and Intel machines ([#91](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/91), [#114](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/114)).
+- **Low-end CPUs and the Steam Deck.** Free roam is about 15–20 fps on a Deck and about 15–25 fps on a 4-core laptop or an integrated GPU. Big races are slower. Use 30 fps. Work is in progress ([#45](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/45), [#140](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/140), [#263](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/263), [#268](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/268)).
+- **NVIDIA.** Stutter on Vulkan with a warm shader cache ([#49](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/49), [#158](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/158)), green texture glitches ([#106](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/106)), flicker and coloured artifacts at render scale 3 ([#47](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/47)), and flicker and greenish reflections on Direct3D 12 ([#46](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/46)). On Windows, **Settings > Display > Graphics API** should stay on Vulkan unless you are comparing. Some fast NVIDIA PCs also report the game barely using the machine ([#181](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/181), [#34](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/34)).
+- **Crashes.** A bad guest read during a race is still open ([#83](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/83)). Quitting to the title screen can crash ([#262](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/262)). Alt-tab on some NVIDIA systems aborts the game ([#221](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/221)). A race crash that exited with code 134 ([#182](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/182)) is fixed in 0.1.28; if you still hit it, comment there. Flashing or black video is still open on some AMD and Intel machines ([#91](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/91), [#114](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/114)).
 - **Title Update 4 and the base game do not share rooms.** A TU4 game only meets other TU4 players. A profile that has been saved on TU4 is refused by the base game ("MISSING TITLE UPDATE"). [`docs/dlc.md`](docs/dlc.md#online-20)
 
-Other open reports include a lobby that stops taking joins after time in a club ([#186](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/186)) and an online level reset ([#245](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/245)).
+Other open reports include a lobby that stops taking joins after time in a club ([#186](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/186)) and an online level reset ([#245](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/245)).
 
 ## Requirements
 
@@ -102,7 +111,7 @@ Other open reports include a lobby that stops taking joins after time in a club 
 
 This is the way to install. The launcher builds the game on your machine from your own files. Nothing of the game is downloaded.
 
-1. Get the launcher from the [latest release](https://github.com/Dyotson/ForzaHorizon1-ReImagined/releases/latest). On Windows, the installer. On Linux, the Flatpak (recommended on SteamOS) or the `.tar.gz`. From v0.1.9 onward the launcher checks for updates itself (**About > Launcher updates**).
+1. Get the launcher from the [latest release](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/releases/latest). On Windows, the installer. On Linux, the Flatpak (recommended on SteamOS) or the `.tar.gz`. From v0.1.9 onward the launcher checks for updates itself (**About > Launcher updates**).
    The Flatpak is `flatpak install --user ForzaHorizon1-ReImagined-x86_64.flatpak`. It pulls the freedesktop SDK runtime from Flathub. Install the compiler extension once, or the launcher downloads a 2 GB compiler instead and tells you so:
 
    ```sh
@@ -131,7 +140,7 @@ The same document is installed as `windows-build-manifest.json`. If antivirus
 quarantines a file, report the exact file path, detection name and launcher version
 from Protection history. The published manifest can identify the expected file
 without restoring it. Signing and antivirus assessment remain separate work
-([#354](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/354)).
+([#354](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/354)).
 
 ## Building from source
 
@@ -151,12 +160,12 @@ In **Settings > Online**, pick one:
 
 - **Public server.** Horizon World, leaderboards and rivals. The address filled in is `forza-reimagined.playit.plus:56677`. You forward no ports.
 - **This PC.** A private server for this session.
-- **My own server.** [`docs/hosting.md`](docs/hosting.md). Python 3 from the standard library, or Docker.
+- **My own server.** [Hosting guide](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/hosting.md) in [forza-live](https://github.com/FH1-ReImagined/forza-live), the server's repository. Python 3 from the standard library, or Docker.
 - **Offline.** No Xbox LIVE.
 
 Horizon World is the first playlist under Multiplayer, Find Game. The server places you in the fullest open world, up to 8 players, or you open one and drive. Someone who joins later gets JUMP IN. When the host leaves, the others keep driving. Each world is its own session. A local test has run with three players. [`docs/online_vision.md`](docs/online_vision.md)
 
-Friends (F8, or hold the left stick on a controller) and chat (F9) use the server's list. Leaderboards cover speed traps, speed zones, events and Rivals (times, ghosts and bounties), and the public server's are on the [website](https://forza.dyotson.dev/leaderboards.html). Car clubs and the Message Center work. The club garage can share a car. [`docs/title_services.md`](docs/title_services.md) · [`docs/playing.md`](docs/playing.md)
+Friends (F8, or hold the left stick on a controller) and chat (F9) use the server's list. Leaderboards cover speed traps, speed zones, events and Rivals (times, ghosts and bounties), and the public server's are on the [website](https://forza.dyotson.dev/leaderboards.html). Car clubs and the Message Center work. The club garage can share a car. [Title services](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/title_services.md) · [`docs/playing.md`](docs/playing.md)
 
 Title Update 4 players and base-game players do not meet. The Auction House has no screens in this game. The server can store auctions, and there is nowhere in the game to open them.
 
@@ -164,12 +173,12 @@ Title Update 4 players and base-game players do not meet. The Auction House has 
 
 [`docs/launcher.md`](docs/launcher.md),
 [`docs/playing.md`](docs/playing.md),
-[`docs/hosting.md`](docs/hosting.md),
+[hosting a server](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/hosting.md) (forza-live),
 [`docs/perf.md`](docs/perf.md),
 [`docs/framerate.md`](docs/framerate.md),
 [`docs/online_vision.md`](docs/online_vision.md),
 [`docs/PROJECT.md`](docs/PROJECT.md),
-and the [issue tracker](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues).
+and the [issue tracker](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
 
 ## Roadmap
 
@@ -185,7 +194,8 @@ Every card is an issue. Comment there to discuss an item or help with it.
 ## Community
 
 Questions, help with setup and online sessions: [Discord](https://discord.gg/yu7zScdcWw).
-Bugs and feature requests: [issues](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues).
+Bugs and feature requests: [issues](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
+The website's source is in [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website).
 The bug report template asks for your OS, CPU, GPU and log.
 
 ## Legal

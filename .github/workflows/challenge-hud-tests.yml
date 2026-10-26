@@ -2,6 +2,11 @@ name: challenge-hud-tests
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'screenshots/**'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 permissions:
   contents: read

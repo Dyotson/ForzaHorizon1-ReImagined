@@ -549,6 +549,7 @@ class SettingsPage(QWidget):
         leads = {
             "Display": "Window, frame rate and picture.",
             "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
+            "Gameplay": "How the game plays in single player. Online games always play as shipped.",
             "Audio": "",
             "Online": "Xbox LIVE is gone, so the game signs in to a Forza Live server instead.",
             "Profile": "Your saves live in the game's data folder. You can also continue a Xenia Canary save.",
@@ -788,7 +789,7 @@ class SettingsPage(QWidget):
                                           "rivals. You forward no ports."),
             ("local", "This PC", "Starts a Forza Live server just for this session (127.0.0.1:21200). "
                                   "Online features work, but only you are in it."),
-            ("custom", "My own server", "A server you or a friend host (docs/hosting.md)."),
+            ("custom", "My own server", "A server you or a friend host (forza-live's docs/hosting.md on GitHub)."),
             ("offline", "Offline", "No Xbox LIVE and no server."),
         ]
         self.radios = {}

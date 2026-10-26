@@ -3,7 +3,7 @@
 Planned work, not started; each item is also a GitHub issue. Findings and progress go to
 `docs/PROJECT.md` (status log) or the topic's doc once work begins.
 
-## Installers for Windows and Linux ([#1](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/1))
+## Installers for Windows and Linux ([#1](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/1))
 
 An installer per platform, built by GitHub Actions and published as release assets, so
 players do not have to follow the build steps in the README.
@@ -26,7 +26,7 @@ players do not have to follow the build steps in the README.
   codegen, which needs the game's `default.xex`) and, for Windows, the MSVC CRT and
   Windows SDK from `xwin` (Microsoft's license).
 
-## More than 8 players in free roam ([#2](https://github.com/Dyotson/ForzaHorizon1-ReImagined/issues/2))
+## More than 8 players in free roam ([#2](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues/2))
 
 Raise the Horizon World's cap of 8 players (`docs/online_vision.md`, "Session cap: 8").
 

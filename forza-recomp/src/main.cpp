@@ -8,6 +8,7 @@
 
 #include "forza_app.h"
 #include "hooks/frame_time.h"
+#include "debug/performance_settings.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -115,4 +116,14 @@ void ApplyForzaGpuCvarDefaults() {
   // need and costs nothing in a race; "fast" copies every resolve every frame and cost
   // 16-21% of the frame rate at 144 (docs/perf.md).
   SetSdkCvarDefault("readback_resolve", "some");
+}
+
+void LogForzaPerformanceSettings() {
+  forza::performance_settings::Snapshot([](std::string_view name)
+      -> std::optional<std::string> {
+    if (!rex::cvar::GetFlagInfo(name)) return std::nullopt;
+    return rex::cvar::GetFlagByName(name);
+  }, [](const std::string& line) {
+    REXLOG_INFO("Performance settings at guest launch: {}", line);
+  });
 }

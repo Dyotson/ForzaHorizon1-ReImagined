@@ -12,7 +12,7 @@ import math
 from . import gamertag, languages, power
 from .paths import IS_WINDOWS
 
-GROUPS = ["Display", "Controls", "Audio", "Online", "Profile", "Advanced"]
+GROUPS = ["Display", "Controls", "Gameplay", "Audio", "Online", "Profile", "Advanced"]
 # The frame rates under 60 the game runs (forza-recomp/src/main.cpp): 20 and 40 divide 60 and
 # 120 Hz screens, so every frame stays on screen for the same number of refreshes.
 LOW_FRAME_RATES = (20, 30, 40)
@@ -212,6 +212,21 @@ add("world_texture_detail", "Distant texture detail", "Display", "choice", "cons
     "Console 0, High -0.5, Ultra -1). Best with 8x or 16x anisotropic filtering; Ultra can "
     "shimmer slightly on fine patterns.", "World detail",
     choices=[("console", "Console"), ("high", "High"), ("ultra", "Ultra")], restart=True)
+add("world_shadow_filter", "Shadow softness", "Display", "choice", "console",
+    "Softer, smoother edges on the shadows of trees, cars and scenery: Soft filters each shadow "
+    "over a 1.5 times wider area, Softer twice as wide with a wider blur. Measured on an RX 9060 XT: "
+    "no measurable increase for Soft, about 0.5 ms per frame for Softer at 2560x1440; other GPUs may differ. "
+    "Console is the game's own filter. Also in the "
+    "in-game Graphics screen, where it applies without a restart.", "World detail",
+    choices=[("console", "Console"), ("soft", "Soft"), ("softer", "Softer")])
+add("world_ambient_occlusion", "Ambient occlusion", "Display", "choice", "off",
+    "Darker sunlight where surfaces meet: under cars, along curbs and rails, at the foot of walls "
+    "and in creases of the ground (screen-space ambient occlusion on the world's sunlight; the cars "
+    "and trees keep their own shading). Low or High strength, the same cost: about 0.5 ms "
+    "per frame at 2560x1440 on an RX 9060 XT, nothing measurable under a 60 fps cap; other GPUs "
+    "may differ. Off is the game's lighting. Vulkan only. Also in the in-game Graphics screen, "
+    "where it applies without a restart.", "World detail",
+    choices=[("off", "Off"), ("low", "Low"), ("high", "High")])
 # Texture packs (#384, docs/texture_packs.md): SDK patch 0280's cvars; the launcher passes
 # --texture_pack_root=<data folder>/textures (game.py), the folder its button opens.
 add("texture_dump", "Dump textures", "Display", "bool", False,
@@ -451,6 +466,23 @@ for _k, _label, _default in KEYBINDS:
         "Key names (A, Space, Return, Up, Semicolon, F5, Numpad1, LMB for the left mouse "
         "button, ...), comma separated for alternatives, Shift+Up for a combination.",
         "Keyboard bindings (used when keyboard and mouse is on)")
+
+# --- Gameplay --------------------------------------------------------------------------
+add("ai_rubber_banding", "Rubber banding", "Gameplay", "choice", "game",
+    "Game: as the game shipped, a CPU driver ahead of you eases off (the weaker ones down to "
+    "a fifth of their power) and one behind you brakes and corners better to catch up. Off: "
+    "every CPU driver races at its own skill wherever you are, so the faster car pulls away "
+    "on the straights and the better-handling one in the corners; the difficulty still sets "
+    "how good they are. Single-player races and free roam only: online races and Co-op "
+    "Festival rounds always play as shipped.",
+    "CPU drivers", choices=[("game", "Game"), ("off", "Off")])
+
+add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
+    "Add Car Tuning to the stock pause menu for your owned car in Colorado free roam. "
+    "Requires Settings > Online > Sign in to Xbox LIVE: off, including when playing solo while signed in to Forza Live. "
+    "Supports named setups "
+    "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
+    "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
 
 # --- Audio -----------------------------------------------------------------------------
 add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")

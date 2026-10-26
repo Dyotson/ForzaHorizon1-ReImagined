@@ -31,7 +31,7 @@ if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERA
 endif()
 
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
-# builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
+# builds it from ReIGlue (the SDK fork), and some of its changes alter the generated code (0025:
 # Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
 if(APPLE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
@@ -148,6 +148,8 @@ set(FORZA_SOURCES
     src/hooks/scene_resolution.cpp
     src/hooks/scene_tiling.cpp
     src/hooks/world_detail.cpp
+    src/hooks/shadow_filter.cpp
+    src/hooks/ai_catchup.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
@@ -191,6 +193,7 @@ set(FORZA_SOURCES
     src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/world_ao.cpp
     src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp

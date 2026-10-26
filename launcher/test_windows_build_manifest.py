@@ -15,7 +15,7 @@ spec = importlib.util.spec_from_file_location("windows_build_manifest", SCRIPT)
 manifest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(manifest)
 BUILD = {"version": "0.1.34", "commit": "a" * 40,
-         "run_url": "https://github.com/Dyotson/ForzaHorizon1-ReImagined/actions/runs/123"}
+         "run_url": "https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/actions/runs/123"}
 
 
 class WindowsBuildManifestTests(unittest.TestCase):

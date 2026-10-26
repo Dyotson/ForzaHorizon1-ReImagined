@@ -94,6 +94,68 @@ int main() {
     invalid = Payload(id, 128, 1); ++invalid[20]; CHECK(!ValidPayload(invalid, id));
 
     CHECK(Read(path, id).entries.empty() && !Read(path, id).rejected);
+
+    // #443: adding only omitted entries must not rewrite the bounded subset.
+    // A tiny budget exercises the same writer as the 512 MiB production limit.
+    {
+      const auto bounded = root / "bounded.vkpc";
+      WriteState state;
+      const uint64_t budget = kHeaderSize + kEntryHeaderSize + entries[0].size();
+      auto save = [&](const std::vector<Entry>& list) {
+        return Write(bounded, list, id, budget, &state);
+      };
+      CHECK(save(entries).written);
+      const auto stamp = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+      std::filesystem::last_write_time(bounded, stamp);
+      auto more = entries;
+      more.push_back(MakeEntry(0x2000, Payload(id, 200, 9), 200));
+      auto skipped = save(more);
+      CHECK(skipped.unchanged && !skipped.written && skipped.entries == 1 && skipped.skipped == 4);
+      CHECK(std::filesystem::last_write_time(bounded) == stamp);
+      // Separately loaded but identical bytes also skip; no pointer-only decision.
+      more[0] = Read(bounded, id).entries[0];
+      CHECK(save(more).unchanged);
+      // Same-sized data and even a checksum collision still require replacement.
+      auto changed = more;
+      changed[0] = MakeEntry(changed[0].key, Payload(id, changed[0].size(), 7), 100);
+      changed[0].checksum = more[0].checksum;  // force a collision for the comparison
+      CHECK(save(changed).written);
+      CHECK(save(more).written);
+      changed = more; ++changed[0].fresh_size;
+      CHECK(save(changed).written);
+      changed = more; --changed[0].key;
+      CHECK(save(changed).written);
+      // A new earlier key displaces a retained entry; removing it restores the old one.
+      changed = more;
+      changed.insert(changed.begin(), MakeEntry(1, Payload(id, 100, 8), 100));
+      CHECK(save(changed).written && Read(bounded, id).entries[0].key == 1);
+      CHECK(save(more).written);
+      // A smaller entry can fill leftover budget even when larger entries were omitted.
+      const uint64_t larger = budget + kEntryHeaderSize + 40;
+      changed = more;
+      changed.push_back(MakeEntry(0x3000, Payload(id, 40, 8), 40));
+      CHECK(Write(bounded, changed, id, larger, &state).written);
+      CHECK(Read(bounded, id).entries.size() == 2);
+      // State is local to a destination, identity and cache lifetime.
+      CHECK(Write(root / "other.vkpc", changed, id, larger, &state).written);
+      CHECK(Write(bounded, changed, id, larger, &state).written);
+      state = {};
+      CHECK(Write(bounded, changed, id, larger, &state).written);
+      auto other_id = id; ++other_id.driver;
+      CHECK(Write(bounded, changed, other_id, larger, &state).written);
+      CHECK(!Read(bounded, other_id).rejected);
+      CHECK(Write(bounded, changed, id, larger, &state).written);
+      changed.clear(); more.clear();
+      CHECK(!state.entries.back().data.lock());  // snapshots do not retain old payloads
+      CHECK(save(entries).written);
+      // A failed atomic replacement must not mark the changed contents as saved.
+      const auto blocked = root / "blocked.vkpc";
+      std::filesystem::create_directory(blocked);
+      CHECK(!Write(blocked, entries, id, budget, &state).written);
+      std::filesystem::remove(blocked);
+      CHECK(Write(blocked, entries, id, budget, &state).written);
+      CHECK(Write(blocked, entries, id, budget, &state).unchanged);
+    }
     auto written = Write(path, entries, id);
     CHECK(written.written && written.bytes == std::filesystem::file_size(path));
     auto read = Read(path, id);
@@ -202,7 +264,16 @@ int main() {
           if (!SameEntry(current.entries[i], expect[i])) failed = true;
       }
     });
-    for (size_t i = 0; i < 50; ++i) Write(path, i % 2 ? entries : replacement, id);
+    WriteState concurrent_state;  // one storage writer, concurrent file readers
+    for (size_t i = 0; i < 50; ++i) {
+      const auto& list = i % 2 ? entries : replacement;
+      const auto saved = Write(path, list, id, kMaxFileSize, &concurrent_state);
+      // On Windows a reader can temporarily deny atomic replacement. The next
+      // attempt must retry; only a successful/unchanged snapshot may skip.
+      if (saved.written || saved.unchanged) {
+        if (!Write(path, list, id, kMaxFileSize, &concurrent_state).unchanged) failed = true;
+      }
+    }
     finish = true; reader.join(); CHECK(!failed);
 
 #ifdef _WIN32
