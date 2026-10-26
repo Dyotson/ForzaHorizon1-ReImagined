@@ -382,6 +382,22 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     """Run a command, streaming its output to rep.log; raises BuildError on failure and
     Cancelled when the player cancels."""
     rep.log("$ " + " ".join(str(c) for c in cmd))
+    output_tail = ""
+    error_lines = []
+
+    def failure(message, code=None, kind=BuildError):
+        error = kind(message)
+        error.command = str(cmd[0])
+        error.exit_code = code
+        error.cwd = str(cwd)
+        # Output is evidence, not a guessed diagnosis. The complete stream is
+        # already in the build log; keep both early diagnostics and a bounded tail.
+        context = (f"Command: {str(cmd[0])[:512]}\nWorking directory: {str(cwd)[:512]}"
+                   + (f"\nExit code: {code}" if code is not None else ""))
+        first = "\nFirst error lines:\n" + "\n".join(error_lines) if error_lines else ""
+        tail = "\nLast command output:\n" + output_tail if output_tail else ""
+        error.detail = (context + first + tail)[:8192]
+        return error
     kw = {}
     if IS_WIN:
         kw["creationflags"] = 0x08000000 | 0x00000200 | (0x00004000 if low_priority else 0)
@@ -394,7 +410,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
                                 encoding="utf-8", errors="replace", bufsize=1, **kw)
     except OSError as e:
-        raise BuildError(f"Could not start {cmd[0]}: {e}")
+        raise failure(f"Could not start {cmd[0]}: {e}") from e
     denied = []     # lines saying access was denied (Windows: OneDrive, antivirus, Controlled folder access)
     mon = None
     if monitor is not None:
@@ -411,6 +427,11 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     try:
         for line in proc.stdout:
             line = line.rstrip("\n")
+            output_tail = (output_tail + "\n" + line[-2000:])[-5500:]
+            if len(error_lines) < 3 and re.search(
+                    r"(?:^|\s)(?:fatal error|error(?:\s+[A-Z]+\d+)?):|^CMake Error|^FAILED:",
+                    line, re.IGNORECASE):
+                error_lines.append(line[:400])
             if IS_WIN and len(denied) < 3 and datafolder.ACCESS_DENIED_RE.search(line):
                 denied.append(line)
             if on_line:
@@ -427,12 +448,12 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
         raise Cancelled()
     if code != 0:
         if denied:
-            raise FolderBlocked(datafolder.blocked_message(root_hint(cwd), denied[0]))
+            raise failure(datafolder.blocked_message(root_hint(cwd), denied[0]), code, FolderBlocked)
         if IS_WIN and CURRENT_ROOT:     # a denied folder can also look like "file not found" to a program
             why = datafolder.read_problem(CURRENT_ROOT)
             if why:
-                raise FolderBlocked(datafolder.blocked_message(CURRENT_ROOT, why))
-        raise BuildError(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the log above.")
+                raise failure(datafolder.blocked_message(CURRENT_ROOT, why), code, FolderBlocked)
+        raise failure(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the build log for full output.", code)
 
 
 # ---- the build tree's file times -------------------------------------------------------------

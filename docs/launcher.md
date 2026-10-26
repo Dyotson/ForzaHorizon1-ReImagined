@@ -4,6 +4,27 @@ Issue #1. State: Linux path built and tested end to end; Windows path built and 
 hardware**; `release.yml` ran green by hand (run 38572896631: SDK for Linux and Windows,
 both launchers, Windows installer; `publish` only runs on tags and has not run).
 
+## Understanding launcher errors
+
+Setup and launch failures name the operation that failed and show the original
+error, a next step and the launcher log path. Builds also name the last reported
+step, such as preparing the SDK. Missing files, access failures, a full disk,
+insufficient memory, download timeouts and HTTP failures have distinct guidance.
+If the cause is unknown, the message asks for the log and reproduction steps
+instead of assuming another rebuild will fix it.
+
+Failed build commands retain their exit code, working directory, initial error
+lines and a bounded output tail in the error details. The full command output
+remains in the build log. Download integrity failures name the archive and both
+SHA-256 values, and state which invalid partial file was removed; unrelated
+cached downloads remain. Certificate failures retain verification and describe
+clock/trust/proxy checks without asserting an unproven security-software cause.
+
+After fixing the reported problem, Resume build retries the build. Cancellation
+is shown separately from failure. These messages do not remove or re-import the
+player's original game files. See [car tuning](car-tuning.md) for the persisted
+diagnostics used when a game build succeeds but tuning preparation fails.
+
 ## The idea
 
 The **Designs & vinyls** page browses local `LivCatalog` / `LivGroups` save packages
