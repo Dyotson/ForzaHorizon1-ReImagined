@@ -106,6 +106,10 @@ class PlayPage(QWidget):
         logs.clicked.connect(lambda: open_folder(cfg.data_home()))
         row.addWidget(logs)
         lay.addLayout(row)
+        self.vr_note = label("VR is experimental: it is playable, but expect rough edges. "
+                             "Take a break if you feel motion sickness.", "warn")
+        self.vr_note.hide()
+        lay.addWidget(self.vr_note)
         launcher_logs = QPushButton("Open launcher log folder")
         launcher_logs.setObjectName("link")
         launcher_logs.setToolTip("Open the folder containing launcher.log (launcher errors and tracebacks).")
@@ -214,6 +218,7 @@ class PlayPage(QWidget):
                 self.play.setText("Set up the game")
         self.play_vr.setVisible(self.mode == "play" and self.play.isEnabled() and ready
                                 and vr.detect() is not None)
+        self.vr_note.setVisible(self.play_vr.isVisibleTo(self))
         if not self._keep_warn:
             self.warn.setVisible(False)
 

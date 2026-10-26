@@ -19,6 +19,7 @@ from .controls_page import ControlsPage
 from .saves_page import SavesPage
 from .mods_page import ModsPage
 from .texture_packs_page import TexturePacksPage
+from .widgets import label
 
 MODS_PAGE_ID = 8
 TEXTURE_PACKS_PAGE_ID = 9
@@ -31,7 +32,10 @@ class VrChecklist(QDialog):
         self.setWindowTitle("Play in VR")
         lay = QVBoxLayout(self)
         lay.setSpacing(12)
-        lay.addWidget(QLabel("Before you start (experimental):"))
+        warning = label("VR is experimental: it is playable, but expect rough edges. "
+                        "Take a break if you feel motion sickness.", "warn")
+        lay.addWidget(warning)
+        lay.addWidget(QLabel("Before you start:"))
         for text in ("1. Start your VR app (WiVRn, SteamVR, Meta Quest Link or Virtual Desktop) "
                      "and connect the headset.",
                      "2. Put the headset on.",

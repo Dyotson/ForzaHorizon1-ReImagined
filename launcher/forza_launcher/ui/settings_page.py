@@ -550,7 +550,8 @@ class SettingsPage(QWidget):
     def _build_group(self, g):
         leads = {
             "Display": "Window, frame rate and picture.",
-            "VR": "Experimental: play with a VR headset. Press Play in VR on the Play page.",
+            "VR": "Experimental: playable, but expect rough edges. Play with a VR headset: "
+                  "press Play in VR on the Play page.",
             "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
             "Gameplay": "How the game plays in single player. Online games always play as shipped.",
             "Audio": "",
