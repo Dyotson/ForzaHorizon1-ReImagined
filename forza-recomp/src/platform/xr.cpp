@@ -1225,7 +1225,9 @@ bool Frame() {
 }
 
 void Run() {
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+  pthread_setname_np("Forza OpenXR");  // macOS names only the calling thread
+#elif !defined(_WIN32)
   pthread_setname_np(pthread_self(), "Forza OpenXR");
 #endif
   if (!LoadDeviceFunctions() || !CreateCopySlots()) {
