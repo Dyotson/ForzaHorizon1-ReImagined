@@ -57,9 +57,9 @@ Captured from the recompiled game and its launcher.
 | | |
 |---|---|
 | ![Free roam](docs/images/forza-free-roam.jpg)<br>Free roam | ![Circuit race](docs/images/forza-race.jpg)<br>Circuit race against 7 AI drivers |
-| ![Co-op Festival race](site/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
-| ![Original and HD 2x textures](site/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](site/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
-| ![Mods page](site/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](site/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
+| ![Co-op Festival race](docs/images/coop-race.webp)<br>Co-op Festival race, two players and CPU drivers | ![Horizon World online](docs/images/forza-horizon-world-online.jpg)<br>Horizon World online playlist |
+| ![Original and HD 2x textures](docs/images/hd-before-after.webp)<br>Original textures (left) and a 2x HD pack (right) | ![Leaderboards map](docs/images/leaderboards-map.webp)<br>The [leaderboards](https://forza.dyotson.dev/leaderboards.html) on a map of Colorado |
+| ![Mods page](docs/images/launcher-mods.webp)<br>The launcher's Mods page | ![Texture packs page](docs/images/launcher-texture-packs.webp)<br>The launcher's Texture packs page |
 
 ## What you can play
 
@@ -160,12 +160,12 @@ In **Settings > Online**, pick one:
 
 - **Public server.** Horizon World, leaderboards and rivals. The address filled in is `forza-reimagined.playit.plus:56677`. You forward no ports.
 - **This PC.** A private server for this session.
-- **My own server.** [`docs/hosting.md`](docs/hosting.md). Python 3 from the standard library, or Docker.
+- **My own server.** [Hosting guide](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/hosting.md) in [forza-live](https://github.com/FH1-ReImagined/forza-live), the server's repository. Python 3 from the standard library, or Docker.
 - **Offline.** No Xbox LIVE.
 
 Horizon World is the first playlist under Multiplayer, Find Game. The server places you in the fullest open world, up to 8 players, or you open one and drive. Someone who joins later gets JUMP IN. When the host leaves, the others keep driving. Each world is its own session. A local test has run with three players. [`docs/online_vision.md`](docs/online_vision.md)
 
-Friends (F8, or hold the left stick on a controller) and chat (F9) use the server's list. Leaderboards cover speed traps, speed zones, events and Rivals (times, ghosts and bounties), and the public server's are on the [website](https://forza.dyotson.dev/leaderboards.html). Car clubs and the Message Center work. The club garage can share a car. [`docs/title_services.md`](docs/title_services.md) · [`docs/playing.md`](docs/playing.md)
+Friends (F8, or hold the left stick on a controller) and chat (F9) use the server's list. Leaderboards cover speed traps, speed zones, events and Rivals (times, ghosts and bounties), and the public server's are on the [website](https://forza.dyotson.dev/leaderboards.html). Car clubs and the Message Center work. The club garage can share a car. [Title services](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/title_services.md) · [`docs/playing.md`](docs/playing.md)
 
 Title Update 4 players and base-game players do not meet. The Auction House has no screens in this game. The server can store auctions, and there is nowhere in the game to open them.
 
@@ -173,7 +173,7 @@ Title Update 4 players and base-game players do not meet. The Auction House has 
 
 [`docs/launcher.md`](docs/launcher.md),
 [`docs/playing.md`](docs/playing.md),
-[`docs/hosting.md`](docs/hosting.md),
+[hosting a server](https://github.com/FH1-ReImagined/forza-live/blob/main/docs/hosting.md) (forza-live),
 [`docs/perf.md`](docs/perf.md),
 [`docs/framerate.md`](docs/framerate.md),
 [`docs/online_vision.md`](docs/online_vision.md),
@@ -195,6 +195,7 @@ Every card is an issue. Comment there to discuss an item or help with it.
 
 Questions, help with setup and online sessions: [Discord](https://discord.gg/yu7zScdcWw).
 Bugs and feature requests: [issues](https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues).
+The website's source is in [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website).
 The bug report template asks for your OS, CPU, GPU and log.
 
 ## Legal

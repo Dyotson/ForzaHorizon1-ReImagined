@@ -31,7 +31,7 @@ if(FORZA_SKIP_CODEGEN AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${FORZA_GENERA
 endif()
 
 # Codegen runs the patched SDK overlay's rexglue when there is one: tools/build_rexglue_sdk.sh
-# builds it from patches/rexglue-sdk/, and some patches change the generated code (0025:
+# builds it from ReIGlue (the SDK fork), and some of its changes alter the generated code (0025:
 # Xenon's dot products give QNaN on overflow, which the collision GJK depends on).
 if(APPLE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")

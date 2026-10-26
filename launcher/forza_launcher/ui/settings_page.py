@@ -789,7 +789,7 @@ class SettingsPage(QWidget):
                                           "rivals. You forward no ports."),
             ("local", "This PC", "Starts a Forza Live server just for this session (127.0.0.1:21200). "
                                   "Online features work, but only you are in it."),
-            ("custom", "My own server", "A server you or a friend host (docs/hosting.md)."),
+            ("custom", "My own server", "A server you or a friend host (forza-live's docs/hosting.md on GitHub)."),
             ("offline", "Offline", "No Xbox LIVE and no server."),
         ]
         self.radios = {}
