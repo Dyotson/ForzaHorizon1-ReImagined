@@ -375,10 +375,11 @@ void DefaultPausePages() {
   menu.SetPages(gated_pages);
   menu.SelectPage("home");
   assert(!menu.FocusTile("my_cars") && !menu.FocusTile("world_map"));
-  assert(!menu.SelectPage("cars"));
+  assert(menu.SelectPage("cars"));
+  assert(!menu.focused_tile_id());
   for (const auto& page : gated_pages) {
     if (page.id == "cars") {
-      assert(!Available(page));
+      assert(Available(page));
       for (const auto& tile : page.tiles) assert(!Focusable(tile));
     }
     if (page.id == "settings") {
@@ -386,22 +387,31 @@ void DefaultPausePages() {
       for (const auto& tile : page.tiles) assert(Focusable(tile));
     }
   }
+  menu.SelectPage("home");
+  assert(menu.ChangePage(1) && menu.page_id() == "cars");
   assert(menu.ChangePage(1) && menu.page_id() == "social");
   assert(menu.ChangePage(1) && menu.page_id() == "settings");
   assert(menu.ChangePage(-1) && menu.page_id() == "social");
+  assert(menu.ChangePage(-1) && menu.page_id() == "cars");
   assert(menu.ChangePage(-1) && menu.page_id() == "home");
   // Map remains a stock online action; it must never unlock car changes.
   auto online = all;
   online.change_car = false;
   menu.SetPages(MakePausePages(online));
   assert(menu.FocusTile("world_map"));
-  assert(!menu.FocusTile("my_cars") && !menu.SelectPage("cars"));
+  assert(!menu.FocusTile("my_cars"));
+  assert(menu.SelectPage("cars"));
+  assert(!menu.FocusTile("change_car"));
+  assert(menu.FocusTile("garage") && menu.Activate() == "garage");
+  assert(menu.FocusTile("autoshow") && menu.Activate() == "autoshow");
   menu.SetPages(gated_pages);
+  menu.SelectPage("home");
   menu.FocusTile("settings");
   assert(menu.Activate() == "settings_page");
   assert(FindPauseAction(*menu.Activate()) == PauseAction::SettingsPage);
-  menu.SetPages(MakePausePages());  // Unknown capabilities also fail closed.
-  assert(!menu.SelectPage("cars"));
+  menu.SetPages(MakePausePages());  // Unknown action capabilities still fail closed.
+  assert(menu.SelectPage("cars"));
+  assert(!menu.focused_tile_id() && !menu.Activate());
   assert(menu.SelectPage("settings"));
 
   auto destinations_locked = all;
