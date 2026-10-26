@@ -129,6 +129,9 @@ thread_local float posed_near = 0;
 // The size-cull factor for the frames being built (vr_culling.cpp): the in-car camera's own
 // vertical field of view (+304) over the posed cockpit view's, as tan^2 of the half-angles.
 std::atomic<float> cull_scale{1.0f};
+// The view/frustum hooks share the main-loop thread. Remember a modified cockpit view so a
+// menu or lost session restores the track's own values even if no new valid view is built.
+bool cockpit_adjusted = false;
 
 std::mutex pose_mutex;
 HeadPose pose;
@@ -309,6 +312,12 @@ class PosedView {
     const bool xr = forza::xr::CockpitActive();
     const bool view_hook = std::strcmp(hook, "view") == 0;
     const bool trace = view_hook && forza::xr::Tracing();
+    if (!xr && cockpit_adjusted) {
+      forza::world_detail::ScaleExposureAdaptation(base, 1.0f);
+      cull_scale = 1.0f;
+      xr_view.valid = false;
+      cockpit_adjusted = false;
+    }
     if (!xr && !trace && !REXCVAR_GET(vr_head_pose_test)) return;
     uint32_t camera = 0;
     const bool posed = Pose(base, director, hook, xr, view_hook, camera);
@@ -318,6 +327,7 @@ class PosedView {
       const float test_speed = exposure_speed_test.load(std::memory_order_relaxed);
       const float speed = test_speed > 0 ? test_speed : float(REXCVAR_GET(vr_exposure_speed));
       forza::world_detail::ScaleExposureAdaptation(base, posed ? speed : 1.0f);
+      cockpit_adjusted = posed;
       if (!posed) cull_scale = 1.0f;
     }
     if (trace && Valid(director)) {  // view 1 of single player has no director
