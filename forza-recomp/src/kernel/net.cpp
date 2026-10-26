@@ -226,6 +226,7 @@ enum LiveType : uint8_t {
   kStatsRows,    // server -> client: the rows of a read
   kFriend,       // client <-> server: the friends list (live_friends.cpp, server/forza_friends.py)
   kChat,         // client <-> server: text chat (live_friends.cpp, server/forza_chat.py)
+  kEvents,       // organizer-approved community event rewards (server/forza_events.py)
 };
 // XNADDR.ina of a player on a Forza Live server: 0xF0000000 | the id the server gave
 // it. 240.0.0.0/8 is reserved, so it never collides with a LAN address.
@@ -951,7 +952,11 @@ class VNet {
     // playlist runs as a Horizon World (world_drop_in.cpp, world_events.cpp, #309): the
     // server lists it only to games that say so. 0x10, our standby records follow the lobby
     // (its game type, and as the game's host its own description; live_xmsg.cpp, #391).
+#if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
+    body.push_back(0x3F);  // 0x20: TU4 event unlocks, in addition to current lobby support.
+#else
     body.push_back(0x1F);
+#endif
     const std::string& key = forza::IdentityFriendsKey();
     body.push_back(uint8_t(key.size()));
     body.insert(body.end(), key.begin(), key.end());
@@ -1071,6 +1076,7 @@ class VNet {
         next_match = now + std::chrono::seconds(1);
         forza::LiveMatchTick();
         forza::LiveFriendsTick();
+        forza::LiveEventsTick();
       }
       // From here: a pass that took long by itself (a slow name lookup) is no time away.
       last_pass = Clock::now();
@@ -1096,12 +1102,17 @@ class VNet {
           std::lock_guard<std::mutex> lock(mutex_);
           if (n >= 14 + motd_size + 2) http_port_ = Load16(p + 14 + motd_size);
           changed = id != live_id_ || epoch != live_epoch_;
+          if (changed) forza::LiveEventsSession(epoch, id, live_token_);
+          if (n >= 14 + motd_size + 3) {
+            const uint8_t policy[] = {0, uint8_t(epoch >> 8), uint8_t(epoch), p[14 + motd_size + 2]};
+            forza::LiveEventsMessage(policy, sizeof(policy));
+          }
           live_id_ = id;
           live_epoch_ = epoch;
           public_ep_ = {public_ip, public_port};
           last_welcome_ = Clock::now();
-          cv_.notify_all();
         }
+        cv_.notify_all();  // initial sign-in cannot race a known server requirement
         if (rejoining_.exchange(false) || changed) {
           REXLOG_INFO("FORZA_LIVE: signed in to {} as {} (player #{}), public address {}:{}{}{}",
                       ServerName(), forza::IdentityGamertag(), id, IpString(public_ip),
@@ -1204,6 +1215,9 @@ class VNet {
         return;
       case kChat:
         if (from_server) forza::LiveChatMessage(p, n);
+        return;
+      case kEvents:
+        if (from_server) forza::LiveEventsMessage(p, n);
         return;
       case kPeers: {
         // Part header: total u16, first index u16, count u16; then the entries.
@@ -1438,6 +1452,10 @@ bool LiveSendFriend(const std::vector<uint8_t>& body) {
 
 bool LiveSendChat(const std::vector<uint8_t>& body) {
   return NetOn() && VNet::Get().SendMatch(kChat, body);
+}
+
+bool LiveSendEvents(const std::vector<uint8_t>& body) {
+  return NetOn() && VNet::Get().SendMatch(kEvents, body);
 }
 }  // namespace forza
 
