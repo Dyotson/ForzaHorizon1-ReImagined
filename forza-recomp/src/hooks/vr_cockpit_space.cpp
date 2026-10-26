@@ -22,10 +22,11 @@
 // camera and the car's point are apart when the cabin is drawn, a few millimetres while driving), and
 // the VR near plane instead of the car's 10 cm:
 // sub_82DCF1C0 marks its thread as inside the pass, sub_82447400 hands over the car render object it
-// returns there, and before each of the three cabin draws the offset, the camera's position, its
-// matrix's translation and the view are written again from the position the pass saved and the
-// car's point, without the 10 cm test (vr_cockpit_space.h). sub_82DCF1C0 puts the constants back
-// itself after the draws.
+// returns there, and before each of the three cabin draws the camera's position, its matrix's
+// translation, the view and the projection's near plane are written again: the offset from the head
+// transform the frame's view was posed with (xr::RenderViewHead), else from the position the pass
+// saved and the car's point without the 10 cm test (vr_cockpit_space.h). sub_82DCF1C0 puts the
+// constants back itself after the draws.
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/vr_cockpit_space.h"
@@ -62,7 +63,7 @@ struct Pass {
   uint32_t car = 0;
 };
 thread_local Pass pass;
-std::atomic<int> parallax_test{-1};  // a FIFO's "parallax 0|1" (vr_head_pose.cpp); -1: the cvar
+std::atomic<int> parallax_test{-1};  // a FIFO's "parallax 0|1|2" (vr_head_pose.cpp); -1: the cvar
 
 bool Valid(uint32_t address) { return address >= 0x00100000 && address < 0xF0000000; }
 
