@@ -114,6 +114,52 @@ class NativeTuningSettings(unittest.TestCase):
                 self.cfg.advanced["extra_args"] = flags
                 self.assertEqual(game.native_update_requested(self.cfg, ""), expected)
 
+    def test_registered_cli_counts_match_cli11_zero_numeric_and_empty_overrides(self):
+        # Checked with the SDK's CLI11 2.6.1 add_flag_function registration,
+        # including its Sum policy and negated get_flag_value transformation.
+        cases = (
+            ("--forza_car_tuning --forza_car_tuning=0", True),
+            ("--forza_car_tuning --forza_car_tuning=00", True),
+            ("--forza_car_tuning=0", False),
+            ("--no-forza_car_tuning=0", True),
+            ("--no-forza_car_tuning=00", False),
+            ("--forza_car_tuning=08", True),
+            ("--forza_car_tuning=0x10", True),
+            ("--forza_car_tuning=0b10", True),
+            ("--forza_car_tuning=1_000", True),
+            ("--forza_car_tuning=2.5", True),
+            ("--forza_car_tuning=0.5", False),
+            ("--forza_car_tuning=0.5 --forza_car_tuning=0.5", True),
+            ("--no-forza_car_tuning=2.5", True),
+            ("--forza_car_tuning=1e2", True),
+            ("--no-forza_car_tuning=1e2", True),
+            ("--forza_car_tuning=1e-2", False),
+            ("--forza_car_tuning=", True),
+            ("--forza_car_tuning={}", True),
+            ("--no-forza_car_tuning=", False),
+            ("--no-forza_car_tuning={}", False),
+        )
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            for flags, expected in cases:
+                with self.subTest(flags=flags):
+                    self.cfg.advanced["extra_args"] = flags
+                    self.assertEqual(game.native_update_requested(self.cfg, ""), expected)
+
+    def test_cli_end_of_options_preserves_config_and_environment_selection(self):
+        with mock.patch.dict(game.os.environ, {}, clear=True):
+            self.cfg.advanced["extra_args"] = "-- --forza_car_tuning"
+            self.assertFalse(game.native_update_requested(self.cfg, ""))
+            self.cfg.advanced["extra_args"] = "-- --no-forza_car_tuning"
+            self.assertTrue(game.native_update_requested(self.cfg, "forza_car_tuning = true\n"))
+
+    def test_invalid_cli_count_does_not_preserve_enabled_environment(self):
+        with mock.patch.dict(game.os.environ, {"REX_FORZA_CAR_TUNING": "yes"}, clear=True):
+            for flags in ("--forza_car_tuning=nonsense",
+                          "--forza_car_tuning=yes --forza_car_tuning=nonsense"):
+                with self.subTest(flags=flags):
+                    self.cfg.advanced["extra_args"] = flags
+                    self.assertFalse(game.native_update_requested(self.cfg, ""))
+
     def test_import_is_managed_setting_and_disabling_restores_default(self):
         config.import_toml(self.cfg, "forza_car_tuning = true\n")
         self.assertIs(self.cfg.settings["forza_car_tuning"], True)

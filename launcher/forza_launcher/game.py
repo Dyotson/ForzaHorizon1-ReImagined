@@ -434,11 +434,26 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
             digits = value.lstrip("+-")
             base = 16 if digits.startswith("0x") else 8 if digits.startswith("0") else 10
             return int(value, base)
-        return None  # Invalid CLI values are reported by the runtime.
+        return None
+
+    def summed_count(value):
+        # CLI11's Sum policy tries numeric conversion before boolean words.
+        # In particular, a positive flag's explicit 0 contributes zero.
+        numeric = value.replace("_", "").replace("'", "")
+        try:
+            return float(numeric)
+        except ValueError:
+            try:
+                return float.fromhex(numeric) if "0x" in numeric.lower() else float(int(numeric, 0))
+            except ValueError:
+                return flag_count(value)
 
     cli_count = None
+    invalid_count = False
     extra = split_args(cfg.advanced.get("extra_args", ""))
     for arg in extra:
+        if arg == "--":
+            break
         if not arg.startswith("--"):
             continue
         key, equal, value = arg[2:].partition("=")
@@ -447,13 +462,22 @@ def native_update_requested(cfg: Config, toml_text: str) -> bool:
             key = key[3:]
         if key not in ("forza_car_tuning",):
             continue
-        if not equal:
-            value = "true"
-        count = flag_count(value)
-        if count is not None:
-            cli_count = (cli_count or 0) + (-count if negated else count)
+        if not equal or value in ("", "{}"):
+            value = "false" if negated else "true"
+        elif negated:
+            # get_flag_value inverts recognized integer/boolean overrides;
+            # other numeric spellings (such as 2.5) pass through unchanged.
+            count = flag_count(value)
+            if count is not None:
+                value = str(-count)
+        count = summed_count(value)
+        invalid_count |= count is None
+        cli_count = (cli_count or 0) + (count or 0)
     if cli_count is not None:
-        values["forza_car_tuning"] = cli_count > 0
+        # The registered callback receives an int64 after CLI11 formats its
+        # floating-point sum. Fractional counts below one therefore stay off.
+        integer = re.match(r"[+-]?\d+", format(cli_count, ".16g"))
+        values["forza_car_tuning"] = not invalid_count and integer is not None and int(integer[0]) > 0
     return any(values.get(key) is True for key in ("forza_car_tuning",))
 
 
