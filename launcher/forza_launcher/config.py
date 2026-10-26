@@ -11,7 +11,7 @@ from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, paths, schema, sp
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 # Settings of the launcher itself: not game cvars, never written to forza.toml.
-LAUNCHER_ONLY = ("share_shader_list", "battery_saver")
+LAUNCHER_ONLY = ("share_shader_list", "battery_saver", "data_out", "data_out_ip", "data_out_port", "data_out_rate", "data_out_format")
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
 FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
