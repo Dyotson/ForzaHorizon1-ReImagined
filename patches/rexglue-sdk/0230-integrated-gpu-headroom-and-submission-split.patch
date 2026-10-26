@@ -1,0 +1,374 @@
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+index bb37d7e..6dbb9d8 100644
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -40,6 +40,7 @@
+ #include <rex/graphics/util/fh1_hud.h>
+ #include "fh1_device_memory.h"
+ #include "fh1_render_target_trim.h"
++#include "fh1_submission_watch.h"
+ #include <rex/platform.h>
+ #include "../fh1_frame_cost.h"
+ #if REX_PLATFORM_MAC
+@@ -147,6 +148,13 @@ REXCVAR_DEFINE_STRING(fh1_frame_cost_csv, "", "GPU/Vulkan",
+                       "textures, uploads, pipelines, render targets, waits) to this CSV file")
+     .debug_only();
+ 
++REXCVAR_DEFINE_INT32(vulkan_submission_draw_limit, -1, "GPU/Vulkan",
++                     "End a GPU submission after this many draws (a frame then reaches the GPU in "
++                     "several parts, so no single part can run into Windows' 2 s GPU timeout): "
++                     "-1 = 1000 on integrated GPUs with a small carve-out, else none; 0 = none")
++    .lifecycle(rex::cvar::Lifecycle::kHotReload)
++    .debug_only();
++
+ REXCVAR_DEFINE_UINT32(vulkan_render_target_trim_percent, 90, "GPU/Vulkan",
+                       "Free the cached render targets that hold no EDRAM data when device-local "
+                       "memory use reaches this percentage of the driver's budget "
+@@ -659,6 +667,28 @@ bool CompileGlslToSpirvInternal(EShLanguage stage, std::string_view source,
+ // long (presentation holding it, for instance).
+ constexpr int64_t kSlowSubmissionWaitMs = 2000;
+ 
++// FH1 (#268): the submissions' draws and the slow waits for them (fh1_submission_watch.h).
++// One command processor per process; its thread alone touches these.
++fh1_submission_watch::Watch fh1_submission_watch_state;
++uint32_t fh1_draws_in_submission = 0;
++uint64_t fh1_submission_splits = 0;
++
++// FORZA_TEST_SLOW_WAIT_MS=<n>: log waits for the GPU from n ms (at most one every 10 s), to
++// see the submissions' draws on a fast GPU.
++struct Fh1SlowWaitTestHook {
++  Fh1SlowWaitTestHook() {
++    if (const char* v = std::getenv("FORZA_TEST_SLOW_WAIT_MS"); v && *v) {
++      fh1_submission_watch_state.SetSlowWaitMs(std::max<int64_t>(0, std::atoll(v)));
++    }
++  }
++} fh1_slow_wait_test_hook;
++
++int64_t Fh1NowMs() {
++  return std::chrono::duration_cast<std::chrono::milliseconds>(
++             std::chrono::steady_clock::now().time_since_epoch())
++      .count();
++}
++
+ // Test hook: FORZA_TEST_GPU_LOSS_AT_FRAME=<n> makes the submission fence check report
+ // VK_ERROR_DEVICE_LOST from frame n on, to exercise the device-loss reporting path.
+ uint64_t TestGpuLossFrame() {
+@@ -5031,6 +5061,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+ 
+   ++fh1_frame_cost::Current().draws;
++  // FH1 (#268): on integrated GPUs, at most so many draws in one submission. Not inside an
++  // occlusion query, which a submission's end would cut short.
++  if (submission_open_ && frame_open_ && !active_occlusion_query_.valid &&
++      fh1_submission_watch::ShouldSplit(
++          fh1_draws_in_submission,
++          fh1_submission_watch::DrawLimit(REXCVAR_GET(vulkan_submission_draw_limit),
++                                          fh1_device_memory::Get().integrated()))) {
++    if (EndSubmission(false)) ++fh1_submission_splits;
++  }
++  ++fh1_draws_in_submission;
+   const RegisterFile& regs = *register_file_;
+   (void)index_buffer_info;
+   auto draw_fail = [&](const char* stage) {
+@@ -6848,9 +6888,30 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+     }
+     if (wait_result == VK_SUCCESS) {
+       fences_awaited += await_submission - submission_completed_;
+-      if (int64_t ms = waited_ms(); ms >= kSlowSubmissionWaitMs) {
+-        REXGPU_WARN("Vulkan: waited {} ms for submission {} to finish on the GPU", ms,
+-                    await_submission);
++      const int64_t ms = waited_ms();
++      // FH1 (#268): what the submissions waited for held, and how full the device-local
++      // memory was.
++      const bool log_slow =
++          ms >= kSlowSubmissionWaitMs ||
++          fh1_submission_watch_state.ShouldLogWait(ms, Fh1NowMs());
++      if (log_slow) {
++        std::string held;
++        const int64_t now_ms = Fh1NowMs();
++        for (uint64_t s = submission_completed_ + 1; s <= await_submission; ++s) {
++          if (const auto* r = fh1_submission_watch_state.Find(s)) {
++            held += fmt::format("{}{}: {} draws, submitted {} ms ago", held.empty() ? "" : "; ",
++                                s, r->draws, now_ms - r->submitted_ms);
++          }
++        }
++        const fh1_device_memory::State::Budget memory = fh1_device_memory::Get().Query();
++        const std::string context = fmt::format(
++            " ({}; device-local {} of {} MB, system {} of {} MB; {} slow waits since the last "
++            "report, {} submissions split)",
++            held.empty() ? std::string("no record") : held, memory.usage >> 20,
++            memory.budget >> 20, memory.system_usage >> 20, memory.system_budget >> 20,
++            fh1_submission_watch_state.TakeSlowWaits(), fh1_submission_splits);
++        REXGPU_WARN("Vulkan: waited {} ms for submission {} to finish on the GPU{}", ms,
++                    await_submission, context);
+       }
+     } else {
+       REXGPU_ERROR("Failed to await submission completion Vulkan fences (VkResult {}, after {} ms)",
+@@ -7035,6 +7096,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+ 
+   if (!submission_open_) {
+     submission_open_ = true;
++    fh1_draws_in_submission = 0;
+ 
+     // Start a new deferred command buffer - will submit it to the real one in
+     // the end of the submission (when async pipeline object creation requests
+@@ -7292,6 +7354,9 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+ 
+     SubmitBarriers(true);
+ 
++    fh1_submission_watch_state.Submitted(GetCurrentSubmission(), fh1_draws_in_submission,
++                                         Fh1NowMs());
++
+     assert_false(command_buffers_writable_.empty());
+     CommandBuffer command_buffer = command_buffers_writable_.back();
+     assert_false(fences_free_.empty());
+diff --git a/src/graphics/vulkan/fh1_device_memory.cpp b/src/graphics/vulkan/fh1_device_memory.cpp
+index 63891ca..46e035c 100644
+--- a/src/graphics/vulkan/fh1_device_memory.cpp
++++ b/src/graphics/vulkan/fh1_device_memory.cpp
+@@ -18,6 +18,24 @@ REXCVAR_DEFINE_BOOL(vulkan_integrated_memory_spill, true, "GPU/Vulkan",
+                     "device-local memory (the BIOS carve-out). No effect on discrete GPUs")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++REXCVAR_DEFINE_UINT32(vulkan_integrated_texture_percent,
++                      rex::graphics::vulkan::fh1_memory_placement::kTexturePercent, "GPU/Vulkan",
++                      "Integrated GPUs with a small carve-out: new textures go to a device-local "
++                      "heap only while its use stays under this percentage of its budget, else to "
++                      "system memory")
++    .range(0, 100)
++    .lifecycle(rex::cvar::Lifecycle::kHotReload)
++    .debug_only();
++
++REXCVAR_DEFINE_UINT32(vulkan_integrated_device_local_percent,
++                      rex::graphics::vulkan::fh1_memory_placement::kHotPercent, "GPU/Vulkan",
++                      "Integrated GPUs with a small carve-out: new render targets and guest memory "
++                      "pages go to a device-local heap only while its use stays under this "
++                      "percentage of its budget, else to system memory")
++    .range(0, 100)
++    .lifecycle(rex::cvar::Lifecycle::kHotReload)
++    .debug_only();
++
+ REXCVAR_DEFINE_UINT32(vulkan_device_local_budget_mb, 0, "GPU/Vulkan",
+                       "Testing: treat the device-local memory budget as at most this many MB and "
+                       "place memory as on an integrated GPU, also on a discrete one (0 = the "
+@@ -70,6 +88,12 @@ const char* UseName(Use use) {
+   }
+ }
+ 
++uint32_t State::SharePercent(Use use) {
++  return std::min(use == Use::kTexture ? REXCVAR_GET(vulkan_integrated_texture_percent)
++                                       : REXCVAR_GET(vulkan_integrated_device_local_percent),
++                  uint32_t(100));
++}
++
+ State& Get() {
+   static State state;
+   return state;
+@@ -141,8 +165,8 @@ void State::Initialize(const ui::vulkan::VulkanDevice* device) {
+     REXGPU_INFO(
+         "Vulkan memory heaps: {}; {}: new textures go to system memory (heap {}) above {}% of "
+         "a device-local heap's budget, render targets and guest memory pages above {}%",
+-        heaps, device_kind, layout_.system_heap, placement::kTexturePercent,
+-        placement::kHotPercent);
++        heaps, device_kind, layout_.system_heap, SharePercent(Use::kTexture),
++        SharePercent(Use::kRenderTarget));
+   } else {
+     REXGPU_INFO("Vulkan memory heaps: {}; {}: GPU memory stays device-local", heaps,
+                 device_kind);
+@@ -278,7 +302,7 @@ placement::Order State::Choose(Use use, uint32_t allowed, uint64_t size, bool al
+   const Budget b = Estimate();
+   return placement::Choose(
+       layout_, allowed,
+-      placement::FittingHeaps(layout_, KindOf(use), b.heaps, size, allocator_blocks));
++      placement::FittingHeaps(layout_, SharePercent(use), b.heaps, size, allocator_blocks));
+ }
+ 
+ void State::Allocated(Use use, uint32_t type, uint64_t size) {
+diff --git a/src/graphics/vulkan/fh1_device_memory.h b/src/graphics/vulkan/fh1_device_memory.h
+index 3f7fb50..25956d5 100644
+--- a/src/graphics/vulkan/fh1_device_memory.h
++++ b/src/graphics/vulkan/fh1_device_memory.h
+@@ -23,9 +23,6 @@ namespace placement = fh1_memory_placement;
+ enum class Use : uint32_t { kTexture, kRenderTarget, kSharedMemory, kScaledResolve, kCount };
+ 
+ const char* UseName(Use use);
+-inline placement::Kind KindOf(Use use) {
+-  return use == Use::kTexture ? placement::Kind::kTexture : placement::Kind::kHot;
+-}
+ 
+ class State {
+  public:
+@@ -36,7 +33,11 @@ class State {
+   // Memory moves to system memory: an integrated GPU (or the test budget cap) and
+   // vulkan_integrated_memory_spill.
+   bool active() const;
++  // An integrated GPU with a small carve-out, or the test budget cap (whatever the setting).
++  bool integrated() const { return device_ && (layout_.integrated || cap_mb_) && layout_.can_move(); }
+   const placement::Layout& layout() const { return layout_; }
++  // The share of each device-local heap's budget that `use` may fill (the settings).
++  static uint32_t SharePercent(Use use);
+ 
+   // The device-local use and budget, all heaps and per heap (the test cap applied), queried
+   // now.
+diff --git a/src/graphics/vulkan/fh1_memory_placement.h b/src/graphics/vulkan/fh1_memory_placement.h
+index e76d7ef..f9ad1f6 100644
+--- a/src/graphics/vulkan/fh1_memory_placement.h
++++ b/src/graphics/vulkan/fh1_memory_placement.h
+@@ -10,7 +10,10 @@
+ // So on an integrated GPU with a small carve-out (or with the test budget cap), new textures
+ // go to a device-local heap only while its use stays under kTexturePercent of its own budget,
+ // and render targets and guest memory pages under kHotPercent; past that they go to a memory
+-// type of the system memory heap that the resource accepts. The device-local heaps are tried
++// type of the system memory heap that the resource accepts. The shares leave room in the
++// carve-out for the rest of the system: AMD's Windows driver reports a fixed budget (95% of
++// each heap) that ignores the compositor and other programs, and with the carve-out nearly
++// full the driver paged until one submission ran past Windows' 2 s timeout (#268). The device-local heaps are tried
+ // one by one, plain device-local types before host-visible ones: AMD's Windows driver splits
+ // a Vega APU's 512 MB carve-out into a 256 MB heap and a 256 MB host-visible heap, each with
+ // its own budget. Discrete GPUs, and APUs whose device-local heap is not small next to the
+@@ -42,11 +45,12 @@ constexpr uint32_t kMaxHeaps = 16;
+ constexpr uint32_t kMaxTiers = 8;
+ constexpr uint32_t kMaxOrder = 2 * kMaxTiers + 2;
+ 
+-// Textures stay in a device-local heap while its use (with the new allocation) stays under
+-// this share of its budget; render targets and guest memory pages under kHotPercent (a little
+-// room for the driver's own allocations).
+-constexpr uint64_t kTexturePercent = 80;
+-constexpr uint64_t kHotPercent = 95;
++// The default shares (vulkan_integrated_texture_percent, vulkan_integrated_device_local_percent):
++// textures never go to device-local memory there (they are read-only and the GPU samples
++// system memory about as fast); render targets and guest memory pages while a heap's use
++// (with the new allocation) stays under half its budget.
++constexpr uint32_t kTexturePercent = 0;
++constexpr uint32_t kHotPercent = 50;
+ // A carve-out is small when the system memory heap is at least this many times its size.
+ constexpr uint64_t kSmallCarveOutRatio = 2;
+ 
+@@ -189,18 +193,17 @@ inline uint64_t AllocatorBlockBytes(uint64_t heap_bytes) {
+   return uint64_t(256) << 20;
+ }
+ 
+-enum class Kind { kTexture, kHot };
+-
+-// Whether `growth` more bytes of device-local memory keep a heap's use within the kind's
+-// share of its budget. Without a budget (no VK_EXT_memory_budget and no cap) everything fits.
+-inline bool Fits(Kind kind, uint64_t usage, uint64_t growth, uint64_t budget) {
++// Whether `growth` more bytes of device-local memory keep a heap's use within `percent` of
++// its budget. Without a budget (no VK_EXT_memory_budget and no cap) everything fits.
++inline bool Fits(uint32_t percent, uint64_t usage, uint64_t growth, uint64_t budget) {
+   if (!budget) return true;
+-  return (usage + growth) * 100 <= budget * (kind == Kind::kTexture ? kTexturePercent : kHotPercent);
++  return (usage + growth) * 100 <= budget * uint64_t(percent);
+ }
+ 
+-// The device-local heaps (a mask) that can take `size` more bytes of `kind`. With
+-// allocator_blocks (VMA), a new block of that heap counts instead when it is larger.
+-inline uint32_t FittingHeaps(const Layout& l, Kind kind, const HeapUse& u, uint64_t size,
++// The device-local heaps (a mask) that can take `size` more bytes within `percent` of their
++// budgets. With allocator_blocks (VMA), a new block of that heap counts instead when it is
++// larger.
++inline uint32_t FittingHeaps(const Layout& l, uint32_t percent, const HeapUse& u, uint64_t size,
+                              bool allocator_blocks) {
+   uint32_t heaps = 0;
+   for (uint32_t h = 0; h < l.heap_count; ++h) {
+@@ -210,7 +213,7 @@ inline uint32_t FittingHeaps(const Layout& l, Kind kind, const HeapUse& u, uint6
+       const uint64_t block = AllocatorBlockBytes(l.heap_bytes[h]);
+       growth = block > size ? block : size;
+     }
+-    if (Fits(kind, u.usage[h], growth, u.budget[h])) heaps |= uint32_t(1) << h;
++    if (Fits(percent, u.usage[h], growth, u.budget[h])) heaps |= uint32_t(1) << h;
+   }
+   return heaps;
+ }
+diff --git a/src/graphics/vulkan/fh1_submission_watch.h b/src/graphics/vulkan/fh1_submission_watch.h
+new file mode 100644
+index 0000000..6071f19
+--- /dev/null
++++ b/src/graphics/vulkan/fh1_submission_watch.h
+@@ -0,0 +1,86 @@
++#pragma once
++// FH1 (#268): how much work one Vulkan submission holds, and the submissions the GPU was slow
++// to finish.
++//
++// Windows resets the GPU when one submission keeps it from switching to other work for 2 s
++// (TDR, "device lost"). On a Vega APU with its carve-out nearly full the game's frames took
++// 50 ms, now and then 200-450 ms, and then one submission 3.8 s. So on integrated GPUs a
++// submission is ended after kIntegratedDrawLimit draws (vulkan_submission_draw_limit): the
++// next draw starts a new one, as after a resolve that is copied back. And waits of the
++// command processor for the GPU of kSlowWaitMs or more are logged with the draws of the
++// submission waited for, so a player's log shows whether a slow submission held much work.
++//
++// Free of the Vulkan headers so that tools/test_submission_watch.cpp can test it.
++#include <array>
++#include <cstdint>
++
++namespace rex::graphics::vulkan::fh1_submission_watch {
++
++constexpr int32_t kIntegratedDrawLimit = 1000;
++constexpr int64_t kSlowWaitMs = 250;
++constexpr int64_t kSlowLogIntervalMs = 10000;
++constexpr uint32_t kMaxSlowLogs = 50;
++
++// The draws a submission may hold: the setting (-1 = auto: kIntegratedDrawLimit on an
++// integrated GPU with a small carve-out, else no limit; 0 = no limit).
++inline uint32_t DrawLimit(int32_t setting, bool integrated) {
++  if (setting >= 0) return uint32_t(setting);
++  return integrated ? uint32_t(kIntegratedDrawLimit) : 0;
++}
++
++// Whether to end the open submission before the next draw.
++inline bool ShouldSplit(uint32_t draws_in_submission, uint32_t limit) {
++  return limit && draws_in_submission >= limit;
++}
++
++// The last submissions: their draws and when they were handed to the GPU.
++class Watch {
++ public:
++  struct Record {
++    uint64_t submission = 0;
++    uint32_t draws = 0;
++    int64_t submitted_ms = 0;
++  };
++
++  void Submitted(uint64_t submission, uint32_t draws, int64_t now_ms) {
++    Record& r = records_[submission % records_.size()];
++    r.submission = submission;
++    r.draws = draws;
++    r.submitted_ms = now_ms;
++  }
++
++  // The record of a submission among the last ones, or nullptr.
++  const Record* Find(uint64_t submission) const {
++    const Record& r = records_[submission % records_.size()];
++    return r.submission == submission && submission ? &r : nullptr;
++  }
++
++  // A wait for the GPU ended after `waited_ms`: whether to log it (slow, and not too often).
++  bool ShouldLogWait(int64_t waited_ms, int64_t now_ms) {
++    if (waited_ms < slow_wait_ms_) return false;
++    ++slow_waits_;
++    if (logged_ >= kMaxSlowLogs || (logged_ && now_ms < last_log_ms_ + kSlowLogIntervalMs)) {
++      return false;
++    }
++    ++logged_;
++    last_log_ms_ = now_ms;
++    return true;
++  }
++  // Slow waits since the last logged one (that one included).
++  uint32_t TakeSlowWaits() {
++    const uint32_t n = slow_waits_;
++    slow_waits_ = 0;
++    return n;
++  }
++  // Tests: log shorter waits too (FORZA_TEST_SLOW_WAIT_MS).
++  void SetSlowWaitMs(int64_t ms) { slow_wait_ms_ = ms; }
++
++ private:
++  std::array<Record, 64> records_{};
++  int64_t slow_wait_ms_ = kSlowWaitMs;
++  uint32_t slow_waits_ = 0;
++  uint32_t logged_ = 0;
++  int64_t last_log_ms_ = 0;
++};
++
++}  // namespace rex::graphics::vulkan::fh1_submission_watch

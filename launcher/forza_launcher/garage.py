@@ -49,6 +49,12 @@ class Result:
     backup: object = None
 
 
+@dataclass(frozen=True)
+class PaintRepairResult:
+    repaired: tuple
+    backup: object = None
+
+
 def _keys(cfg):
     executable = cfg.game_files() / 'default.xex'
     info = executable.stat()
@@ -183,6 +189,15 @@ def _stock_part(db, table, group, value, required=False):
     return dict(rows[0]) if rows else {'Id': -1}
 
 
+def _factory_colour(db, cid):
+    # This is Combo_Colors.Sequence, not a zero-based position in the list.
+    colour = db.execute('SELECT Sequence FROM Combo_Colors WHERE Ordinal=? '
+                        'ORDER BY Sequence LIMIT 1', (cid,)).fetchone()
+    if colour is None or type(colour[0]) is not int or not 1 <= colour[0] <= 255:
+        raise saves.SaveError('The unicorn car has no supported factory colour.')
+    return colour[0]
+
+
 def stock_car(db, cid, ordinal, columns):
     """Build stock parts from the player's game database, never from another owned car."""
     if cid not in {model for model, _, _ in unicorns.CARS}:
@@ -198,7 +213,7 @@ def stock_car(db, cid, ordinal, columns):
     guid = uuid.uuid4().hex
     row.update(Id=ordinal, CarId=cid, PartsValue=0, NumOwners=1, OriginalOwner='ReImagined',
                CurOwnerPurchaseDate=int(time.time()), CarGroup=None, TireBrand=None,
-               Flags=73, WheelStyle=-1, DefaultManufacturerColorIndex=0, LiveryFileName='',
+               Flags=73, WheelStyle=-1, DefaultManufacturerColorIndex=_factory_colour(db, cid), LiveryFileName='',
                Guid=f'{guid[:8]}-{guid[8:12]}-{guid[12:16]}-{guid[16:]}', Thumbnail=car['Thumbnail'], SharedID=0,
                MirroredPerformanceIndex=car['PerformanceIndex'])
     parents = {}
@@ -274,24 +289,65 @@ def add_missing(cfg, profile, cancelled=lambda: False, progress=lambda *_: None)
             raise saves.SaveError('Unsupported garage or game database: '+str(exc)) from exc
         finally:
             db.close()
-        saves._check(cancelled)
-        backup = saves._create(profile, 'Before adding unicorn cars', 'before-edit', cancelled, progress, 10)
-        if backup is None:
-            raise saves.SaveError('Could not back up the selected save.')
+        backup = _replace_garage(profile, original, edited, 'Before adding unicorn cars', cancelled, progress)
+        return Result(missing, existing, backup)
+
+
+def _replace_garage(profile, original, edited, label, cancelled, progress):
+    saves._check(cancelled)
+    backup = saves._create(profile, label, 'before-edit', cancelled, progress, 10)
+    if backup is None:
+        raise saves.SaveError('Could not back up the selected save.')
+    saves._check(cancelled)
+    if _read(profile) != original:
+        raise saves.SaveError('The garage changed during backup. Reload before editing.')
+    path = _path(profile)
+    temporary = path.with_name('.garage-edit-'+uuid.uuid4().hex)
+    try:
+        with temporary.open('xb') as writer:
+            writer.write(edited)
+            writer.flush()
+            os.fsync(writer.fileno())
         saves._check(cancelled)
         if _read(profile) != original:
-            raise saves.SaveError('The garage changed during backup. Reload before editing.')
-        path = _path(profile)
-        temporary = path.with_name('.garage-edit-'+uuid.uuid4().hex)
+            raise saves.SaveError('The garage changed before applying the edit.')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return backup
+
+
+def repair_factory_paint(cfg, profile, cancelled=lambda: False, progress=lambda *_: None):
+    """Opt-in repair of the old editor's invalid factory colour; never replace a livery."""
+    with saves.locked(profile):
+        saves._recover(profile)
+        saves._check(cancelled)
+        original = _read(profile)
+        document = decode(profile, original, _keys(cfg))
+        db = _open(document.database)
         try:
-            with temporary.open('xb') as writer:
-                writer.write(edited)
-                writer.flush()
-                os.fsync(writer.fileno())
-            saves._check(cancelled)
-            if _read(profile) != original:
-                raise saves.SaveError('The garage changed before applying the edit.')
-            os.replace(temporary, path)
+            columns = [dict(c) for c in db.execute('PRAGMA table_info(Career_Garage)')]
+            if ({c['name'] for c in columns} != GARAGE_COLUMNS
+                    or any(c['type'] not in ('INT', 'INTEGER', 'REAL', 'TEXT') for c in columns)
+                    or [c['name'] for c in columns if c['pk']] != ['Id']):
+                raise saves.SaveError('Unsupported garage schema.')
+            supported = {cid for cid, _, _ in unicorns.CARS}
+            candidates = [row for row in db.execute(
+                "SELECT Id, CarId FROM Career_Garage WHERE DefaultManufacturerColorIndex=0 "
+                "AND LiveryFileName='' AND OriginalOwner='ReImagined' AND NumOwners=1 AND Flags=73")
+                if row['CarId'] in supported]
+            if not candidates:
+                return PaintRepairResult(())
+            with closing(sqlite3.connect((cfg.game_files()/'media/db/gamedb.slt').resolve().as_uri()+'?mode=ro', uri=True)) as source:
+                for row in candidates:
+                    saves._check(cancelled)
+                    db.execute('UPDATE Career_Garage SET DefaultManufacturerColorIndex=? WHERE Id=?',
+                               (_factory_colour(source, row['CarId']), row['Id']))
+            db.commit()
+            edited = encode(document, db.serialize())
+        except sqlite3.Error as exc:
+            raise saves.SaveError('Unsupported garage or game database: '+str(exc)) from exc
         finally:
-            temporary.unlink(missing_ok=True)
-        return Result(missing, existing, backup)
+            db.close()
+        backup = _replace_garage(profile, original, edited, 'Before repairing unicorn paint', cancelled, progress)
+        return PaintRepairResult(tuple(row['Id'] for row in candidates), backup)

@@ -45,7 +45,7 @@ def _safe_name(name):
 def _wanted(name):
     base = PurePosixPath(name).name
     return (base.lower().endswith((".liv", ".lvg", ".owner", ".xuid"))
-            or base in ("StorefrontID", "thumb.xdc"))
+            or base in ("StorefrontID", "thumb.xdc", "DatabaseReservedName4002"))
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,8 @@ class Catalog:
     title_id: str | None
     source_sha256: str | None
     items: tuple[Item, ...]
+    profile_id: bytes | None = field(default=None, repr=False)
+    index: bytes | None = field(default=None, repr=False)
 
     @property
     def game(self):
@@ -136,7 +138,9 @@ def _package(source, cancelled):
         after = os.fstat(pkg.files[0].fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise CatalogError("Catalog package changed while reading; retry after closing the game.")
-        return title_id, digest, found
+        pkg.files[0].seek(0x371)
+        profile_id = pkg.files[0].read(8)
+        return title_id, digest, found, profile_id
     except (SystemExit, IndexError, struct.error, OSError) as exc:
         raise CatalogError("Damaged or unreadable catalog package.") from exc
     finally:
@@ -190,9 +194,9 @@ def read_catalog(source, cancelled=lambda: False):
         raise CatalogError("Choose a catalog directly, not a linked path.")
     try:
         if source.is_dir():
-            title_id, digest, files = None, None, _folder(source, cancelled)
+            title_id, digest, files, profile_id = None, None, _folder(source, cancelled), None
         elif source.is_file():
-            title_id, digest, files = _package(source, cancelled)
+            title_id, digest, files, profile_id = _package(source, cancelled)
         else:
             raise CatalogError("Catalog does not exist or is not a regular file.")
     except OSError as exc:
@@ -221,7 +225,8 @@ def read_catalog(source, cancelled=lambda: False):
                           model_id, int(match[1]) if match else None,
                           tuple(sorted(n[:-6] for n in peers if n.lower().endswith(".owner"))),
                           bool(peers.get("StorefrontID")), peers))
-    return Catalog(source, title_id, digest, tuple(items))
+    return Catalog(source, title_id, digest, tuple(items), profile_id,
+                   files.get('DatabaseReservedName4002'))
 
 
 def description(catalog):

@@ -2,6 +2,8 @@
 // tu_address_map: TU4 addresses
 // The scene/model layouts below are validated for Title Update 4 only.
 #include "../platform/graphics_menu.h"
+#include "../platform/native_car_tuning_menu.h"
+#include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
 #include "../platform/graphics_resolution.h"
@@ -61,6 +63,7 @@ extern "C" REX_FUNC(OriginalSelect);
 namespace forza::graphics_menu {
 namespace {
 constexpr uint32_t kGraphics = 0x7000;
+constexpr uint32_t kBenchmark = 0x7001;
 uint32_t Read(uint8_t *base, uint32_t address) {
   const auto *p = GuestPtr(base, address);
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 |
@@ -246,7 +249,8 @@ std::vector<std::pair<std::string, std::string>> preview_baseline;
 
 bool IsLive(const Setting &setting) {
   return setting.key == "vsync" || setting.key == "anisotropic_override" ||
-         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay";
+         setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay" ||
+         setting.key == "world_shadow_filter" || setting.key == "world_ambient_occlusion";
 }
 
 void RememberPreview() {
@@ -282,8 +286,11 @@ bool ApplyPreview() {
 }
 
 constexpr size_t kAntiAliasing = 9;
+constexpr size_t kShadowSoftness = 10;
+constexpr size_t kAmbientOcclusion = 11;
 // Preset first, then image quality, frame pacing, HUD and monitoring.
-constexpr std::array<size_t, 10> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, 3, 4, 6, 7};
+constexpr std::array<size_t, 12> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, kShadowSoftness,
+                                               kAmbientOcclusion, 3, 4, 6, 7};
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
@@ -327,7 +334,9 @@ void Snapshot() {
        "frame_rate",
        "Frame rate limit",
        "",
-       {{"30", "30 FPS"},
+       {{"20", "20 FPS"},
+        {"30", "30 FPS"},
+        {"40", "40 FPS"},
         {"60", "60 FPS"},
         {"90", "90 FPS"},
         {"120", "120 FPS"},
@@ -362,6 +371,10 @@ void Snapshot() {
        {{"custom", "Custom"}, {"auto", "Auto (recommended)"}, {"low", "Low"},
         {"medium", "Medium"}, {"high", "High"}}},
       {"anti_aliasing", "", "Anti-aliasing", "game", {}},
+      {"world_shadow_filter", "world_shadow_filter", "Shadow softness", "",
+       {{"console", "Console"}, {"soft", "Soft"}, {"softer", "Softer"}}},
+      {"world_ambient_occlusion", "world_ambient_occlusion", "Ambient occlusion", "",
+       {{"off", "Off"}, {"low", "Low"}, {"high", "High"}}},
   };
 #ifdef __APPLE__
   settings[0].choices.insert(settings[0].choices.begin(), {"720p", "1280 x 720"});
@@ -402,6 +415,14 @@ void Snapshot() {
 #endif
     if (setting.key == "output") setting.value = CurrentOutput(setting.value);
     if (setting.value.empty())
+      setting.value = setting.choices.front().value;
+  }
+  // A value the screen does not offer would be saved back as it is; show and keep the
+  // game's look (Console, Off).
+  for (const size_t world : {kShadowSoftness, kAmbientOcclusion}) {
+    auto &setting = settings[world];
+    if (std::none_of(setting.choices.begin(), setting.choices.end(),
+                     [&](const Choice &choice) { return choice.value == setting.value; }))
       setting.value = setting.choices.front().value;
   }
   // Never let an unknown/current launcher mode silently select spinner index
@@ -484,12 +505,15 @@ bool SaveNativeConfig() {
       "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
       "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
       "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
-      "forza_hud_edges", "forza_performance_overlay"}) {
+      "forza_hud_edges", "forza_performance_overlay", "world_shadow_filter",
+      "world_ambient_occlusion"}) {
     auto value = rex::cvar::GetFlagByName(name);
     if (value.empty()) continue;
     const std::string key(name);
     if (key == "resolution" || key == "fh1_upscaler" || key == "swap_post_effect" ||
-        key == "forza_performance_overlay") value = "\"" + value + "\"";
+        key == "forza_performance_overlay" || key == "world_shadow_filter" ||
+        key == "world_ambient_occlusion")
+      value = "\"" + value + "\"";
     updates.emplace_back(key, value);
   }
   auto temporary = native_config_path;
@@ -528,19 +552,25 @@ extern "C" REX_FUNC(MenuBind) {
   from_main_menu = false;
   Native ui(ctx, base);
   if (ui) {
+    const bool tuning = forza::car_tuning_menu::Available(ctx, base, active_menu);
+    if (tuning)
+      ui.Add(active_menu, forza::car_tuning_menu::kMenuAction, "CAR TUNING");
     ui.Add(active_menu, kGraphics, "GRAPHICS");
     // The TU4 data source keeps display order in a vector of row pointers at
-    // +0x28, independently of its ID lookup. Move our appended row above Quit
+    // +0x28, independently of its ID lookup. Move our appended rows above Quit
     // before the original bind publishes the list to the native component.
     const uint32_t rows = active_menu + 0x174 + 0x28;
     const uint32_t begin = Read(base, rows);
     const uint32_t end = Read(base, rows + 4);
-    if (begin && end >= begin && end - begin >= 8 &&
+    const uint32_t added = tuning ? 2 : 1;
+    if (begin && end >= begin && end - begin >= (added + 1) * 4 &&
         (end - begin) % 4 == 0) {
       const uint32_t graphics = Read(base, end - 4);
-      const uint32_t previous = Read(base, end - 8);
+      const uint32_t previous_address = end - (added + 1) * 4;
+      const uint32_t previous = Read(base, previous_address);
       if (graphics && Read(base, graphics + 8) == kGraphics) {
-        Write(base, end - 8, graphics);
+        for (uint32_t address = previous_address; address < end - 4; address += 4)
+          Write(base, address, Read(base, address + 4));
         Write(base, end - 4, previous);
       }
     }
@@ -611,7 +641,9 @@ std::string Help(size_t i) {
       "Move ultrawide HUD anchors to the center or edges. Save applies this change when HUD layout is enabled.",
       "Show measured game FPS, optionally with recent frame times in milliseconds. Save applies this change.",
       "Adjust reconstruction and filtering together. Auto uses available features and output size, not a benchmark. HUD and FPS limit stay unchanged.",
-      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method."};
+      "Game default preserves guest MSAA. SMAA is spatial. DLAA and FSR Native AA are temporal at output resolution. Turn off upscaling to select a separate AA method.",
+      "Softer, smoother edges on the world's shadows: Soft filters them over a 1.5x wider area, Softer 2x with a wider blur (a little GPU time). Console is the game's filter. Save applies this change.",
+      "Darker sunlight where the world's surfaces meet: under cars, along rails and curbs, at the foot of walls and in creases of the ground. Low or High strength (about 0.5 ms per frame at 2560x1440). Off is the game's lighting. Save applies this change."};
   return i < std::size(help) ? help[i] : "Save applies graphics changes without restarting.";
 }
 uint32_t MakeChoices(Native &ui, uint8_t *base, size_t i) {
@@ -636,6 +668,8 @@ bool Relevant(size_t i) {
 #endif
   if (i == 2) return BackendMode() == "off";
   if (i == kAntiAliasing) return settings[1].value == "off";
+  // The occlusion is a pass of the Vulkan renderer (SDK patch 0350).
+  if (i == kAmbientOcclusion) return rex::cvar::GetFlagByName("gpu_backend") != "d3d12";
   if (i == 6) return rex::cvar::GetFlagByName("forza_ultrawide") == "true" ||
                      rex::cvar::GetFlagByName("forza_hud_layout") == "true";
   return true;
@@ -797,6 +831,7 @@ extern "C" REX_FUNC(__imp__sub_827142C0);
 extern "C" REX_FUNC(__imp__sub_82736B08);
 
 extern "C" REX_FUNC(sub_827303E8) {
+  if (forza::car_tuning_menu::TryBind(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (!opening_graphics) {
     __imp__sub_827303E8(ctx, base);
@@ -853,6 +888,7 @@ extern "C" REX_FUNC(sub_827303E8) {
               native_rows.size());
 }
 extern "C" REX_FUNC(sub_82739190) {
+  if (forza::car_tuning_menu::TryNotify(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_82739190(ctx, base);
@@ -873,6 +909,7 @@ extern "C" REX_FUNC(sub_82739190) {
   }
 }
 extern "C" REX_FUNC(sub_827142C0) {
+  if (forza::car_tuning_menu::TryDestroy(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_827142C0(ctx, base);
@@ -902,6 +939,7 @@ extern "C" REX_FUNC(sub_827142C0) {
   save_requested = false;
 }
 extern "C" REX_FUNC(sub_82736B08) {
+  if (forza::car_tuning_menu::TryInput(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
     __imp__sub_82736B08(ctx, base);
@@ -952,6 +990,11 @@ void OpenGraphics(PPCContext &ctx, uint8_t *base) {
 }
 extern "C" REX_FUNC(MenuSelect) {
   using namespace forza::graphics_menu;
+  if (ctx.r3.u32 == active_menu && ctx.r4.u32 == 2 &&
+      ctx.r6.u32 == forza::car_tuning_menu::kMenuAction) {
+    forza::car_tuning_menu::Open(ctx, base, active_menu);
+    return;
+  }
   if (ctx.r3.u32 == active_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics) {
     from_main_menu = false;
     OpenGraphics(ctx, base);
@@ -976,29 +1019,44 @@ extern "C" REX_FUNC(sub_8283CB68) {
     const auto component = Read(base, menu + 0x170);
     title_layout_pending = true;
     ui.AddSource(source, kGraphics, "GRAPHICS");
+    ui.AddSource(source, kBenchmark, "BENCHMARK");
+    forza::benchmark::TitleReady(menu, 10);
     ui.Call(Read(base, Read(base, component + 0x6C) + 0x28), {component + 0x6C});
     REXLOG_INFO("Graphics menu: native main-menu entry added");
   }
 }
 extern "C" REX_FUNC(sub_82836928) {
   using namespace forza::graphics_menu;
-  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
+  const bool title_choice = ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 &&
+                            Read(base, main_menu + 0x260) == 12;
+  if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kBenchmark &&
       Read(base, main_menu + 0x260) == 12) {
-    title_layout_pending = false;
-    RestoreTitle(base);
+    forza::benchmark::Show();
+    return;
   }
   if (ctx.r3.u32 == main_menu && ctx.r4.u32 == 2 && ctx.r6.u32 == kGraphics &&
       Read(base, main_menu + 0x260) == 12) {
+    title_layout_pending = false;
+    RestoreTitle(base);
     active_menu = main_menu;
     from_main_menu = true;
     OpenGraphics(ctx, base);
     return;
   }
   __imp__sub_82836928(ctx, base);
+  if (title_choice && Read(base, main_menu + 0x260) != 12) {
+    // A stock choice can show a modal dialog and keep the title list alive.
+    // In that case its animated selected label must keep the same shifted
+    // transform as the static rows. Once the native menu really leaves, its
+    // scene owns those transforms; discard our references without touching it.
+    title_layout_pending = false;
+    title_offsets.clear();
+  }
 }
 
 namespace forza::graphics_menu {
 void Tick(PPCContext& ctx, uint8_t* base) {
+  forza::car_tuning_menu::Tick(ctx, base);
   UpdatePerformanceOverlay();
   RefreshRelevance(ctx, base);
   if (title_layout_pending && main_menu && Read(base, main_menu + 0x260) == 12) {
@@ -1030,8 +1088,8 @@ void Tick(PPCContext& ctx, uint8_t* base) {
             const auto row = Read(base, item);
             const auto node = row ? Read(base, row + 0x2C) : 0;
             if (!node) continue;
-            title_offsets.push_back({row, node, spacing});
-            ShiftTitleRow(base, node, spacing);
+            title_offsets.push_back({row, node, spacing * 2});
+            ShiftTitleRow(base, node, spacing * 2);
           }
           // Refresh each native visual state so static, unfocused tape/text
           // geometry is rebuilt along with the animated selected item.
@@ -1044,7 +1102,7 @@ void Tick(PPCContext& ctx, uint8_t* base) {
               ui.Call(Read(base, table + 0x80), {row, 1});
           }
           title_layout_pending = false;
-          REXLOG_INFO("Graphics menu: title choices raised by one row ({})", spacing);
+          REXLOG_INFO("Graphics menu: title choices raised by {} units", spacing * 2);
         }
       }
     }

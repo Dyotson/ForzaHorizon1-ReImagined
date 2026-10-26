@@ -138,7 +138,8 @@ int main() {
     WriteBytes(damaged, format1);
     CHECK(Read(damaged, id).entries.empty() && Read(damaged, id).rejected);
 
-    // Size limits: an oversized file is not read, and a save over the limit writes nothing.
+    // Size limits: an oversized file is not read. A save retains complete entries
+    // within its budget, rather than losing all persistence when one more is added.
     {
       std::ofstream oversized(root / "oversized", std::ios::binary);
       oversized.seekp(std::streamoff(kMaxFileSize + 1)); oversized.put(0);
@@ -146,13 +147,34 @@ int main() {
     CHECK(Read(root / "oversized", id).entries.empty() && Read(root / "oversized", id).rejected);
     std::filesystem::remove(root / "oversized");
     {
-      auto big = MakeEntry(1, Payload(id, kMaxEntrySize, 7), kMaxEntrySize);
-      std::vector<Entry> many(kMaxFileSize / kMaxEntrySize + 1, big);
-      for (size_t i = 0; i < many.size(); ++i) many[i].key = i;
+      // Small budgets exercise the real encoder, filesystem replacement and reader
+      // without writing a 512 MiB fixture. Exactly two entries fit including headers.
+      const uint64_t budget = kHeaderSize + 2 * (kEntryHeaderSize + 128);
+      std::vector<Entry> many;
+      for (uint64_t key = 0; key < 6; ++key)
+        many.push_back(MakeEntry(key, Payload(id, 128, uint8_t(key)), 128));
+      for (int session = 0; session < 3; ++session) {
+        const auto bounded = Write(path, many, id, budget);
+        CHECK(bounded.written && bounded.entries == 2 && bounded.skipped == 4);
+        CHECK(bounded.bytes == budget && std::filesystem::file_size(path) == budget);
+        read = Read(path, id);
+        CHECK(!read.rejected && read.entries.size() == 2);
+        for (size_t i = 0; i < 2; ++i) CHECK(SameEntry(read.entries[i], many[i]));
+      }
+      // A large first entry does not prevent a later small entry from fitting.
+      many.insert(many.begin(), MakeEntry(99, Payload(id, 512, 7), 512));
+      const auto bounded = Write(path, many, id, budget - 1);
+      CHECK(bounded.written && bounded.entries == 1 && bounded.skipped == 6);
+      read = Read(path, id);
+      CHECK(!read.rejected && read.entries.size() == 1 && SameEntry(read.entries[0], many[1]));
+      CHECK(bounded.bytes == kHeaderSize + kEntryHeaderSize + 128);
       const auto before = ReadBytes(path);
-      const auto over = Write(path, many, id);
-      CHECK(!over.written && over.too_large && over.bytes > kMaxFileSize);
+      CHECK(!Write(path, many, id, kHeaderSize - 1).written);
       CHECK(ReadBytes(path) == before);
+      // Omitted entries remain available to the next save with a larger budget.
+      const auto full = Write(path, many, id);
+      CHECK(full.written && full.entries == many.size() && full.skipped == 0);
+      CHECK(Read(path, id).entries.size() == many.size());
       CHECK(!ValidPayload(Payload(id, kMaxEntrySize + 1, 7), id));
     }
 
@@ -182,6 +204,22 @@ int main() {
     });
     for (size_t i = 0; i < 50; ++i) Write(path, i % 2 ? entries : replacement, id);
     finish = true; reader.join(); CHECK(!failed);
+
+#ifdef _WIN32
+    // An existing reader that denies deletion forces atomic replacement to fail.
+    // Retain the exact old bytes and remove the failed save's temporary file.
+    {
+      const auto before = ReadBytes(path);
+      HANDLE held = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+      CHECK(held != INVALID_HANDLE_VALUE);
+      const auto blocked = Write(path, entries, id, kHeaderSize + kEntryHeaderSize + 128);
+      CloseHandle(held);
+      CHECK(!blocked.written && ReadBytes(path) == before);
+      for (const auto& item : std::filesystem::directory_iterator(root))
+        CHECK(item.path().filename().string().find("cache.vkpc.tmp-") != 0);
+    }
+#endif
 
     // Classification of what a pipeline's own cache holds after creation.
     {

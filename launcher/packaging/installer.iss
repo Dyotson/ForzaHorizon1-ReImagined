@@ -15,7 +15,7 @@ AppId={{B0C6F2A4-5D1E-4D0B-9B1B-7B5A0F3E6C21}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Dyotson
-AppPublisherURL=https://github.com/Dyotson/ForzaHorizon1-ReImagined
+AppPublisherURL=https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 DefaultDirName={localappdata}\Programs\ForzaHorizon1-ReImagined
 DefaultGroupName={#ShortName}
 PrivilegesRequired=lowest
@@ -30,6 +30,10 @@ SetupIconFile=../../forza-recomp/resources/forza.ico
 UninstallDisplayIcon={app}\forza-launcher.exe
 LicenseFile={#Stage}\licenses\ForzaHorizon1-ReImagined.txt
 DisableProgramGroupPage=yes
+; Always show where the files go and let the player change it, also on updates (Inno Setup's
+; default skips the page once a previous install exists, issue #403). The launcher's own update
+; passes /DIR, so the page comes up filled with the current install folder.
+DisableDirPage=no
 ; Installed files keep the build's real (UTC) file times. By default Inno Setup stores the build machine's
 ; local time (UTC on CI) and sets it as the player's local time: hours in the future west of UTC, which
 ; keeps ninja re-running CMake (issue #35).

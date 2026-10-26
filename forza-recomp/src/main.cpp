@@ -15,6 +15,12 @@
 #include <string>
 #include <string_view>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 REX_DEFINE_APP(forza, ForzaApp::Create)
 
 REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
@@ -24,22 +30,42 @@ REXCVAR_DEFINE_STRING(gpu_backend, "vulkan", "GPU",
 std::string ForzaGpuBackend() { return REXCVAR_GET(gpu_backend); }
 
 // The game's vblank callback wakes its main loop every second guest vblank (every vblank
-// with its mainthread30fps option off), and the main loop times its simulation in real
-// time, so the frame rate follows the guest vblank rate. Above 30 the frame time comes from
-// the guest tick clock instead of the kernel's millisecond tick (src/hooks/frame_time.cpp,
-// docs/framerate.md).
+// with its mainthread30fps option off, every third at 20 and 40 fps), and the main loop
+// times its simulation in real time, so the frame rate follows the guest vblank rate. Away
+// from 30 the frame time comes from the guest tick clock instead of the kernel's millisecond
+// tick (src/hooks/frame_time.cpp, docs/framerate.md).
 REXCVAR_DEFINE_INT32(frame_rate, 30, "Display",
-                     "Frame rate: 30 (the console's), or 60 to 240 (60, 120, 144, ...). The "
-                     "game times its simulation in real time (docs/framerate.md)")
+                     "Frame rate: 30 (the console's), 20 or 40 (even frames on 60 and 120 Hz "
+                     "screens for PCs that cannot hold 30 or 60), or 60 to 240 (60, 120, 144, "
+                     "...). The game times its simulation in real time (docs/framerate.md)")
     .validator([](std::string_view v) {
       int fps = 0;
       for (char c : v) {
         if (c < '0' || c > '9' || fps > 1000) return false;
         fps = fps * 10 + (c - '0');
       }
-      return fps == 30 || (fps >= 60 && fps <= 240);
+      return fps == 20 || fps == 30 || fps == 40 || (fps >= 60 && fps <= 240);
     })
     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+
+#ifdef _WIN32
+namespace {
+// forza.exe's manifest (resources/forza.manifest) already makes the process per-monitor-v2 DPI
+// aware. This is the same request for a build whose manifest did not make it into the exe: it is
+// refused (harmlessly) once the awareness is set. Before main() so it runs ahead of any window.
+// Without it, display scaling (200% on a 4K TV) shrinks exclusive fullscreen to a quarter (#418).
+const bool g_dpi_aware = [] {
+  using Fn = BOOL(WINAPI*)(HANDLE);
+  if (HMODULE user32 = GetModuleHandleW(L"user32.dll")) {
+    if (auto fn = reinterpret_cast<Fn>(
+            reinterpret_cast<void*>(GetProcAddress(user32, "SetProcessDpiAwarenessContext")))) {
+      fn(reinterpret_cast<HANDLE>(-4));  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
+  }
+  return true;
+}();
+}  // namespace
+#endif
 
 namespace {
 
@@ -72,10 +98,10 @@ void ApplyForzaCvarDefaults() {
   // flip model shows the newest finished frame at each refresh instead.
   SetSdkCvarDefault("d3d12_allow_variable_refresh_rate_and_tearing", "false");
 #endif
-  // frame_rate above 30: the guest vblank at twice the frame rate, or at the frame rate when
-  // twice is past the SDK's limit (src/hooks/frame_time.cpp). A video_mode_refresh_rate set
-  // in forza.toml or on the command line wins.
-  if (REXCVAR_GET(frame_rate) > 30) {
+  // frame_rate other than 30: the guest vblank at three times 20 or 40, twice a higher frame
+  // rate, or the frame rate when twice is past the SDK's limit (src/hooks/frame_time.cpp). A
+  // video_mode_refresh_rate set in forza.toml or on the command line wins.
+  if (REXCVAR_GET(frame_rate) != 30) {
     SetSdkCvarDefault("video_mode_refresh_rate", std::to_string(forza::frame_time::VblankHz()));
   }
 }

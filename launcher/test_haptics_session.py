@@ -10,6 +10,11 @@ from forza_launcher.game import LaunchPlan, Session
 from forza_launcher.haptics.settings import DEFAULTS
 
 
+def game_call(child):
+    # the Popen patch is on the shared subprocess module: take the game's call only
+    return [c for c in child.call_args_list if c.args and c.args[0] == ['test-game']][-1]
+
+
 class SessionHapticsTests(unittest.TestCase):
     def test_telemetry_is_only_advertised_when_an_effect_is_enabled(self):
         for settings, wanted in (({}, False), (DEFAULTS, False),
@@ -29,7 +34,7 @@ class SessionHapticsTests(unittest.TestCase):
                      patch('forza_launcher.haptics.service.HapticsService', return_value=service) as factory, \
                      patch('forza_launcher.game.subprocess.Popen') as child:
                     session.start()
-                    env = child.call_args.kwargs['env']
+                    env = game_call(child).kwargs['env']
                     if wanted:
                         factory.assert_called_once_with(settings, xbox_capable=True)
                         service.start.assert_called_once()
@@ -61,13 +66,13 @@ class SessionHapticsTests(unittest.TestCase):
                 self.assertTrue(session.relaunch())
                 service.stop.assert_called_once()
                 self.assertIsNone(session.haptics)
-                self.assertNotIn('FORZA_TELEMETRY_PORT', child.call_args.kwargs['env'])
+                self.assertNotIn('FORZA_TELEMETRY_PORT', game_call(child).kwargs['env'])
                 session.update_haptics({**DEFAULTS, 'xbox_enabled': True})
                 self.assertIsNone(session.haptics)  # Running child has no telemetry destination.
                 self.assertEqual(factory.call_count, 1)
                 self.assertTrue(session.relaunch())
                 self.assertEqual(factory.call_count, 2)
-                self.assertEqual(child.call_args.kwargs['env']['FORZA_TELEMETRY_PORT'], '12345')
+                self.assertEqual(game_call(child).kwargs['env']['FORZA_TELEMETRY_PORT'], '12345')
 
 
 if __name__ == '__main__':

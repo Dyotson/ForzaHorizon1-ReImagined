@@ -9,8 +9,11 @@
 #include "kernel/live.h"
 #include "platform/achievement_toast.h"
 #include "platform/discord_presence.h"
+#include "platform/cursor_idle.h"
 #include "platform/hud_overlay.h"
+#include "platform/resume.h"
 #include "platform/graphics_menu.h"
+#include "platform/benchmark.h"
 #include "platform/vulkan_hooks.h"
 #include "platform/ultrawide.h"
 #include <rex/ui/window.h>
@@ -37,7 +40,12 @@ namespace forza {
 void InstallFaultGuard();  // src/debug/fault_guard.cpp
 void LogGuestThreads(const char* why);  // src/debug/fault_guard.cpp
 void PatchMotionBlurStencilThreshold();  // src/platform/motion_blur_fix.cpp
+void PatchSceneResolution();  // src/hooks/scene_resolution.cpp
 void LogDlcPackages(const std::filesystem::path& user_data_root);  // src/debug/dlc_log.cpp
+// The player's mods over update:\media.zip (src/kernel/mod_overlay.cpp, #149).
+void InstallMods(rex::filesystem::VirtualFileSystem* vfs,
+                 const std::filesystem::path& user_data_root,
+                 const std::filesystem::path& cache_root);
 }  // namespace forza
 
 // SDK settings with this game's defaults (src/main.cpp); the GPU plugin's own settings exist
@@ -80,6 +88,7 @@ class ForzaApp : public rex::ReXApp {
     }
     graphics_ = config.graphics.get();
     ApplyForzaGpuCvarDefaults();
+    forza::benchmark::PrepareRuntime();
   }
 
   // The GPU provider exists now and the window has no swapchain yet: hook the Vulkan
@@ -89,6 +98,7 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallVulkanHooks(graphics_);
     forza::InstallHud(drawer, app_context(), window());
     forza::InstallFriendsKey();
+    cursor_idle_ = std::make_unique<forza::CursorIdle>(window(), drawer);
   }
 
   void OnPostSetup() override { forza::InstallVulkanHooks(runtime()->graphics_system()); }
@@ -106,7 +116,9 @@ class ForzaApp : public rex::ReXApp {
       override { return {}; }
 
   void OnShutdown() override {
+    cursor_idle_.reset();
     stall_watchdog_.Stop();
+    resume_watcher_.Stop();
     if (achievement_listener_) {
       forza::RemoveAchievementHud(achievements(), achievement_listener_);
       achievement_listener_ = 0;
@@ -120,6 +132,7 @@ class ForzaApp : public rex::ReXApp {
     // The SDK terminates guest threads immediately after accepting this request.
     // A retained XThread handle does not keep its guest stack alive.
     stall_watchdog_.Stop();
+    resume_watcher_.Stop();
     forza::discord::Shutdown();
     forza::perf::Shutdown();
     forza::LogGuestThreads("at close");
@@ -133,6 +146,7 @@ class ForzaApp : public rex::ReXApp {
   // not found". Mount a host folder there as Xenia does with mount_cache.
   void OnPreLaunchModule() override {
     forza::graphics_menu::Initialize(user_data_root());
+    forza::benchmark::Initialize(user_data_root());
     forza::discord::Initialize();
 
     if (!achievement_listener_) achievement_listener_ = forza::InstallAchievementHud(achievements());
@@ -159,11 +173,23 @@ class ForzaApp : public rex::ReXApp {
     forza::InstallFaultGuard();
     // Long frames and where the game was during them (#187).
     stall_watchdog_.Start();
+    // A stopped game or a machine that slept: logged, Forza Live signs in again (#140).
+    resume_watcher_.Start();
     // The executable's image is loaded: fix the speed blur's stencil threshold.
     forza::PatchMotionBlurStencilThreshold();
+    // The 3D scene below 720p (scene_resolution, #347): scenario and screen texture tables.
+    forza::PatchSceneResolution();
     // Which DLC the game will find (#79: Horizon Rally without the Rally Expansion Pack).
     forza::LogDlcPackages(user_data_root());
+    // Texture packs (#384, docs/texture_packs.md): dumps and replacements live in
+    // <user data>/textures unless texture_pack_root names another folder (the launcher passes
+    // its data folder's, which a Xenia save's user data root is not).
+    if (rex::cvar::GetFlagByName("texture_pack_root").empty()) {
+      rex::cvar::SetFlagByName("texture_pack_root", (user_data_root() / "textures").string());
+    }
     auto* vfs = runtime()->file_system();
+    // Before the game opens its first archive.
+    forza::InstallMods(vfs, user_data_root(), cache_root());
     const std::filesystem::path host = cache_root() / "cache";
     std::error_code ec;
     std::filesystem::create_directories(host, ec);
@@ -174,8 +200,8 @@ class ForzaApp : public rex::ReXApp {
     }
   }
 
-#if defined(__APPLE__) || (defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4)
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    forza::benchmark::ConfigurePaths(paths);
 #ifdef __APPLE__
     const auto exe = rex::filesystem::GetExecutableFolder();
     if (exe.filename() == "MacOS" && exe.parent_path().filename() == "Contents") {
@@ -199,7 +225,6 @@ class ForzaApp : public rex::ReXApp {
     }
 #endif
   }
-#endif
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   // game:\default.xex and the facades resolve to the update's: symbolic links from their
   // game: device paths, which ResolvePath follows after game: itself.
@@ -214,7 +239,9 @@ class ForzaApp : public rex::ReXApp {
 #endif
 
  private:
+  std::unique_ptr<forza::CursorIdle> cursor_idle_;
   forza::stall::Watchdog stall_watchdog_;
+  forza::resume::Watcher resume_watcher_;
   uint64_t achievement_listener_ = 0;
   rex::system::IGraphicsSystem* graphics_ = nullptr;
 };

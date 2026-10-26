@@ -115,6 +115,7 @@ endif()
 set(FORZA_SOURCES
     src/main.cpp
     src/debug/audio_level.cpp
+    src/hooks/radio_station.cpp
     src/debug/cpu_profile.cpp
     src/debug/codriver_log.cpp
     src/debug/dlc_log.cpp
@@ -126,26 +127,39 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
+    src/hooks/database_query.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
     src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
     src/hooks/ultrawide_projection.cpp
+    src/hooks/vr_head_pose.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
+    src/hooks/native_car_tuning.cpp
+    src/hooks/native_car_tuning_menu.cpp
     src/hooks/gpu_wait.cpp
     src/hooks/render_idle.cpp
     src/hooks/gamma_transition.cpp
+    src/hooks/scene_resolution.cpp
+    src/hooks/scene_tiling.cpp
+    src/hooks/world_detail.cpp
+    src/hooks/shadow_filter.cpp
+    src/hooks/ai_catchup.cpp
     src/hooks/physics_loader_check.cpp
     src/hooks/resource_data_release.cpp
     src/hooks/resource_cache_eviction.cpp
     src/hooks/resource_stream_trace.cpp
     src/hooks/thumbnail_sync.cpp
     src/hooks/world_challenge.cpp
+    src/hooks/ambient_leaderboard.cpp
+    src/hooks/teleport_velocity.cpp
     src/hooks/challenge_hud.cpp
+    src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/hooks/telemetry.cpp
@@ -159,10 +173,12 @@ set(FORZA_SOURCES
     src/kernel/live_friends.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
+    src/kernel/mod_overlay.cpp
     src/kernel/module_resident.cpp
     src/kernel/net.cpp
     src/kernel/proc_address_cache.cpp
     src/kernel/xam_enumerate.cpp
+    src/kernel/xam_keyboard.cpp
     src/kernel/xam_loader.cpp
     src/kernel/xam_nui.cpp
     src/kernel/xam_signin.cpp
@@ -170,10 +186,15 @@ set(FORZA_SOURCES
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
     src/platform/discord_presence.cpp
+    src/platform/cursor_idle.cpp
     src/platform/cpu_target.cpp
     src/platform/ultrawide.cpp
+    src/platform/benchmark.cpp
+    src/platform/benchmark_session.cpp
     src/platform/hud_overlay.cpp
     src/platform/motion_blur_fix.cpp
+    src/platform/world_ao.cpp
+    src/platform/resume.cpp
     src/platform/sdk_import.cpp
     src/platform/socket.cpp
     src/platform/telemetry.cpp
@@ -196,19 +217,32 @@ if(WIN32)
         set(FORZA_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/forza-icon.rc")
         configure_file(resources/app.rc.in "${FORZA_ICON_RC}" @ONLY)
         set_source_files_properties("${FORZA_ICON_RC}" PROPERTIES
-            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico")
+            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.ico;${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.manifest")
     else()
         message(STATUS "No resource compiler found: forza.exe is built without its icon")
     endif()
     add_executable(forza WIN32 ${FORZA_SOURCES} ${FORZA_ICON_RC})
     target_compile_definitions(forza PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(forza PRIVATE ws2_32)
+    # Per-monitor-v2 DPI awareness from the first instruction (#418), from resources/forza.manifest.
+    # With a resource compiler it is the exe's RT_MANIFEST resource (app.rc.in) and the linker's own
+    # default manifest is off (it would collide); without one the linker merges the file itself.
+    if(FORZA_ICON_RC)
+        target_link_options(forza PRIVATE "/MANIFEST:NO")
+    else()
+        target_link_options(forza PRIVATE "/MANIFEST:EMBED"
+            "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/resources/forza.manifest")
+    endif()
 else()
     add_executable(forza ${FORZA_SOURCES})
 endif()
 
 rexglue_setup_target(forza GPU_PLUGINS xenos)
 include(cmake/discord.cmake)
+
+# forza-texcompress: texture packs to BC7/BC1 DDS files, run by the launcher's Make HD pack and
+# Compress PNGs (#413, docs/texture_packs.md). Its own executable next to forza.
+add_subdirectory(texcompress)
 
 add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")

@@ -16,7 +16,9 @@ nor get messages.
 
 Channels: SESSION, the players in a session with the sender (the game reports the ids of
 the sessions it hosts or joined, Horizon World sessions excepted); WORLD, the players in the
-sender's Horizon World (what matchmaking knows); DIRECT, one friend.
+sender's Horizon World or Co-op Festival world (what matchmaking knows); DIRECT, one friend.
+A line starting with "/" may be a server command instead (Chat.commands: /event and /events
+in a Co-op Festival world, forza_campaign.py); commands are answered with NOTICEs.
 
 Message CHAT (UDP kind 23), body op u8 then (big endian; text u16 length + UTF-8):
   client -> server
@@ -39,6 +41,7 @@ import unicodedata
 import time
 
 import forza_friends as friends
+import forza_limits as limits
 
 log = logging.getLogger("forza-live")
 
@@ -51,6 +54,7 @@ CHANNELS = {SESSION: "session", WORLD: "world", DIRECT: "direct"}
 
 MAX_CHARS = 200
 MAX_BYTES = 800
+NO_WORLD = "World chat is for a Horizon World or Co-op Festival world (Find Game): use Session chat here"
 RATE = (0.5, 5)  # messages per second and burst, per player
 RING = 200
 MAX_SESSIONS = 4
@@ -67,7 +71,9 @@ def clean(text):
     """The text as it is relayed: no control characters, one line, at most MAX_CHARS."""
     # Control and format characters (C0/C1, bidi overrides like U+202E, zero-width) become
     # spaces, so a message can't hide or reverse text in other players' overlays.
-    text = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") else c for c in text)
+    # Combining marks (Zalgo text) are dropped.
+    text = "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") else c
+                   for c in text if unicodedata.category(c) not in ("Mn", "Me"))
     return " ".join(text.split())[:MAX_CHARS]
 
 
@@ -80,6 +86,9 @@ class Chat:
         self.mutes = {}  # xuid -> until (wall time): the admin's
         self.bans = {}   # xuid -> until
         self.buckets = {}
+        # commands(peer, channel, text) -> True when a "/" line was a server command
+        # (forza_live_server.chat_command: the Co-op Festival's /event), not relayed
+        self.commands = None
 
     # --- moderation state ---
 
@@ -253,8 +262,8 @@ class Chat:
             return to or "%s is offline" % self.store.name(target)
         if channel == WORLD:
             mine = self.server.world_of_peer(peer.id)
-            if mine is None:
-                return "You are not in a Horizon World"
+            if mine is None:  # a custom game, another playlist, single player (#395)
+                return NO_WORLD
             to = [p for p in others if p.room == peer.room
                   and self.server.world_of_peer(p.id) == mine]
             return to or "No one else in your Horizon World has chat"
@@ -285,12 +294,14 @@ class Chat:
             self.notice(peer, "Slow down: at most %d messages in %d s" %
                         (RATE[1], int(RATE[1] / RATE[0])))
             return
+        if text.startswith("/") and self.commands and self.commands(peer, channel, text):
+            return
         to = self.recipients(peer, channel, target)
         if isinstance(to, str):
             self.notice(peer, to)
             return
         delivered = [p for p in to if not self.hides(p.xuid, peer.xuid)]
-        name = peer.name.encode()[:15]
+        name = limits.clean_gamertag(peer.name, peer.xuid).encode()
         msg = struct.pack(">BBQB", R_MESSAGE, channel, peer.xuid, len(name)) + name + text16(text)
         for p in delivered:
             self.server.send(p.addr, KIND, msg)

@@ -308,6 +308,7 @@ class SetupPage(QWidget):
         self.task = None
         self._probes = {}   # key -> Probe running off the GUI thread (#124)
         self._probe_done = set()   # keys already probed: an answer that cannot be cached is not asked again
+        self._dlc_snapshot = None
         self._dlc_error = None     # (folder, message) of a DLC folder that cannot be read
         self.fail = {}   # last failure shown per message label, kept until the next run (refresh() must not wipe it)
         outer = QVBoxLayout(self)
@@ -406,7 +407,7 @@ class SetupPage(QWidget):
 
         # 3. DLC ------------------------------------------------------------------------
         self.c2 = StepCard(3, "DLC",
-                           "The folder with your DLC: packages (4D5309C9/00000002), or a Xenia content folder (or its "
+                           "The folder with your DLC: packages (4D5309C9/00000002), .zip archives of them, or a Xenia content folder (or its "
                            "00000002 folder). They are installed for the game to find; you can add more later. "
                            "Without DLC the extra cars and events are missing.")
         row, self.dlc, _ = path_row("Folder of DLC", None, self._pick_dlc)
@@ -598,7 +599,12 @@ class SetupPage(QWidget):
         d = self.dlc.text().strip()
         warning = ""
         if d:
-            got = installer.dlc_cached(d)
+            snapshot, got = installer.dlc_snapshot(d)
+            if snapshot != self._dlc_snapshot:
+                # A folder can change while its worker scans, including delayed
+                # Windows directory metadata. Permit a fresh probe for that state.
+                self._probe_done.discard("dlc:" + d)
+                self._dlc_snapshot = snapshot
             if self._dlc_error and self._dlc_error[0] == d:
                 self.dlclist.setText(self._dlc_error[1])
             elif got is None:
@@ -636,25 +642,26 @@ class SetupPage(QWidget):
         state, text = "unavailable", "Build the game first."
         if g is not None:
             try:
-                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False))
+                state, text = shader_prebuild.status(game.build_plan(self.cfg, g, write=False),
+                                                           shader_prebuild.build_problem(self.cfg))
             except Exception as e:  # a settings combination the plan refuses: say so, do not break the page
                 state, text = "unavailable", str(e)
         badge = {"none": ("Optional", None), "stale": ("Recommended", None), "done": ("Done", True),
-                 "unavailable": ("Unavailable", None)}[state]
+                 "unavailable": ("Unavailable", None), "rebuild": ("Rebuild first", None)}[state]
         self.c4.set_badge(*badge)
         self.go4.setText("Prebuild again" if state in ("done", "stale") else "Prebuild shaders")
-        self.go4.setEnabled(not busy and state != "unavailable")
+        self.go4.setEnabled(not busy and state not in ("unavailable", "rebuild"))
         if not self.fail.get("msg4") and not (busy and getattr(self, "_msg", None) is self.msg4):
             self.msg4.setText(text)
-            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state == 'stale' else theme.MUTED};")
+            self.msg4.setStyleSheet(f"color: {theme.ORANGE if state in ('stale', 'rebuild') else theme.MUTED};")
 
     @staticmethod
     def _dlc_text(found, skipped):
         txt = (f"{len(found)} package(s) found: " + ", ".join(n for _f, n in found[:12]) +
                (" ..." if len(found) > 12 else "")) if found else (
-            "No DLC found in this folder. Pick the folder of your DLC packages, or a Xenia content folder.")
+            "No DLC found in this folder or its subfolders. Pick the folder of your DLC packages, or a Xenia content folder.")
         if skipped:
-            txt += (f"  Skipped {len(skipped)} folder(s) that do not look like DLC: " +
+            txt += (f"  Skipped {len(skipped)} item(s) that are not usable DLC: " +
                     ", ".join(f"{n} ({why})" for n, why in skipped[:4]) + (" ..." if len(skipped) > 4 else ""))
         return txt
 
@@ -1063,6 +1070,7 @@ class SetupPage(QWidget):
         key = {id(self.msg0): "msg0", id(self.msg1): "msg1", id(self.msg2): "msg2", id(self.status3): "status3",
                id(self.msg4): "msg4"}.get(id(self._msg), "msg")
         failed = not ok and message != "Cancelled."
+        warn = ok and bool(getattr(self.task, "warning", False))
         blocked = bool(getattr(self.task, "blocked", False))
         if blocked:
             self.cfg.advanced["blocked_root"] = str(self.cfg.data_home())
@@ -1079,7 +1087,7 @@ class SetupPage(QWidget):
                 self.build_details.set_expanded(True)
         else:
             self._msg.setText(message)
-            self._msg.setStyleSheet(f"color: {theme.OK if ok else theme.MUTED};")
+            self._msg.setStyleSheet(f"color: {theme.ORANGE if warn else theme.OK if ok else theme.MUTED};")
         # keep the QThread object alive until its run() has really returned
         self._zombies = [z for z in getattr(self, "_zombies", []) if z.isRunning()] + [self.task]
         self.task = None
@@ -1095,6 +1103,8 @@ class SetupPage(QWidget):
                 self.change_folder()
         elif failed:
             QMessageBox.warning(self, "Something went wrong", message)
+        elif warn:
+            QMessageBox.warning(self, "Damaged DLC", message)
 
     def _cancel(self):
         if self.task:

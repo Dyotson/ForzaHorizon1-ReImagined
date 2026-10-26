@@ -9,6 +9,8 @@ parameters" failure for the game, which carries on without the upload.
 import ipaddress
 import os
 import time
+import unicodedata
+import zlib
 
 MAX_BLOB = 2 << 20
 DISK_CAP = int(os.environ.get("FORZA_DISK_CAP_MB", "4096")) << 20
@@ -75,3 +77,39 @@ def is_trusted_proxy(ip):
     except ValueError:
         return False
     return any(addr in net for net in TRUSTED_PROXIES)
+
+
+# ---- Player-chosen display strings: plain ASCII only ----
+# Xbox 360 gamertags were ASCII letters, digits and spaces (at most 15). A name of dozens of
+# combining marks or wide glyphs would cover every other player's screen, so nothing but
+# plain ASCII reaches the game. Accented Latin is transliterated first ("Jose" for "Jose").
+
+MAX_GAMERTAG = 15
+CLUB_TAG_MAX, CLUB_NAME_MAX, CLUB_DESC_MAX = 4, 20, 128
+
+
+def ascii_fold(text):
+    """NFKD, drop the combining marks, keep only ASCII (anything else is dropped)."""
+    text = unicodedata.normalize("NFKD", text if isinstance(text, str) else "")
+    return "".join(c for c in text if c.isascii() and not unicodedata.combining(c))
+
+
+def clean_gamertag(name, xuid=None):
+    """A gamertag the game may show: ASCII letters, digits and single spaces, trimmed, at
+    most 15. Nothing left: "Driver" and 4 hex digits of the XUID (or of the original text
+    when no XUID is known), the same every time."""
+    if isinstance(name, (bytes, bytearray)):
+        name = bytes(name).decode("utf-8", "replace")
+    raw = name if isinstance(name, str) else ""
+    kept = "".join(c if c.isalnum() else " " for c in ascii_fold(raw))
+    kept = " ".join(kept.split())[:MAX_GAMERTAG].strip()
+    if kept:
+        return kept
+    seed = (xuid & 0xFFFF) if isinstance(xuid, int) else zlib.crc32(raw.encode("utf-8", "replace")) & 0xFFFF
+    return "Driver%04X" % seed
+
+
+def clean_ascii_text(text, limit, fallback=""):
+    """Printable ASCII (0x20-0x7E) on one line, trimmed, at most `limit` characters."""
+    kept = "".join(c if " " <= c <= "~" else " " for c in ascii_fold(text))
+    return " ".join(kept.split())[:limit].strip() or fallback

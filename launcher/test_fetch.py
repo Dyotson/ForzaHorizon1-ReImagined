@@ -165,6 +165,19 @@ class ExtractTarLinkTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(out / "bin/outside"))
 
     def test_with_symlinks_links_stay_links(self):
+        # Windows requires Developer Mode or symlink privilege; some temporary
+        # filesystems cannot create links either. Keep the copy-fallback test
+        # above running on those hosts, and exercise preservation where supported.
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp)
+            (probe / "file").write_bytes(b"probe")
+            (probe / "directory").mkdir()
+            try:
+                os.symlink(probe / "file", probe / "file-link")
+                os.symlink(probe / "directory", probe / "directory-link",
+                           target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"Temporary directory cannot create file/directory symlinks: {exc}")
         for through_symlink in (False, True):
             with self.subTest(through_symlink=through_symlink):
                 self.check_links(self.unpack(symlinks=True, through_symlink=through_symlink))

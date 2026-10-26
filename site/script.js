@@ -103,7 +103,7 @@
   // Screenshot lightbox.
   var box = document.getElementById("lightbox");
   if (box && box.showModal) {
-    document.querySelectorAll(".shots button").forEach(function (b) {
+    document.querySelectorAll(".shots button, .cards button").forEach(function (b) {
       b.addEventListener("click", function () {
         box.querySelector("img").src = b.dataset.full;
         box.querySelector("img").alt = b.querySelector("img").alt;

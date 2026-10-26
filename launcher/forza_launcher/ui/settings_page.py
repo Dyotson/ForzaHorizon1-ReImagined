@@ -1,14 +1,14 @@
 """The Settings page: every forza.toml key plus the launcher's own options, in groups."""
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, Signal
-from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
+from PySide6.QtCore import QPoint, QRegularExpression, QTimer, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QTabBar, QPlainTextEdit,
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QStackedWidget,
-                               QVBoxLayout, QWidget)
+                               QToolTip, QVBoxLayout, QWidget)
 
-from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gpu, schema, specs
+from .. import PUBLIC_SERVER, display, dlss, fsr3, game, gamertag, gpu, power, schema, specs
 from ..config import Config, render_toml, validate_extras
 from . import theme
 from .settings_search import SettingsSearch
@@ -139,10 +139,11 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         w = Combo()
         w.setEditable(True)
         w.addItem(display.label(monitor), 0)
-        for v in (30, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
+        for v in (*schema.LOW_FRAME_RATES, 60, 75, 90, 100, 120, 144, 165, 180, 200, 240):
             w.addItem(f"{v} fps", v)
         w.lineEdit().setValidator(QRegularExpressionValidator(QRegularExpression(r"[1-9]\d{0,2}(?: fps)?")))
-        w.setToolTip("Pick a rate or type your own (60 to 240), such as your display's refresh rate.")
+        w.setToolTip("Pick a rate or type your own (20, 30, 40, or 60 to 240), such as your display's "
+                     "refresh rate.")
         i = w.findData(int(value))
         if i >= 0:
             w.setCurrentIndex(i)
@@ -164,6 +165,28 @@ def make_control(s: schema.Setting, value, on_change, note=None, monitor=0):
         return w
     w = QLineEdit(str(value))  # str, keys
     w.setMinimumWidth(240)
+    if s.key == "gamertag":
+        # Limits while typing too: 15 characters, and anything but ASCII letters, digits and
+        # spaces is dropped (accents transliterated) as it is typed or pasted.
+        w.setMaxLength(gamertag.MAX_LENGTH)
+
+        def gamertag_typed(text, w=w):
+            kept = gamertag.filter_typing(text)
+            if kept != text:
+                pos = w.cursorPosition() - (len(text) - len(kept))
+                w.setText(kept)
+                w.setCursorPosition(max(0, min(pos, len(kept))))
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), gamertag.RULE, w, w.rect(), 4000)
+        w.textEdited.connect(gamertag_typed)
+
+        def gamertag_done(w=w):
+            cleaned, message = gamertag.check_name(w.text())
+            if message:
+                w.setText(cleaned)
+                QToolTip.showText(w.mapToGlobal(w.rect().bottomLeft()), message, w, w.rect(), 8000)
+            on_change(cleaned)
+        w.editingFinished.connect(gamertag_done)
+        return w
     w.editingFinished.connect(lambda w=w: on_change(w.text().strip()))
     return w
 
@@ -241,6 +264,7 @@ class SettingsPage(QWidget):
         self.cfg = cfg
         self.window = window
         self.rows = {}
+        self.section_contents = {}
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(350)
@@ -333,6 +357,30 @@ class SettingsPage(QWidget):
         self._apply_dependencies()
         self.touched()
 
+    def apply_external(self, changes):
+        """Values set elsewhere (the Controls page's bindings): store them, show them in their
+        controls and save."""
+        for key, value in changes.items():
+            s = schema.BY_KEY[key]
+            value = schema.coerce(s, value)
+            self.cfg.settings[key] = value
+            row = self.rows.get(key)
+            if row is None:
+                continue
+            control = row.control
+            control.blockSignals(True)
+            if isinstance(control, QLineEdit):
+                control.setText(str(value))
+            elif hasattr(control, "setChecked"):
+                control.setChecked(bool(value))
+            elif hasattr(control, "findData") and s.kind == "choice":
+                control.setCurrentIndex(max(0, control.findData(value)))
+            elif hasattr(control, "setValue"):
+                control.setValue(value)
+            control.blockSignals(False)
+        self._apply_dependencies()
+        self.touched()
+
     def touched(self):
         self._save_timer.start()
         self.refresh_preview()
@@ -382,13 +430,24 @@ class SettingsPage(QWidget):
         states["wheel_invert_clutch"] = (bool(self.cfg.settings.get("wheel_clutch", True)),
                                          "Turn on Clutch pedal to adjust this setting.")
         states["wheel_shifter_buttons"] = (shifter != "off", "Choose a shifter to set its buttons.")
+        for key in ("wheel_shifter_device", "wheel_shifter_device_buttons"):
+            states[key] = (shifter != "off", "Choose a shifter to set its device.")
+        states["wheel_pedal_axes"] = (
+            str(self.cfg.settings.get("wheel_pedal_device", "")).strip().lower() not in ("none", "off", "wheel"),
+            "Set Pedal device to a device (or empty) to set its axes.")
         states["wheel_shifter_clutch"] = (shifter == "h", "Choose the H-pattern shifter to use this setting.")
+        states["wheel_shifter_follow_slot"] = (shifter == "h",
+                                               "Choose the H-pattern shifter to use this setting.")
+        states["wheel_handbrake_axis"] = (
+            str(self.cfg.settings.get("wheel_handbrake_device", "")).strip().lower() not in ("none", "off", "wheel"),
+            "Set Handbrake device to a device (or empty) to set its axis.")
         states["wheel_clutch_threshold"] = (
             shifter == "h" and bool(self.cfg.settings.get("wheel_shifter_clutch")),
             "Turn on Gears need the clutch (H-pattern shifter) to adjust this setting.")
 
         hdr_supported = self.cfg.settings.get("gpu_backend", "vulkan") == "vulkan"
         states["present_hdr"] = (hdr_supported, "HDR output requires Vulkan.")
+        states["texture_replace"] = (hdr_supported, "Texture packs require Vulkan.")
         for key in self.rows:
             if key.startswith("present_hdr_"):
                 states[key] = (hdr_supported and bool(self.cfg.settings.get("present_hdr")),
@@ -417,6 +476,9 @@ class SettingsPage(QWidget):
         scene_reason = "Native AA renders at output resolution; this setting only affects Game MSAA."
         if scene_aa:
             states["resolution_scale"] = (False, scene_reason)
+        if active or temporal or ultrawide or scene_aa:
+            states["scene_resolution"] = (False, "NVIDIA DLSS, AMD FSR 3, a separate anti-aliasing method and "
+                                                 "Ultrawide gameplay keep the 3D scene at 720p or more.")
         if "resolution_scale" in self.rows:
             self.rows["resolution_scale"].control.setToolTip(
                 scene_reason if scene_aa else schema.BY_KEY["resolution_scale"].help)
@@ -457,6 +519,7 @@ class SettingsPage(QWidget):
                 section = s.section
                 content = section_card(lay, section)
                 content.setSpacing(0)
+                self.section_contents[section] = content
             else:
                 content.addWidget(hline())
             row = SettingRow(s, self.cfg, self.set_value)
@@ -486,6 +549,7 @@ class SettingsPage(QWidget):
         leads = {
             "Display": "Window, frame rate and picture.",
             "Controls": "Use a controller, or enable keyboard and mouse and customize your bindings below.",
+            "Gameplay": "How the game plays in single player. Online games always play as shipped.",
             "Audio": "",
             "Online": "Xbox LIVE is gone, so the game signs in to a Forza Live server instead.",
             "Profile": "Your saves live in the game's data folder. You can also continue a Xenia Canary save.",
@@ -499,6 +563,8 @@ class SettingsPage(QWidget):
         if g == "Profile":
             self._profile_block(lay)
         self._rows(lay, g)
+        if g == "Display":
+            self._texture_pack_block()
         if g == "Controls":
             lay.addWidget(label("Everything on this page is a forza.toml key; the keyboard bindings "
                                 "use the SDK's key names.", "help"))
@@ -508,6 +574,43 @@ class SettingsPage(QWidget):
             self._advanced_block(lay)
         lay.addStretch(1)
         return scroll
+
+    # --- texture packs (#384) -------------------------------------------------------
+    def _texture_pack_block(self):
+        content = self.section_contents.get("Texture packs")
+        if content is None:
+            return
+        content.addWidget(hline())
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 14, 0, 0)
+        folder = game.texture_pack_folder(self.cfg)
+        self.texture_folder_button = QPushButton("Open textures folder")
+        self.texture_folder_button.setToolTip(str(folder))
+        self.texture_folder_button.clicked.connect(self._open_texture_folder)
+        row.addWidget(self.texture_folder_button)
+        self.texture_page_button = QPushButton("Texture packs page…")
+        self.texture_page_button.setToolTip("Add, order and turn packs on or off, and make an HD pack "
+                                            "from your dump.")
+        self.texture_page_button.clicked.connect(self._show_texture_packs)
+        row.addWidget(self.texture_page_button)
+        row.addStretch(1)
+        content.addLayout(row)
+
+    def _show_texture_packs(self):
+        from .window import TEXTURE_PACKS_PAGE_ID
+        show = getattr(self.window, "show_page", None)
+        if show is not None:
+            self.flush()
+            show(TEXTURE_PACKS_PAGE_ID)
+
+    def _open_texture_folder(self):
+        folder = game.texture_pack_folder(self.cfg)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "Texture packs", f"Could not create {folder}: {e}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     # --- graphics card (#52) --------------------------------------------------------
     def _gpu_block(self, lay):
@@ -570,10 +673,11 @@ class SettingsPage(QWidget):
         p = gpu.preset(vendor)
         apply_ = force_apply
         if not force_apply and p is not None:
+            names = [schema.BY_KEY[k].label for k in gpu.settings_for(vendor)
+                     if k in schema.BY_KEY and schema.BY_KEY[k].applies()]
             apply_ = QMessageBox.question(
                 self, "Graphics card", f"Use the recommended settings for {p.label} now?\n\n{p.summary}\n\n"
-                "This changes the backend, render scale, upscaling filter and frame rate; every other "
-                "setting stays as it is.") == QMessageBox.Yes
+                f"This changes {', '.join(names)}; every other setting stays as it is.") == QMessageBox.Yes
         self.cfg.set_gpu_vendor(vendor, apply_)
         if self.cfg.settings.get("fh1_upscaler", "off") != "off":
             self.set_value("fh1_upscaler", self.cfg.settings["fh1_upscaler"])
@@ -597,6 +701,9 @@ class SettingsPage(QWidget):
         for w in specs.warnings(self.cfg.pc_specs(), warning_settings):
             if w.key and w.key not in vendor_keys:
                 found.setdefault(w.key, []).append(w.text)
+        saver = power.setting_warning(self.cfg.settings.get("battery_saver", power.OFF))
+        if saver:
+            found.setdefault("battery_saver", []).append(saver)
         for key, row in self.rows.items():
             if key == "discord_presence":
                 continue  # its setup warning is managed by _apply_dependencies
@@ -623,7 +730,10 @@ class SettingsPage(QWidget):
         root.addWidget(self.banner)
 
     def _refresh_banner(self):
-        self.banner.setVisible(self.cfg.specs_banner_due())
+        due = self.cfg.specs_banner_due()
+        if due:
+            self.banner_text.setText(self.cfg.specs_banner_text())
+        self.banner.setVisible(due)
 
     def _use_recommended(self):
         changed = self.cfg.use_recommended()

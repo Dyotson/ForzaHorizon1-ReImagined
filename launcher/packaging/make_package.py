@@ -25,7 +25,7 @@ sys.path.insert(0, str(HERE.parent))
 from forza_launcher import builder  # noqa: E402
 
 README = """Forza Horizon 1: ReImagined - launcher
-https://github.com/Dyotson/ForzaHorizon1-ReImagined
+https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 
 This package contains the launcher, the project's source code and the patched ReXGlue SDK
 pieces. It contains NO game code and NO game data. Open the launcher, point it at your own copy

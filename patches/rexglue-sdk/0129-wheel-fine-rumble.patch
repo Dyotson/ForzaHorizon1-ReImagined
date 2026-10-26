@@ -1,0 +1,260 @@
+diff --git a/src/input/wheel/wheel_input_driver.cpp b/src/input/wheel/wheel_input_driver.cpp
+index c4c8e1e..2d546d4 100644
+--- a/src/input/wheel/wheel_input_driver.cpp
++++ b/src/input/wheel/wheel_input_driver.cpp
+@@ -9,8 +9,9 @@
+  * the game reads the 360 wheel's clutch and shifter (wheel_shifter.h). A game that knows the wheel
+  * sends its force feedback through the kernel's XInputdFF* calls (wheel_ff.h), played here on SDL
+  * haptics; one that takes it for a gamepad only sets the vibration motors, which give an
+- * approximate spring and a vibration. Pedals and a shifter on their own USB devices are read
+- * with the first wheel (wheel_devices.h); steering, buttons and force feedback stay on the wheel.
++ * approximate spring and a vibration. The rumble plays as a fine or classic vibration
++ * (wheel_rumble.h). Pedals and a shifter on their own USB devices are read with the first wheel
++ * (wheel_devices.h); steering, buttons and force feedback stay on the wheel.
+  *
+  * @license     BSD 3-Clause License
+  *              See LICENSE file in the project root for full license text.
+@@ -34,6 +35,7 @@
+ #include <rex/ui/virtual_key.h>
+ 
+ #include "wheel_devices.h"
++#include "wheel_rumble.h"
+ 
+ REXCVAR_DEFINE_STRING(wheel_mode, "auto", "Input",
+                       "Racing wheel support: auto (SDL says it is a wheel), on (every joystick "
+@@ -110,17 +112,24 @@ REXCVAR_DEFINE_INT32(wheel_ffb_strength, 60, "Input", "Force feedback strength,
+ REXCVAR_DEFINE_INT32(wheel_ffb_spring_strength, 100, "Input",
+                      "Centring spring and damper strength, 0 to 100 percent of wheel_ffb_strength")
+     .range(0, 100);
+-REXCVAR_DEFINE_INT32(wheel_rumble_engine_strength, 100, "Input",
++REXCVAR_DEFINE_INT32(wheel_rumble_engine_strength, 50, "Input",
+                      "Rumble from the game's right motor (mostly the engine), 0 to 100 percent of "
+-                     "wheel_ffb_strength")
++                     "wheel_ffb_strength (#273: 50, it runs at half or more whenever the car "
++                     "accelerates)")
+     .range(0, 100);
+-REXCVAR_DEFINE_INT32(wheel_rumble_road_strength, 100, "Input",
++REXCVAR_DEFINE_INT32(wheel_rumble_road_strength, 80, "Input",
+                      "Rumble from the game's left motor (road surface, kerbs, impacts), 0 to 100 "
+-                     "percent of wheel_ffb_strength")
++                     "percent of wheel_ffb_strength (#273: 80)")
+     .range(0, 100);
+ REXCVAR_DEFINE_BOOL(wheel_ffb_reverse, false, "Input",
+                     "Reverse the game's steering force: for a wheel that pulls away from the centre "
+                     "in corners instead of towards it");
++REXCVAR_DEFINE_STRING(wheel_rumble_style, "fine", "Input",
++                      "How the game's rumble plays on the wheel's motor: fine (a light, quick "
++                      "vibration for each rumble motor) or classic (one coarse vibration, for "
++                      "wheels with rim motors); fine falls back to classic on a wheel without room "
++                      "for its effects")
++    .allowed({"fine", "classic"});
+ REXCVAR_DEFINE_STRING(wheel_pedal_device, "", "Input",
+                       "Pedals on their own USB device: empty finds a known pedal set (or one named "
+                       "like pedals), a device name, SDL GUID or vid:pid picks one, none reads the "
+@@ -357,6 +366,40 @@ void LogShifter(const ShifterMap& m, const std::string& mode, const char* where)
+   }
+ }
+ 
++// A periodic rumble effect brought to `wave`: updated when its magnitude changes (the game repeats
++// its rumble every frame), started while it has one, stopped at 0.
++void PlayWave(SDL_Haptic* haptic, int fx, const RumbleWave& wave, int& sent, bool& running) {
++  if (!haptic || fx < 0) {
++    return;
++  }
++  SDL_HapticEffect e{};
++  e.type = SDL_HAPTIC_SINE;
++  e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
++  e.periodic.length = SDL_HAPTIC_INFINITY;
++  e.periodic.period = wave.period_ms;
++  e.periodic.magnitude = RumbleMagnitude(wave.level);
++  if (e.periodic.magnitude != sent) {
++    SDL_UpdateHapticEffect(haptic, fx, &e);
++    sent = e.periodic.magnitude;
++  }
++  if (e.periodic.magnitude > 0 && !running) {
++    running = SDL_RunHapticEffect(haptic, fx, SDL_HAPTIC_INFINITY);
++  } else if (e.periodic.magnitude <= 0 && running) {
++    SDL_StopHapticEffect(haptic, fx);
++    running = false;
++  }
++}
++
++int CreateSine(SDL_Haptic* haptic, uint16_t period_ms) {
++  SDL_HapticEffect e{};
++  e.type = SDL_HAPTIC_SINE;
++  e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
++  e.periodic.length = SDL_HAPTIC_INFINITY;
++  e.periodic.period = period_ms;
++  e.periodic.magnitude = 0;
++  return SDL_CreateHapticEffect(haptic, &e);
++}
++
+ const rex::ui::VirtualKey kVk[16] = {
+     rex::ui::VirtualKey::kXInputPadDpadUp,     rex::ui::VirtualKey::kXInputPadDpadDown,
+     rex::ui::VirtualKey::kXInputPadDpadLeft,   rex::ui::VirtualKey::kXInputPadDpadRight,
+@@ -393,8 +436,12 @@ struct WheelInputDriver::Wheel {
+   SDL_Joystick* joy = nullptr;
+   SDL_Haptic* haptic = nullptr;
+   int spring_fx = -1;
+-  int sine_fx = -1;
++  int sine_fx = -1;  // the classic rumble (wheel_rumble.h)
+   bool sine_running = false;
++  // The fine rumble: a sine for the road motor and one for the engine motor.
++  int road_fx = -1, engine_fx = -1;
++  bool road_running = false, engine_running = false;
++  int road_magnitude = -1, engine_magnitude = -1;
+   // Pedals and shifter on their own USB devices (the first wheel only, wheel_devices.h).
+   AuxDevice pedals{AuxRole::kPedals};
+   AuxDevice shifter_device{AuxRole::kShifter};
+@@ -653,19 +700,32 @@ void WheelInputDriver::SetupForceFeedbackLocked(Wheel& w) {
+       REXLOG_WARN("Wheel: spring effect rejected: {}", SDL_GetError());
+     }
+   }
+-  if (f & SDL_HAPTIC_SINE) {
+-    SDL_HapticEffect e{};
+-    e.type = SDL_HAPTIC_SINE;
+-    e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
+-    e.periodic.length = SDL_HAPTIC_INFINITY;
+-    e.periodic.period = 40;
+-    e.periodic.magnitude = 0;
+-    w.sine_fx = SDL_CreateHapticEffect(w.haptic, &e);
++  if ((f & SDL_HAPTIC_SINE) &&
++      ParseRumbleStyle(REXCVAR_GET(wheel_rumble_style)) == RumbleStyle::kFine) {
++    // Fine rumble (#273): a sine for each of the game's motors. Without room for both, classic.
++    w.road_fx = CreateSine(w.haptic, kFineRoadPeriodMs);
++    w.engine_fx = w.road_fx >= 0 ? CreateSine(w.haptic, kFineEnginePeriodMs) : -1;
++    if (w.road_fx >= 0 && w.engine_fx >= 0) {
++      REXLOG_INFO("Wheel: fine vibration uploaded: road {} Hz (id {}), engine {} Hz (id {})",
++                  1000 / kFineRoadPeriodMs, w.road_fx, 1000 / kFineEnginePeriodMs, w.engine_fx);
++    } else {
++      REXLOG_WARN("Wheel: fine vibration rejected ({}): classic vibration instead",
++                  SDL_GetError());
++      if (w.road_fx >= 0) {
++        SDL_DestroyHapticEffect(w.haptic, w.road_fx);
++      }
++      w.road_fx = w.engine_fx = -1;
++    }
++  }
++  if ((f & SDL_HAPTIC_SINE) && w.road_fx < 0) {
++    w.sine_fx = CreateSine(w.haptic, kClassicPeriodMs);
+     if (w.sine_fx >= 0) {
+       REXLOG_INFO("Wheel: vibration effect uploaded (id {})", w.sine_fx);
+     } else {
+       REXLOG_WARN("Wheel: vibration effect rejected: {}", SDL_GetError());
+     }
++  } else if (!(f & SDL_HAPTIC_SINE)) {
++    REXLOG_INFO("Wheel: no periodic (sine) effect: the game's rumble is not played");
+   }
+   if (game_ff_active_) {  // a wheel plugged in while the game drives the force feedback
+     for (uint32_t b = 1; b <= kFfMaxBlocks; b++) {
+@@ -698,25 +758,14 @@ void WheelInputDriver::ApplyRumbleLocked(Wheel& w, uint16_t left_motor, uint16_t
+   if (!w.haptic) {
+     return;
+   }
+-  if (w.sine_fx >= 0) {
+-    const float amp =
+-        FfRumbleLevel(left_motor, right_motor, Strengths()) * 0.6f * (game ? fade_.level : 1.0f);
+-    SDL_HapticEffect e{};
+-    e.type = SDL_HAPTIC_SINE;
+-    e.periodic.direction.type = SDL_HAPTIC_STEERING_AXIS;
+-    e.periodic.length = SDL_HAPTIC_INFINITY;
+-    e.periodic.period = 40;
+-    e.periodic.magnitude = static_cast<Sint16>(amp * 32767.0f);
+-    if (e.periodic.magnitude != w.sine_magnitude) {  // the game repeats its rumble every frame
+-      SDL_UpdateHapticEffect(w.haptic, w.sine_fx, &e);
+-      w.sine_magnitude = e.periodic.magnitude;
+-    }
+-    if (amp > 0.0f && !w.sine_running) {
+-      w.sine_running = SDL_RunHapticEffect(w.haptic, w.sine_fx, SDL_HAPTIC_INFINITY);
+-    } else if (amp <= 0.0f && w.sine_running) {
+-      SDL_StopHapticEffect(w.haptic, w.sine_fx);
+-      w.sine_running = false;
+-    }
++  const float fade = game ? fade_.level : 1.0f;
++  if (w.road_fx >= 0 && w.engine_fx >= 0) {  // fine (wheel_rumble.h)
++    const FineRumble fine = FineRumbleOf(left_motor, right_motor, Strengths(), fade);
++    PlayWave(w.haptic, w.road_fx, fine.road, w.road_magnitude, w.road_running);
++    PlayWave(w.haptic, w.engine_fx, fine.engine, w.engine_magnitude, w.engine_running);
++  } else {
++    PlayWave(w.haptic, w.sine_fx, ClassicRumble(left_motor, right_motor, Strengths(), fade),
++             w.sine_magnitude, w.sine_running);
+   }
+ }
+ 
+diff --git a/src/input/wheel/wheel_rumble.h b/src/input/wheel/wheel_rumble.h
+new file mode 100644
+index 0000000..a0a5bd6
+--- /dev/null
++++ b/src/input/wheel/wheel_rumble.h
+@@ -0,0 +1,71 @@
++/**
++ * @file        src/input/wheel/wheel_rumble.h
++ * @brief       The game's two rumble motors on a force feedback wheel's motor (#273), without
++ *              SDL: classic (one coarse 25 Hz sine, as before) or fine (a light, quicker sine for
++ *              each motor).
++ *
++ * On the Xbox 360 the wheel's rumble went to small motors in the rim, which had to shake hard to
++ * be felt. Played through a force feedback base's main motor, the same levels rattle the whole
++ * wheel (#4: a Fanatec CSR Elite with the engine and tyre-slip rumble together). Fine plays the
++ * engine motor (the game's right motor) as a ~71 Hz sine and the road motor (left) as a 40 Hz one,
++ * each at most kFineGain of the force feedback strength, so they are felt as a texture in the rim.
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++#pragma once
++
++#include <algorithm>
++#include <cstdint>
++#include <string>
++
++#include <rex/input/wheel/wheel_ff.h>
++
++namespace rex::input::wheel {
++
++enum class RumbleStyle { kClassic, kFine };
++
++// wheel_rumble_style: "classic", anything else fine (the default).
++inline RumbleStyle ParseRumbleStyle(const std::string& s) {
++  return s == "classic" ? RumbleStyle::kClassic : RumbleStyle::kFine;
++}
++
++// One periodic effect: its period (SDL and Linux take milliseconds) and level, 0 to 1 of the
++// motor's full force.
++struct RumbleWave {
++  uint16_t period_ms = 0;
++  float level = 0.0f;
++};
++
++constexpr uint16_t kClassicPeriodMs = 40;  // 25 Hz
++constexpr float kClassicGain = 0.6f;
++constexpr uint16_t kFineRoadPeriodMs = 25;    // 40 Hz
++constexpr uint16_t kFineEnginePeriodMs = 14;  // ~71 Hz
++constexpr float kFineGain = 0.25f;
++
++// Classic: the stronger motor, each by its own strength, as one 25 Hz sine (as before #273).
++inline RumbleWave ClassicRumble(uint16_t left_motor, uint16_t right_motor, const FfStrengths& s,
++                                float fade) {
++  return {kClassicPeriodMs, FfRumbleLevel(left_motor, right_motor, s) * kClassicGain * fade};
++}
++
++// Fine: each motor its own sine, by its own strength and the overall strength.
++struct FineRumble {
++  RumbleWave road;    // the game's left motor: road surface, kerbs, impacts, tyre slip
++  RumbleWave engine;  // the right motor: mostly the engine
++};
++inline FineRumble FineRumbleOf(uint16_t left_motor, uint16_t right_motor, const FfStrengths& s,
++                               float fade) {
++  auto level = [&](uint16_t motor, float strength) {
++    return std::clamp(motor / 65535.0f * strength * s.overall, 0.0f, 1.0f) * kFineGain * fade;
++  };
++  return {{kFineRoadPeriodMs, level(left_motor, s.road)},
++          {kFineEnginePeriodMs, level(right_motor, s.engine)}};
++}
++
++// An SDL periodic magnitude (0 to 32767) for a level.
++inline int16_t RumbleMagnitude(float level) {
++  return static_cast<int16_t>(std::clamp(level, 0.0f, 1.0f) * 32767.0f);
++}
++
++}  // namespace rex::input::wheel
