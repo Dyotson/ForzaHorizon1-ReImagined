@@ -41,7 +41,8 @@ DEFAULT_SDK="$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64"
 export LD_LIBRARY_PATH="${REXSDK:-$DEFAULT_SDK}/lib:$PWD"
 timeout --signal=INT --kill-after=10 "$SECS" ./forza \
     --game_data_root="${FORZA_DATA:-$ROOT/extracted/game}" \
-    --log_file="$RUN/forza.log" --log_level="${FORZA_LOG_LEVEL:-info}" "$@" > "$RUN/run.out" 2>&1
+    --log_file="$RUN/forza.log" --log_level="${FORZA_LOG_LEVEL:-info}" \
+    --skip_startup_movies="${FORZA_SKIP_MOVIES:-true}" "$@" > "$RUN/run.out" 2>&1
 echo "EXIT=$?" >> "$RUN/run.out"
 tail -1 "$RUN/run.out"
 

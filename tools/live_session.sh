@@ -44,6 +44,7 @@ FORZA_FRAMEDUMP_TRIGGER="$DIR/dump.trigger" FORZA_FRAMEDUMP_DIR="$DIR" \
 FORZA_SCREENSHOT_TRIGGER="$DIR/shot.trigger" \
 LD_LIBRARY_PATH="${REXSDK:-$DEFAULT_SDK}/lib:$PWD" nohup timeout --signal=INT --kill-after=15 "$SECS" \
     ./forza --game_data_root="${FORZA_DATA:-$ROOT/extracted/game}" --log_file="$DIR/forza.log" \
-    --log_level="${FORZA_LOG_LEVEL:-info}" "$@" > "$DIR/run.out" 2>&1 &
+    --log_level="${FORZA_LOG_LEVEL:-info}" \
+    --skip_startup_movies="${FORZA_SKIP_MOVIES:-true}" "$@" > "$DIR/run.out" 2>&1 &
 echo $! > "$DIR/pid"
 echo "started pid $! in $DIR"

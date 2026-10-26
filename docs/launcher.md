@@ -654,6 +654,10 @@ a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
+Gameplay > Startup > **Skip startup videos** (`skip_startup_movies`, off by default): the game
+starts straight at the title screen, without the Microsoft Studios, Dolby and Playground Games
+videos (about 45 s). The game boots as after a restart of itself; the festival and 1000 Club
+videos inside the game still play. Applies on the next launch.
 On Windows, Display also offers DLSS Quality, Balanced, Performance and DLAA,
 with independent 1080p/1440p/4K output and automatic NVIDIA runtime setup. See [`native_dlss.md`](native_dlss.md).
 On every platform and GPU the Upscaling filter also offers **AMD FSR 3 (temporal)**, with FSR 3
