@@ -252,7 +252,10 @@ std::vector<std::pair<std::string, std::string>> preview_baseline;
 bool IsLive(const Setting &setting) {
   return setting.key == "vsync" || setting.key == "anisotropic_override" ||
          setting.key == "forza_hud_edges" || setting.key == "forza_performance_overlay" ||
-         setting.key == "world_shadow_filter" || setting.key == "world_ambient_occlusion";
+         setting.key == "world_shadow_filter" || setting.key == "world_ambient_occlusion" ||
+         setting.key == "forza_cockpit_fov" || setting.key == "forza_chase_near_fov" ||
+         setting.key == "forza_chase_far_fov" || setting.key == "forza_hood_fov" ||
+         setting.key == "forza_bumper_fov";
 }
 
 void RememberPreview() {
@@ -288,11 +291,14 @@ bool ApplyPreview() {
 }
 
 constexpr size_t kAntiAliasing = 9;
-constexpr size_t kShadowSoftness = 10;
-constexpr size_t kAmbientOcclusion = 11;
-// Preset first, then image quality, frame pacing, HUD and monitoring.
-constexpr std::array<size_t, 12> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5, kShadowSoftness,
-                                               kAmbientOcclusion, 3, 4, 6, 7};
+constexpr size_t kShadowSoftness = 10, kAmbientOcclusion = 11;
+constexpr size_t kCockpitFov = 12;
+constexpr size_t kChaseNearFov = 13, kChaseFarFov = 14, kHoodFov = 15, kBumperFov = 16;
+constexpr std::array<size_t, 5> kCameraFovs{kChaseNearFov, kChaseFarFov, kCockpitFov, kHoodFov, kBumperFov};
+// Preset first, then image quality, frame pacing, cameras, HUD and monitoring.
+constexpr std::array<size_t, 17> kDisplayOrder{8, 0, 1, kAntiAliasing, 2, 5,
+    kShadowSoftness, kAmbientOcclusion, 3, 4,
+    kChaseNearFov, kChaseFarFov, kCockpitFov, kHoodFov, kBumperFov, 6, 7};
 void AntiAliasingChoices() {
   auto &aa = settings[kAntiAliasing];
   if (settings[1].value != "off") {
@@ -378,7 +384,15 @@ void Snapshot() {
        {{"console", "Console"}, {"soft", "Soft"}, {"softer", "Softer"}}},
       {"world_ambient_occlusion", "world_ambient_occlusion", "Ambient occlusion", "",
        {{"off", "Off"}, {"low", "Low"}, {"high", "High"}}},
+      {"forza_cockpit_fov", "forza_cockpit_fov", "Cockpit base FOV", "", {{"0", "Stock (62 degrees)"}}},
+      {"forza_chase_near_fov", "forza_chase_near_fov", "Chase near base FOV", "", {{"0", "Stock (48.5 degrees)"}}},
+      {"forza_chase_far_fov", "forza_chase_far_fov", "Chase far base FOV", "", {{"0", "Stock (58 degrees)"}}},
+      {"forza_hood_fov", "forza_hood_fov", "Hood base FOV", "", {{"0", "Stock (66 degrees)"}}},
+      {"forza_bumper_fov", "forza_bumper_fov", "Bumper base FOV", "", {{"0", "Stock (53 degrees)"}}},
   };
+  for (const auto index : kCameraFovs)
+    for (int degrees = 40; degrees <= 90; ++degrees)
+      settings[index].choices.push_back({std::to_string(degrees), std::to_string(degrees) + " degrees"});
   auto &modes = settings[1].choices;
 #ifdef _WIN32
   if (rex::cvar::GetFlagByName("gpu_backend") == "vulkan" &&
@@ -428,6 +442,12 @@ void Snapshot() {
   // Never let an unknown/current launcher mode silently select spinner index
   // zero (1080p). Native ultrawide owns drawing and output until restart.
   auto &output = settings[0];
+  for (const auto index : kCameraFovs) {
+    auto &fov = settings[index];
+    if (std::none_of(fov.choices.begin(), fov.choices.end(),
+                     [&](const Choice &choice) { return choice.value == fov.value; }))
+      fov.value = "0";
+  }
   if (const auto extent = forza::ultrawide::OutputSize(); extent.width) {
     output.choices = {{output.value, std::to_string(extent.width) + " x " +
         std::to_string(extent.height) + " (window)"}};
@@ -505,8 +525,8 @@ bool SaveNativeConfig() {
       "fh1_upscaler", "fh1_output_width", "fh1_output_height", "resolution_scale",
       "draw_resolution_scale_x", "draw_resolution_scale_y", "fh1_scene_720p_native_hud",
       "fh1_native_scene_scale", "swap_post_effect", "anisotropic_override", "vsync",
-      "forza_hud_edges", "forza_performance_overlay", "world_shadow_filter",
-      "world_ambient_occlusion"}) {
+      "forza_hud_edges", "forza_performance_overlay", "world_shadow_filter", "world_ambient_occlusion",
+      "forza_cockpit_fov", "forza_chase_near_fov", "forza_chase_far_fov", "forza_hood_fov", "forza_bumper_fov"}) {
     auto value = rex::cvar::GetFlagByName(name);
     if (value.empty()) continue;
     const std::string key(name);
@@ -613,6 +633,8 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
   }
 }
 std::string Help(size_t i) {
+  if (std::find(kCameraFovs.begin(), kCameraFovs.end(), i) != kCameraFovs.end())
+    return "Base vertical FOV: Stock or 40-90 degrees. Speed can widen it; transitions blend changes. Off with VR head tracking. Save applies; Back discards.";
   if ((i <= 2 || i == 8 || i == kAntiAliasing) && forza::ultrawide::OutputSize().width) {
     const auto drawing = forza::ultrawide::DrawingSize();
     return "Ultrawide follows the window. Drawing: " + std::to_string(drawing.width) +

@@ -143,6 +143,7 @@ set(FORZA_SOURCES
     src/hooks/ultrawide_projection.cpp
     src/hooks/vr_culling.cpp
     src/hooks/vr_head_pose.cpp
+    src/hooks/camera_fov.cpp
     src/hooks/vr_cockpit_space.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp

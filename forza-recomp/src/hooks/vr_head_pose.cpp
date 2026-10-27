@@ -435,6 +435,7 @@ uint32_t FirstViewDirector(uint8_t* base) {
   if (!Valid(manager)) return 0;
   return Load32(base, manager + 244 + 8);
 }
+
 }  // namespace
 
 namespace forza::xr {

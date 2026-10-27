@@ -17,6 +17,13 @@ occlusion, frame limit, VSync, and ultrawide HUD placement. Irrelevant rows dim 
 hover or selection, and restore when relevant. Inactive values are retained.
 The game's font cache is updated separately from native row input state.
 
+Base FOV controls for chase near, chase far, cockpit, hood and bumper appear
+before HUD placement. Stock preserves each camera's game settings, or choose
+40–90 vertical degrees. The game's speed widening still applies, so the moving
+FOV can exceed that base. Transitions blend the adjustment continuously. Save
+applies without restarting; Back discards. VR head tracking bypasses these
+controls. See [Driving camera field of view](cockpit-fov.md) for scope and evidence.
+
 Ultrawide shows the physical window output and automatic drawing size. Its
 rendering controls are read-only because changing them requires a launcher
 restart; frame pacing, filtering and HUD controls still save independently.

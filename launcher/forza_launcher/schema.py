@@ -52,6 +52,22 @@ def add(*a, **k):
 
 
 # --- Display ---------------------------------------------------------------------------
+CAMERA_FOVS = (
+    ("forza_chase_near_fov", "Chase near", 48.5),
+    ("forza_chase_far_fov", "Chase far", 58),
+    ("forza_cockpit_fov", "Cockpit", 62),
+    ("forza_hood_fov", "Hood", 66),
+    ("forza_bumper_fov", "Bumper", 53),
+)
+CAMERA_FOV_KEYS = {key for key, _, _ in CAMERA_FOVS}
+for key, label, stock in CAMERA_FOVS:
+    add(key, f"{label} base FOV (vertical degrees)", "Display", "choice", 0,
+        f"Stock preserves the game's camera behavior (normally {stock} vertical degrees). "
+        "Select a base FOV from 40 to 90 vertical degrees. The game's speed widening still "
+        "applies, so the moving view can exceed the selected base. Camera transitions blend "
+        "the adjustment. Ultrawide keeps its wider horizontal view. Disabled during VR head tracking.",
+        "Camera", choices=[(0, f"Stock ({stock} degrees)")] +
+        [(degrees, f"{degrees} degrees") for degrees in range(40, 91)])
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "

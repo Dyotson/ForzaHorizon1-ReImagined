@@ -97,6 +97,9 @@ bool GraphicsFlag(const std::string &key) {
     return false;
   return key.starts_with("fh1_") || key.starts_with("fsr3_") ||
          key == "forza_hud_edges" || key == "forza_performance_overlay" ||
+         key == "forza_cockpit_fov" || key == "forza_chase_near_fov" ||
+         key == "forza_chase_far_fov" || key == "forza_hood_fov" ||
+         key == "forza_bumper_fov" ||
          key == "world_shadow_filter" || key == "world_ambient_occlusion" ||
          key == "frame_rate" || key == "video_mode_refresh_rate" ||
          key == "resolution" || key == "resolution_scale" || key == "vsync" ||
