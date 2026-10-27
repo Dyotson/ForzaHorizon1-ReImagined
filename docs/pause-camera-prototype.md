@@ -80,10 +80,11 @@ Further source tracing narrows that candidate:
   groups. The bit-1 group at `82474E84..82474F10` iterates the core presentation's
   `[+50,+54)` collection and calls each object's virtual `+3C`; the unified car
   implementation `82E95790` forwards to its render object `+162C` and
-  `82E59678`. Merely setting the thumbnail flag does not remove that iteration
-  or establish that only the user's car will be submitted. Other mask bits
-  independently control other draw groups; do not infer a car-only mask from
-  the flag name.
+  `82E59678`, which clears per-part flags `+1C/+1D`. That group is preparation,
+  not proof of an isolated draw pass. Merely setting the thumbnail flag does
+  not establish that only the user's car will be submitted. Other mask bits
+  independently gate work in the render function; do not infer a car-only mask
+  from the flag name.
 - Original `CCarThumbnailManager` constructor `8254B798` initializes its shared
   renderer/car/camera references at `+68/+70/+74`. Its render state machine
   constructor `8254B838` registers four states from table `82012520`.
@@ -99,12 +100,25 @@ owned native presentation view and target**, with a separately owned UI car if
 the core cannot filter one existing render object. First prove an original
 caller's view initialization, exact car selection, target readiness and deferred
 release order; render a still car-only frame before attaching the pan or fade.
-Then establish whether its target has meaningful alpha (including glass and
-antialiased edges), clear/background behavior, culling, exposure, reflection
-dependencies and a separate ground/shadow layer. Blend the world contribution
-using the controller envelope behind the unchanged car and UI. If any lifetime
-or ownership check fails, retain the original scene and cancel the experiment.
+Then establish target clear/background behavior, culling, exposure, reflection
+dependencies and ground/shadow ownership. Prefer matching car+studio RGB imagery:
+fade WORLD+CAR to STUDIO+CAR behind the unchanged UI, with the same car pose,
+camera and lighting in both images. This retains the car without assuming that
+the native target supplies useful glass alpha; glass/AA/lighting ghosting still
+needs image review. If an alpha-layer route is used instead, its transparency
+and separate ground/shadow layer need independent proof. If any lifetime or
+ownership check fails, retain the original scene and cancel the experiment.
 No native view is allocated and none of these setters is invoked by this draft.
+
+The next diagnostic is a private, read-only build delta: bounded observations of
+frontend render `827225C8`, target setup `82738B18`, release `82734928`, and the
+already hooked actual world-view reader `824744D0` (no duplicate hook). Each
+wrapper retains exactly one original call and logs owner/view/camera/target
+identities and native-view bridging across original child-screen/cancel paths.
+It must detect witnessed release/address reuse and distinguish queued render
+work from a stale target. Actual target/draw captures are required alongside
+those logs. Diagnostic scaffolding is kept outside this PR until qualified;
+it allocates no native views and cannot establish studio rendering by itself.
 
 Road geometry can still occlude the authored path. There is no proven collision
 query or wall-clearance test here. Existing world lighting, reflections, exposure
