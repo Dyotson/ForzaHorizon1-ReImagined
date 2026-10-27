@@ -6,7 +6,8 @@ namespace forza::pause_camera {
 bool Enabled();
 // UI lifecycle on the main loop thread. A visible, validated native pause must
 // pulse every tick; hides/releases cancel before invoking any native transition.
-void Pulse(uint32_t screen,bool eligible);
+// eligibility is an observational bitmask: enabled=1, free roam=2, offline=4.
+void Pulse(uint32_t screen,bool eligible,uint32_t eligibility=0);
 void Cancel(uint32_t screen);
 void World(uint32_t world);
 
@@ -24,7 +25,7 @@ private:
 };
 #else
 inline bool Enabled() { return false; }
-inline void Pulse(uint32_t,bool) {}
+inline void Pulse(uint32_t,bool,uint32_t=0) {}
 inline void Cancel(uint32_t) {}
 inline void World(uint32_t) {}
 class ScopedView {

@@ -47,6 +47,21 @@ Hide, child-screen entry and composition release cancel before native transition
 Resume has no camera animation running over resumed simulation. A stale tick also
 stops publication. New pause ownership starts from the new original driving view.
 
+`forza_pause_camera_trace=true` enables bounded activation diagnostics while the
+experiment is enabled. It logs each reason once per lifecycle/presentation/frustum
+site, at most 64 records per process. Records include pause/world pulse ages,
+the eligibility mask (enabled=1, free roam=2, offline=4), failed guard and observed
+guest identities or flags. It adds no guest calls or writes and does not relax
+the offline, VR, freshness, single-view or geometry guards. A camera-context
+rejection still blocks that pause until its ownership is reset.
+
+The latest production-host runtime attempt displayed exterior chase, native
+pause and ordinary resume with both feature flags verified on, but never emitted
+the camera-begin message. Zoom, pullback, pan and camera-specific resume therefore
+remain unqualified. The opt-in diagnostics are intended to identify the actual
+failed activation condition in the next bounded capture; a specific guard failure
+has not yet been established.
+
 ## Unresolved visual gates
 
 The background envelope is intentionally **unbound**. A full-frame fade would

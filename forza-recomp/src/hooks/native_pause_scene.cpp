@@ -1242,7 +1242,11 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   }
   PollInput(ui, elapsed);
   if (state.screen != screen || !state.visible) return;
-  pause_camera::Pulse(screen, pause_camera::Enabled() && ActionAvailable(base,2) && offline_cars::Available(base,screen));
+  const bool camera_enabled=pause_camera::Enabled();
+  const bool camera_free_roam=camera_enabled&&ActionAvailable(base,2);
+  const bool camera_offline=camera_free_roam&&offline_cars::Available(base,screen);
+  pause_camera::Pulse(screen,camera_offline,
+      uint32_t(camera_enabled)|(uint32_t(camera_free_roam)<<1)|(uint32_t(camera_offline)<<2));
   const auto page_id = state.controller.page_id();
   const auto focus = state.controller.focused_tile_id();
   const menu::Page* page = nullptr;
