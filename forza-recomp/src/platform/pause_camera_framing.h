@@ -7,6 +7,13 @@ namespace forza::pause_camera {
 inline constexpr float kMenuRight=672;
 inline constexpr float kCarLeft=720,kCarRight=1240,kCarTop=168,kCarBottom=552;
 inline constexpr float kTargetNdcX=(kCarLeft+kCarRight)/1280.f-1.f;
+// Actual Garage-exterior captures show scenery crossing the car during the
+// orbit. Until an owned scenery-free studio scene exists, release the authored
+// view at the end of pullback instead of leaving that known failing pan active.
+// This bounds the experiment; it is not a collision test for the earlier path.
+inline bool WorldShotAllowed(const Frame& frame) {
+  return std::isfinite(frame.elapsed)&&frame.elapsed>=0&&frame.elapsed<3.;
+}
 inline bool FramingProjection(float fov,float aspect) {
   return std::isfinite(fov)&&fov>.1f&&fov<3.f&&std::isfinite(aspect)&&aspect>.5f&&aspect<4.f;
 }

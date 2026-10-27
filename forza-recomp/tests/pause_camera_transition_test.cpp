@@ -11,6 +11,12 @@ static Vec3 Project(const Pose& pose,Vec3 point,float fov,float aspect) {
           360*(1-Dot(relative,u)/(depth*std::tan(fov*.5f))),depth};
 }
 static void Composition() {
+  Frame boundary;
+  for(double elapsed:{0.,1.,1.4,2.999}){boundary.elapsed=elapsed;assert(WorldShotAllowed(boundary));}
+  for(double elapsed:{-1.,3.,8.,std::numeric_limits<double>::infinity(),
+                      std::numeric_limits<double>::quiet_NaN()}) {
+    boundary.elapsed=elapsed;assert(!WorldShotAllowed(boundary));
+  }
   const std::array<Vec3,4> hubs{{{-.8f,-.25f,1.4f},{.8f,-.25f,1.4f},
                                {.8f,-.25f,-1.3f},{-.8f,-.25f,-1.3f}}};
   for(int degrees=0;degrees<360;degrees+=15)for(int fps:{30,60,120})

@@ -224,6 +224,9 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
     }
     const auto sample=state.transition.Advance(std::chrono::duration<double>(now-state.previous).count());
     state.previous=now;
+    if(!WorldShotAllowed(sample)){
+      Trace(site,"studio-required-for-pan",director);Reset(true);return;
+    }
     Pose framed;
     if(!Framing(sample,state.anchor,std::bit_cast<float>(fov_bits),aspect,framed)){
       Trace(site,"composition-frame-invalid",director);Reset(true);return;

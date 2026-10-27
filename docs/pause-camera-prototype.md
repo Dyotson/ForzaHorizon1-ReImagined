@@ -221,3 +221,9 @@ retry ran successfully. The stall's cause is unassigned.
 
 Studio fade remains unbound. See [the concrete provider boundary](pause-studio-provider.md)
 for the missing native scene production and SDK image ownership/ordering work.
+
+The production adapter now cancels and latches the shot at the end of pullback
+(three seconds), restoring the original view and normal menu layout instead of
+continuing into the known failing world pan. Resume/next pause clears the latch.
+This temporary fallback does not qualify collision clearance for the earlier
+approach/pullback and does not implement the requested studio pan or fade.
