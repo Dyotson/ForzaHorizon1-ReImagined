@@ -93,9 +93,13 @@ compositor: TU4 `CUI4PresentationRenderer` vtable `8204C814` delegates to its co
 presentation at `+8`. Its view array is `[+0C,+10)`, records are `80` bytes, ID is
 `+5C`, active byte `+79`. `827225C8` finds a view by ID, invokes core pre-render
 when active, then runs `8271AC98` to publish its camera settings and render it.
-`RenderViewToTexture` (`82738B18`, deferred wrapper `8271A408`) can create/find a
-view and attach a target description at record `+60`. This establishes a native
-offscreen-view route worth pursuing; it does **not** establish exclusive car
+View setup (`82738B18`, deferred wrapper `8271A408`) creates/finds a view and
+copies a 24-byte viewport at record `+60`. The original viewport constructor
+`824A0178` and setter `82425A50` identify its x/y/width/height/min-Z/max-Z fields;
+this is **not a GPU-target descriptor**. Observing these records does not prove
+target ownership, readiness or completion. Renderer virtual `+4C` (`82729468`)
+separately contains offscreen resource/copy operations, which still require
+ownership and lifetime analysis. Neither route establishes exclusive car
 ownership or a transparent car layer. The core presentation still owns its world,
 cars, lighting and deferred queue. Calling it with invented view IDs/resources or
 globally switching to a homespace would be an unverified engine/state change.
@@ -143,10 +147,11 @@ ownership check fails, retain the original scene and cancel the experiment.
 No native view is allocated and none of these setters is invoked by this draft.
 
 The next diagnostic is a private, read-only build delta: bounded observations of
-frontend render `827225C8`, target setup `82738B18`, release `82734928`, and the
+frontend render `827225C8`, view/viewport setup `82738B18`, release `82734928`, and the
 already hooked actual world-view reader `824744D0` (no duplicate hook). Each
 wrapper retains exactly one original call and logs owner/view/camera/target
 identities and native-view bridging across original child-screen/cancel paths.
+Those observations do not identify a retained GPU target.
 It must detect witnessed release/address reuse and distinguish queued render
 work from a stale target. Actual target/draw captures are required alongside
 those logs. Diagnostic scaffolding is kept outside this PR until qualified;
