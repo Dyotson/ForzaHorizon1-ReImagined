@@ -119,7 +119,11 @@ bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,Site s
       if(!Vector(base,candidate+0x1350+wheel*0x410,hubs[wheel])||
          !Word(base,candidate+0x12A8+wheel*0x410,radius_bits))return Reject(site,"wheel-unreadable",candidate,wheel);
       const auto radius=std::bit_cast<float>(radius_bits);
-      if(!std::isfinite(radius)||radius<.15f||radius>.8f)return Reject(site,"wheel-radius-invalid",wheel,radius_bits);
+      // The native getter returned 0.1225 for the loaded Mustang in the
+      // qualified trace. This unused sanity value has no proven metre-scale
+      // minimum; require positive/finite data and retain the conservative cap.
+      // Actual shot geometry still comes exclusively from validated hub data.
+      if(!std::isfinite(radius)||radius<=0||radius>.8f)return Reject(site,"wheel-radius-invalid",wheel,radius_bits);
     }
     if(!WheelAnchor(anchor.center,anchor.forward,up,hubs,anchor))return Reject(site,"wheel-anchor-invalid",candidate);
     car=candidate;

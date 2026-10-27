@@ -57,10 +57,18 @@ rejection still blocks that pause until its ownership is reset.
 
 The latest production-host runtime attempt displayed exterior chase, native
 pause and ordinary resume with both feature flags verified on, but never emitted
-the camera-begin message. Zoom, pullback, pan and camera-specific resume therefore
-remain unqualified. The opt-in diagnostics are intended to identify the actual
-failed activation condition in the next bounded capture; a specific guard failure
-has not yet been established.
+the camera-begin message. A subsequent 100.391-second diagnostic run identified
+the first rejection: wheel 0's native getter value was `0x3DFAE148` (about 0.1225),
+below the adapter's authored 0.15 minimum. Pause eligibility was 7, its world
+observation was fresh and the presentation consumer ran during the pause.
+The exact native vtable slot points directly at `82DDF248`, without a secondary
+interface adjustment thunk. The shot does not use this value to position the
+camera. Its validation now requires finite, positive data with the existing 0.8
+cap, instead of assuming an unsupported physical-size minimum; wheel-hub and
+basis geometry checks remain in force. No squared-radius interpretation is
+assumed. Zoom, pullback, pan and camera-specific resume still require another
+runtime test; identifying this first rejection does not establish acceptance of
+later guards or the visible shot.
 
 ## Unresolved visual gates
 
