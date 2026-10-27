@@ -393,7 +393,9 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     }
     if (block_all) state = PadState{};
     state.buttons &= uint16_t(~forza::WorldChallengePad(state.buttons));
-    state.buttons = forza::CustomRacePad(state.buttons);  // SELECT on a won event's title card
+    // SELECT on a won event's title card, and Custom Race's A for the card; nothing of it
+    // while a prompt above holds the pad.
+    if (!block_all) state.buttons = forza::CustomRacePad(state.buttons);
     if (forza::benchmark::WantsPad()) {
       bool capture = false;
       const auto buttons = forza::benchmark::Pad(state.buttons, capture);

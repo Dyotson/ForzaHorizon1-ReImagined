@@ -9,7 +9,8 @@
 //    the current career event id from *(0x833CAACC)+0x388. After it, this file checks the
 //    event (festival or street race, no provided car) and whether it has been won
 //    (sub_82522108(profile, event, &place), the query behind the card's BEST FINISH, place
-//    1), and adds SELECT "CUSTOM RACE" to the card's footer (slot 13 of the footer's
+//    1) and that the player is offline (the native car tuning's gate: Colorado free roam,
+//    no Forza Live network, no session), and adds SELECT "CUSTOM RACE" to the card's footer (slot 13 of the footer's
 //    17 button slots is the Back/Select icon, table 0x83333B98).
 // 2. The card's input handler (slot 9, sub_82738948 -> sub_82736150) handles A 0x5D,
 //    B 0x60, X 0x99 (Rivals), Y 0x9C (restrictions) and two more. SELECT is not among
@@ -23,13 +24,17 @@
 //    closes it.
 // 4. Arming runs SQL through the game's own database object (*(0x833CAAE4) ->
 //    sub_82F1E918 -> vfunc 0x20, the path every "SELECT ... FROM Events WHERE Id=%d" of
-//    the card takes): TEMP copies of Events, Races, EventParticipants and
-//    EventRestrictions with this event's rows changed. TEMP tables are searched before
-//    the main database, so the car selection's class filter, the race setup
-//    (CLoadIntoCareerRace) and the CPU grid all read the custom values. The opponents
+//    the card takes): TEMP copies of Events, Races, EventParticipants, EventRestrictions
+//    and EventRecommendedCars with this event's rows changed (the statements are in
+//    src/platform/custom_race.h). TEMP tables are searched before the main database, so the
+//    car registration's class filter, the dealer, the race setup (CLoadIntoCareerRace) and
+//    the CPU grid all read the custom values. The opponents
 //    are the event's own named drivers in cars of the chosen class (Data_Car.ClassID,
 //    installed, selectable), in random order.
-// 5. Back on the card, an A press is added to the pad (CustomRacePad): the card's own A runs
+// 5. Back on the card, an A press is added to the pad (CustomRacePad), only while the card is
+//    the active screen (from the page's destroy until the card takes it, gives the input to
+//    the page again or is destroyed) and never while another overlay blocks the pad: the
+//    card's own A runs
 //    in the UI dispatcher as for a normal entry and opens the event's car registration
 //    (with BUY NEW CAR), which offers only cars of the chosen class (or below); its A
 //    starts the race. Rewards are the event's own (paid as usual).
@@ -37,7 +42,8 @@
 //    back from the car registration, the next visit), when the page is cancelled, and when the
 //    player is back in free roam after the race.
 //
-// FORZA_CUSTOM_RACE_TRACE=1 logs each step. cvar custom_race (on) turns the feature off.
+// FORZA_CUSTOM_RACE_TRACE=1 logs each step. Off by default: cvar custom_race (the launcher's
+// Gameplay > Custom Race). docs/custom-race.md describes it for players.
 
 #include "../platform/custom_race.h"
 #include "../platform/guest_addr.h"
@@ -50,81 +56,15 @@
 #include <cstdlib>
 #include <string>
 
-REXCVAR_DEFINE_BOOL(custom_race, true, "Gameplay",
+REXCVAR_DEFINE_BOOL(custom_race, false, "Game",
                     "Custom Race: SELECT on a won festival/street event's title card opens a "
-                    "page to replay it with your own class, laps, opponents and time of day");
+                    "page to replay it with your own class, laps, opponents and time of day "
+                    "(offline only)");
 
-namespace forza::custom_race {
-
-std::vector<std::string> ArmStatements(const Settings& s, bool circuit) {
-  const std::string e = std::to_string(s.event), c = std::to_string(s.class_id);
-  const uint32_t d = s.opponents;
-  std::vector<std::string> sql = DisarmStatements();
-  // The event's named CPU drivers (before EventParticipants is shadowed).
-  sql.push_back("CREATE TEMP TABLE CustomRaceDrivers AS SELECT AIPlayerID, HorizonEventID FROM "
-                "EventParticipants WHERE EventID=" + e + " ORDER BY Priority, ID");
-  // Their cars: the class's installed, selectable cars, shuffled (any installed car of the
-  // class when none is selectable).
-  sql.push_back("CREATE TEMP TABLE CustomRacePool AS SELECT Id FROM Data_Car WHERE ClassID=" + c +
-                " AND IsCarInstalled(Id) AND IsSelectable=1 ORDER BY RANDOM()");
-  sql.push_back("INSERT INTO temp.CustomRacePool SELECT Id FROM Data_Car WHERE ClassID=" + c +
-                " AND IsCarInstalled(Id) AND (SELECT COUNT(*) FROM temp.CustomRacePool)=0 "
-                "ORDER BY RANDOM()");
-  sql.push_back("CREATE TEMP TABLE Events AS SELECT * FROM Events");
-  std::string events = "UPDATE temp.Events SET TargetClass=" + c +
-                       ", NumberOfDrivers=" + std::to_string(d) +
-                       ", PlayerGridPosition=CASE WHEN PlayerGridPosition>" +
-                       std::to_string(d + 1) + " THEN " + std::to_string(d + 1) +
-                       " ELSE PlayerGridPosition END";
-  if (s.time_of_day) events += ", TimeOfDayStart=" + std::to_string(s.time_of_day);
-  sql.push_back(events + " WHERE Id=" + e);
-  sql.push_back("CREATE TEMP TABLE Races AS SELECT * FROM Races");
-  if (circuit) {
-    sql.push_back("UPDATE temp.Races SET NumLaps=" + std::to_string(s.laps) + " WHERE EventId=" + e);
-  }
-  // No make/year/... restrictions: the class is the only one. The event keeps its row (the car
-  // selection and the car check read it, and crash without it) with an empty field mask: the
-  // first 8 hex digits are the mask, the next 2 a byte the row always has.
-  sql.push_back("CREATE TEMP TABLE EventRestrictions AS SELECT * FROM EventRestrictions");
-  sql.push_back("UPDATE temp.EventRestrictions SET Value='00000000'||substr(Value,9,2) WHERE "
-                "EventID=" + e);
-  sql.push_back("CREATE TEMP TABLE EventParticipants AS SELECT * FROM EventParticipants WHERE "
-                "EventID<>" + e);
-  // BUY NEW CAR: the dealer lists the event's EventRecommendedCars (then the class filter);
-  // recommend every buyable car of the chosen class instead of the event's own picks.
-  sql.push_back("CREATE TEMP TABLE EventRecommendedCars AS SELECT * FROM EventRecommendedCars "
-                "WHERE EventID<>" + e);
-  sql.push_back("INSERT INTO temp.EventRecommendedCars (EventID,CarID,FirstChoice) SELECT " + e +
-                ",Id,0 FROM Data_Car WHERE ClassID=" + c +
-                " AND IsSelectable=1 AND IsUnicorn=0 AND IsCarInstalled(Id) ORDER BY PerformanceIndex DESC");
-  for (uint32_t n = 0; n < d; ++n) {
-    const std::string k = std::to_string(n);
-    sql.push_back(
-        "INSERT INTO temp.EventParticipants (ID,EventID,Priority,Ordinal,ColorSequence,BucketId,"
-        "HorizonEventID,AIPlayerID,LiveryLevel,TuningLevel) SELECT " +
-        std::to_string(900000 + n) + "," + e + "," + k + ",p.Id," + std::to_string(n + 1) +
-        ",0,COALESCE((SELECT HorizonEventID FROM temp.CustomRaceDrivers LIMIT 1),''),"
-        "COALESCE((SELECT AIPlayerID FROM temp.CustomRaceDrivers WHERE rowid=" + k +
-        "%(SELECT COUNT(*) FROM temp.CustomRaceDrivers)+1)," + std::to_string(n + 1) +
-        "),0,0 FROM temp.CustomRacePool p WHERE p.rowid=" + k +
-        "%(SELECT COUNT(*) FROM temp.CustomRacePool)+1");
-  }
-  return sql;
-}
-
-std::vector<std::string> DisarmStatements() {
-  std::vector<std::string> sql;
-  for (const char* t : {"Events", "Races", "EventParticipants", "EventRestrictions", "EventRecommendedCars",
-                        "CustomRacePool", "CustomRaceDrivers"}) {
-    sql.push_back(std::string("DROP TABLE IF EXISTS temp.") + t);
-  }
-  return sql;
-}
-
-}  // namespace forza::custom_race
 
 #if FORZA_TU4
 #include "../kernel/live.h"
+#include "../platform/pause_car_access.h"
 #include "../platform/guest_memory.h"
 
 #include <rex/ppc/context.h>
@@ -338,6 +278,16 @@ Clock::time_point free_roam_since{};
 // Pad (CustomRacePad, any thread).
 std::atomic<int64_t> select_pressed_ms{0};
 std::atomic<int64_t> inject_from_ms{0}, inject_until_ms{0};
+// The career title card is the active screen: set when the Custom Race page closes over it,
+// cleared when the card takes the press, opens the page again or is destroyed. The added A
+// is only ever pressed while this is set.
+std::atomic<bool> card_active{false};
+
+void StopInjecting() {
+  card_active = false;
+  inject_from_ms = 0;
+  inject_until_ms = 0;
+}
 
 int64_t NowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch())
@@ -362,6 +312,7 @@ void Disarm(Ui& ui, const char* why) {
   launched = false;
   launch_pending = false;
   left_free_roam = false;
+  StopInjecting();
   REXLOG_INFO("CUSTOM RACE: cancelled ({})", why);
 }
 
@@ -409,6 +360,18 @@ bool Eligible(Ui& ui, uint32_t id) {
   ui.Sql("SELECT COUNT(*) FROM Races WHERE EventId=" + e, &races);
   if ((style != 1 && style != 2) || provided != 0 || races != 1) return false;
   if (!SupportedType(event_info.career_type)) return false;
+  // Offline only, as the native car tuning (src/platform/pause_car_access.h): a replay pays
+  // XP and credits, which must not reach a profile shared with an online session.
+  uint32_t presence = 0, region = 0;
+  const bool known = LiveLocalActivity(presence, region);
+  const bool network = NetworkOn(), session = LiveCurrentSession().has_value();
+  if (!pause_car_access::Allowed(known, presence, region, network, session)) {
+    if (Trace()) {
+      REXLOG_INFO("CUSTOM RACE: event {}: not offline (presence known {} {} region {} network {} "
+                  "session {})", id, known, presence, region, network, session);
+    }
+    return false;
+  }
   // Won: the card's own BEST FINISH query (sub_827209A0).
   const uint32_t profile = ui.Call(0x8274B680);
   if (!profile) return false;
@@ -551,6 +514,7 @@ void OpenPage(Ui& ui) {
   ui.Call(0x82471820, {params + 0xC, title});
   ui.Release(title);
   Write(ui.base(), ui.scratch(), params);
+  StopInjecting();  // the page takes the input from the card
   opening = true;
   opening_since = Clock::now();
   select_pressed_ms = 0;
@@ -668,7 +632,7 @@ bool TryDestroy(PPCContext& ctx, uint8_t* base) {
   page = 0;
   source = 0;
   std::lock_guard<std::mutex> lock(mutex);
-  if (launch_pending) {
+  if (launch_pending && card) {
     // Hand the race to the card: an A press once the card has its input back.
     page_closed = true;
     inject_from = Clock::now() + std::chrono::milliseconds(300);
@@ -676,6 +640,7 @@ bool TryDestroy(PPCContext& ctx, uint8_t* base) {
     const int64_t now = NowMs();
     inject_from_ms = now + 300;
     inject_until_ms = now + 450;
+    card_active = true;
   }
   return true;
 }
@@ -763,7 +728,7 @@ extern "C" REX_FUNC(sub_82738948) {
     {
       std::lock_guard<std::mutex> lock(mutex);
       launch_pending = false;
-      inject_from_ms = inject_until_ms = 0;
+      StopInjecting();
       launched = true;
       left_free_roam = false;
       if (Trace()) {
@@ -811,6 +776,7 @@ extern "C" REX_FUNC(sub_82727530) {
   if (ctx.r3.u32 && ctx.r3.u32 == card) {
     card = 0;
     card_eligible = false;
+    StopInjecting();
   }
   __imp__sub_82727530(ctx, base);
 }
@@ -818,7 +784,7 @@ extern "C" REX_FUNC(sub_82727530) {
 uint16_t forza::CustomRacePad(uint16_t buttons) {
   const int64_t now = NowMs();
   const int64_t from = inject_from_ms.load(), until = inject_until_ms.load();
-  if (from && now >= from && now < until) buttons |= kPadA;  // the hand-over to the card
+  if (card_active && from && now >= from && now < until) buttons |= kPadA;  // the hand-over
   static std::atomic<uint16_t> previous{0};
   const uint16_t before = previous.exchange(buttons);
   if ((buttons & kPadBack) && !(before & kPadBack)) select_pressed_ms = now;
