@@ -66,9 +66,18 @@ interface adjustment thunk. The shot does not use this value to position the
 camera. Its validation now requires finite, positive data with the existing 0.8
 cap, instead of assuming an unsupported physical-size minimum; wheel-hub and
 basis geometry checks remain in force. No squared-radius interpretation is
-assumed. Zoom, pullback, pan and camera-specific resume still require another
-runtime test; identifying this first rejection does not establish acceptance of
-later guards or the visible shot.
+assumed.
+
+The subsequent 134-second production run passed the later entry guards and
+emitted two Begin records for separate pause owners. Native images show a
+rear-wheel close-up, pullback and slow pan; resume returned to the original chase
+view and normal HUD, and another pause started a fresh transition. This is a
+limited behavioral pass for the Mustang parked outside Dak's Garage, rather
+than the interior upgrade/showroom camera. Menu panels obscure much of the car
+in the wider shot. No frustum consumer during an active pause request was
+observed, so moving-view culling beyond this position remains unqualified.
+Both owned runs closed with empty Jobs and unchanged original 13-file profile
+guards. Studio target production and fade binding remain unimplemented.
 
 ## Unresolved visual gates
 
