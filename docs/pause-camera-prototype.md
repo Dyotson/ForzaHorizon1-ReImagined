@@ -197,3 +197,27 @@ driving view, approach, held close-up, pan, child-screen round trip, quick repea
 pause, and resumed view with option off as control. Confirm that the matrix-reader
 hooks still run while paused, culling follows, and exterior body renders correctly.
 No mockup or historical screenshot is evidence for this source version.
+
+## Menu-aware framing result
+
+At source `535897c`, both changed TU4 units, TU0/disabled adapter builds,
+strict transition/projection/layout tests, TU0/TU4 VR fixtures and an ordinary
+production link passed. Projection tests cover all headings in 15-degree steps,
+30/60/120 Hz, three FOVs and three aspect ratios. The native FOV and viewport
+are read only; framing translates the camera without changing projection.
+
+A fresh 138.141-second isolated production run captured the rear-wheel close-up,
+pullback, Home and Settings with the car clear of controls, Social restoring the
+ordinary layout/view, and resume restoring the original chase view and normal
+HUD. Cars was observed through Computer Use; its standalone native screenshot
+request lagged input and did not save a Cars frame. Both camera entries emitted
+Begin records. The owned Job emptied and all 13 original profile guards passed.
+
+The same run also captured scenery covering almost the entire car during the
+pan. Thus menu fit and resume have limited live evidence; an unobscured complete
+pan does not. This was outside Dak's Garage, not interior upgrade validation.
+An earlier attempt stopped presenting frames before camera activation; a fresh
+retry ran successfully. The stall's cause is unassigned.
+
+Studio fade remains unbound. See [the concrete provider boundary](pause-studio-provider.md)
+for the missing native scene production and SDK image ownership/ordering work.
