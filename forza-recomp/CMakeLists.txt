@@ -147,6 +147,7 @@ set(FORZA_SOURCES
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
     src/hooks/pause_menu.cpp
+    src/hooks/pause_camera.cpp
     src/hooks/native_pause_scene.cpp
     src/hooks/native_pause_edges.cpp
     src/hooks/fh1_map_preview.cpp

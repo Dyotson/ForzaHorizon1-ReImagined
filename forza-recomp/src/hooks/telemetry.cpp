@@ -7,6 +7,7 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/telemetry.h"
+#include "../platform/pause_camera.h"
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
 #include <atomic>
@@ -26,6 +27,7 @@ extern "C" REX_FUNC(sub_823E40D8) {
   const uint32_t world = ctx.r3.u32;
   const uint32_t substeps = g_substeps.load(std::memory_order_relaxed);
   __imp__sub_823E40D8(ctx, base);
+  forza::pause_camera::World(world);
   const uint8_t* w = forza::GuestPtr(base, world);
   uint32_t scale;
   std::memcpy(&scale, w + 0x28, sizeof(scale));

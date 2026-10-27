@@ -1,3 +1,4 @@
+#include "../platform/pause_camera.h"
 // forza - the head pose on the in-car camera (#333, docs/vr.md): from the headset in the VR
 // cockpit mode (src/platform/xr.h), or a test pose without a headset (vr_head_pose_test). Off
 // unless one of them is on; normal play never reaches the code below that check.
@@ -503,6 +504,7 @@ extern "C" REX_FUNC(__imp__sub_825A9D20);
 extern "C" REX_FUNC(sub_825A9D20) {
   const uint32_t view = ctx.r3.u32;
   PosedView posed(base, Valid(view) ? Load32(base, view + 8) : 0, "view");
+  forza::pause_camera::ScopedView pause(base, Valid(view) ? Load32(base, view + 8) : 0, true);
   __imp__sub_825A9D20(ctx, base);
 }
 
@@ -511,6 +513,7 @@ extern "C" REX_FUNC(__imp__sub_829A4860);
 extern "C" REX_FUNC(sub_829A4860) {
   const bool posing = REXCVAR_GET(vr_head_pose_test) || forza::xr::CockpitActive();
   PosedView posed(base, posing ? FirstViewDirector(base) : 0, "frustum");
+  forza::pause_camera::ScopedView pause(base, 0, false);
   __imp__sub_829A4860(ctx, base);
 }
 

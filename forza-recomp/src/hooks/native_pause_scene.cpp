@@ -2,6 +2,7 @@
 // page geometry and controller. No second game's assets or translated code.
 // tu_address_map: TU4 addresses
 #include "../platform/native_pause_scene.h"
+#include "../platform/pause_camera.h"
 #include "../platform/native_quit.h"
 #include "../platform/guest_addr.h"
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
@@ -805,6 +806,7 @@ void Visibility(Native& ui, bool visible) {
   if (state.ready) StockVisibility(ui, false);
 }
 void Release(Native& ui, bool restore) {
+  pause_camera::Cancel(state.screen);
   native_pause_edges::ClearTabs();
   fh1_map_preview::Release(ui.ctx, ui.base);
   if (restore) {
@@ -1023,6 +1025,7 @@ bool Input(PPCContext& ctx, uint8_t* base) {
 }
 bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
   if (screen != state.screen) return false;
+  if (!show) pause_camera::Cancel(screen);
   state.visible = show;
   if (show) { state.controller.Resume(); state.previous_pad = 0xffff; }
   else { state.controller.Suspend(); fh1_map_preview::Update(ctx, base, screen, false); }
@@ -1239,6 +1242,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   }
   PollInput(ui, elapsed);
   if (state.screen != screen || !state.visible) return;
+  pause_camera::Pulse(screen, pause_camera::Enabled() && ActionAvailable(base,2) && offline_cars::Available(base,screen));
   const auto page_id = state.controller.page_id();
   const auto focus = state.controller.focused_tile_id();
   const menu::Page* page = nullptr;
