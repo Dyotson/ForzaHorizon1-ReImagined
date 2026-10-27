@@ -152,14 +152,17 @@ translation units compiled successfully against the existing private R2 SDK;
 TU0 and native-pause-disabled adapter builds also compiled. A small float easing
 overshoot found by that test was fixed with double intermediates and clamping.
 The native wheel-data revision passed the same focused checks, including geometry
-selection, duplicate-corner rejection and upright-car checks. No full host link
-has been attempted. CI exposed the standalone VR hook fixture's missing link to
+selection, duplicate-corner rejection and upright-car checks. CI exposed the standalone VR hook fixture's missing link to
 the out-of-line disabled adapter; disabled configurations now use inline no-ops.
 That fixture compiles and executes for TU0 and TU4 locally, and all affected
-active TU4 units still compile. Initial runtime testing was blocked by the locked
-desktop; the desktop has since been reported unlocked, but this prototype still
-awaits its exclusive game turn behind the existing tests. No game session or
-fresh screenshot has been obtained for it.
+active TU4 units still compile. Private diagnostic and production control hosts
+have since linked successfully. The production control displayed world, native
+pause and resume with the camera option off. With it on, the 144.407-second
+production-host attempt also displayed those states but never started the camera
+transition. Actual native chase and pause frames were captured; they provide no
+zoom or pan acceptance. The production activation diagnostics compile and link
+without the private presentation probes. Native target production and compositor
+binding remain unimplemented; shader/reference tests do not qualify a studio image.
 
 Runtime must use an exclusive Forza grant, current unlocked desktop, bounded
 owned process Job/watchdog, copied profile and source/hash guards. Record original

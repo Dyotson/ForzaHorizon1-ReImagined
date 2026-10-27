@@ -174,6 +174,7 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
   const auto now=Clock::now();
   const Site site=presentation?Site::Presentation:Site::Frustum;
   Trace(site,"consumer-entered",director);
+  if(state.requested)Trace(site,"pause-consumer-entered",director);
   if(!Gates(base,now,site)){Reset(state.blocked);return;}
   uint32_t car=0;Anchor anchor;
   if(!Camera(base,director,car,anchor,site)){Reset(true);return;}
