@@ -66,6 +66,29 @@ backend must establish real image ownership and command-stream ordering.
 This is the minimum missing engine/backend contract. The existing unbound fade
 math and shader cannot supply scene production, correct ordering or ownership.
 
+## Native output and context adapter
+
+The bounded output trace identifies a direct native texture path:82729468 takes
+a caller-provided texture reference in r5, copies it to a local strong reference,
+and submits its final graphics postpass through82CFE8F0 /824728D8 into that
+texture's surface. Its local references are released on exit. The existing map
+preview demonstrates native UI retaining a separately copied texture reference
+through82F38478. This keeps a direct native composition route viable; an SDK
+bridge is not yet established as necessary. The renderer also changes its view's
+viewport, so it must never be invoked on a shared live view.
+
+The source adapter now observes the original presentation camera update only
+while a fresh pause view is published. It checks the concrete camera/core types,
+the original selected-car accessor slots and an exact match to the matrix just
+published by the pause camera. The native setter may execute on the render
+thread after the main-thread reader returns, so a caller-thread scope token is
+not treated as proof of scene identity. It rejects ambiguous candidates and clears the
+observation on each new frame, cancellation or stale context. This supplies
+observed core/camera/selection identities without calling native getters,
+allocating anything or changing a guest object. It does not retain those
+objects, prove selection maps to the intended render car, or produce an image.
+An owned producer must complete those checks before using the observation.
+
 ## Acceptance before enabling
 
 Capture actual close-up, pullback and pan frames throughout the fade with the

@@ -18,7 +18,7 @@
 #include <mutex>
 
 REXCVAR_DEFINE_BOOL(forza_pause_camera, false, "Interface",
-    "Experimental TU4 native-pause rear-quarter camera and slow pan (camera only; no studio background)");
+    "Experimental TU4 pause wheel shot/pullback; restores view before unqualified pan (no studio background)");
 REXCVAR_DEFINE_BOOL(forza_pause_camera_trace, false, "Debug",
     "Log pause-camera eligibility and rejection reasons once per consumer (maximum 64 records)");
 REXCVAR_DECLARE(bool, vr_head_pose_test);
@@ -33,6 +33,9 @@ struct State {
   Transition transition;
   Anchor anchor{};
   std::array<float,16> view{};
+  NativeScene scene{};
+  uint64_t frame_serial=0;
+  bool scene_ambiguous=false;
   bool frame=false,blocked=false;
 } state;
 
@@ -139,6 +142,7 @@ bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,float&
 }
 void Reset(bool block=false) {
   state.transition.Cancel();state.director=0;state.frame=false;state.blocked=block;
+  state.scene={};state.scene_ambiguous=false;
 }
 bool Gates(uint8_t* base,Clock::time_point now,Site site) {
   if(!REXCVAR_GET(forza_pause_camera))return false;
@@ -169,6 +173,54 @@ bool CompositionActive(uint32_t screen) {
   return screen&&state.requested==screen&&state.transition.Active()&&state.frame&&!state.blocked&&
       now-state.frame_time<=std::chrono::milliseconds(250)&&now-state.pulse<=std::chrono::milliseconds(250)&&
       now-state.world_time<=std::chrono::milliseconds(250);
+}
+void ObserveSceneCamera(uint8_t* base,uint32_t camera) {
+  if(!REXCVAR_GET(forza_pause_camera)||REXCVAR_GET(vr_head_pose_test)||xr::CockpitActive())return;
+  std::lock_guard lock(state.mutex);
+  const auto now=Clock::now();
+  // This setter can execute later on the native render thread. Match the
+  // published matrix and fresh owner/frame, not a caller-thread scope token.
+  if(!state.frame||state.blocked||!state.transition.Active()||state.scene_ambiguous||
+     now-state.frame_time>std::chrono::milliseconds(250)||now-state.pulse>std::chrono::milliseconds(250)||
+     now-state.world_time>std::chrono::milliseconds(250))return;
+  uint32_t table=0,core=0,core_table=0,setter=0,getter=0,selection=0;
+  // Concrete CPresentationCamera, its native parent core and the exact leaf
+  // selected-car accessors.82E79910 stores +484;82476A88 reads +484. The
+  // constructor82E7CB38 stores the parent core at +4. Unknown types reject.
+  if(!Word(base,camera,table)||table!=0x82002F6C){
+    Trace(Site::Presentation,"scene-camera-type-rejected",camera,table);return;
+  }
+  if(!Word(base,table+0x58,setter)||setter!=0x82E79910||
+     !Word(base,table+0x5C,getter)||getter!=0x82476A88){
+    Trace(Site::Presentation,"scene-accessors-rejected",setter,getter);return;
+  }
+  if(!Word(base,camera+4,core)||!Word(base,core,core_table)||core_table!=0x82003744){
+    Trace(Site::Presentation,"scene-core-type-rejected",core,core_table);return;
+  }
+  if(!Word(base,camera+484,selection)||!selection){
+    Trace(Site::Presentation,"scene-selection-missing",camera);return;
+  }
+  for(unsigned i=0;i<16;++i) {
+    uint32_t word;
+    if(!Word(base,camera+16+i*4,word)||word!=std::bit_cast<uint32_t>(state.view[i])){
+      Trace(Site::Presentation,"scene-pose-mismatch",camera,i);return;
+    }
+  }
+  if(state.scene.camera&&(state.scene.camera!=camera||state.scene.core!=core||state.scene.selection!=selection)) {
+    state.scene={};state.scene_ambiguous=true;Trace(Site::Presentation,"ambiguous-scene-camera");return;
+  }
+  state.scene={state.requested,state.transition.car(),core,camera,selection,state.frame_serial,state.view};
+  Trace(Site::Presentation,"native-scene-observed",camera,selection);
+}
+bool ReadObservedScene(uint32_t screen,NativeScene& scene) {
+  scene={};
+  if(!REXCVAR_GET(forza_pause_camera)||REXCVAR_GET(vr_head_pose_test)||xr::CockpitActive())return false;
+  std::lock_guard lock(state.mutex);const auto now=Clock::now();
+  if(!screen||state.requested!=screen||state.scene.screen!=screen||!state.scene.camera||
+     state.scene_ambiguous||state.scene.frame!=state.frame_serial||!state.frame||state.blocked||
+     !state.transition.Active()||now-state.frame_time>std::chrono::milliseconds(250)||
+     now-state.pulse>std::chrono::milliseconds(250)||now-state.world_time>std::chrono::milliseconds(250))return false;
+  scene=state.scene;return true;
 }
 void Pulse(uint32_t screen,bool eligible,uint32_t eligibility) {
   std::lock_guard lock(state.mutex);
@@ -232,6 +284,7 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
       Trace(site,"composition-frame-invalid",director);Reset(true);return;
     }
     state.frame=View(framed,state.view);state.frame_time=now;
+    ++state.frame_serial;state.scene={};state.scene_ambiguous=false;
     if(!state.frame)Trace(site,"sample-view-invalid");
   }
   if(!state.frame||state.director!=director||now-state.frame_time>std::chrono::milliseconds(250)){

@@ -523,6 +523,7 @@ extern "C" REX_FUNC(__imp__sub_823EB7A0);
 extern "C" REX_FUNC(sub_823EB7A0) {
   const uint32_t camera = ctx.r3.u32;
   __imp__sub_823EB7A0(ctx, base);
+  forza::pause_camera::ObserveSceneCamera(base,camera);
   if (forza::xr::CockpitActive() && Valid(camera))
     forza::xr::OnRenderView(camera, forza::GuestPtr(base, camera + kRenderCameraMatrix));
 }

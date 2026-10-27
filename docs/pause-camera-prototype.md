@@ -227,3 +227,14 @@ The production adapter now cancels and latches the shot at the end of pullback
 continuing into the known failing world pan. Resume/next pause clears the latch.
 This temporary fallback does not qualify collision clearance for the earlier
 approach/pullback and does not implement the requested studio pan or fade.
+Its strict actual-adapter fixture verifies cancellation before a matrix write,
+same-pause latching, cleared composition state, and re-entry after cancel. A
+108.687-second live attempt again stalled presentation at the first cockpit
+frame before any camera activation; it provides no live cutoff acceptance.
+
+The next source adapter observes native camera/core/selection identities by
+matching a fresh published pause matrix, including updates on the render thread.
+Strict adapter tests cover cross-thread observation, ambiguous cameras/changed
+selection, stale context, VR, cancellation and disabled operation. All three
+affected TU4 units compile and the production host links. These observations
+own no native objects and are not GPU readiness or a rendered studio scene.
