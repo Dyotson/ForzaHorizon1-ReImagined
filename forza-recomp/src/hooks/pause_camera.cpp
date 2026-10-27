@@ -176,13 +176,4 @@ ScopedView::~ScopedView() {
   if(matrix_&&std::memcmp(matrix_,posed_,64)==0)std::memcpy(matrix_,original_,64);
 }
 } // namespace forza::pause_camera
-#else
-namespace forza::pause_camera {
-bool Enabled() { return false; }
-void World(uint32_t) {}
-void Pulse(uint32_t,bool) {}
-void Cancel(uint32_t) {}
-ScopedView::ScopedView(uint8_t*,uint32_t,bool) {}
-ScopedView::~ScopedView() {}
-}
 #endif
