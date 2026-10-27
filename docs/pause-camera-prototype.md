@@ -68,6 +68,44 @@ ownership or a transparent car layer. The core presentation still owns its world
 cars, lighting and deferred queue. Calling it with invented view IDs/resources or
 globally switching to a homespace would be an unverified engine/state change.
 
+Further source tracing narrows that candidate:
+
+- `CPresentationViewDeferred::SetThumbNailPass` (`82E7ABF0`) queues the
+  `822541FC` parameter type to callback `82E7ABD8`; that callback calls virtual
+  `+5C`. The non-deferred implementation `82E93A50` writes only view byte `+1CE`.
+  `CPresentationView::Render` (`824744D0`) reads that byte and packs it into bit 0
+  of its per-view render flags (stack `+385`, around `8247497C`). This is a scoped
+  view flag, **not evidence of car-only filtering or usable alpha**.
+- In that same render function, view mask `+1D8` independently gates rendering
+  groups. The bit-1 group at `82474E84..82474F10` iterates the core presentation's
+  `[+50,+54)` collection and calls each object's virtual `+3C`; the unified car
+  implementation `82E95790` forwards to its render object `+162C` and
+  `82E59678`. Merely setting the thumbnail flag does not remove that iteration
+  or establish that only the user's car will be submitted. Other mask bits
+  independently control other draw groups; do not infer a car-only mask from
+  the flag name.
+- Original `CCarThumbnailManager` constructor `8254B798` initializes its shared
+  renderer/car/camera references at `+68/+70/+74`. Its render state machine
+  constructor `8254B838` registers four states from table `82012520`.
+  Stage 2 (`8254ADD8`) accesses the manager-owned UI car `+70`, loads it through
+  `8270B858` if needed, installs camera/view settings, updates its transform and
+  calls the shared renderer. Stage 3 (`82526388`) begins asynchronous output
+  through `82CF9B58`; its tick `8252D578` waits on completion. That is a thumbnail
+  job with shared mutable resources and output lifetime, not a safe live-pan
+  service to borrow during pause. This prototype never submits such a job.
+
+The smallest reversible experiment for the next stage is therefore a **separately
+owned native presentation view and target**, with a separately owned UI car if
+the core cannot filter one existing render object. First prove an original
+caller's view initialization, exact car selection, target readiness and deferred
+release order; render a still car-only frame before attaching the pan or fade.
+Then establish whether its target has meaningful alpha (including glass and
+antialiased edges), clear/background behavior, culling, exposure, reflection
+dependencies and a separate ground/shadow layer. Blend the world contribution
+using the controller envelope behind the unchanged car and UI. If any lifetime
+or ownership check fails, retain the original scene and cancel the experiment.
+No native view is allocated and none of these setters is invoked by this draft.
+
 Road geometry can still occlude the authored path. There is no proven collision
 query or wall-clearance test here. Existing world lighting, reflections, exposure
 and ground shadows remain in use; they are not studio lighting. Menu geometry and
@@ -86,8 +124,13 @@ TU0 and native-pause-disabled adapter builds also compiled. A small float easing
 overshoot found by that test was fixed with double intermediates and clamping.
 The native wheel-data revision passed the same focused checks, including geometry
 selection, duplicate-corner rejection and upright-car checks. No full host link
-has been attempted. The exclusive runtime queue and locked desktop have prevented
-any game session or fresh screenshot for this prototype so far.
+has been attempted. CI exposed the standalone VR hook fixture's missing link to
+the out-of-line disabled adapter; disabled configurations now use inline no-ops.
+That fixture compiles and executes for TU0 and TU4 locally, and all affected
+active TU4 units still compile. Initial runtime testing was blocked by the locked
+desktop; the desktop has since been reported unlocked, but this prototype still
+awaits its exclusive game turn behind the existing tests. No game session or
+fresh screenshot has been obtained for it.
 
 Runtime must use an exclusive Forza grant, current unlocked desktop, bounded
 owned process Job/watchdog, copied profile and source/hash guards. Record original
