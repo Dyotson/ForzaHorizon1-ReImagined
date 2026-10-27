@@ -96,3 +96,7 @@ the SDK with synthetic guest memory and checked native-call boundaries. It check
 that remote map details adds no Custom Race footer, cannot arm shadow tables,
 and cancels a stale pending hand-over with all seven drops while preserving the
 native input call. It does not qualify venue entry or an actual race.
+
+CI runs both tests through `forza-recomp/tests/custom-race` in the Linux SDK job,
+after its SDK setup and even on a cache hit. The context fixture includes the
+actual hook's SDK headers, so it cannot use the earlier SDK-free g++ step.

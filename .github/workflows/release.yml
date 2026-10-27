@@ -319,6 +319,15 @@ jobs:
             -DFORZA_PATCHED_SDK_SOURCE="$HOME/rexglue-sdk-src-forza/sdk"
           "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/overlay-sdk" --parallel 2
           "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/overlay-sdk" --output-on-failure
+      - name: Custom Race statements and native card context regressions
+        run: |
+          # The context fixture compiles the actual hook and needs the SDK headers.
+          # Run on cache hits too, so every PR head exercises both tests.
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/custom-race -B "$RUNNER_TEMP/custom-race-tests" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/custom-race-tests" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/custom-race-tests" --output-on-failure
       - name: Benchmark and title-modal regression tests
         run: |
           "$HOME/cmake/bin/cmake" -S forza-recomp/tests/benchmark -B "$RUNNER_TEMP/benchmark-tests" \
