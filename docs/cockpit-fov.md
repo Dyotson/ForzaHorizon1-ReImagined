@@ -130,3 +130,23 @@ all five FOV preferences with shadow and ambient-occlusion settings. These are
 source/interface checks, not current-SDK host or revised in-game qualification.
 The earlier 121-patch SDK build above belongs to the previous checkpoint.
 The accessor/blend/speed and native-layout runtime gate remains open.
+
+## Windows runtime check (2026-10-27)
+
+On revision `71434e9`, a fresh Windows host linked against ReIGlue r2
+`317216e8` reached TU4 free roam using a separate copy of a legitimate profile.
+Actual 720p captures show all five native FOV controls and parked cockpit views
+at Stock (62 degrees), 40 and 90. Native Save wrote the selected preference;
+the production accessor trace returned 40 and 90 from the original 62-degree
+value. This run observed five caller return addresses, not all seven.
+
+The help paragraph clipped its final instruction at 720p. It is now shorter,
+preserving the range, speed, transition, VR and Save/Back explanations; the
+revised paragraph still needs an actual native-screen check.
+
+The driving attempt stopped against a garage barrier, so it does not qualify
+speed widening. Near/far blends, process-restart persistence and a physical
+headset remain unqualified. The game returned normally to the title screen and
+then exited with code 0. The observer reported a read failure during process
+shutdown; the owned job was empty and the original profile hashes were unchanged.
+These captures qualify the revision above, not the subsequent text change.

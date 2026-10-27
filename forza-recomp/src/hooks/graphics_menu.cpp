@@ -634,7 +634,7 @@ void PauseRows(Native &ui, uint8_t *base, bool show) {
 }
 std::string Help(size_t i) {
   if (std::find(kCameraFovs.begin(), kCameraFovs.end(), i) != kCameraFovs.end())
-    return "Base vertical FOV: 40-90 degrees, or Stock. Speed widening still applies and can exceed the base. Transitions blend the adjustment. Disabled during VR head tracking. Save applies; Back discards.";
+    return "Base vertical FOV: Stock or 40-90 degrees. Speed can widen it; transitions blend changes. Off with VR head tracking. Save applies; Back discards.";
   if ((i <= 2 || i == 8 || i == kAntiAliasing) && forza::ultrawide::OutputSize().width) {
     const auto drawing = forza::ultrawide::DrawingSize();
     return "Ultrawide follows the window. Drawing: " + std::to_string(drawing.width) +
