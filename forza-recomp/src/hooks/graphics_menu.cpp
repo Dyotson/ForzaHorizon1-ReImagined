@@ -5,6 +5,7 @@
 #include "../platform/native_pause_scene.h"
 #include "../platform/native_quit.h"
 #include "../platform/native_car_tuning_menu.h"
+#include "../platform/custom_race.h"
 #include "../platform/benchmark.h"
 #include "../platform/hud_overlay.h"
 #include "../platform/graphics_presets.h"
@@ -861,6 +862,7 @@ extern "C" REX_FUNC(__imp__sub_827142C0);
 extern "C" REX_FUNC(__imp__sub_82736B08);
 
 extern "C" REX_FUNC(sub_827303E8) {
+  if (forza::custom_race::TryBind(ctx, base)) return;
   if (forza::car_tuning_menu::TryBind(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (!opening_graphics) {
@@ -918,6 +920,7 @@ extern "C" REX_FUNC(sub_827303E8) {
               native_rows.size());
 }
 extern "C" REX_FUNC(sub_82739190) {
+  if (forza::custom_race::TryNotify(ctx, base)) return;
   if (forza::car_tuning_menu::TryNotify(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
@@ -939,6 +942,7 @@ extern "C" REX_FUNC(sub_82739190) {
   }
 }
 extern "C" REX_FUNC(sub_827142C0) {
+  if (forza::custom_race::TryDestroy(ctx, base)) return;
   if (forza::car_tuning_menu::TryDestroy(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
@@ -970,6 +974,7 @@ extern "C" REX_FUNC(sub_827142C0) {
   save_requested = false;
 }
 extern "C" REX_FUNC(sub_82736B08) {
+  if (forza::custom_race::TryInput(ctx, base)) return;
   if (forza::car_tuning_menu::TryInput(ctx, base)) return;
   using namespace forza::graphics_menu;
   if (ctx.r3.u32 != graphics_screen) {
@@ -1093,6 +1098,7 @@ extern "C" REX_FUNC(sub_82836928) {
 namespace forza::graphics_menu {
 void Tick(PPCContext& ctx, uint8_t* base) {
   forza::car_tuning_menu::Tick(ctx, base);
+  forza::custom_race::Tick(ctx, base);
   UpdatePerformanceOverlay();
   RefreshRelevance(ctx, base);
   if (title_layout_pending && main_menu && Read(base, main_menu + 0x260) == 12) {

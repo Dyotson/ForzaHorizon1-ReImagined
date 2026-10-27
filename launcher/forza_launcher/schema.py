@@ -516,6 +516,13 @@ add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
     "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
     "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
 
+add("custom_race", "Custom Race", "Gameplay", "bool", False,
+    "Replay a festival or street race you have already won with your own settings: press "
+    "Select on the event's title card to choose the car class, laps (circuits), opponents "
+    "(1-7) and time of day. Rewards are paid as usual. Offline only: requires Settings > "
+    "Online > Sign in to Xbox LIVE: off. Title Update 4 only. Applies on the next game launch.",
+    "Custom Race", restart=True)
+
 add("skip_startup_movies", "Skip startup videos", "Gameplay", "bool", False,
     "Skips the videos at the start (Microsoft Studios, Dolby, Playground Games, about 45 s) "
     "and goes to the title screen. The in-game videos (the festival intro, the 1000 Club "
