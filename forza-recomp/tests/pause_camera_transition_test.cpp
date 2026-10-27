@@ -1,10 +1,51 @@
-#include "../src/platform/pause_camera_transition.h"
+#include "../src/platform/pause_camera_framing.h"
 #include <cassert>
 #include <limits>
 
 using namespace forza::pause_camera;
 static bool Near(Vec3 a,Vec3 b,float tolerance=.002f) { return Dot(a-b,a-b)<tolerance*tolerance; }
+static Vec3 Project(const Pose& pose,Vec3 point,float fov,float aspect) {
+  const auto f=Unit(pose.target-pose.eye),r=Unit(Cross(pose.up,f)),u=Cross(f,r);
+  const auto relative=point-pose.eye;const float depth=Dot(relative,f);
+  return {640*(1+Dot(relative,r)/(depth*std::tan(fov*.5f)*aspect)),
+          360*(1-Dot(relative,u)/(depth*std::tan(fov*.5f))),depth};
+}
+static void Composition() {
+  const std::array<Vec3,4> hubs{{{-.8f,-.25f,1.4f},{.8f,-.25f,1.4f},
+                               {.8f,-.25f,-1.3f},{-.8f,-.25f,-1.3f}}};
+  for(int degrees=0;degrees<360;degrees+=15)for(int fps:{30,60,120})
+    for(float fov:{.6f,1.f,1.4f})for(float aspect:{1.f,16.f/9,2.39f}) {
+      const float angle=float(degrees)*.01745329252f;
+      const Vec3 forward{std::sin(angle),0,std::cos(angle)},up{0,1,0};
+      const auto right=Cross(up,forward);Anchor car;
+      assert(WheelAnchor({123,1,-456},forward,up,hubs,car));
+      const Pose original{car.center-forward*5+up*1.5f,car.center,up};
+      Transition transition;assert(transition.Begin(1,2,car,original));Pose framed;
+      assert(Framing(transition.Sample(),car,fov,aspect,framed));
+      assert(Near(framed.eye,original.eye)&&Near(framed.target,original.target));
+      for(int tick=1;tick<=fps*11;++tick) {
+        const auto frame=transition.Advance(1./fps);
+        assert(Framing(frame,car,fov,aspect,framed));
+        if(tick==fps) {
+          const auto wheel=Project(framed,car.rear_wheel,fov,aspect);
+          assert(std::abs(wheel.x-980)<.08f&&wheel.y>kCarTop&&wheel.y<kCarBottom&&wheel.z>0);
+        }
+        if(tick>=fps*3)for(int x:{-1,1})for(int z:{-1,1})for(float y:{car.low_y,car.high_y}) {
+          const auto corner=car.center+right*(x*car.half_width)+forward*(z*car.half_length)+up*y;
+          const auto screen=Project(framed,corner,fov,aspect);
+          assert(screen.z>=.19f&&screen.x>=kCarLeft-.03f&&screen.x<=kCarRight+.03f&&
+                 screen.y>=kCarTop-.03f&&screen.y<=kCarBottom+.03f);
+        }
+      }
+      for(float invalid:{0.f,-1.f,3.f,std::numeric_limits<float>::infinity(),
+                        std::numeric_limits<float>::quiet_NaN()}) {
+        assert(!Framing(transition.Sample(),car,invalid,aspect,framed));
+        if(invalid!=3.f)assert(!Framing(transition.Sample(),car,fov,invalid,framed));
+      }
+    }
+}
 int main() {
+  Composition();
   const std::array<Vec3,4> hubs{{{-.8f,-.25f,1.4f},{.8f,-.25f,1.4f},
                                {.8f,-.25f,-1.3f},{-.8f,-.25f,-1.3f}}};
   Anchor car;

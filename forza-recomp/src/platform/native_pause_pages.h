@@ -1,6 +1,7 @@
 #pragma once
 
 #include "menu_model.h"
+#include "native_pause_layout.h"
 #include <array>
 #include <optional>
 #include <string_view>
@@ -81,7 +82,7 @@ struct PauseCapabilities {
 };
 
 inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool social_help=false,
-                                      bool social_session=false) {
+                                      bool social_session=false,bool camera_layout=false) {
   std::vector<Page> pages{
       {"home", "HOME", {
           {"world_map", "WORLD MAP", {64, 166, 560, 282}, "world_map", true, caps.world_map},
@@ -132,6 +133,7 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool
       {"social_connection","CONNECTION & HELP",{936,376,280,194},"social_connection"},
       {"social_back","BACK TO SOCIAL",{64,464,560,106},"social_back"},
   };
+  if(camera_layout)native_pause_layout::CameraPages(pages);
   return pages;
 }
 

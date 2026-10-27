@@ -4,9 +4,10 @@
 namespace forza::pause_camera {
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 bool Enabled();
+bool CompositionActive(uint32_t screen);
 // UI lifecycle on the main loop thread. A visible, validated native pause must
 // pulse every tick; hides/releases cancel before invoking any native transition.
-// eligibility is an observational bitmask: enabled=1, free roam=2, offline=4.
+// eligibility: enabled=1, free roam=2, offline=4, supported composition page=8.
 void Pulse(uint32_t screen,bool eligible,uint32_t eligibility=0);
 void Cancel(uint32_t screen);
 void World(uint32_t world);
@@ -25,6 +26,7 @@ private:
 };
 #else
 inline bool Enabled() { return false; }
+inline bool CompositionActive(uint32_t) { return false; }
 inline void Pulse(uint32_t,bool,uint32_t=0) {}
 inline void Cancel(uint32_t) {}
 inline void World(uint32_t) {}

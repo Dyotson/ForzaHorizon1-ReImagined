@@ -21,7 +21,13 @@ inline float Ease(double t) {
   return float(std::clamp(v*v*v*(v*(v*6-15)+10),0.0,1.0));
 }
 struct Pose { Vec3 eye, target, up{0,1,0}; };
-struct Anchor { Vec3 center, forward, rear_wheel; };
+struct Anchor {
+  Vec3 center, forward, rear_wheel;
+  Vec3 up{0,1,0};
+  // Wheel-derived framing envelope with authored body clearance. It is not a
+  // native body bounding box or a collision guarantee.
+  float half_width=1.3f,half_length=3.f,low_y=-1.f,high_y=2.f;
+};
 // CCarDynamics' wheel camera getter supplies four car-space hubs. Select by
 // geometry rather than assuming its wheel-number convention. Unknown layouts
 // (not two axles/two sides, or implausible scale) retain the original view.
@@ -49,7 +55,10 @@ inline bool WheelAnchor(Vec3 center,Vec3 forward,Vec3 up,
     if(back&&h.x>0)target=center+right*h.x+up*h.y+forward*h.z;
   }
   if(corners!=15)return false;
-  out={center,forward,target};return true;
+  float half_width=0,half_length=0,low_y=10,high_y=-10;
+  for(const auto h:hubs){half_width=std::max(half_width,std::abs(h.x));
+    half_length=std::max(half_length,std::abs(h.z));low_y=std::min(low_y,h.y);high_y=std::max(high_y,h.y);}
+  out={center,forward,target,up,half_width+.35f,half_length+1.2f,low_y-.8f,high_y+1.8f};return true;
 }
 struct Frame {
   Pose pose;

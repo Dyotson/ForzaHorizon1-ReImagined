@@ -447,6 +447,32 @@ void DefaultPausePages() {
 void NativeLayoutContract() {
   namespace layout = forza::native_pause_layout;
   const auto defaults = MakePausePages({true, true, true, true, true});
+  const auto composed = MakePausePages({true, true, true, true, true},false,false,true);
+  assert(layout::Supports(composed));
+  for(size_t p=0;p<defaults.size();++p) {
+    assert(defaults[p].id==composed[p].id&&defaults[p].tiles.size()==composed[p].tiles.size());
+    for(size_t i=0;i<defaults[p].tiles.size();++i) {
+      const auto& before=defaults[p].tiles[i];const auto& after=composed[p].tiles[i];
+      assert(before.id==after.id&&before.action==after.action&&before.enabled==after.enabled&&
+             before.visible==after.visible&&before.label==after.label);
+      const auto& r=after.bounds;
+      if(!layout::CameraPage(composed[p].id)) {
+        assert(r.x==before.bounds.x&&r.y==before.bounds.y&&r.width==before.bounds.width&&r.height==before.bounds.height);
+        continue;
+      }
+      assert(r.x+r.width<=forza::pause_camera::kMenuRight&&r.y>=166&&r.y+r.height<=634);
+      for(size_t j=i+1;j<composed[p].tiles.size();++j) {
+        const auto& other=composed[p].tiles[j].bounds;
+        assert(r.x+r.width<=other.x||other.x+other.width<=r.x||
+               r.y+r.height<=other.y||other.y+other.height<=r.y);
+      }
+      using namespace forza::fh1_menu_components;
+      const auto quad=MenuQuad({float(r.x),float(r.y),float(r.width),float(r.height)});
+      assert(quad.x+quad.w+std::abs(kMenuShear)*quad.h/2<forza::pause_camera::kCarLeft);
+      if(after.id=="current_car")assert(layout::Car(r).photo.height>0);
+      if(after.id=="world_map")assert(layout::Map(r).height>0);
+    }
+  }
   assert(layout::Supports(defaults));
   assert(!layout::Supports({}));
   for (size_t count = 1; count <= layout::kTabCapacity; ++count) {

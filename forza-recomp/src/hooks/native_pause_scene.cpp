@@ -73,7 +73,7 @@ struct State {
   uint32_t stock_render_root = 0;
   uint8_t stock_suppression = 0, stock_visibility = 0;
   bool stock_captured = false;
-  bool ready = false, visible = true;
+  bool ready = false, visible = true, camera_layout = false;
   menu::Controller controller{};
   fh1_menu_components::TabBar tab_bar;
   std::array<Card, layout::kTileCapacity> cards;
@@ -837,7 +837,7 @@ void Resume(Native& ui) {
 }
 void SocialSession(Native& ui,bool show) {
   state.social_session=show;state.social_help=false;
-  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),false,show));
+  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),false,show,state.camera_layout));
   state.controller.SelectPage("social");
   state.controller.FocusTile(show?"social_back":"social_connection");
   state.controller.Resume();state.previous_pad=0xffff;
@@ -848,7 +848,7 @@ void SocialHelp(Native& ui,bool show) {
   if(show)state.help_from_session=state.social_session;
   if(show)state.social_return=state.controller.focused_tile_id().value_or("social_connection");
   state.social_help=show;state.social_session=false;
-  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),show));
+  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),show,false,state.camera_layout));
   state.controller.SelectPage("social");
   state.controller.FocusTile(show?"social_back":state.social_return);
   state.controller.Resume();state.previous_pad=0xffff;
@@ -1001,7 +1001,7 @@ void PollInput(Native& ui, double elapsed) {
   }
   if((state.social_help||state.social_session)&&state.controller.page_id()!="social"){
     state.social_help=state.social_session=state.help_from_session=false;
-    state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+    state.controller.SetPages(menu::MakePausePages(Capabilities(ui),false,false,state.camera_layout));
   }
   if (reset && Read(ui.base, state.screen + 0x1dc) && ActionAvailable(ui.base, 2) &&
       fh1_car_recovery::Request(ui.ctx, ui.base)) { Resume(ui); return; }
@@ -1070,7 +1070,7 @@ void AfterBind(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   const auto access = ui.Virtual(state.engine, 0x1c, {state.engine});
   state.root = ui.Virtual(access, 0x48, {access});
   if (!state.engine || !state.root) { state = {}; return; }
-  state.controller.SetPages(menu::MakePausePages(Capabilities(ui)));
+  state.controller.SetPages(menu::MakePausePages(Capabilities(ui),false,false,state.camera_layout));
   if (!layout::Supports(state.controller.pages())) { state = {}; return; }
   state.started = state.previous = Clock::now();
   state.previous_pad = Pad(ui).value_or(0xffff);
@@ -1221,7 +1221,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       state.social_session=return_bookmark->social_session;
       state.help_from_session=return_bookmark->help_from_session;
       state.social_return=return_bookmark->social_return;
-      state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help,state.social_session));
+      state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help,state.social_session,state.camera_layout));
       state.controller.SelectPage(return_bookmark->page);
       state.controller.FocusTile(return_bookmark->tile);
     }
@@ -1234,8 +1234,12 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   state.previous = now;
   StockVisibility(ui, false);
   if (!state.visible) return;
+  const auto current_page=state.controller.page_id();
+  const bool camera_layout=pause_camera::CompositionActive(screen)&&
+      current_page&&layout::CameraPage(*current_page);
+  if(state.camera_layout!=camera_layout){state.camera_layout=camera_layout;state.refreshed={};}
   if (std::chrono::duration<double>(now - state.refreshed).count() >= 1) {
-    state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help,state.social_session));
+    state.controller.SetPages(menu::MakePausePages(Capabilities(ui),state.social_help,state.social_session,state.camera_layout));
     CarData(ui);
     RefreshData(ui);
     state.refreshed = now;
@@ -1245,9 +1249,11 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   const bool camera_enabled=pause_camera::Enabled();
   const bool camera_free_roam=camera_enabled&&ActionAvailable(base,2);
   const bool camera_offline=camera_free_roam&&offline_cars::Available(base,screen);
-  pause_camera::Pulse(screen,camera_offline,
-      uint32_t(camera_enabled)|(uint32_t(camera_free_roam)<<1)|(uint32_t(camera_offline)<<2));
   const auto page_id = state.controller.page_id();
+  const bool camera_page=page_id&&layout::CameraPage(*page_id);
+  pause_camera::Pulse(screen,camera_offline&&camera_page,
+      uint32_t(camera_enabled)|(uint32_t(camera_free_roam)<<1)|(uint32_t(camera_offline)<<2)|
+      (uint32_t(camera_page)<<3));
   const auto focus = state.controller.focused_tile_id();
   const menu::Page* page = nullptr;
   for (const auto& candidate : state.controller.pages())
@@ -1304,7 +1310,8 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     Release(ui, true); return;
   }
   state.tab_bar.Advance(elapsed);
-  const fh1_menu_components::Rect tab_bounds{64, 112, 768, 42};
+  const fh1_menu_components::Rect tab_bounds=state.camera_layout?
+      fh1_menu_components::Rect{48,112,620,42}:fh1_menu_components::Rect{64,112,768,42};
   const auto cells = state.tab_bar.Layout(tab_bounds, layout::kTabCapacity);
   for (size_t i = 0; i < state.tabs.size(); ++i)
     state.tabs[i].donor.SetVisible(ui, i < cells.size());
@@ -1336,7 +1343,8 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
     const bool after=slot+1==cells.size()&&state.tab_bar.MoreAfter();
     ui.Show(tab.donor.presentation,tab.caption,before||after);
     if(before||after){
-      const auto r=fh1_menu_components::MenuQuad({after?838.f:38.f,114,22,38});
+      const auto r=fh1_menu_components::MenuQuad({after?(state.camera_layout?674.f:838.f):
+          (state.camera_layout?22.f:38.f),114,22,38});
       Label(ui,tab.donor,tab.caption,{r.x,r.y,r.w,r.h},20,after?">":"<",0xffffff,1);
     }
   }

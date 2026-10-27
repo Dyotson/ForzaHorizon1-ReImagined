@@ -159,8 +159,13 @@ it allocates no native views and cannot establish studio rendering by itself.
 
 Road geometry can still occlude the authored path. There is no proven collision
 query or wall-clearance test here. Existing world lighting, reflections, exposure
-and ground shadows remain in use; they are not studio lighting. Menu geometry and
-readability are unchanged and require actual image review during the moving shot.
+and ground shadows remain in use; they are not studio lighting. A fresh active
+camera now reserves the right side of Home, Cars and Settings for the shot,
+using native FOV/aspect and a wheel-derived framing envelope. These pages place
+controls on the left; Social retains its normal layout and cancels the camera.
+Stale or rejected camera contexts restore the normal layout. The authored
+envelope is not a native body bounding box or a wall-clearance guarantee.
+Readability and framing still require actual image review during the moving shot.
 Do not enable this experiment as a normal user feature before those gates pass.
 
 ## Validation and next runtime qualification

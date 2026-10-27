@@ -5,7 +5,8 @@
 
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
-#include "../platform/pause_camera_transition.h"
+#include "../platform/pause_camera_framing.h"
+#include "../platform/ultrawide.h"
 #include "../platform/xr.h"
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -84,7 +85,7 @@ bool Vector(uint8_t* base,uint32_t address,Vec3& out) {
   out={std::bit_cast<float>(x),std::bit_cast<float>(y),std::bit_cast<float>(z)};
   return Finite(out)&&Dot(out,out)<1e12f;
 }
-bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,Site site) {
+bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,float& aspect,Site site) {
   uint32_t root,holder,manager,first,last,active,table,first_director,second_director;
   if(!Word(base,0x833CAAE4,root)||!Word(base,root+4,holder)||!Word(base,holder+4,manager)||
      !Word(base,manager+244+8,first_director))return Reject(site,"camera-root-chain");
@@ -94,6 +95,12 @@ bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,Site s
   if(second_director)return Reject(site,"second-director-present",manager,second_director);
   if(!Word(base,director+20,active)||!Word(base,active,table))return Reject(site,"active-camera-unreadable",director);
   if(table!=FORZA_ADDR(0x820755AC)&&table!=FORZA_ADDR(0x8207562C))return Reject(site,"unsupported-camera",active,table);
+  uint32_t width,height;
+  if(!Word(base,manager+244+12+8,width)||!Word(base,manager+244+12+12,height)||
+     !width||!height||width>16384||height>16384)return Reject(site,"composition-viewport-invalid");
+  // Same read-only aspect policy as the original projection hook, without
+  // marking a gameplay/map frame or changing FOV/projection.
+  aspect=float(ultrawide::Projection(false,false,width,height,double(width)/height));
   if(!Word(base,manager+0x80,first)||!Word(base,manager+0x84,last))return Reject(site,"car-list-unreadable",manager);
   if(last<first||last-first>256||(last-first)%4)return Reject(site,"car-list-range",first,last);
   unsigned locals=0;
@@ -156,6 +163,13 @@ void World(uint32_t world) {
   Trace(Site::Lifecycle,"world-observed",world);
 }
 bool Enabled() { return REXCVAR_GET(forza_pause_camera); }
+bool CompositionActive(uint32_t screen) {
+  if(!REXCVAR_GET(forza_pause_camera))return false;
+  std::lock_guard lock(state.mutex);const auto now=Clock::now();
+  return screen&&state.requested==screen&&state.transition.Active()&&state.frame&&!state.blocked&&
+      now-state.frame_time<=std::chrono::milliseconds(250)&&now-state.pulse<=std::chrono::milliseconds(250)&&
+      now-state.world_time<=std::chrono::milliseconds(250);
+}
 void Pulse(uint32_t screen,bool eligible,uint32_t eligibility) {
   std::lock_guard lock(state.mutex);
   if(REXCVAR_GET(forza_pause_camera))Trace(Site::Lifecycle,eligible?"pause-eligible":"pause-ineligible",screen,eligibility);
@@ -180,10 +194,14 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
   Trace(site,"consumer-entered",director);
   if(state.requested)Trace(site,"pause-consumer-entered",director);
   if(!Gates(base,now,site)){Reset(state.blocked);return;}
-  uint32_t car=0;Anchor anchor;
-  if(!Camera(base,director,car,anchor,site)){Reset(true);return;}
+  uint32_t car=0;Anchor anchor;float aspect=0;
+  if(!Camera(base,director,car,anchor,aspect,site)){Reset(true);return;}
   auto* matrix=Memory(base,director+240,64,true);if(!matrix){Trace(site,"matrix-unwritable",director);Reset(true);return;}
   if(presentation) {
+    uint32_t fov_bits;
+    if(!Word(base,director+304,fov_bits)||!FramingProjection(std::bit_cast<float>(fov_bits),aspect)){
+      Trace(site,"composition-projection-invalid",director);Reset(true);return;
+    }
     if(state.transition.Active()&&
        (state.director!=director||state.transition.car()!=car||
         Dot(anchor.center-state.anchor.center,anchor.center-state.anchor.center)>.01f||
@@ -206,7 +224,11 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
     }
     const auto sample=state.transition.Advance(std::chrono::duration<double>(now-state.previous).count());
     state.previous=now;
-    state.frame=View(sample.pose,state.view);state.frame_time=now;
+    Pose framed;
+    if(!Framing(sample,state.anchor,std::bit_cast<float>(fov_bits),aspect,framed)){
+      Trace(site,"composition-frame-invalid",director);Reset(true);return;
+    }
+    state.frame=View(framed,state.view);state.frame_time=now;
     if(!state.frame)Trace(site,"sample-view-invalid");
   }
   if(!state.frame||state.director!=director||now-state.frame_time>std::chrono::milliseconds(250)){

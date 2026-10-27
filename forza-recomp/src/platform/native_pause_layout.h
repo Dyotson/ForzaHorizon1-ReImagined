@@ -1,6 +1,7 @@
 #pragma once
 #include "menu_model.h"
 #include "fh1_menu_components.h"
+#include "pause_camera_framing.h"
 #include <array>
 #include <cmath>
 
@@ -47,4 +48,24 @@ inline menu::Rect Map(const menu::Rect& panel) {
 }
 inline constexpr std::array<menu::Rect, kTabCapacity> kTabs{{
     {64, 112, 172, 42}, {244, 112, 172, 42}, {424, 112, 172, 42}, {604, 112, 172, 42}}};
+inline bool CameraPage(std::string_view id) {
+  // Long social/account/session text keeps its original readable layout and
+  // original driving view rather than squeezing those pages around a shot.
+  return id=="home"||id=="cars"||id=="settings";
+}
+inline void CameraPages(std::vector<menu::Page>& pages) {
+  for(auto& page:pages) {
+    if(!CameraPage(page.id))continue;
+    if(page.id=="home"&&page.tiles.size()==6) {
+      constexpr std::array<menu::Rect,6> bounds{{{48,166,328,240},{392,166,276,112},
+          {392,294,276,112},{48,422,300,120},{48,558,620,76},{364,422,304,120}}};
+      for(size_t i=0;i<bounds.size();++i)page.tiles[i].bounds=bounds[i];
+    } else if(page.id=="cars"&&page.tiles.size()==5) {
+      page.tiles[0].bounds={48,166,328,404};
+      for(size_t i=1;i<page.tiles.size();++i)page.tiles[i].bounds={392,166+104.*(i-1),276,92};
+    } else {
+      for(size_t i=0;i<page.tiles.size();++i)page.tiles[i].bounds={48+316.*(i%2),166+140.*(i/2),300,124};
+    }
+  }
+}
 } // namespace forza::native_pause_layout
