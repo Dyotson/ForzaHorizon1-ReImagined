@@ -150,3 +150,12 @@ headset remain unqualified. The game returned normally to the title screen and
 then exited with code 0. The observer reported a read failure during process
 shutdown; the owned job was empty and the original profile hashes were unchanged.
 These captures qualify the revision above, not the subsequent text change.
+
+The benchmark restart snapshot now includes all five camera preferences. Its
+previous graphics whitelist omitted them, so changing to the benchmark's
+independent profile could lose a native-menu FOV selection. A regression executes
+the production snapshot writer and restore reader: five distinct bases round-trip,
+Stock replaces prior explicit bases, and an unrelated flag stays untouched. It
+fails on the old writer and passes with the five-key whitelist fix. The affected
+Windows source compiles and the production host links; actual game restart
+qualification remains separate.
