@@ -271,7 +271,7 @@ bool launch_pending = false;   // A confirmed: waiting for the card to take the 
 Clock::time_point armed_at{};
 bool page_closed = false;      // the page's destroy ran since A
 Clock::time_point inject_from{}, inject_until{};
-bool launched = false;         // the car selection was opened for the custom race
+bool launched = false;         // the custom race was handed to native career entry
 bool left_free_roam = false;
 Clock::time_point free_roam_since{};
 
@@ -305,6 +305,15 @@ bool IsCard(uint8_t* base, uint32_t screen) {
   return screen && Read(base, screen) == kDescriptionVtable;
 }
 
+bool HasCareerEntry(uint8_t* base, uint32_t screen) {
+  // TU4's native A dispatcher (sub_82736150) uses +376, the bound okCareer
+  // transition, before taking its career entry path. With no transition it
+  // delegates acceptance to the owner: map details uses that to set a route.
+  // Neither the car-check result (+374) nor event eligibility (+408) identifies
+  // this context. Leave all native fields and entry checks untouched.
+  return IsCard(base, screen) && Read(base, screen + 376) != 0;
+}
+
 void Disarm(Ui& ui, const char* why) {
   if (!armed) return;
   for (const auto& sql : DisarmStatements()) ui.Sql(sql);
@@ -317,6 +326,10 @@ void Disarm(Ui& ui, const char* why) {
 }
 
 bool Arm(Ui& ui) {
+  if (!HasCareerEntry(ui.base(), card)) {
+    Disarm(ui, "the card no longer has a career entry");
+    return false;
+  }
   bool ok = true;
   for (const auto& sql : ArmStatements(settings, IsCircuit(event_info.career_type))) {
     ok = ui.Sql(sql) && ok;
@@ -700,7 +713,11 @@ extern "C" REX_FUNC(sub_82733A68) {
   const uint32_t globals = Read(base, kCareerGlobals);
   const uint32_t id = globals ? Read(base, globals + 0x388) : 0;
   ReadEvent(ui, id);
-  card_eligible = Eligible(ui, id);
+  card_eligible = HasCareerEntry(base, screen) && Eligible(ui, id);
+  if (!card_eligible && launch_pending) {
+    std::lock_guard<std::mutex> lock(mutex);
+    Disarm(ui, "the rebound card has no eligible career entry");
+  }
   if (card_eligible && settings.event != id) settings = Defaults(event_info);
   if (Trace() || card_eligible) {
     REXLOG_INFO("CUSTOM RACE: title card for event {} (type {}, class {}, {} laps, {} drivers): {}",
@@ -714,6 +731,15 @@ extern "C" REX_FUNC(sub_82733A68) {
 // card is ours).
 extern "C" REX_FUNC(sub_82738948) {
   const uint32_t screen = ctx.r3.u32;
+  if (screen == card && IsCard(base, screen) && !HasCareerEntry(base, screen)) {
+    card_eligible = false;
+    StopInjecting();
+    if (armed) {
+      Ui ui(ctx, base);
+      std::lock_guard<std::mutex> lock(mutex);
+      if (ui) Disarm(ui, "the card no longer has a career entry");
+    }
+  }
   if (!REXCVAR_GET(custom_race) || !IsCard(base, screen) || screen != card || !card_eligible) {
     __imp__sub_82738948(ctx, base);
     return;
@@ -736,7 +762,7 @@ extern "C" REX_FUNC(sub_82738948) {
                     GuestPtr(base, screen + 374)[0], Read(base, screen + 376),
                     Read(base, screen + 392), Read(base, screen + 408));
       }
-      REXLOG_INFO("CUSTOM RACE: event {}: entering with class {}", settings.event,
+      REXLOG_INFO("CUSTOM RACE: event {}: handing class {} to native career entry", settings.event,
                   settings.class_id);
     }
     __imp__sub_82738948(ctx, base);

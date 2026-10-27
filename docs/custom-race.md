@@ -13,6 +13,7 @@ Title Update 4 only. Off by default.
    offline, the same gate as [car tuning](car-tuning.md).
 2. Drive to a festival race (point-to-point or circuit) or a street race you have
    already won and open its title card.
+   Map details only offers **Set Route**; drive to the venue to use Custom Race.
 3. The footer shows **Custom Race** on Select. Press Select.
 4. Choose:
    - **Car Class**: E, D, C, B, A, S, R3, R2 or R1 (defaults to the event's class).
@@ -39,7 +40,8 @@ Source: `forza-recomp/src/hooks/custom_race.cpp` (hooks) and
 SDK dependency).
 
 - **Title card** (`CCareerEventDescription`): the bind hook (`sub_82733A68`) reads
-  the event id and checks the event type, the win (`sub_82522108`), the offline gate
+  the event id and checks the native career-entry transition (absent on map details),
+  the event type, the win (`sub_82522108`), the offline gate
   (`pause_car_access::Allowed`) and the cvar. If all pass, it adds a Select prompt in
   footer slot 13 when that slot is free. The input hook (`sub_82738948`) opens the
   page on Select. The destructor (`sub_82727530`) ends any pending hand-over.
@@ -88,3 +90,9 @@ CI runs the test on Linux:
 g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src \
     forza-recomp/tests/custom_race_test.cpp -o custom-race-test && ./custom-race-test
 ```
+
+`forza-recomp/tests/custom_race_context_test.cpp` compiles the TU4 hooks against
+the SDK with synthetic guest memory and checked native-call boundaries. It checks
+that remote map details adds no Custom Race footer, cannot arm shadow tables,
+and cancels a stale pending hand-over with all seven drops while preserving the
+native input call. It does not qualify venue entry or an actual race.
