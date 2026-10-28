@@ -192,7 +192,7 @@ jobs:
           done
 
   # The patched SDK pieces for Linux: the plugin, runtime and codegen tool built from ReIGlue,
-  # the project's fork of the SDK, at the tag tools/build_rexglue_sdk.sh pins. Cached on that script.
+  # the project's fork of the SDK, at the revision tools/build_rexglue_sdk.sh pins. Cached on that script.
   sdk-linux:
     # 22.04: the oldest runner image, so the overlay needs glibc 2.35 only
     runs-on: ubuntu-22.04

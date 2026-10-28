@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the ReXGlue Xenos GPU plugin (librexgpu-xenos.so), the runtime and the codegen tool
 # (rexglue) from ReIGlue, this project's fork of the ReXGlue SDK
-# (https://github.com/FH1-ReImagined/ReIGlue), at the tag pinned below, and install them
+# (https://github.com/FH1-ReImagined/ReIGlue), at the revision pinned below, and install them
 # into an overlay of the nightly SDK so the forza build (its codegen step and the plugin it
 # ships) and tools/run_forza.sh pick them up. Adapted from RecompiledHaloReach.
 #
@@ -32,15 +32,17 @@
 #
 # Only the plugin, the runtime and bin/rexglue are taken from this build; every other SDK
 # file in the overlay is a symlink into the nightly, so they must be built from a ReIGlue
-# tag based on the nightly's exact commit to stay ABI-compatible with it.
+# revision based on the nightly's exact commit to stay ABI-compatible with it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
-# r2 adds the VR commits 0390-0397 (#333). The tag comes with the ReIGlue pull request that adds
-# them (https://github.com/FH1-ReImagined/ReIGlue/pull/1), on its last commit, REIGLUE_COMMIT.
-REIGLUE_TAG=fh1-0.10.0.24-r2  # ReIGlue on SDK_COMMIT (its docs/reiglue/commits.md lists the changes)
-REIGLUE_COMMIT=317216e8d66d766bd13abdb672975458f30ca576  # immutable target of REIGLUE_TAG
+# Includes the merged cockpit instrument raster fix (#419, ReIGlue PR #2),
+# controller disconnect reporting (#3), and digital keyboard taps (#4).
+# A reviewed full commit can be pinned before a maintainer publishes a tag.
+# When a tag is supplied, its target must still match this immutable commit.
+REIGLUE_TAG=
+REIGLUE_COMMIT=7d17ea51a51861cfef4244afc06a908bf1fd74a2
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
@@ -88,15 +90,23 @@ else
         git clone --quiet --no-checkout "$REIGLUE_URL" "$SRC"
         fresh=1
     fi
-    git -C "$SRC" rev-parse --quiet --verify "refs/tags/$REIGLUE_TAG" > /dev/null ||
-        git -C "$SRC" fetch --quiet "$REIGLUE_URL" "+refs/tags/$REIGLUE_TAG:refs/tags/$REIGLUE_TAG"
-    target="$(git -C "$SRC" rev-parse "$REIGLUE_TAG^{commit}")"
-    [ "$target" = "$REIGLUE_COMMIT" ] ||
-        { echo "$REIGLUE_TAG resolves to $target, expected $REIGLUE_COMMIT" >&2; exit 1; }
+    if [ -n "$REIGLUE_TAG" ]; then
+        git -C "$SRC" rev-parse --quiet --verify "refs/tags/$REIGLUE_TAG" > /dev/null ||
+            git -C "$SRC" fetch --quiet "$REIGLUE_URL" "+refs/tags/$REIGLUE_TAG:refs/tags/$REIGLUE_TAG"
+        target="$(git -C "$SRC" rev-parse "$REIGLUE_TAG^{commit}")"
+        [ "$target" = "$REIGLUE_COMMIT" ] ||
+            { echo "$REIGLUE_TAG resolves to $target, expected $REIGLUE_COMMIT" >&2; exit 1; }
+    else
+        [[ "$REIGLUE_COMMIT" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "REIGLUE_COMMIT must be a full immutable commit" >&2; exit 1; }
+        git -C "$SRC" cat-file -e "$REIGLUE_COMMIT^{commit}" 2>/dev/null ||
+            git -C "$SRC" fetch --quiet "$REIGLUE_URL" "$REIGLUE_COMMIT"
+        target="$(git -C "$SRC" rev-parse "$REIGLUE_COMMIT^{commit}")"
+    fi
     git -C "$SRC" merge-base --is-ancestor "$SDK_COMMIT" "$target" ||
-        { echo "$REIGLUE_TAG is not based on the nightly's commit $SDK_COMMIT" >&2; exit 1; }
-    # Check out the tag without touching files that already match it: HEAD and the index go to
-    # the tag, then only the files whose content differs are rewritten. Files that already match
+        { echo "$target is not based on the nightly's commit $SDK_COMMIT" >&2; exit 1; }
+    # Check out the revision without touching files that already match it: HEAD and the index go to
+    # the revision, then only the files whose content differs are rewritten. Files that already match
     # keep their timestamps, so a re-run changes no source file, and a clone that had the old
     # patch series applied (the same content) is taken over without rebuilding the SDK.
     [ "$fresh" = 1 ] || require_expected_changes "$SRC" "$target" SDK
@@ -110,7 +120,7 @@ else
         git -C "$SRC" diff-files -z --ignore-submodules --name-only |
             git -C "$SRC" checkout-index -f -z --stdin
     fi
-    echo "SDK source at $REIGLUE_TAG ($changed file(s) updated)"
+    echo "SDK source at ${REIGLUE_TAG:-$target} ($changed file(s) updated)"
 fi
 [ "${REIGLUE_DEV:-0}" = 1 ] || git -C "$SRC" submodule update --init --recursive --depth 1 --quiet
 
