@@ -138,3 +138,14 @@ are in the SDK's `docs/reiglue/validation/2026-10-28-hdr-request.json`; its
 `capture-witness-plan.md` records the next evidence requirements and current
 instrumentation gaps. CPU was released. No game/GPU run occurred, and the SDK pin
 and runtime/provenance gates remain unchanged.
+
+One subsequent granted HDR-off SDK smoke session closed after 183.563 seconds
+under an owned Job/watchdog. A prior-main compatible host reached the opening
+Viper/Flynt world sequence with scene/HUD, paused and resumed through normal UI.
+The source seed did not reach the intended garage/ordinary free-roam, so those
+cases remain open. The host excludes this PR's new AI/presentation mechanisms;
+the run does not qualify them, HDR-on/VR, hot-toggle or capture acquisition.
+The SDK records exact hashes and limits in
+`docs/reiglue/validation/2026-10-28-hdr-off-smoke.json`. Source profile/cache,
+shared game data and private runtime inputs were unchanged; Job and full game
+process enumeration were empty on closure. Required notices and SDK pin remain.
