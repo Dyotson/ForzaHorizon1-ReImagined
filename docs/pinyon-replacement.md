@@ -125,3 +125,16 @@ SDK design document. The presenter passes syntax checking; request, format and
 exact-copy contracts pass. No new DLL link or game/GPU run occurred. The game SDK
 pin, required notices and remaining capture/integration/crypto limitations are
 unchanged. Runtime qualification still requires a separate resource grant.
+
+The subsequent separately granted private SDK validation rebuilt four production
+units at `342686ee76dd5758e691a57f84ce9e0964441ef7` and linked both DLLs in a
+single serial job, including loader/ABI checks, in 27.063 seconds. All 319
+previously recorded input/output hashes matched before and after. Two objects
+without historical hash anchors were rebuilt; the four reused replacement
+objects matched their recorded hashes. Both DLLs loaded, ABI 1 was returned,
+all 135 GPU imports resolved against 11,280 runtime exports, and invalid requests
+were rejected without graphics creation. Exact object/DLL hashes and step results
+are in the SDK's `docs/reiglue/validation/2026-10-28-hdr-request.json`; its
+`capture-witness-plan.md` records the next evidence requirements and current
+instrumentation gaps. CPU was released. No game/GPU run occurred, and the SDK pin
+and runtime/provenance gates remain unchanged.
