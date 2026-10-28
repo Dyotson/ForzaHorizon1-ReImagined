@@ -29,7 +29,7 @@ Check (Test-Path $exe) "forza-launcher.exe in $app"
 # Inno Setup writes its strings into fixed-size slots padded with spaces, so compare them trimmed.
 $si = (Get-Item -LiteralPath $Setup).VersionInfo
 $siName = "$($si.OriginalFilename)".Trim(); $siProduct = "$($si.ProductName)".Trim(); $siCompany = "$($si.CompanyName)".Trim()
-Check ($siName -like 'ForzaHorizon1-ReImagined-Setup-*.exe' -and $siProduct -and $siCompany) "installer has its version resource ($siProduct $("$($si.ProductVersion)".Trim()), $siCompany, $siName)"
+Check ($siName -eq 'ForzaHorizon1-ReImagined-Setup.exe' -and $siProduct -and $siCompany) "installer has its version resource ($siProduct $("$($si.ProductVersion)".Trim()), $siCompany, $siName)"
 if (Test-Path $exe) {
     $vi = (Get-Item -LiteralPath $exe).VersionInfo
     Check ($vi.OriginalFilename -eq 'forza-launcher.exe' -and $vi.ProductName -and $vi.CompanyName) "launcher has its version resource ($($vi.ProductName) $($vi.ProductVersion), $($vi.CompanyName))"

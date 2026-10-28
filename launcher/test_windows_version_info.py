@@ -115,9 +115,19 @@ class Installer(unittest.TestCase):
         for line in ("VersionInfoVersion={#VersionNumeric}", "VersionInfoProductTextVersion={#AppVersion}",
                      "VersionInfoCompany={#Publisher}", "VersionInfoProductName={#AppName}",
                      "VersionInfoDescription={#AppName} Setup", "VersionInfoCopyright={#LegalCopyright}",
-                     "VersionInfoOriginalFileName=ForzaHorizon1-ReImagined-Setup-{#AppVersion}.exe"):
+                     "VersionInfoOriginalFileName=ForzaHorizon1-ReImagined-Setup.exe"):
             self.assertIn(line, self.script.splitlines())
         self.assertRegex(self.define("VersionNumeric"), r"^\d+\.\d+\.\d+\.\d+$")
+
+    def test_installer_original_name_fits_innos_resource_slot(self):
+        # Inno copies into a 50-character OriginalFileName slot. The actual CI
+        # development download name is 52 characters and lost the final "xe".
+        original = re.search(r'^VersionInfoOriginalFileName=(.+)$', self.script, re.M).group(1)
+        self.assertNotIn('{#AppVersion}', original)
+        self.assertLessEqual(len(original), 50)
+        check = (PACKAGING / "test_installer.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"$siName -eq '{original}'", check)
+        self.assertIn("OutputBaseFilename=ForzaHorizon1-ReImagined-Setup-{#AppVersion}", self.script)
 
 
 class Workflow(unittest.TestCase):

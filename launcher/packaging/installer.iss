@@ -39,7 +39,10 @@ VersionInfoCompany={#Publisher}
 VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} Setup
 VersionInfoCopyright={#LegalCopyright}
-VersionInfoOriginalFileName=ForzaHorizon1-ReImagined-Setup-{#AppVersion}.exe
+; Inno's OriginalFileName slot holds 50 characters. A development version in this
+; field truncates even the .exe suffix; keep the version in the fields above and
+; the download name (OutputBaseFilename), and use the stable executable name here.
+VersionInfoOriginalFileName=ForzaHorizon1-ReImagined-Setup.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
