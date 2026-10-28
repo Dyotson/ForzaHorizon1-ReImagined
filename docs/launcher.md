@@ -902,7 +902,7 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `ForzaHorizon1-ReImagined-linux-x86_64.tar.gz` with `install.sh`, `.desktop`, icon) and
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
-  redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
+  redistributable installed when missing, after a page that says so), `flatpak` (flatpak-builder in the Flathub image, see
   "Flatpak" below) and `publish` (tags only) creating the release and uploading all three.
   Before upload, `launcher/packaging/release_checksums.py` hashes the final asset bytes
   and writes `SHA256SUMS`, uploaded alongside them (#354). The manifest uses sorted,
@@ -938,6 +938,22 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `TODO(code signing)` in the workflow are the two places a signature goes once a certificate is chosen
   (SignPath Foundation or Certum): the launcher before the smoke test and packaging, so the manifest hashes
   the signed file, and the installer before upload.
+  The VC++ redistributable comes from a versioned Microsoft URL pinned with its SHA-256 in
+  `launcher/forza_launcher/pins.py` (`vc-redist-x64`, fetched by `launcher/packaging/ci_fetch.py`), and
+  the job fails unless `Get-AuthenticodeSignature` says it is validly signed by Microsoft. When Microsoft
+  ships a newer one, follow `https://aka.ms/vs/17/release/vc_redist.x64.exe` to the URL it redirects to
+  and put that URL and the file's SHA-256 in the pin (the URL's path names the hash; `test_vc_redist_pin.py`
+  checks they agree).
+* Privacy (#497, [`PRIVACY.md`](../PRIVACY.md)): the installer shows the policy (`InfoBeforeFile`,
+  `licenses/PRIVACY.txt` from `make_package.py`), then an "Online features" page, ticked by default.
+  It writes the choice to `install_options.json` in the install folder with a stamp of that run;
+  `/ONLINE=no` turns it off for a silent install. `launcher/forza_launcher/online_features.py` applies
+  each stamp once: off sets Server to Offline and turns off shader-list sharing, co-op campaign results,
+  the update check and Discord activity; on keeps the settings (a new config has them on). Without an
+  installer (Linux, Flatpak, a checkout), a new `launcher.json` gets the same question in a dialog
+  (`ui/online_features.py`) before the update check runs; it is asked again until answered.
+  *Reset settings* keeps those features off for a player who chose off. `test_installer.ps1` installs
+  twice (default, then `/ONLINE=no`) and checks the file, and that the uninstaller removes it.
 * The website (forza.dyotson.dev) is its own repository,
   [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website), with its Pages workflow
   and `tools/preview_site.sh`. Screenshots it shows from `docs/images` are copied there.

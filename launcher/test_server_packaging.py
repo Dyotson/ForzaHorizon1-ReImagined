@@ -27,7 +27,7 @@ class ServerPackaging(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         self.repo = self.base / "repo"
-        for name in ("launcher/forza_launcher/__init__.py", "launcher/main.py", "LICENSE",
+        for name in ("launcher/forza_launcher/__init__.py", "launcher/main.py", "LICENSE", "PRIVACY.md",
                      "forza-recomp/src/fixture.cpp", "tools/cmake/fixture.cmake"):
             self.write(name)
         for name in flatpak.ASSETS:
@@ -78,6 +78,8 @@ class ServerPackaging(unittest.TestCase):
         self.server("initialized")
         stage = self.assemble(package)
         self.check_payload(stage)
+        # The privacy policy the Windows installer shows (installer.iss InfoBeforeFile, #497).
+        self.assertEqual((stage / "licenses" / "PRIVACY.txt").read_bytes(), b"fixture")
         import tarfile
         with tarfile.open(self.base / "out/ForzaHorizon1-ReImagined-linux-x86_64.tar.gz") as archive:
             prefix = "ForzaHorizon1-ReImagined/server/"

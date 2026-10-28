@@ -6,7 +6,7 @@
     project/forza-recomp, project/tools/cmake   the project's own sources (no generated code)
     server/                                the Forza Live server (the server/ submodule, FH1-ReImagined/forza-live)
     sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz   the patched ReXGlue SDK pieces (built by CI)
-    licenses/, README.txt
+    licenses/ (with PRIVACY.txt, the privacy policy), README.txt
   (Linux also: install.sh, uninstall.sh, forza-reimagined.desktop, forza-reimagined.png)
 
 It never contains game code or data, and no built game: the player's machine builds that.
@@ -30,6 +30,9 @@ https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 This package contains the launcher, the project's source code and the patched ReXGlue SDK
 pieces. It contains NO game code and NO game data. Open the launcher, point it at your own copy
 of Forza Horizon (Xbox 360, Games on Demand package), and it builds the game on your computer.
+
+What the launcher and the game send over the network, and how to turn it off:
+licenses/PRIVACY.txt (https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/blob/main/PRIVACY.md).
 
 Forza Horizon is (c) Microsoft. This project is not affiliated with, endorsed by or sponsored
 by Microsoft, Playground Games or Turn 10 Studios.
@@ -75,6 +78,8 @@ def main():
     if a.overlay:
         copy(Path(a.overlay), stage / "sdk-overlay" / f"rexglue-overlay-{a.platform}-amd64.tar.gz")
     copy(REPO / "LICENSE", stage / "licenses" / "ForzaHorizon1-ReImagined.txt")
+    # The privacy policy: the Windows installer shows it (installer.iss, InfoBeforeFile).
+    copy(REPO / "PRIVACY.md", stage / "licenses" / "PRIVACY.txt")
     if a.sdk_license:
         copy(Path(a.sdk_license), stage / "licenses" / "rexglue-sdk.txt")
     (stage / "README.txt").write_text(README + f"\nVersion {a.version}\n", encoding="utf-8")

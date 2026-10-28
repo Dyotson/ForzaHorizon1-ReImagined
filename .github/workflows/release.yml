@@ -576,7 +576,15 @@ jobs:
       - name: Installer (Inno Setup, with the Visual C++ 2015-2022 x64 redistributable)
         shell: pwsh
         run: |
-          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
+          # The redistributable the installer bundles: a versioned Microsoft download pinned by SHA-256 in
+          # launcher/forza_launcher/pins.py ("vc-redist-x64"), then Microsoft's Authenticode signature.
+          python launcher/packaging/ci_fetch.py vc-redist-x64 vc_redist.x64.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned Visual C++ redistributable could not be downloaded or did not match its SHA-256 (see the message above)' }
+          $sig = Get-AuthenticodeSignature -LiteralPath vc_redist.x64.exe
+          $sig | Format-List Status, StatusMessage, SignerCertificate
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+            throw "vc_redist.x64.exe is not validly signed by Microsoft ($($sig.Status): $($sig.SignerCertificate.Subject))"
+          }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
           # Hash the final staged payload before Inno Setup packages it. Keep a copy
@@ -665,7 +673,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/"
+          notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/. Code signing policy: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined#code-signing-policy. Privacy policy: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/blob/main/PRIVACY.md"
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
           # The SDK overlays are artifacts only for the packaging jobs; every package carries its own.
