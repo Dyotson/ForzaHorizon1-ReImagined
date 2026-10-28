@@ -19,5 +19,10 @@ Validation so far: heading math/concurrent snapshot tests, native adapter fixtur
 launcher persistence tests, touched-TU compilation and a linked private production
 host. An actual offline TU4 run selected Camera in the stock Graphics page, saved
 the preference, and captured a stationary car looking right with the minimap
-rotated. Full-map/preview regression checks and an actual launcher import/restart
-check are still required before release.
+rotated. The saved native setting passed the production launcher import and fresh
+configuration reload. A fresh offline TU4 process then loaded the saved Camera
+choice without an orientation command-line override, followed a look-right input,
+and opened and closed the full map before resuming gameplay. Full-map and preview
+exclusion also pass the native adapter fixtures; the new pause-menu preview was
+not separately exercised in that stock-pause runtime check. Hardware coverage is
+limited to the Windows/Vulkan test host; other rendering platforms remain untested.
