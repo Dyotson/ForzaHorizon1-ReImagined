@@ -480,6 +480,7 @@ edited by hand:
 | `wheel_ffb_min_strength` | 0 | Minimum steering force (#303): the game's steering forces weaker than this percentage of the full force are scaled up, stronger ones stay (launcher: Minimum force; 0 is off) |
 | `wheel_ffb_spring_strength` | 100 | The centring spring and the damper, in percent of `wheel_ffb_strength` (launcher: Centring strength) |
 | `wheel_rumble_engine_strength`, `wheel_rumble_road_strength` | 50, 80 | The rumble from the game's engine motor (its right motor) and from its road motor (left: road surface, kerbs, impacts), in percent of `wheel_ffb_strength` (launcher: Engine rumble, Road rumble); 100, 100 before #273 |
+| `wheel_vibration_rate` | 60 | How many times a second the wheel's vibration is updated, 15 to 120, whatever the frame rate (launcher: Wheel vibration updates per second). 60 was the smoothest on a Fanatec CSR Elite and a Simagic Alpha EVO Pro; lower it (30) if the vibration feels too strong (#467) |
 | `wheel_rumble_style` | `fine` | `fine`: each rumble motor a light, quick vibration (40 and ~71 Hz); `classic`: one 25 Hz vibration, as before (#273) |
 | `wheel_ffb_reverse` | off | Reverse the game's steering force, for a wheel that pulls away from the centre in corners |
 | `wheel_ffb_keep_playing` | 0 | For a wheel that ends force feedback effects by itself (#304): start every effect that plays again every this many seconds. 0: never (an effect the wheel says has stopped is still started again); -1: not even that |
