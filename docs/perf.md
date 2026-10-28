@@ -87,6 +87,10 @@ No frame for 10 s logs `not presenting` once and `presenting again` at the end. 
 screens can log long frames too. A player who sees a hitch can attach these lines to an
 issue: the chains are guest return addresses (look them up in Ghidra). `FORZA_STALL_TEST=1`
 makes the main loop sleep 500 ms once, 90 s after the first frame, to check the lines.
+A render thread at lr 82419338 (Title Update 4; 823E9288 on the disc) is in the D3D library's
+wait for a GPU fence (`src/hooks/gpu_wait.cpp`): the emulated GPU was behind, and the
+`GPU slow frames` line of the same seconds says what the command processor did (#167: it waited
+for new pipelines at the frame end, which it counted as idle, "the game").
 
 ## Slow database queries (FORZA_SQL)
 
@@ -1044,6 +1048,94 @@ spawn, quit from the race intro back to free roam, drive 10 s):
 The creation of the view and its indexes takes 6 ms once at start. On the player's PC the query took about 0.3 s;
 at the same ratio it takes about 40 ms there. Frames of 60-75 ms remain in the first seconds after a load on this
 PC with either view; they are not the database's (no query took 50 ms with the indexed view).
+## Hitches when new cars come into view: the frame end waited for new pipelines (#167, 2026-10-28)
+
+**The report.** The same player (RX 6700 XT, AMD's Windows driver 26.10.1) on 0.2.0, after the car view fix:
+most hitches gone, but some remain "in certain spots, usually when there are cars around", shorter than before.
+The 0.2.0 session of the log (32 minutes, online free roam, races, the festival) had 12 frames of 200-979 ms. In
+all but one (just after a load) the FORZA_STALL chains put the main loop in its wait for room in the
+render thread's command buffer (TU4 chain 82424FB4, a loop around the sleep `sub_82B2A6B0`), the render thread in the D3D
+library's wait for a GPU fence at its swap (TU4 `sub_824192A0`, lr 82419338, the loop
+`src/hooks/gpu_wait.cpp` sleeps in), and the command processor's slow-frame line named "the game" with 13-18 ms
+of CPU in frames of 250-300 ms: it was neither working nor waiting for the GPU. Each stall came with new
+pipelines in the log, from one (16:11:10: a placeholder in 0.1 ms on the command processor, the real pipeline on
+a creation thread, a 286 ms frame) to 60 (16:17:43, entering the festival area: 979 ms, below). That session created
+540 pipelines the store did not have (1,332 at its start, 1,871 at the next). The `FORZA_SQL` lines of the
+session (a 145 ms query of `Profile0_View_UpgradeAreas` on another thread while the main loop waited for the
+database lock, 8 times in 2.5 minutes at the festival workshop) are a separate, smaller cost.
+
+**What it is.** With asynchronous creation the SDK skips a draw whose pipeline is not built yet (a placeholder,
+or one the lookahead of 0270 is building ahead) and does not show that frame
+(`vulkan_async_skip_incomplete_frames`). But `VulkanPipelineCache::EndSubmission`, at every submission end, the
+swap included, built the queued pipelines on the command processor and then waited until the creation threads
+had built every pipeline in flight (Xenia's design, where recorded commands could refer to pipelines still being
+created; here nothing recorded does). So each pipeline the game met for the first time stopped the command
+processor for as long as the driver took to compile it, and with it the render thread and the main loop. The
+wait is on an event, so the frame-cost report counted it as idle time. On RADV a pipeline takes 5-30 ms, which
+is why it never showed on Linux; AMD's Windows driver takes 0.2-0.3 s for the game's bigger shaders. Since the
+lookahead (0.1.34) one miss can start up to 64 pipelines at once, and the frame end waited for all of them. New cars
+bring new materials, hence "when there are cars around"; the pipelines are kept, so the same cars do not hitch
+again in later sessions.
+
+Reproduced on this PC by emulating a slow driver: a local, unshipped build of the plugin that sleeps 150 ms before
+each real pipeline creation. Stacks (`eu-stack`) at each FORZA_STALL: the command processor in
+`VulkanPipelineCache::EndSubmission`, waiting for the creation threads (4 of 6), creating a pipeline for a draw
+without a pixel shader itself (1: such a draw has no placeholder, and unless the lookahead queued it the command
+processor builds it; one in the player's session), in `WAIT_REG_MEM` just after the load (1).
+
+**The fix (ReIGlue 0364, two commits).** The frame waits for the pipelines in flight for at most
+`vulkan_async_frame_end_wait_ms` (default 33; 0 not at all; -1 the old wait), one budget from swap to swap that
+every submission end of the frame (draw-limit splits, readbacks) and both pipeline caches share; the creation
+threads go on in the background, and the time waited counts as pipeline time in the frame's cost. Frames that need
+pipelines still being built are held back (`vulkan_async_skip_incomplete_frames`); for at most
+`vulkan_async_skip_incomplete_frames_ms` (default 100) if they only lack object draws, after which they are shown
+without those objects until the pipelines are ready. A frame that skipped a draw whose absence would leave stale or
+wrong contents is held however long the build takes: a depth or stencil only draw (shadow casters, Z, stencil
+masks), a screen-space pass (6 host vertices or fewer: a full-screen effect, a composite, a movie frame, a HUD
+element), a draw into the 1280-wide unmultisampled 10-bit front buffer or UI target or the native HUD, and any draw
+of the VR stereo segment (the right eye replays the left's draws and could find the pipeline built). Synchronous
+creation (`async_shader_compilation` off, or `sync_pipeline_creation`, `src/hooks/thumbnail_sync.cpp`) keeps the old
+wait; besides a car's picture and its livery, photo mode now holds it (its photo is composed and read back on the
+CPU at SAVE; docs/rendering.md). The `Pipelines:` summary gives the frames held past the hold, the skipped draws
+that held them by kind, the frames shown without draws, and the resolves copied back for the CPU while draws were
+skipped (each also logs `Pipelines: a resolve copied back for the CPU ... missed draws`; a cold cache's boot and
+loads make about 100 of those, as before 0364).
+
+**Measured** (TU4, Ryzen 7 7800X3D, RX 9060 XT, RADV, Linux, 60 fps, 1920x1080 window, offline, the golden save,
+an empty `--cache_root` and `MESA_SHADER_CACHE_DISABLE=true` so every run compiles the same pipelines, 10 minutes
+of free roam driven by `tools/autodrive.py` round the #45 loop with the traffic, about 470 pipelines built per
+run; frames of the drive after the boot and load; "game" are the game's frames (VdSwap), "shown" the presents;
+`BENCH_LOCK` held, no other game running; "before" is the SDK of 7d17ea51 with the same game build; 0364 is
+ReIGlue 420ec4f, without 30c3afb, which only changes when replaced placeholders are destroyed):
+
+| Driver compile | SDK | Game frames >= 100 ms (total, longest) | Shown frames >= 100 ms (total, longest) | Shown >= 50 ms | FORZA_STALL | Frames held past the hold / shown without draws |
+| --- | --- | --- | --- | --- | --- | --- |
+| RADV as is | before | 0 (longest 51 ms) | 0 (longest 79 ms) | 17 | 0 | - |
+| RADV as is | 0364 | 0 (longest 34 ms) | 0 (longest 67 ms) | 7 | 0 | 3 / 0 |
+| 150 ms emulated | before | 109 (20.8 s, 352 ms) | 105 (20.9 s, 542 ms) | 105 | 21 | - |
+| 150 ms emulated | 0364 | 12 (2.1 s, 199 ms) | 93 (19.5 s, 767 ms) | 96 | 0 | 314 / 0 |
+| 150 ms emulated | 0364, hold 50 ms, wait 16 ms | 10 (1.7 s, 182 ms) | 92 (19.3 s, 509 ms) | 96 | 0 | 770 / 0 |
+
+On RADV the change shows nothing: no game or shown frame reaches 100 ms either way. With the emulated slow driver the
+game no longer stops: its frames of 100 ms or more go from 109 to 12 (those left are draws without a pixel shader
+that the lookahead did not reach, built on the command processor), FORZA_STALL from 21 to 0. The picture does not
+come back sooner, though: no frame was shown without draws in any run, because every frame that skipped draws also
+skipped one that must not be missing. Of the 134,934 draws the 0364 run skipped, 72,613 were depth or stencil only
+and 59,381 went to a 1280-wide unmultisampled 10-bit target (screen passes 2,940): a new car brings its shadow and
+depth draws with its materials, and the 1280-wide test matches more than the front buffer and the UI here (which
+targets, not checked). So the
+picture holds for as long as the pipeline takes, as before (shown frames over 100 ms 105 and 93, mostly 150-200 ms,
+the emulated compile), while the game, its sound and the controls go on; the hold and wait settings change nothing
+there. Showing such frames sooner would need the depth and 1280-wide rules relaxed, with the stale contents they
+guard against. The frame-end wait is now counted as pipeline time, which is why the command processor's pipeline
+time in the drive rose from about 1.9 s to 15 s: 33 ms in each frame that met pipelines still being built.
+
+Not changed: a draw without a pixel shader that the lookahead did not reach has no placeholder and is still built
+on the command processor (the 10-12 game frames over 100 ms of the emulated runs); one the lookahead queued is
+skipped, and holds its frame. The 8 s `sync_pipeline_creation` hold after each livery render still makes every new
+pipeline in that time wait, which is what the 979 ms frame at the festival also had (929 ms of `Fh1WaitForAhead`,
+the `waits` of the `Pipelines:` line); the upgrade view query above.
+
 ## Steam Deck and 4-core CPUs: the built-in benchmark (#45, 2026-10-23)
 
 A Deck with every shader prebuilt (0.1.30) runs the built-in benchmark (docs/benchmark.md) at 19.7 fps, 1% low
