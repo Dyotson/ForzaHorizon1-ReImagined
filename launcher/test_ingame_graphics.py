@@ -12,6 +12,18 @@ from forza_launcher.config import Config
 
 
 class InGameGraphicsTests(unittest.TestCase):
+    def test_minimap_orientation_round_trip(self):
+        self.assertFalse(self.cfg.settings["forza_minimap_camera"])
+        for value in ("true", "false"):
+            self.request(forza_minimap_camera=value)
+            self.assertTrue(ingame.import_pending(self.cfg, lambda _: None))
+            self.assertEqual(Config(self.cfg.path).settings["forza_minimap_camera"], value == "true")
+
+    def test_minimap_orientation_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            ingame.translate({"version": 1, "settings": {"forza_minimap_camera": "camera"}},
+                             self.cfg.settings)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

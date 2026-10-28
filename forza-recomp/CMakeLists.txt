@@ -136,6 +136,7 @@ set(FORZA_SOURCES
     src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/minimap_camera.cpp
     src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp

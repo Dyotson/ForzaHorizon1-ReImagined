@@ -163,6 +163,11 @@ jobs:
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/custom_race_test.cpp -o "$RUNNER_TEMP/custom-race-test"
           "$RUNNER_TEMP/custom-race-test"
       - if: runner.os == 'Linux'
+        name: Camera-facing minimap headings
+        run: |
+          g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror forza-recomp/tests/minimap_heading_test.cpp -o "$RUNNER_TEMP/minimap-heading-test"
+          "$RUNNER_TEMP/minimap-heading-test"
+      - if: runner.os == 'Linux'
         name: Mods over the title update's archive
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror -I forza-recomp/src forza-recomp/tests/mod_archive_test.cpp -o "$RUNNER_TEMP/mod-archive-test"
@@ -326,6 +331,13 @@ jobs:
             -DFORZA_PATCHED_SDK_SOURCE="$HOME/rexglue-sdk-src-forza/sdk"
           "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/overlay-sdk" --parallel 2
           "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/overlay-sdk" --output-on-failure
+      - name: Minimap camera native adapter regressions
+        run: |
+          "$HOME/cmake/bin/cmake" -S forza-recomp/tests/minimap-camera -B "$RUNNER_TEMP/minimap-camera-tests" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$HOME/llvm/bin/clang++" \
+            -DCMAKE_PREFIX_PATH="$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64"
+          "$HOME/cmake/bin/cmake" --build "$RUNNER_TEMP/minimap-camera-tests" --parallel 2
+          "$HOME/cmake/bin/ctest" --test-dir "$RUNNER_TEMP/minimap-camera-tests" --output-on-failure
       - name: Custom Race statements and native card context regressions
         run: |
           # The context fixture compiles the actual hook and needs the SDK headers.

@@ -117,6 +117,10 @@ add("forza_hud_edges", "Expand HUD to ultrawide edges", "Display", "bool", False
 add("forza_hud_layout", "Customize HUD layout", "Display", "bool", False,
     "Adjust the HUD safe area and position at 16:9 or ultrawide, without changing the camera. "
     "Applies on the next game launch.", "Ultrawide and HUD", restart=True)
+add("forza_minimap_camera", "Camera-facing minimap", "Display", "bool", False,
+    "Rotate the gameplay minimap with where the camera looks instead of the vehicle. "
+    "Also available in the in-game Graphics settings. Requires Title Update 4; "
+    "the full map and VR cockpit keep their native orientation.", "Ultrawide and HUD")
 add("forza_hud_safe_width", "HUD safe width %", "Display", "float", 100.0,
     "Fit the centered 16:9 HUD within this width. The smaller safe-area percentage sets the "
     "uniform scale, keeping gauges and text proportional.", "Ultrawide and HUD", lo=50, hi=100, step=1)

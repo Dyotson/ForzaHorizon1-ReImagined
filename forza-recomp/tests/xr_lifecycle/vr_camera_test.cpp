@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <vector>
 bool vr_cull_scale = true;
+bool forza_minimap_camera = false;
 bool active = false;
 float exposure = 1;
 int exposure_writes = 0;
