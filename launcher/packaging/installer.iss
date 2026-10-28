@@ -1,12 +1,19 @@
 ; Inno Setup script for the Windows installer. Built by .github/workflows/release.yml:
-;   iscc /DAppVersion=1.2.3 /DStage=<folder from make_package.py> /DRedist=<vc_redist.x64.exe> /DOut=<dir> installer.iss
+;   iscc /DAppVersion=1.2.3 /DVersionNumeric=1.2.3.0 /DStage=<folder from make_package.py> /DRedist=<vc_redist.x64.exe> /DOut=<dir> installer.iss
+; VersionNumeric is the four-part number of AppVersion (python launcher/packaging/windows_version_info.py 1.2.3).
 ; It installs the launcher for the current user (no administrator rights; forza.toml sits in the
 ; install folder), and the Microsoft Visual C++ 2015-2022 x64 redistributable when it is missing.
 ; The installer contains no game code or data.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+#ifndef VersionNumeric
+  #define VersionNumeric "0.0.0.0"
+#endif
 #define AppName "Forza Horizon 1: ReImagined"
+; The publisher and copyright text of forza-launcher.exe's version resource are the same (windows_version_info.py).
+#define Publisher "Dyotson"
+#define LegalCopyright "Copyright (c) 2026 Dyotson and Forza Horizon 1: ReImagined contributors"
 ; Folder and shortcut names: Windows does not allow ":" in them.
 #define ShortName "Forza Horizon 1 - ReImagined"
 
@@ -14,7 +21,7 @@
 AppId={{B0C6F2A4-5D1E-4D0B-9B1B-7B5A0F3E6C21}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=Dyotson
+AppPublisher={#Publisher}
 AppPublisherURL=https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined
 DefaultDirName={localappdata}\Programs\ForzaHorizon1-ReImagined
 DefaultGroupName={#ShortName}
@@ -23,6 +30,16 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#Out}
 OutputBaseFilename=ForzaHorizon1-ReImagined-Setup-{#AppVersion}
+; The installer's own Windows version resource, so Explorer, Task Manager and antivirus reports name it
+; and its version (#482, #354). The numeric version cannot hold a development tag, so the text one is AppVersion.
+VersionInfoVersion={#VersionNumeric}
+VersionInfoProductVersion={#VersionNumeric}
+VersionInfoProductTextVersion={#AppVersion}
+VersionInfoCompany={#Publisher}
+VersionInfoProductName={#AppName}
+VersionInfoDescription={#AppName} Setup
+VersionInfoCopyright={#LegalCopyright}
+VersionInfoOriginalFileName=ForzaHorizon1-ReImagined-Setup-{#AppVersion}.exe
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

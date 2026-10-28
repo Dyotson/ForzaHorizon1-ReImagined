@@ -25,6 +25,13 @@ Check ($p.ExitCode -eq 0) "installer exit code 0 (was $($p.ExitCode))"
 if ($p.ExitCode -ne 0 -and (Test-Path $log)) { Get-Content $log -Tail 40 }
 $exe = Join-Path $app "forza-launcher.exe"
 Check (Test-Path $exe) "forza-launcher.exe in $app"
+# Both programs carry a Windows version resource (company, product, original file name; #482, #354).
+$si = (Get-Item -LiteralPath $Setup).VersionInfo
+Check ($si.OriginalFilename -like 'ForzaHorizon1-ReImagined-Setup-*.exe' -and $si.ProductName -and $si.CompanyName) "installer has its version resource ($($si.ProductName) $($si.ProductVersion), $($si.CompanyName))"
+if (Test-Path $exe) {
+    $vi = (Get-Item -LiteralPath $exe).VersionInfo
+    Check ($vi.OriginalFilename -eq 'forza-launcher.exe' -and $vi.ProductName -and $vi.CompanyName) "launcher has its version resource ($($vi.ProductName) $($vi.ProductVersion), $($vi.CompanyName))"
+}
 Check (Test-Path (Join-Path $app "project\forza-recomp\CMakeLists.txt")) "project sources installed"
 Check (Test-Path (Join-Path $app "sdk-overlay\rexglue-overlay-windows-amd64.tar.gz")) "SDK overlay installed"
 $manifestPath = Join-Path $app "windows-build-manifest.json"

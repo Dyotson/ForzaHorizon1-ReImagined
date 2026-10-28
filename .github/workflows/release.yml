@@ -520,6 +520,20 @@ jobs:
           v="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev.${GITHUB_SHA::7}"
           printf '"""Launcher version."""\n__version__ = "%s"\n' "$v" > launcher/forza_launcher/_version.py
           echo "VERSION=$v" >> "$GITHUB_ENV"
+      # PyInstaller's stock Windows bootloader is the same binary in every program it has packed, malware
+      # included, and antivirus machine learning keys on it (#482, #354). So PyInstaller is installed from its
+      # source distribution with the bootloader compiled here, with the Visual Studio C++ tools of the runner
+      # (PyInstaller's waf finds them itself). The version is whatever launcher/requirements-build.txt allows,
+      # as on Linux. The next step's pip install then finds it already satisfied and leaves it alone.
+      - name: PyInstaller with its bootloader built from source
+        shell: bash
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+          PYINSTALLER_BOOTLOADER_WAF_ARGS: --target-arch=64bit
+        run: |
+          python -m pip install --no-binary pyinstaller -r launcher/requirements-build.txt
+          # fails when run.exe or runw.exe is still byte-identical to the stock wheel's
+          python launcher/packaging/check_bootloader.py
       - name: Build the launcher
         shell: bash
         run: |
@@ -530,6 +544,26 @@ jobs:
           dist/forza-launcher/forza-launcher.exe --version
           dist/forza-launcher/forza-launcher.exe --run-script packaging/gamepad_smoke.py gamepad-smoke.txt
           test -s gamepad-smoke.txt
+      # The spec gave forza-launcher.exe a Windows version resource (company, product, description, versions,
+      # original file name) from forza_launcher/_version.py; fail the build if it did not land.
+      - name: Check the launcher's version resource
+        shell: pwsh
+        run: |
+          $info = (Get-Item launcher/dist/forza-launcher/forza-launcher.exe).VersionInfo
+          $info | Format-List CompanyName, ProductName, FileDescription, FileVersion, ProductVersion, OriginalFilename, InternalName, LegalCopyright
+          $numeric = (python launcher/packaging/windows_version_info.py "$env:VERSION").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compute the numeric version' }
+          if (-not $info.CompanyName -or -not $info.FileDescription -or $info.OriginalFilename -ne 'forza-launcher.exe' -or $info.ProductVersion -ne $env:VERSION -or $info.FileVersion -ne $numeric) {
+            throw 'forza-launcher.exe has no (or the wrong) version resource'
+          }
+      # TODO(code signing, #482, #354): sign launcher/dist/forza-launcher/forza-launcher.exe here, before the
+      # smoke test and the Package step copy it, so the payload manifest below hashes the signed file. Needs a
+      # code-signing certificate (SignPath Foundation or Certum, still to be chosen) and its secrets, for
+      # example:
+      #   - name: Sign the launcher
+      #     shell: pwsh
+      #     run: <signtool sign /fd SHA256 /tr <timestamp server> /td SHA256 ...> launcher/dist/forza-launcher/forza-launcher.exe
+      # then the signature is verified: (Get-AuthenticodeSignature <file>).Status -eq 'Valid'.
       - name: Smoke test the packaged window
         shell: bash
         run: python launcher/packaging/smoke_gui.py launcher/dist/forza-launcher/forza-launcher.exe
@@ -549,9 +583,15 @@ jobs:
           # outside the installer so a quarantined file can still be identified.
           python launcher/packaging/windows_build_manifest.py out/ForzaHorizon1-ReImagined --version "$env:VERSION" --commit "$env:GITHUB_SHA" --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Windows payload manifest' }
-          & $iscc "/DAppVersion=$env:VERSION" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
+          # The installer's own version resource needs a four-part number (installer.iss: VersionNumeric).
+          $numeric = (python launcher/packaging/windows_version_info.py "$env:VERSION").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compute the numeric version' }
+          & $iscc "/DAppVersion=$env:VERSION" "/DVersionNumeric=$numeric" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
           Copy-Item -LiteralPath out/ForzaHorizon1-ReImagined/windows-build-manifest.json -Destination "installer/ForzaHorizon1-ReImagined-windows-files-$env:VERSION.json"
+      # TODO(code signing, #482, #354): sign installer/*.exe here (the Setup program), the same way as the
+      # launcher above, before it is uploaded. Inno Setup can also sign the installer and its uninstaller while
+      # compiling (a SignTool entry in [Setup] plus iscc /S...), which also covers unins000.exe.
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows

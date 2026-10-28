@@ -360,6 +360,39 @@ saves and rewrites `forza.toml`. `launcher/test_bindings.py` covers the strings,
 detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad);
 `launcher/test_wheel_devices.py` the pedal and shifter devices (a wheel, pedals and a shifter).
 
+## Verify your download
+
+Each release carries a `SHA256SUMS` file with the SHA-256 checksum of every download (the Windows
+installer, the Linux archive, the Flatpak bundle and the Windows file list). To check that your
+download is the file the release published:
+
+1. Download `SHA256SUMS` from the same release page as the installer.
+2. Hash your download. On Windows, in a Command Prompt or PowerShell in the folder of the file:
+
+   ```
+   certutil -hashfile ForzaHorizon1-ReImagined-Setup-<version>.exe SHA256
+   ```
+
+   or, in PowerShell:
+
+   ```
+   Get-FileHash .\ForzaHorizon1-ReImagined-Setup-<version>.exe -Algorithm SHA256
+   ```
+
+3. Find the line for that file name in `SHA256SUMS` (any text editor) and compare the hashes. They must
+   match letter for letter; capitals do not matter, and spaces that `certutil` may put between byte
+   pairs are not part of the hash.
+
+   On Linux: put both files in one folder and run `sha256sum --ignore-missing -c SHA256SUMS`.
+
+A match shows your copy is complete and is the file GitHub Actions built and published from this
+repository. It is not a code signature and not a malware scan. The installer and `forza-launcher.exe`
+are not code-signed yet (SmartScreen may warn), and Windows Defender sometimes flags the launcher as
+`Trojan:Win32/Bearfoos.A!ml` or `Trojan:Script/Wacatac.C!ml`, which are machine-learning guesses
+(#482, #354, #409). If that happens after the hash matches, open **Windows Security > Virus & threat
+protection > Protection history**, choose the detection and **Actions > Allow on device**. The installed
+files are listed with their hashes in `windows-build-manifest.json` in the install folder.
+
 ## Launcher updates
 
 **About > Launcher updates** checks the project's latest stable GitHub release and offers
@@ -888,6 +921,23 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   generated uninstaller or the separately bundled Microsoft redistributable. If
   payload signing is added, generate this manifest after signing. The installer
   smoke test verifies that the installed launcher matches its recorded hash.
+  Against Defender's machine-learning detections of `forza-launcher.exe` (#482, #354), the
+  `launcher-windows` job builds PyInstaller's bootloader from source and gives both executables a
+  Windows version resource. `PYINSTALLER_COMPILE_BOOTLOADER=1 pip install --no-binary pyinstaller -r
+  launcher/requirements-build.txt` replaces the stock `run.exe` and `runw.exe`, which every PyInstaller
+  program (malware included) shares, with ones compiled on the runner by PyInstaller's waf and the
+  Visual Studio C++ tools; the version is still the one `requirements-build.txt` allows.
+  `launcher/packaging/check_bootloader.py` fails the job when either file is still byte-identical to the
+  PyPI wheel's (PyInstaller's source distribution ships the stock ones and keeps them without the
+  variable). `launcher/packaging/windows_version_info.py` writes the version resource
+  (`CompanyName`, `ProductName`, `FileDescription`, `FileVersion`, `ProductVersion`, `OriginalFilename`,
+  copyright) from `forza_launcher/_version.py` when `forza-launcher.spec` runs, and a job step reads it
+  back (`test_installer.ps1` reads both programs' resources from the installed files). `installer.iss` sets the installer's own (`VersionInfoVersion` from `/DVersionNumeric`, company,
+  product, description, original file name). Linux is untouched: the spec only passes `version=` on
+  Windows, and the Linux job and the Flatpak build use the stock PyInstaller wheel or none. Marked
+  `TODO(code signing)` in the workflow are the two places a signature goes once a certificate is chosen
+  (SignPath Foundation or Certum): the launcher before the smoke test and packaging, so the manifest hashes
+  the signed file, and the installer before upload.
 * The website (forza.dyotson.dev) is its own repository,
   [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website), with its Pages workflow
   and `tools/preview_site.sh`. Screenshots it shows from `docs/images` are copied there.
