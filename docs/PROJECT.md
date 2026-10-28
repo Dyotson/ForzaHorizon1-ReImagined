@@ -64,7 +64,8 @@ instructions; both read `extracted/analysis/`.
 
 - ReXGlue SDK nightly 0.10.0.24 (`nightly-20261002-bd833a2a`) at
   `~/rexglue-sdk-nightly/0.10.0.24/linux-amd64`.
-- Patched Xenos GPU plugin, runtime and codegen tool: `tools/build_rexglue_sdk.sh` builds them
+- Patched Xenos GPU plugin, runtime and codegen tool, and the SDK's CMake helpers (the code model
+  of the game's code, #473): `tools/build_rexglue_sdk.sh` builds them
   from [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue) (the project's fork of the SDK, at
   the tag the script pins) into this project's own overlay
   `~/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64` from its own clone
@@ -76,12 +77,15 @@ instructions; both read `extracted/analysis/`.
   `analyzeHeadless ... -import extracted/game/default.xex` (about 25 minutes with 6 GB heap).
 
 Build (always through the same path, `/var/home/...`; `/home` is a symlink and a
-different spelling makes CMake rebuild everything):
+different spelling makes CMake rebuild everything). The SDK prefix is the overlay, as in the
+launcher, so the build takes ReIGlue's CMake helpers; a build folder configured with the nightly
+as its prefix keeps the nightly's (`-mcmodel=large`) until it is configured again with
+`-Drexglue_DIR=$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/cmake/rexglue`:
 
 ```sh
 export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
 cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64
+  -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH=$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64
 nice -n 15 ninja -C forza-recomp/out/build/linux -j4
 ```
 

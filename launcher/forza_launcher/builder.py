@@ -641,7 +641,10 @@ def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
         if overlay is not None:
             fetch.extract_tar(overlay, stage, cancelled=rep.cancelled)
         else:  # development: the checkout's own overlay
-            for rel in ("lib/librexgpu-xenos.so", "lib/librexruntime.so", "bin/rexglue"):
+            for rel in ("lib/librexgpu-xenos.so", "lib/librexruntime.so", "bin/rexglue",
+                        "lib/cmake/rexglue/rexglue_helpers.cmake"):
+                if rel.endswith(".cmake") and not (dev / rel).is_file():
+                    continue  # an overlay made before it carried ReIGlue's CMake helpers
                 dst = stage / rel
                 dst.unlink(missing_ok=True)
                 shutil.copy2((dev / rel).resolve(), dst)
