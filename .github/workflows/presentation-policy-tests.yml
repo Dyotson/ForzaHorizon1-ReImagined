@@ -1,0 +1,19 @@
+name: Presentation policy
+on:
+  push:
+    paths: ['forza-recomp/src/platform/presentation_policy.h', 'forza-recomp/src/platform/ultrawide*', 'forza-recomp/tests/*presentation*', 'forza-recomp/tests/ultrawide_math_test.cpp', '.github/workflows/presentation-policy-tests.yml']
+  pull_request:
+    paths: ['forza-recomp/src/platform/presentation_policy.h', 'forza-recomp/src/platform/ultrawide*', 'forza-recomp/tests/*presentation*', 'forza-recomp/tests/ultrawide_math_test.cpp', '.github/workflows/presentation-policy-tests.yml']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check presentation transitions and rectangle geometry
+        run: |
+          for test in presentation_policy ultrawide_math; do
+            g++ -std=c++20 -Wall -Wextra -Werror "forza-recomp/tests/${test}_test.cpp" -o "$RUNNER_TEMP/$test"
+            "$RUNNER_TEMP/$test"
+          done
