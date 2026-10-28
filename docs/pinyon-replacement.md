@@ -37,6 +37,7 @@ does not rewrite published history or overwrite anyone's active checkout.
 | `forza-recomp/tests/ultrawide_math_test.cpp` | Existing pixel-shape, safe-area, anchor and backing-height checks; nonfinite input cases added. |
 | `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Remove the config-field neutralization policy. Isolate comparison-query results at five verified call sites instead, with precise stale live-state cleanup. See `docs/ai-comparison-policy.md`; runtime qualification remains outstanding. |
 | `tools/check_hdr_capture.py`, `tools/test_hdr_capture.py` | Verifier and independent known-answer tests for the new `diffuse-exp-v1` SDK curve/grid. Refuses old captures rather than applying the new model to them. |
+| `launcher/forza_launcher/save_editor.py`, `launcher/test_save_editor.py` | Iterative prefix walker replaces recursive traversal and the unexplained depth-8/name-256 policy. Byte-derived count feasibility, explicit object/path budgets and sibling duplicate detection preserve scalar offsets and opaque tail bytes. Synthetic contracts include 1,100 nested sections and 300-byte names. |
 
 These replacements were written from the existing interfaces and documented
 behavior. This is not a claim of a segregated clean-room process: the previous
@@ -54,7 +55,7 @@ implementations were inspected during the provenance audit.
 | ReIGlue `src/graphics/shaders/hdr_hud_mask.cs.glsl` and generated header | Review found the first replacement retained the original threshold/dilation policy. A subsequent per-pixel compositing lower-bound design replaces it; the pinned SDK still carries the adaptation. |
 | ReIGlue Vulkan command processor and render-target cache HDR paths | SDK PR #5 replaces compute construction, descriptor recording and image allocations, including reused VR allocation/sharpening helpers. The extracted capture decision still implements the inherited policy, and `CopyHdrScene` remains inherited. Neither is cleared by a rename or passing tests. |
 | `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Review found substantive carryover in the original ordered config neutralization despite different hooks and traces. That policy is removed in the new query-isolation draft; historical research credit and notices remain. Config offsets retained for tracing are game-layout facts, not a clearance claim. |
-| `docs/launcher.md`, `launcher/forza_launcher/save_editor.py`, `saves.py` | Research citation retained. Initial commit `ad75b8b` records the independent save manager/editor. Its bounded Python parser differs from reference C++ profile parsing; save management also differs from `tools/pinyon_saves.py`. The only identical significant lines found in the compared save managers were two standard-library imports. |
+| `docs/launcher.md`, `launcher/forza_launcher/save_editor.py`, `saves.py` | Research citation retained. Initial commit `ad75b8b` records the save manager/editor. A later audit also inspected upstream `tools/fh1-profile.py`; its depth/name limits were shared with the first parser. The subsequent iterative design removes those policies. Save management's staging/journal/hash flow differs from upstream. The crypto/key-derivation provenance audit is separate and is not cleared by parser tests or by absence of matching lines. |
 | macOS tuning/performance comparison documents | Historical measurements and citations retained. They are not runtime dependencies. |
 
 The source commits named by the HDR documentation are ShiftGlue `36275a6`,
@@ -84,6 +85,11 @@ The subsequent AI replacement passes its contract tests and production syntax
 checks with both `FORZA_TITLE_UPDATE=0` and `4`. The new HDR verifier passes four
 known-answer tests with NumPy 2.3.5. No linked game or race run has qualified the
 new AI mechanism, and no new HDR capture has qualified the redesigned curve.
+
+The iterative save parser passes all 21 synthetic save-editor tests, including
+authentication, no-edit byte identity, field-only mutations, stale-session/backup
+failure rejection, deep nesting, oversized names, resource budgets, duplicates
+and every truncated prefix. No real save was opened or changed for this check.
 
 ## Replacement checkpoints
 
