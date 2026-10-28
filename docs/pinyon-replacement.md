@@ -35,6 +35,8 @@ does not rewrite published history or overwrite anyone's active checkout.
 | `forza-recomp/src/hooks/ultrawide_projection.cpp` | New guest getter adapter uses the established viewport fields and caller addresses, and preserves the VR eye-aspect override. Addresses and memory layout are interface facts. |
 | `forza-recomp/tests/presentation_policy_test.cpp` | Acquisition/expiry, map priority in both callback orders, background rendering, disable and reset. |
 | `forza-recomp/tests/ultrawide_math_test.cpp` | Existing pixel-shape, safe-area, anchor and backing-height checks; nonfinite input cases added. |
+| `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Remove the config-field neutralization policy. Isolate comparison-query results at five verified call sites instead, with precise stale live-state cleanup. See `docs/ai-comparison-policy.md`; runtime qualification remains outstanding. |
+| `tools/check_hdr_capture.py`, `tools/test_hdr_capture.py` | Verifier and independent known-answer tests for the new `diffuse-exp-v1` SDK curve/grid. Refuses old captures rather than applying the new model to them. |
 
 These replacements were written from the existing interfaces and documented
 behavior. This is not a claim of a segregated clean-room process: the previous
@@ -49,9 +51,9 @@ implementations were inspected during the provenance audit.
 | `patches/rexglue-sdk/0091-hdr-scrgb-presenter.patch` | Removed from the obsolete archive, including its embedded generated SPIR-V. The live SDK still contains remaining covered integration. |
 | ReIGlue `src/ui/vulkan/vulkan_presenter.cpp`, `include/rex/ui/vulkan/presenter.h` | Separate SDK PR #5 replaces image ownership, format selection, composition/output pass construction and coverage/output recording. Stable interface declarations, cache invalidation and shutdown calls remain for final provenance review. The game pin still uses the prior implementation. |
 | ReIGlue `src/ui/shaders/hdr_output.ps.glsl`, `hdr_ui_mask.ps.glsl` and their `vulkan_spirv/*` headers | Replacement shaders and regenerated binaries exist on the separate ReIGlue branch; the pinned SDK still carries the adaptation. |
-| ReIGlue `src/graphics/shaders/hdr_hud_mask.cs.glsl` and generated header | A shared-tile replacement exists on the separate ReIGlue branch; the pinned SDK still carries the adaptation. |
-| ReIGlue Vulkan command processor and render-target cache HDR paths | SDK PR #5 replaces compute construction, descriptor recording, capture decisions and image allocations, including reused VR allocation/sharpening helpers. Existing frame fences and render-target transfer integration remain. |
-| `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Research citation retained. Compared with reference `9331e453`: this implementation hooks config fills, exempts online modes and uses a bounded trace cache; upstream hooks spawn registers, modifies additional cheat fields and traces with a map. Shared field offsets are game-layout facts. No imported upstream function was identified. |
+| ReIGlue `src/graphics/shaders/hdr_hud_mask.cs.glsl` and generated header | Review found the first replacement retained the original threshold/dilation policy. A subsequent per-pixel compositing lower-bound design replaces it; the pinned SDK still carries the adaptation. |
+| ReIGlue Vulkan command processor and render-target cache HDR paths | SDK PR #5 replaces compute construction, descriptor recording and image allocations, including reused VR allocation/sharpening helpers. The extracted capture decision still implements the inherited policy, and `CopyHdrScene` remains inherited. Neither is cleared by a rename or passing tests. |
+| `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Review found substantive carryover in the original ordered config neutralization despite different hooks and traces. That policy is removed in the new query-isolation draft; historical research credit and notices remain. Config offsets retained for tracing are game-layout facts, not a clearance claim. |
 | `docs/launcher.md`, `launcher/forza_launcher/save_editor.py`, `saves.py` | Research citation retained. Initial commit `ad75b8b` records the independent save manager/editor. Its bounded Python parser differs from reference C++ profile parsing; save management also differs from `tools/pinyon_saves.py`. The only identical significant lines found in the compared save managers were two standard-library imports. |
 | macOS tuning/performance comparison documents | Historical measurements and citations retained. They are not runtime dependencies. |
 
@@ -78,6 +80,11 @@ comparison, full link or macOS runtime validation has been performed for this
 replacement. The SDK's own contract tests and syntax checks are recorded in its
 corresponding replacement branch. No game save or qualified SDK binary changed.
 
+The subsequent AI replacement passes its contract tests and production syntax
+checks with both `FORZA_TITLE_UPDATE=0` and `4`. The new HDR verifier passes four
+known-answer tests with NumPy 2.3.5. No linked game or race run has qualified the
+new AI mechanism, and no new HDR capture has qualified the redesigned curve.
+
 ## Replacement checkpoints
 
 The game branch is PR #493. The companion ReIGlue branch is PR #5, source
@@ -85,8 +92,12 @@ checkpoint `7bb18e3`. The SDK has eight passing standalone contract tests:
 HUD geometry, shader contraction, HDR color, parameter ABI, format selection,
 generated shader bindings, scene capture policy and injected compute-allocation
 failures. Both updated production translation units pass Windows syntax checks.
-Earlier checkpoints linked and passed DLL loader/ABI checks; this later source
-checkpoint still needs its own link and hardware validation.
+This checkpoint also linked and passed DLL loader/ABI checks. Independent review
+then identified substantive carryover in the curve, calibration, coverage,
+capture and AI policies. The subsequent HDR redesign and AI query-isolation
+mechanism change those policies and require new qualification; the inherited
+scene trigger and copy remain unresolved. The new SDK design is recorded in
+`docs/reiglue/independent-hdr-design.md` in PR #5. No existing notices are removed.
 
 The source comparison is evidence about particular implementations, not an
 inference from absence of a project name. Research references remain useful and
