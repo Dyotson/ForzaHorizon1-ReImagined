@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -66,15 +67,22 @@ void SetSync(bool on) {
   }
 }
 
-std::atomic<uint64_t> g_generation{0};
+std::mutex g_sync_mutex;
+uint64_t g_generation = 0;  // Protected with the corresponding flag update.
 
 // Sets the SDK setting now and clears it kWindow after the last call.
 void HoldSync() {
-  const uint64_t generation = g_generation.fetch_add(1) + 1;
-  SetSync(true);
+  uint64_t generation;
+  {
+    std::lock_guard lock(g_sync_mutex);
+    generation = ++g_generation;
+    SetSync(true);
+  }
   std::thread([generation] {
     std::this_thread::sleep_for(kWindow);
-    if (g_generation.load() == generation) SetSync(false);
+    // An expired timer must not clear a hold renewed between its check and flag write.
+    std::lock_guard lock(g_sync_mutex);
+    if (g_generation == generation) SetSync(false);
   }).detach();
 }
 
