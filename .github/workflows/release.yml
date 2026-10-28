@@ -279,7 +279,7 @@ jobs:
           # on), the analog handbrake and which device is the wheel (patches 0131-0134, #306);
           # #308: Thrustmaster wheels and refused effects (0135, 0136); #304: the force feedback
           # in the log and the effects kept playing (0145, 0146); #467: the vibration at a fixed pace
-          # (ReIGlue 0403).
+          # (ReIGlue 0403); #468: an H-pattern shift through neutral (0404, wheel_gear_request).
           for t in wheel_shifter wheel_min_force wheel_gear_request wheel_handbrake \
                    wheel_primary wheel_thrustmaster wheel_ff_reject wheel_ff_log wheel_rumble_pace; do
             clang++ -std=c++17 -Wall -Wextra -Werror -I"$HOME/rexglue-sdk-src-forza/sdk/include" \

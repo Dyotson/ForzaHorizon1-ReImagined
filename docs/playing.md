@@ -487,6 +487,7 @@ edited by hand:
 | `wheel_shifter` | `off` | `h`: an H-pattern shifter selects the gear; `sequential`: its up and down buttons shift like the paddles |
 | `wheel_shifter_buttons` | by model | e.g. `1=12,2=13,3=14,4=15,5=16,6=17,r=18` (gears 1 to 7 and reverse) or `up=..,down=..`; SDL button numbers, -1 unmaps |
 | `wheel_shifter_clutch`, `wheel_clutch_threshold` | off, 0.5 | H-pattern: a gear engages only with the clutch pressed this far (0.1 to 1) |
+| `wheel_shifter_neutral_ms` | 400 | H-pattern: how long the lever may sit in neutral between two gates and still go straight from one gear to the other, so the game shows an upshift as one (#468); 0 to 2000 milliseconds, 0: neutral at once, as before |
 | `wheel_shifter_follow_slot` | on | H-pattern: on, the game takes the lever's gear whenever it sets the gear itself (race and event starts and finishes), as on the Xbox; off, a gear engages only when the lever moves, for switching to the paddles (#303; launcher: Gear follows the lever's slot) |
 | `wheel_shifter_device` | found | A shifter on its own USB device: empty finds a known one or one named like a shifter; a name, SDL GUID or `vid:pid` picks one; `none` reads the wheel's own buttons |
 | `wheel_shifter_device_buttons` | by model | Its gears, e.g. `1=0,2=1,3=2,4=3,5=4,6=5,r=6`, or `up=..,down=..`; while a shifter device is connected every gear comes from it |
@@ -542,6 +543,15 @@ button.
   you move the lever (where the lever sits when the game starts is not a move). Tested with it off, a virtual
   wheel and DS-8X, the lever left in 3rd: the paddles shifted freely, a race started in 1st, and moving the
   lever to 4th engaged 4th.
+- **Through neutral (#468).** The game numbers its gears R 0, 1 to 8 and neutral 9, and takes a change to a
+  higher number for an upshift (that is what the cockpit's paddle animation shows). The lever crosses neutral
+  between two gates, so every H-pattern shift used to reach the game as neutral, then the gear: a downshift, and
+  a car with paddles pulled the downshift paddle on every upshift. Now a lever that leaves a gear keeps it for
+  `wheel_shifter_neutral_ms` (400 ms by default) while it is in neutral: one that reaches another gate in that
+  time goes straight there (2nd to 3rd is an upshift), one that stays in neutral longer is neutral then (SDK
+  0404). The log shows the first few changes and how the game takes them, e.g. `Wheel: H-pattern 2 > 3, an
+  upshift for the game (the lever crossed neutral in 180 ms)`. If slow shifts still show the downshift paddle,
+  raise it; 0 gives neutral at once, as before.
 - **Realistic shifting:** `wheel_shifter_clutch` makes a new gear engage only while the clutch is pressed at
   least `wheel_clutch_threshold` (default half way); moved into a gear without the clutch, the car stays in
   neutral until you press it. Off by default (the lever's gear engages at once).
