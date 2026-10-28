@@ -26,8 +26,10 @@ if ($p.ExitCode -ne 0 -and (Test-Path $log)) { Get-Content $log -Tail 40 }
 $exe = Join-Path $app "forza-launcher.exe"
 Check (Test-Path $exe) "forza-launcher.exe in $app"
 # Both programs carry a Windows version resource (company, product, original file name; #482, #354).
+# Inno Setup writes its strings into fixed-size slots padded with spaces, so compare them trimmed.
 $si = (Get-Item -LiteralPath $Setup).VersionInfo
-Check ($si.OriginalFilename -like 'ForzaHorizon1-ReImagined-Setup-*.exe' -and $si.ProductName -and $si.CompanyName) "installer has its version resource ($($si.ProductName) $($si.ProductVersion), $($si.CompanyName))"
+$siName = "$($si.OriginalFilename)".Trim(); $siProduct = "$($si.ProductName)".Trim(); $siCompany = "$($si.CompanyName)".Trim()
+Check ($siName -like 'ForzaHorizon1-ReImagined-Setup-*.exe' -and $siProduct -and $siCompany) "installer has its version resource ($siProduct $("$($si.ProductVersion)".Trim()), $siCompany, $siName)"
 if (Test-Path $exe) {
     $vi = (Get-Item -LiteralPath $exe).VersionInfo
     Check ($vi.OriginalFilename -eq 'forza-launcher.exe' -and $vi.ProductName -and $vi.CompanyName) "launcher has its version resource ($($vi.ProductName) $($vi.ProductVersion), $($vi.CompanyName))"
