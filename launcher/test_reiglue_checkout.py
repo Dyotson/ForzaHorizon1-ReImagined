@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "tools/build_rexglue_sdk.sh"
-TAG = re.search(r"(?m)^REIGLUE_TAG=(\S+)", SCRIPT.read_text()).group(1)  # the pinned tag
+TAG = "fixture-sdk-tag"
 BASH = (str(Path("C:/Program Files/Git/bin/bash.exe")) if os.name == "nt" and
         Path("C:/Program Files/Git/bin/bash.exe").is_file() else shutil.which("bash"))
 
@@ -45,6 +45,7 @@ class ReiglueCheckout(unittest.TestCase):
         self.git(self.origin, "tag", "--no-sign", "-a", TAG, "-m", "fixture tag")
         self.source = self.root / "checkout with spaces"
         text = SCRIPT.read_text()
+        text = re.sub(r"(?m)^REIGLUE_TAG=.*", "REIGLUE_TAG=" + TAG, text)
         text = re.sub(r"(?m)^SDK_COMMIT=[0-9a-f]+", "SDK_COMMIT=" + self.base, text)
         text = re.sub(r"(?m)^REIGLUE_COMMIT=[0-9a-f]+", "REIGLUE_COMMIT=" + self.target, text)
         self.script = self.root / "project/tools/build_rexglue_sdk.sh"
@@ -197,6 +198,64 @@ class ReiglueCheckout(unittest.TestCase):
         result = self.prepare()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.git(self.source, "rev-parse", "HEAD").stdout.strip(), other)
+
+    def commit_pin(self, commit=None):
+        text = re.sub(r"(?m)^REIGLUE_TAG=.*", "REIGLUE_TAG=", self.script.read_text())
+        if commit is not None:
+            text = re.sub(r"(?m)^REIGLUE_COMMIT=.*", "REIGLUE_COMMIT=" + commit, text)
+        self.script.write_bytes(text.encode())
+
+    def test_commit_pin_without_any_published_tag(self):
+        self.git(self.origin, "tag", "--delete", TAG)
+        self.commit_pin()
+        self.ready()
+        self.assertEqual(self.git(self.source, "tag").stdout, "")
+        before = self.snapshot()
+        self.ready()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_commit_pin_fetches_missing_revision_into_existing_checkout(self):
+        self.init(self.source)
+        self.git(self.source, "fetch", "--quiet", str(self.origin), self.base)
+        self.git(self.source, "checkout", "--quiet", "--detach", "FETCH_HEAD")
+        self.commit_pin()
+        self.ready()
+        self.assertEqual(self.git(self.source, "tag").stdout, "")
+
+    def test_commit_pin_rejects_branch_name_without_moving_head(self):
+        self.old_checkout()
+        self.commit_pin("main")
+        result = self.prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("full immutable commit", result.stderr)
+        self.assertEqual(self.git(self.source, "rev-parse", "HEAD").stdout.strip(), self.base)
+
+    def test_commit_pin_preserves_old_checkout_work(self):
+        self.old_checkout()
+        self.commit_pin()
+        (self.source / "sdk.txt").write_text("my SDK work\n")
+        before = self.snapshot()
+        result = self.prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.git(self.source, "rev-parse", "HEAD").stdout.strip(), self.base)
+
+    def test_commit_pin_requires_nightly_ancestry_before_checkout(self):
+        self.old_checkout()
+        self.commit_pin()
+        unrelated = self.root / "unrelated"
+        self.init(unrelated)
+        (unrelated / "file").write_text("different history\n")
+        other_base = self.commit(unrelated, "Unrelated SDK")
+        text = re.sub(r"(?m)^SDK_COMMIT=.*", "SDK_COMMIT=" + other_base, self.script.read_text())
+        self.script.write_bytes(text.encode())
+        self.git(self.source, "fetch", "--quiet", str(unrelated), other_base)
+        before = self.snapshot()
+        result = self.prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not based on the nightly", result.stderr)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.git(self.source, "rev-parse", "HEAD").stdout.strip(), self.base)
 
 
 if __name__ == "__main__":

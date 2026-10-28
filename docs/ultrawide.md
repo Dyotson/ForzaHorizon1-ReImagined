@@ -76,6 +76,15 @@ squashed. Native-mode output dumps now have the active 3440x1440 dimensions.
 
 ## Validation and current limits
 
+The SDK revision pinned by the source build includes the cockpit instrument
+texture correction from [ReIGlue PR #2](https://github.com/FH1-ReImagined/ReIGlue/pull/2).
+The instrument image and its downsample passes retain their own texture coordinates,
+so their contents stay aligned with the dashboard material as the gameplay view
+widens. This correction does not change camera FOV. Earlier Viper testing at
+3440x1440 confirmed the instrument alignment; the separate cyan roof artifact
+remained visible. Installed launcher packages need an SDK overlay built from
+the updated pin to receive the correction.
+
 1080-line support and menu validation (2026-10-21): a full TU4 Windows host build
 from main `425dfa2` plus these host/launcher changes ran on an RTX 5060 Ti,
 driver 617.14, with the existing public SDK stack. Offline runs used copied

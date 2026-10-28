@@ -4,7 +4,8 @@
 > [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's fork of the ReXGlue SDK
 > (one commit per patch, same numbers, this text in the commit messages; its
 > `docs/reiglue/commits.md` marks the Forza-specific ones). `tools/build_rexglue_sdk.sh` checks
-> out the ReIGlue tag it pins (`REIGLUE_TAG`) and no longer applies `patches/rexglue-sdk/`;
+> out the immutable ReIGlue revision it pins (`REIGLUE_COMMIT`, with an optional matching
+> `REIGLUE_TAG`) and no longer applies `patches/rexglue-sdk/`;
 > the folder and this page stay for reference for now. New SDK changes go to ReIGlue
 > (CONTRIBUTING.md).
 >

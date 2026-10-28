@@ -455,7 +455,7 @@ game (`xrEndFrame max` in the 10 s line); how far the head prediction is off and
 
 The SDK changes VR needs are commits 0390-0397 of
 [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's fork of the ReXGlue SDK, from
-tag `fh1-0.10.0.24-r2` on (`REIGLUE_TAG` in `tools/build_rexglue_sdk.sh`). Each commit's message
+tag `fh1-0.10.0.24-r2` on (included in the revision pinned by `tools/build_rexglue_sdk.sh`). Each commit's message
 says what it changes and why (the same text as their rows in [sdk_patches.md](sdk_patches.md));
 ReIGlue's `docs/reiglue/commits.md` lists them as Forza-specific, area VR. The game looks them up at
 run time (C exports of the runtime and the GPU plugin) and plays flat, or without the missing part,
