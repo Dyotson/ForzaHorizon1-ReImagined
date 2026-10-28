@@ -111,10 +111,9 @@ link the immutable earlier local SDK; the relevant PPC, cvar, logging, memory,
 app and kernel-state headers match exact pinned ReIGlue r2 source. They do not
 qualify a current r2 game executable.
 
-The rendered B-close/reopen-A/hold/fresh-confirm sequence and a complete
-benchmark run/return remain pending. Earlier timed title navigation did not reach
-Benchmark and is not acceptance evidence. A fresh current host and observed,
-bounded native-input session are required before claiming runtime validation.
+On that earlier integrated head, timed title navigation did not reach Benchmark
+and was not acceptance evidence. The current integration's acceptance is recorded
+below.
 
 ### Current-main integration (2026-10-28)
 
@@ -123,6 +122,17 @@ suite retains both the TU0/TU4 production-session regressions and main's camera
 preference snapshot/restore test. The production session retains all five FOV
 preferences added on main, along with the current restart and VR input paths.
 All 15 focused Windows CTests pass against the current ReIGlue SDK, including
-the actual production-session implementation compiled for TU0 and TU4. The
-rendered confirmation/run/results/return sequence remains pending; these tests
-do not qualify a game executable or physical-controller behavior.
+the actual production-session implementation compiled for TU0 and TU4. A
+Windows TU4 production host at code revision `4ea4c17` also passed the observed
+cancel/reopen/release/fresh-confirm sequence, one benchmark restart, a complete
+60-second measured run, results, and a normal restart back to the title menu.
+The 13 original profile files were unchanged and both request markers were
+consumed.
+
+Input used ordinary keyboard/MnK controls. Reopening used a mouse drag bound to
+A; the call took 71 ms and setup remained visible after release. A sustained
+physical-controller hold was not exercised; repeated held-button polls remain
+covered by the production-session fixtures. The final desktop close required
+an owned-process stop after returning to title, so this run does not qualify
+normal application shutdown. The native title also returned to Press Start
+after cancelling setup; this is recorded without claiming a cause or fix.
