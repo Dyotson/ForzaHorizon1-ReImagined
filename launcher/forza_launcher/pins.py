@@ -42,6 +42,16 @@ DOWNLOADS = {
     "openxr-loader-windows": (
         f"{_GH}/KhronosGroup/OpenXR-SDK-Source/releases/download/release-1.1.62/openxr_loader_windows-1.1.62.zip",
         "800ec772e2f9448a26ab9f579f4914d984346dd9d0d7c007841abe21d2c8ff2f", "zip"),
+    # The Microsoft Visual C++ 2015-2022 x64 redistributable 14.44.35211.0 that the Windows installer
+    # bundles (installer.iss). CI only (release.yml, through ci_fetch.py), which also checks Microsoft's
+    # Authenticode signature. The versioned download is where https://aka.ms/vs/17/release/vc_redist.x64.exe
+    # led on 2026-10-28; Microsoft's path names the file's SHA-256. To update: follow that aka.ms link,
+    # take the URL it redirects to, and the SHA-256 of the file (the path's hash, checked by
+    # test_vc_redist_pin.py).
+    "vc-redist-x64": (
+        "https://download.visualstudio.microsoft.com/download/pr/990c720a-46ce-4dc7-87b9-c2eb615d34b9/"
+        "CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe",
+        "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b", "file"),
     # Make HD pack's upscaler (#384, hd_pack.py): Real-ESRGAN's ncnn-Vulkan build with its models,
     # from the official Real-ESRGAN v0.2.5.0 release (program MIT, models BSD-3-Clause). The
     # release predates GitHub's asset digests: the hashes match nixpkgs' realesrgan-ncnn-vulkan

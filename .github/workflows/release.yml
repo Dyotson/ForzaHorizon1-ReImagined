@@ -77,6 +77,13 @@ jobs:
           cmake -S forza-recomp/tests/thumbnail-sync -B "$RUNNER_TEMP/thumbnail-sync"
           cmake --build "$RUNNER_TEMP/thumbnail-sync" --config Release --parallel 1
           ctest --test-dir "$RUNNER_TEMP/thumbnail-sync" -C Release --output-on-failure
+      - name: Render comparison and session safety tests (no game)
+        run: |
+          python -m pip install Pillow
+          python -m unittest discover -s tools -p 'test_render*.py' -v
+      - if: runner.os == 'Linux'
+        name: FFCB slot wait regression (synthetic events, base and TU4)
+        run: python tools/test_ffcb_wake.py --compiler g++ --output "$RUNNER_TEMP/ffcb-wake"
       - if: runner.os == 'Linux'
         name: Resource ownership regression
         run: |
@@ -526,6 +533,20 @@ jobs:
           v="${GITHUB_REF_NAME#v}"; [ "$GITHUB_REF_TYPE" = tag ] || v="0.0.0-dev.${GITHUB_SHA::7}"
           printf '"""Launcher version."""\n__version__ = "%s"\n' "$v" > launcher/forza_launcher/_version.py
           echo "VERSION=$v" >> "$GITHUB_ENV"
+      # PyInstaller's stock Windows bootloader is the same binary in every program it has packed, malware
+      # included, and antivirus machine learning keys on it (#482, #354). So PyInstaller is installed from its
+      # source distribution with the bootloader compiled here, with the Visual Studio C++ tools of the runner
+      # (PyInstaller's waf finds them itself). The version is whatever launcher/requirements-build.txt allows,
+      # as on Linux. The next step's pip install then finds it already satisfied and leaves it alone.
+      - name: PyInstaller with its bootloader built from source
+        shell: bash
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+          PYINSTALLER_BOOTLOADER_WAF_ARGS: --target-arch=64bit
+        run: |
+          python -m pip install --no-binary pyinstaller -r launcher/requirements-build.txt
+          # fails when run.exe or runw.exe is still byte-identical to the stock wheel's
+          python launcher/packaging/check_bootloader.py
       - name: Build the launcher
         shell: bash
         run: |
@@ -536,6 +557,26 @@ jobs:
           dist/forza-launcher/forza-launcher.exe --version
           dist/forza-launcher/forza-launcher.exe --run-script packaging/gamepad_smoke.py gamepad-smoke.txt
           test -s gamepad-smoke.txt
+      # The spec gave forza-launcher.exe a Windows version resource (company, product, description, versions,
+      # original file name) from forza_launcher/_version.py; fail the build if it did not land.
+      - name: Check the launcher's version resource
+        shell: pwsh
+        run: |
+          $info = (Get-Item launcher/dist/forza-launcher/forza-launcher.exe).VersionInfo
+          $info | Format-List CompanyName, ProductName, FileDescription, FileVersion, ProductVersion, OriginalFilename, InternalName, LegalCopyright
+          $numeric = (python launcher/packaging/windows_version_info.py "$env:VERSION").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compute the numeric version' }
+          if (-not $info.CompanyName -or -not $info.FileDescription -or $info.OriginalFilename -ne 'forza-launcher.exe' -or $info.ProductVersion -ne $env:VERSION -or $info.FileVersion -ne $numeric) {
+            throw 'forza-launcher.exe has no (or the wrong) version resource'
+          }
+      # TODO(code signing, #482, #354): sign launcher/dist/forza-launcher/forza-launcher.exe here, before the
+      # smoke test and the Package step copy it, so the payload manifest below hashes the signed file. Needs a
+      # code-signing certificate (SignPath Foundation or Certum, still to be chosen) and its secrets, for
+      # example:
+      #   - name: Sign the launcher
+      #     shell: pwsh
+      #     run: <signtool sign /fd SHA256 /tr <timestamp server> /td SHA256 ...> launcher/dist/forza-launcher/forza-launcher.exe
+      # then the signature is verified: (Get-AuthenticodeSignature <file>).Status -eq 'Valid'.
       - name: Smoke test the packaged window
         shell: bash
         run: python launcher/packaging/smoke_gui.py launcher/dist/forza-launcher/forza-launcher.exe
@@ -548,16 +589,30 @@ jobs:
       - name: Installer (Inno Setup, with the Visual C++ 2015-2022 x64 redistributable)
         shell: pwsh
         run: |
-          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vc_redist.x64.exe
+          # The redistributable the installer bundles: a versioned Microsoft download pinned by SHA-256 in
+          # launcher/forza_launcher/pins.py ("vc-redist-x64"), then Microsoft's Authenticode signature.
+          python launcher/packaging/ci_fetch.py vc-redist-x64 vc_redist.x64.exe
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned Visual C++ redistributable could not be downloaded or did not match its SHA-256 (see the message above)' }
+          $sig = Get-AuthenticodeSignature -LiteralPath vc_redist.x64.exe
+          $sig | Format-List Status, StatusMessage, SignerCertificate
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch '(^|, )O=Microsoft Corporation(,|$)') {
+            throw "vc_redist.x64.exe is not validly signed by Microsoft ($($sig.Status): $($sig.SignerCertificate.Subject))"
+          }
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
           # Hash the final staged payload before Inno Setup packages it. Keep a copy
           # outside the installer so a quarantined file can still be identified.
           python launcher/packaging/windows_build_manifest.py out/ForzaHorizon1-ReImagined --version "$env:VERSION" --commit "$env:GITHUB_SHA" --run-url "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           if ($LASTEXITCODE -ne 0) { throw 'Could not generate the Windows payload manifest' }
-          & $iscc "/DAppVersion=$env:VERSION" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
+          # The installer's own version resource needs a four-part number (installer.iss: VersionNumeric).
+          $numeric = (python launcher/packaging/windows_version_info.py "$env:VERSION").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compute the numeric version' }
+          & $iscc "/DAppVersion=$env:VERSION" "/DVersionNumeric=$numeric" "/DStage=$PWD\out\ForzaHorizon1-ReImagined" "/DRedist=$PWD\vc_redist.x64.exe" "/DOut=$PWD\installer" launcher\packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
           Copy-Item -LiteralPath out/ForzaHorizon1-ReImagined/windows-build-manifest.json -Destination "installer/ForzaHorizon1-ReImagined-windows-files-$env:VERSION.json"
+      # TODO(code signing, #482, #354): sign installer/*.exe here (the Setup program), the same way as the
+      # launcher above, before it is uploaded. Inno Setup can also sign the installer and its uninstaller while
+      # compiling (a SignTool entry in [Setup] plus iscc /S...), which also covers unins000.exe.
       - uses: actions/upload-artifact@v4
         with:
           name: launcher-windows
@@ -631,7 +686,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/"
+          notes="Installers for the Forza Horizon 1: ReImagined launcher. They contain no game code and no game data: the launcher builds the game on your computer from your own copy of Forza Horizon (Games on Demand package). See https://dyotson.github.io/ForzaHorizon1-ReImagined/. Code signing policy: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined#code-signing-policy. Privacy policy: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/blob/main/PRIVACY.md"
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes"
           # The SDK overlays are artifacts only for the packaging jobs; every package carries its own.
