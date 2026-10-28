@@ -38,12 +38,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
 # Includes the merged cockpit instrument raster fix (#419, ReIGlue PR #2),
-# controller disconnect reporting (#3), digital keyboard taps (#4), and 0364:
-# asynchronous pipelines built across frame ends (#167).
+# controller disconnect reporting (#3), digital keyboard taps (#4), 0364: asynchronous pipelines
+# built across frame ends (#167, ReIGlue PR #7), and 0400: the small code model on Linux (#473,
+# ReIGlue PR #10).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
-REIGLUE_COMMIT=579938c7cab292a8c4d37469feb037c0a01b553f  # merged ReIGlue #7; same tree as reviewed 79c74dae
+REIGLUE_COMMIT=74085fdc17545c0c58036d2761a140bba3346d49  # merged ReIGlue #10 (on top of #7)
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
@@ -200,9 +201,28 @@ for entry in "$NIGHTLY"/*; do
 done
 for entry in "$NIGHTLY"/lib/*; do
     # The plugin and runtime are installed below (atomically); never swap them for a symlink.
-    case "$(basename "$entry")" in librexgpu-xenos.so|librexruntime.so) continue ;; esac
+    # lib/cmake is a directory of its own (below).
+    case "$(basename "$entry")" in librexgpu-xenos.so|librexruntime.so|cmake) continue ;; esac
     ln -sfn "$entry" "$OVERLAY/lib/$(basename "$entry")"
 done
+# The SDK's CMake helpers come from ReIGlue too (0400: the code model a game's code is compiled
+# with); the other package files are the nightly's. Older overlays linked lib/cmake to the
+# nightly's: remove that link (only the link) before making the directory.
+for dir in "$OVERLAY/lib/cmake" "$OVERLAY/lib/cmake/rexglue"; do
+    [ -L "$dir" ] && rm "$dir"
+    mkdir -p "$dir"
+done
+for entry in "$NIGHTLY"/lib/cmake/*; do
+    [ "$(basename "$entry")" = rexglue ] || ln -sfn "$entry" "$OVERLAY/lib/cmake/$(basename "$entry")"
+done
+for entry in "$NIGHTLY"/lib/cmake/rexglue/*; do
+    [ "$(basename "$entry")" = rexglue_helpers.cmake ] ||
+        ln -sfn "$entry" "$OVERLAY/lib/cmake/rexglue/$(basename "$entry")"
+done
+helpers_new="$OVERLAY/lib/cmake/rexglue/.rexglue_helpers.cmake.new"
+cp "$SRC/cmake/rexglue_helpers.cmake" "$helpers_new"
+mv -f "$helpers_new" "$OVERLAY/lib/cmake/rexglue/rexglue_helpers.cmake"
+echo "SDK CMake helpers: $OVERLAY/lib/cmake/rexglue/rexglue_helpers.cmake"
 # Install by rename: overwriting a mapped .so in place can crash a running game.
 plugin_new="$OVERLAY/lib/.librexgpu-xenos.new"
 cp "$built" "$plugin_new"

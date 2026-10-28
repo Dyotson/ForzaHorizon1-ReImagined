@@ -14,6 +14,8 @@ for f in bin/rexglue lib/librexgpu-xenos.so lib/librexruntime.so; do
 done
 files=(bin/rexglue lib/librexgpu-xenos.so lib/librexruntime.so)
 [ -f "$OVERLAY/lib/libopenxr_loader.so.1" ] && files+=(lib/libopenxr_loader.so.1)  # VR (docs/vr.md)
+# ReIGlue's CMake helpers (the code model of the game's code), over the nightly's
+[ -f "$OVERLAY/lib/cmake/rexglue/rexglue_helpers.cmake" ] && files+=(lib/cmake/rexglue/rexglue_helpers.cmake)
 [ -d "$OVERLAY/fh1-licenses" ] && files+=(fh1-licenses)
 tar -C "$OVERLAY" -hczf "$OUT" "${files[@]}"
 echo "$OUT"
