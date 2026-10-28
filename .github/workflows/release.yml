@@ -71,6 +71,12 @@ jobs:
         run: python -m unittest discover -s tools -p 'test_livery_codec.py' -v
       - name: Resource hook audit tests (synthetic images)
         run: python -m unittest discover -s tools -p 'test_resource_data_hooks.py' -v
+      - name: Thumbnail and photo sync renewal contracts (no game)
+        shell: bash
+        run: |
+          cmake -S forza-recomp/tests/thumbnail-sync -B "$RUNNER_TEMP/thumbnail-sync"
+          cmake --build "$RUNNER_TEMP/thumbnail-sync" --config Release --parallel 1
+          ctest --test-dir "$RUNNER_TEMP/thumbnail-sync" -C Release --output-on-failure
       - name: Render comparison and session safety tests (no game)
         run: |
           python -m pip install Pillow

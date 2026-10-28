@@ -574,6 +574,18 @@ hook off. The red line in the report (a red VW Corrado, not in the test save) wa
 reproduced on the cars at hand (Zonda R, M3 GTR at scale 2, AF 16x, FXAA extreme); a livery
 layer missing in the same way is a likely cause.
 
+Photo mode (#167, 2026-10-28): since ReIGlue 0364 the pipelines a frame meets are built in the
+background across frames, and draws whose pipelines are not ready are skipped in every frame
+until they are, not only in the first. A photo taken soon after entering photo mode on a slow
+driver (AMD's on Windows, 0.2-0.3 s a pipeline) could then miss them, as the photo is composed,
+resolved and read back on the CPU at SAVE. `src/hooks/thumbnail_sync.cpp` holds
+`sync_pipeline_creation` while photo mode renders (it draws the first shadow cascade with the
+high-quality filter, technique 8 of `ApplyShadows`, which play never uses; renewed at most once a
+second, 8 s after the last such frame), so its frames wait for their pipelines as before 0364.
+`FORZA_PHOTO_SYNC=0` switches it off. Any other render the game reads back while draws were
+skipped logs `Pipelines: a render the game reads back ... missed draws` and is counted in the
+`Pipelines:` line.
+
 
 ## Reused car thumbnail readbacks (Vulkan)
 
@@ -680,7 +692,15 @@ Cold pipeline cache ruled out as the cause (2026-10-17): the boot videos on TU4 
 12 screenshots from the first video to the title. With async compilation a draw whose pipeline
 is not ready is skipped, but the SDK then does not present that frame at all
 (`vulkan_async_skip_incomplete_frames`, on by default), so a cold cache gives held frames at
-worst, never stale render-target contents on screen. Purple/white frames with the right luma
+worst, never stale render-target contents on screen. Since ReIGlue 0364 (#167) a frame that
+only lacks object draws is shown after `vulkan_async_skip_incomplete_frames_ms` (100 ms) of
+holding, without those objects; a frame that lacks a screen-space pass (a movie frame, a
+composite, a full-screen effect: 6 vertices or fewer), a depth or stencil only draw, a draw
+into the 1280-wide front buffer or UI target or the native HUD, or a draw of the VR stereo
+segment is still held until the pipeline is built, so stale contents still never reach the
+screen. With `vulkan_async_skip_incomplete_frames=false` they can (objects or passes missing
+for as long as their pipelines build); the `Pipelines:` line counts frames shown without
+draws. Purple/white frames with the right luma
 and wrong colour planes do not fit that either, so no movie sync window was added. Not tested
 on AMD Windows (#108: the same cutscene was fine on the player's next run, so check whether
 that run had a warm cache and the same settings, and whether `vulkan_async_skip_incomplete_frames`
