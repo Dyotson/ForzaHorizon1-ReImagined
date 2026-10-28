@@ -1,59 +1,44 @@
-// forza - the render thread no longer waits forever for a HUD command buffer (#512).
+// forza - wake the HUD worker when its command-buffer slot is not ready (#512).
 // tu_address_map: TU4 addresses
 //
-// Part of the HUD is recorded in fixed-function command buffers (FFCB) on a worker thread and
-// drawn on the render thread through a 12-slot ring in the render object R: the worker's submit
-// (sub_824198A8, base sub_823E97F8) sets the slot event the render thread's consume
-// (sub_824A1E40, base sub_824726C8) waits for without a timeout. Only the render thread wakes the
-// worker (its kick, sub_82D11BA0, sets the wake event *R+0x764 unless its flag is still set). When
-// FFCB turns on with the HUD map at free roam and the worker is a frame behind, the first consume
-// waits for a submit the worker makes only when woken again, which only the waiting render thread
-// would do: both wait forever (seen with a 50-75 Hz guest vblank, more often with faster code).
-// Now a consume with every submit so far consumed wakes the worker itself every 2 ms until the
-// submit comes (at most 2 s), then waits as the game does. FORZA_FFCB_WAKE=0: the game's wait.
+// Retry this exact native slot wait in 2 ms slices, waking the worker only after
+// STATUS_TIMEOUT. After 2 s use the original infinite wait. Success consumes the
+// event once; errors retain the native boolean result. No host submission totals
+// survive ring wrap, device reset, or address reuse. FORZA_FFCB_WAKE=0: original wait.
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
-
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
 
 #if FORZA_TU4
-#define FfcbSubmit sub_824198A8
-#define OriginalFfcbSubmit __imp__sub_824198A8
 #define FfcbConsume sub_824A1E40
 #define OriginalFfcbConsume __imp__sub_824A1E40
+#define SlotWait sub_82419270
+#define OriginalSlotWait __imp__sub_82419270
+#define RawWait sub_824957B0
 #define SetEventHandle sub_824AA568
+constexpr uint32_t kSlotWaitReturn = 0x8249E108;
 #else
-#define FfcbSubmit sub_823E97F8
-#define OriginalFfcbSubmit __imp__sub_823E97F8
 #define FfcbConsume sub_824726C8
 #define OriginalFfcbConsume __imp__sub_824726C8
+#define SlotWait sub_823E91C0
+#define OriginalSlotWait __imp__sub_823E91C0
+#define RawWait sub_82465EB8
 #define SetEventHandle sub_8247AF78
+constexpr uint32_t kSlotWaitReturn = 0x8246E920;
 #endif
 
 namespace {
-
-constexpr uint32_t kRecording = 0x460;   // R: a recording to submit (byte)
-constexpr uint32_t kWorkerWake = 0x764;  // R: pointer to the worker's wake event handle
-
-std::atomic<uint32_t> ring{0};       // the render object the counts below are for
-std::atomic<uint64_t> submitted{0};  // submits that set a slot's event
-std::atomic<uint64_t> consumed{0};   // consumes that returned
-std::atomic<uint64_t> wakes{0};
-
 uint32_t Load32(uint8_t* base, uint32_t address) {
   const uint8_t* p = forza::GuestPtr(base, address);
   return uint32_t(p[0]) << 24 | p[1] << 16 | p[2] << 8 | p[3];
 }
-
 bool Enabled() {
   static const bool on = [] {
     const char* v = std::getenv("FORZA_FFCB_WAKE");
@@ -61,71 +46,82 @@ bool Enabled() {
   }();
   return on;
 }
-
-// The counts belong to one render object; a new one (the device made again) starts them over.
-void Track(uint32_t r) {
-  uint32_t seen = ring.load(std::memory_order_acquire);
-  if (seen != r && ring.compare_exchange_strong(seen, r, std::memory_order_acq_rel)) {
-    submitted.store(0, std::memory_order_release);
-    consumed.store(0, std::memory_order_release);
+struct ConsumeScope;
+thread_local const ConsumeScope* consuming = nullptr;
+// Lifetime equals the native consume call. This does not extend guest object
+// lifetime or make concurrent native teardown safe.
+struct ConsumeScope {
+  uint32_t object, event;
+  const ConsumeScope* previous = consuming;
+  ConsumeScope(uint32_t r, uint32_t e) : object(r), event(e) { consuming = this; }
+  ~ConsumeScope() { consuming = previous; }
+};
+void LogWake(bool ready, int64_t us) {
+  static std::atomic<uint64_t> wakes{0}, summarized{10};
+  static std::atomic<int64_t> next_summary{0};
+  const uint64_t n = wakes.fetch_add(1, std::memory_order_relaxed) + 1;
+  const int64_t now_s = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (n <= 10) {
+    REXLOG_INFO("FFCB: woke the HUD command buffer worker: {}, after {} us (#512, {} so far)",
+                ready ? "slot ready" : "native wait resumed", us, n);
+    if (n == 10) next_summary.store(now_s + 10, std::memory_order_relaxed);
+  } else if (now_s >= next_summary.load(std::memory_order_relaxed)) {
+    next_summary.store(now_s + 10, std::memory_order_relaxed);
+    const uint64_t before = summarized.exchange(n, std::memory_order_relaxed);
+    REXLOG_INFO("FFCB: woke the HUD command buffer worker {} more times (#512, {} so far)",
+                n - before, n);
   }
 }
-
-bool Outstanding() {
-  return submitted.load(std::memory_order_acquire) > consumed.load(std::memory_order_acquire);
-}
-
 }  // namespace
-
-extern "C" REX_FUNC(SetEventHandle);
-
-extern "C" REX_FUNC(OriginalFfcbSubmit);
-extern "C" REX_FUNC(FfcbSubmit) {
-  const uint32_t r = ctx.r3.u32;
-  const bool recording = *forza::GuestPtr(base, r + kRecording) != 0;
-  OriginalFfcbSubmit(ctx, base);
-  if (!recording) return;
-  Track(r);
-  submitted.fetch_add(1, std::memory_order_acq_rel);
-}
 
 extern "C" REX_FUNC(OriginalFfcbConsume);
 extern "C" REX_FUNC(FfcbConsume) {
+  if (!Enabled()) { OriginalFfcbConsume(ctx, base); return; }
   const uint32_t r = ctx.r3.u32;
-  Track(r);
-  const uint32_t wake = Load32(base, r + kWorkerWake);
-  if (Enabled() && wake && !Outstanding()) {
-    const auto start = std::chrono::steady_clock::now();
-    auto last_wake = start - std::chrono::seconds(1);
-    while (!Outstanding() && std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) {
-      if (std::chrono::steady_clock::now() - last_wake >= std::chrono::milliseconds(2)) {
-        PPCContext call = ctx;
-        call.r1.u64 = ctx.r1.u32 - 0x400;
-        call.r3.u64 = Load32(base, wake);  // the event's handle
-        SetEventHandle(call, base);
-        last_wake = std::chrono::steady_clock::now();
-      }
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
-    // The first ten, then at most one line every 10 s with the count since the last one.
-    const auto now = std::chrono::steady_clock::now();
-    const int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(now - start).count();
-    const uint64_t n = wakes.fetch_add(1, std::memory_order_relaxed) + 1;
-    static std::atomic<int64_t> next_summary{0};
-    static std::atomic<uint64_t> summarized{10};
-    const int64_t now_s = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-    if (n <= 10) {
-      REXLOG_INFO("FFCB: the HUD command buffer the render thread waits for was not submitted: woke "
-                  "the worker, {} after {} us (#512, {} so far)",
-                  Outstanding() ? "submitted" : "still none", us, n);
-      if (n == 10) next_summary.store(now_s + 10, std::memory_order_relaxed);
-    } else if (now_s >= next_summary.load(std::memory_order_relaxed)) {
-      next_summary.store(now_s + 10, std::memory_order_relaxed);
-      const uint64_t before = summarized.exchange(n, std::memory_order_relaxed);
-      REXLOG_INFO("FFCB: woke the HUD command buffer worker {} more times (#512, {} so far)",
-                  n - before, n);
-    }
-  }
+  const uint32_t slot = Load32(base, r + 0x75C);
+  if (slot >= 12) { OriginalFfcbConsume(ctx, base); return; }
+  ConsumeScope scope(r, r + 0x470 + 60 * slot + 28);
   OriginalFfcbConsume(ctx, base);
-  consumed.fetch_add(1, std::memory_order_acq_rel);
+}
+extern "C" REX_FUNC(OriginalSlotWait);
+extern "C" REX_FUNC(RawWait);
+extern "C" REX_FUNC(SetEventHandle);
+extern "C" REX_FUNC(SlotWait) {
+  if (!consuming || ctx.lr != kSlotWaitReturn || ctx.r3.u32 != consuming->event ||
+      ctx.r4.u32 != 0xFFFFFFFF) {
+    OriginalSlotWait(ctx, base);
+    return;
+  }
+  const uint32_t wake = Load32(base, consuming->object + 0x764);
+  if (!wake) { OriginalSlotWait(ctx, base); return; }
+  const uint32_t handle = Load32(base, ctx.r3.u32);
+  const auto start = std::chrono::steady_clock::now();
+  bool woke = false;
+  while (std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) {
+    // RawWait takes the handle, uses a non-alertable relative timeout, and
+    // translates errors as the original boolean wrapper does. Keep its guest
+    // stack writes below the caller's frame, like a separate ABI call.
+    PPCContext call = ctx;
+    call.r1.u64 = ctx.r1.u32 - 0x400;
+    call.r3.u64 = handle;
+    call.r4.u64 = 2;
+    RawWait(call, base);
+    if (call.r3.u32 != 0x102) {
+      // Native boolean wrapper: zero -> true, every other result -> false.
+      // Only timeout permits a wake; errors must not be retried.
+      ctx.r3.u64 = call.r3.u32 == 0;
+      if (woke) LogWake(call.r3.u32 == 0, std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - start).count());
+      return;
+    }
+    call = ctx;
+    call.r1.u64 = ctx.r1.u32 - 0x400;
+    call.r3.u64 = Load32(base, wake);
+    SetEventHandle(call, base);
+    woke = true;
+  }
+  if (woke) LogWake(false, std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - start).count());
+  OriginalSlotWait(ctx, base);
 }
