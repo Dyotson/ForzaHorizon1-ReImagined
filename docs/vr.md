@@ -2032,15 +2032,15 @@ loop: xrPollEvent -> READY: xrBeginSession(STEREO) / STOPPING: xrEndSession / LO
 
 ### Licences
 
-| Project | Licence | Reuse here (MIT) |
+| Project | Licence | Reuse here (GPL-3.0-or-later) |
 |---|---|---|
-| HindsightVR | GPLv2+ | Ideas only |
-| RPCS3 VR fork | GPLv2 | Ideas only |
-| Dolphin | GPLv2+ | Ideas only |
-| PPSSPP | GPL | Ideas only |
-| openRBRVR | MPL-2.0 | File-level copyleft |
+| HindsightVR | GPLv2+ | Code can be used under GPLv3; keep its notices |
+| RPCS3 VR fork | GPLv2 | Ideas only (GPLv2-only is not compatible with GPLv3) |
+| Dolphin | GPLv2+ | Code can be used under GPLv3; keep its notices |
+| PPSSPP | GPL | Check the version first (2 only: ideas only) |
+| openRBRVR | MPL-2.0 | File-level copyleft; MPL-2.0 files can be combined with GPLv3 code, keep their notices |
 | UEVR | No licence id reported by GitHub | Check before reusing |
-| OpenXR-SDK loader | Apache-2.0 | Ship |
+| OpenXR-SDK loader | Apache-2.0 | Ship (Apache-2.0 is compatible with GPLv3) |
 
 ### Sources
 

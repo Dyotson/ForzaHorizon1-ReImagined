@@ -43,6 +43,9 @@ fi
 cp "$ROOT/tools/xcontent_extract.py" "$ROOT/tools/xiso_extract.py" "$ROOT/tools/install_dlc.py" "$DIST/"
 cp "$ROOT"/server/*.py "$DIST/server/"
 cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
+# The GPLv3 section 7 additional permission and the relicensing note, and the server's license.
+cp "$ROOT/NOTICE.md" "$DIST/licenses/NOTICE.txt"
+[ -f "$ROOT/server/LICENSE" ] && cp "$ROOT/server/LICENSE" "$DIST/licenses/forza-live.txt"
 [ -f "$SRC/LICENSE" ] && cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
 [ -f "$SDK/share/licenses/SDL3/LICENSE.txt" ] && cp "$SDK/share/licenses/SDL3/LICENSE.txt" "$DIST/licenses/SDL3.txt"
 # AMD FidelityFX FSR 3 sources compiled into the GPU plugin (SDK patch 0072, MIT)
