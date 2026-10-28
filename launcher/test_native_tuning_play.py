@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
-from forza_launcher import config, game
+from forza_launcher import config, game, tuning_status
 from forza_launcher.ui.pages import PlayPage
 
 
@@ -94,6 +94,34 @@ class TuningPlayTests(unittest.TestCase):
                 self.refresh()
                 self.assertTrue(self.page.tuning_notice.isHidden())
                 self.assertTrue(self.page.tuning_setup.isHidden())
+
+    def test_persisted_reason_is_shown_and_clears_after_success(self):
+        self.cfg.settings["forza_car_tuning"] = True
+        tuning_status.write(self.root, tuning_status.failure(
+            "missing_tools", "This launcher is missing the tuning preparation tool.",
+            "Reinstall the current launcher release, then Build with Title Update 4 selected."))
+        self.refresh()
+        self.assertIn("missing the tuning preparation tool", self.page.tuning_notice.text())
+        self.assertIn("Reinstall", self.page.tuning_notice.text())
+        self.assertTrue(self.page.play.isEnabled())
+        # Disk status is read again by a fresh page, not retained only in memory.
+        another = PlayPage(self.cfg, self.window)
+        try:
+            another.refresh()
+            self.assertIn("missing the tuning preparation tool", another.tuning_notice.text())
+        finally:
+            another.close()
+            another.deleteLater()
+        (self.root / "update-native").mkdir()
+        self.refresh()
+        self.assertTrue(self.page.tuning_notice.isHidden())
+
+    def test_invalid_status_falls_back_to_safe_help(self):
+        self.cfg.settings["forza_car_tuning"] = True
+        (self.root / tuning_status.FILE).write_text('{"schema":1,"reason":[]}', encoding="utf-8")
+        self.refresh()
+        self.assertIn("Title Update 4", self.page.tuning_notice.text())
+        self.assertTrue(self.page.play.isEnabled())
 
 
 if __name__ == "__main__":

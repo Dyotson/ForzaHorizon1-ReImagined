@@ -115,3 +115,14 @@ The rendered B-close/reopen-A/hold/fresh-confirm sequence and a complete
 benchmark run/return remain pending. Earlier timed title navigation did not reach
 Benchmark and is not acceptance evidence. A fresh current host and observed,
 bounded native-input session are required before claiming runtime validation.
+
+### Current-main integration (2026-10-28)
+
+The confirmation fix now integrates main `0ebe0b4`. The standalone benchmark
+suite retains both the TU0/TU4 production-session regressions and main's camera
+preference snapshot/restore test. The production session retains all five FOV
+preferences added on main, along with the current restart and VR input paths.
+All 15 focused Windows CTests pass against the current ReIGlue SDK, including
+the actual production-session implementation compiled for TU0 and TU4. The
+rendered confirmation/run/results/return sequence remains pending; these tests
+do not qualify a game executable or physical-controller behavior.

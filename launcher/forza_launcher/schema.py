@@ -52,6 +52,22 @@ def add(*a, **k):
 
 
 # --- Display ---------------------------------------------------------------------------
+CAMERA_FOVS = (
+    ("forza_chase_near_fov", "Chase near", 48.5),
+    ("forza_chase_far_fov", "Chase far", 58),
+    ("forza_cockpit_fov", "Cockpit", 62),
+    ("forza_hood_fov", "Hood", 66),
+    ("forza_bumper_fov", "Bumper", 53),
+)
+CAMERA_FOV_KEYS = {key for key, _, _ in CAMERA_FOVS}
+for key, label, stock in CAMERA_FOVS:
+    add(key, f"{label} base FOV (vertical degrees)", "Display", "choice", 0,
+        f"Stock preserves the game's camera behavior (normally {stock} vertical degrees). "
+        "Select a base FOV from 40 to 90 vertical degrees. The game's speed widening still "
+        "applies, so the moving view can exceed the selected base. Camera transitions blend "
+        "the adjustment. Ultrawide keeps its wider horizontal view. Disabled during VR head tracking.",
+        "Camera", choices=[(0, f"Stock ({stock} degrees)")] +
+        [(degrees, f"{degrees} degrees") for degrees in range(40, 91)])
 add("frame_rate", "Frame rate", "Display", "fps", 30,
     "30 FPS is the game's default. You can raise it up to 240 FPS without changing the game's "
     "physics speed. Pick a rate or type your own. Match display uses the refresh rate of the monitor "
@@ -101,6 +117,10 @@ add("forza_hud_edges", "Expand HUD to ultrawide edges", "Display", "bool", False
 add("forza_hud_layout", "Customize HUD layout", "Display", "bool", False,
     "Adjust the HUD safe area and position at 16:9 or ultrawide, without changing the camera. "
     "Applies on the next game launch.", "Ultrawide and HUD", restart=True)
+add("forza_minimap_camera", "Camera-facing minimap", "Display", "bool", False,
+    "Rotate the gameplay minimap with where the camera looks instead of the vehicle. "
+    "Also available in the in-game Graphics settings. Requires Title Update 4; "
+    "the full map and VR cockpit keep their native orientation.", "Ultrawide and HUD")
 add("forza_hud_safe_width", "HUD safe width %", "Display", "float", 100.0,
     "Fit the centered 16:9 HUD within this width. The smaller safe-area percentage sets the "
     "uniform scale, keeping gauges and text proportional.", "Ultrawide and HUD", lo=50, hi=100, step=1)
@@ -499,6 +519,13 @@ add("forza_car_tuning", "Native car tuning", "Gameplay", "bool", False,
     "Supports named setups "
     "and tune file export/import. Requires FH1 Title Update 4 resources prepared "
     "by the launcher during a build. Applies on the next game launch.", "Car tuning", restart=True)
+
+add("custom_race", "Custom Race", "Gameplay", "bool", False,
+    "Replay a festival or street race you have already won with your own settings: press "
+    "Select on the event's title card to choose the car class, laps (circuits), opponents "
+    "(1-7) and time of day. Rewards are paid as usual. Offline only: requires Settings > "
+    "Online > Sign in to Xbox LIVE: off. Title Update 4 only. Applies on the next game launch.",
+    "Custom Race", restart=True)
 
 add("skip_startup_movies", "Skip startup videos", "Gameplay", "bool", False,
     "Skips the videos at the start (Microsoft Studios, Dolby, Playground Games, about 45 s) "

@@ -54,6 +54,8 @@
 // (debug/frame_dump.cpp) so the OpenXR thread knows which pose each picture was drawn with.
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
+#include "../platform/camera_fov.h"
+#include "../platform/minimap_heading.h"
 #include "../platform/vr_head_pose_math.h"
 #include "../platform/world_detail.h"
 #include "../platform/xr.h"
@@ -72,6 +74,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+REXCVAR_DECLARE(bool, forza_minimap_camera);
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -435,6 +438,7 @@ uint32_t FirstViewDirector(uint8_t* base) {
   if (!Valid(manager)) return 0;
   return Load32(base, manager + 244 + 8);
 }
+
 }  // namespace
 
 namespace forza::xr {
@@ -503,6 +507,19 @@ extern "C" REX_FUNC(__imp__sub_825A9D20);
 extern "C" REX_FUNC(sub_825A9D20) {
   const uint32_t view = ctx.r3.u32;
   PosedView posed(base, Valid(view) ? Load32(base, view + 8) : 0, "view");
+  // Capture the exact submitted gameplay view, including native look-around
+  // and blends, on its owning thread. Never read that matrix from render.
+  if (REXCVAR_GET(forza_minimap_camera) && !REXCVAR_GET(vr_head_pose_test) &&
+      !forza::xr::CockpitActive() && Valid(view)) {
+    const auto director = Load32(base, view + 8);
+    if (Valid(director) && director == FirstViewDirector(base)) {
+      std::array<float, 16> matrix;
+      for (size_t i = 0; i < matrix.size(); ++i)
+        matrix[i] = LoadFloat(base, director + kViewMatrix + uint32_t(i * 4));
+      forza::minimap::heading.Publish(matrix,
+          forza::camera::camera_world.load(std::memory_order_relaxed), forza::minimap::NowMs());
+    }
+  }
   __imp__sub_825A9D20(ctx, base);
 }
 

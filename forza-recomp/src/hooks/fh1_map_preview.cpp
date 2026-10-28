@@ -2,6 +2,7 @@
 // native map record owns its camera; the gameplay HUD record is never modified.
 // tu_address_map: TU4 addresses
 #include "../platform/fh1_map_preview.h"
+#include "../platform/minimap_camera.h"
 
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
@@ -1026,6 +1027,7 @@ void PrepareMapPass(const PPCContext& context, uint8_t* base, MapPassScope& scop
 }
 } // namespace forza::fh1_map_preview
 extern "C" REX_FUNC(sub_826E22A8) {
+  forza::minimap::MapScope minimap(ctx, base);
   forza::fh1_map_preview::MapPassScope scope;
   forza::fh1_map_preview::PrepareMapPass(ctx, base, scope);
   __imp__sub_826E22A8(ctx, base);

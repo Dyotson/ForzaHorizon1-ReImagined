@@ -56,8 +56,14 @@ class PlayLogFolderTests(unittest.TestCase):
              patch("forza_launcher.ui.window.paths.log_error") as logged:
             MainWindow._start_failed(window, RuntimeError("test launch failure"))
         logged.assert_called_once()
-        window.play.show_message.assert_called_once_with(
-            f"Could not start the game: test launch failure\nLauncher log: {log}", True, keep=True)
+        window.play.show_message.assert_called_once()
+        call = window.play.show_message.call_args
+        self.assertIn("Game could not start", call.args[0])
+        self.assertIn("test launch failure", call.args[0])
+        self.assertIn(f"Launcher log: {log}", call.args[0])
+        self.assertIn("Next:", call.args[0])
+        self.assertEqual(call.args[1], True)
+        self.assertEqual(call.kwargs, {"keep": True})
 
 
 if __name__ == "__main__":

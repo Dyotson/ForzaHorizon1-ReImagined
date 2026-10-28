@@ -574,8 +574,13 @@ time the game uses. On a Deck the busy wait took one of its 8 hardware threads (
 that core, and power from the shared CPU/GPU budget), so that is where the gain should show; a Deck log is
 still needed to tell.
 
-Ideas left (not cheap; the generated code built with FMA behind a CPU check is done, see
-[CPU target x86-64-v3](#cpu-target-x86-64-v3-220-2026-10-21)): cache Vulkan descriptor sets in
+The launcher now selects guarded [x86-64-v3 generated code](#cpu-target-x86-64-v3-220-2026-10-21)
+on supported CPUs (#233). The narrower Linux-only `FORZA_GUEST_FMA` experiment remains off by
+default for manual comparisons with `FORZA_CPU_TARGET=baseline`; see
+[the BC-250 FMA validation plan](bc250-performance.md). Neither change has
+a confirmed BC-250 fps result.
+
+Other ideas left: cache Vulkan descriptor sets in
 `UpdateBindings` (~15% of the command processor); a futex wake instead of the 50 us sleeps (done for the swap
 waits, see [Low-end CPUs](#low-end-cpus-45-263-268-2026-10-22); the word they poll is not the read pointer
 write-back but one the GPU writes while it executes the ring).
