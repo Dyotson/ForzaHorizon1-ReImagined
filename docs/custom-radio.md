@@ -10,7 +10,8 @@ FFmpeg with libmp3lame is required. Choose its executable with **Locate FFmpeg**
 or make it available on PATH. The launcher does not download an encoder or music.
 Songs are converted locally to 48 kHz stereo MP3 at 160 kb/s. Each song is limited
 to 30 minutes; each station accepts at most 200 songs, subject to the game's 2 GB
-bank limit. Logos fit within 210 × 100 pixels without cropping.
+bank limit. Logos fit without cropping in the native logo slot, with transparent
+space below the artwork to keep track titles readable.
 
 Settings stay in launcher.json and generated assets stay in
 `<data>/mods/reimagined-radio/`, outside the versioned installation. Updates do
@@ -48,7 +49,23 @@ Focused tests cover preservation of original bank bytes, empty-build round trips
 malformed bank rejection, cancellation, MP3 framing, Unicode string rebuilding,
 configuration restart, restore behavior and logo tile round trips.
 
-Runtime qualification is pending: actual music playback, station/HUD names and
-logos, station switching, DJ timing, base/TU4 behavior and restore/restart. Source
-and file-format tests do not establish those behaviors. Keep this change draft
-until those checks pass.
+Windows/Vulkan TU4 in-game checks completed on 2026-10-28 using copied test saves
+and two generated test tones. Replacement playback was measured from the audio
+output at 523 Hz and 1046 Hz. Add mode retained stock songs; station switching,
+custom HUD logos and song/artist labels, pause/resume, and restart were exercised.
+The custom station name appears as the artist for imported songs. The localized
+station-option strings are covered by file-format tests; the stock Audio page
+does not expose a station picker.
+
+The first runtime check exposed a texture-pitch mismatch and artwork overlapping
+track labels. The descriptor now matches the tiled row pitch, and large artwork
+leaves the native text area transparent. Both fixes were checked in-game.
+Restoring all stations through the build backend and restarting the same copied
+save restored stock Pulse/Bass Arena logos and music; output measurement detected
+neither custom test tone. Source game/profile files were unchanged. Test sessions
+ended with bounded supervisor stops, not a qualification of normal game shutdown.
+
+Coverage is Windows/Vulkan with TU4. TU0, Linux, macOS, other audio devices and
+long-playlist soak testing remain untested. Original DJ dialogue was observed
+over custom playback; these short checks do not qualify every DJ transition.
+Generated assets, recordings and the encoder remain private test inputs.

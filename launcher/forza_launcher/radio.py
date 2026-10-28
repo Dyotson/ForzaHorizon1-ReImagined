@@ -269,11 +269,14 @@ def logo_xds(filename, width=210, height=100):
     image = reader.read()
     if image.isNull():
         raise RadioError("Logo could not be decoded. Choose a PNG image.")
-    image = image.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    # The native HUD draws track text over the bottom of its 210x100 logo slot.
+    # Keep custom opaque artwork above those labels, as the stock artwork does.
+    art_height = 72 if (width, height) == (210, 100) else height
+    image = image.scaled(width, art_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     canvas = QImage(width, height, QImage.Format_RGBA8888)
     canvas.fill(Qt.transparent)
     painter = QPainter(canvas)
-    painter.drawImage((width - image.width()) // 2, (height - image.height()) // 2, image)
+    painter.drawImage((width - image.width()) // 2, (art_height - image.height()) // 2, image)
     painter.end()
     raw = bytes(canvas.constBits())
     pitch = (width + 31) & ~31
@@ -286,8 +289,11 @@ def logo_xds(filename, width=210, height=100):
             if offset + 4 > len(pixels):
                 raise RadioError("Logo tile size exceeded its texture allocation.")
             pixels[offset:offset + 4] = bytes((a, r, g, b))
+    # TextureFetch word 0 bits 22..30 store row pitch in 32-texel units
+    # (SDK TextureInfo::Prepare: fetch.pitch << 5). It must match the tiler.
+    fetch0 = (0x820000FE & ~(0x1FF << 22)) | ((pitch // 32) << 22)
     header = struct.pack(">13I", 3, 1, 0, 0, 0, 0xFFFF0000, 0xFFFF0000,
-                         0x820000FE, 0x86, ((height - 1) << 13) | (width - 1), 0xC14, 0, 0xA00)
+                         fetch0, 0x86, ((height - 1) << 13) | (width - 1), 0xC14, 0, 0xA00)
     return header + pixels
 
 

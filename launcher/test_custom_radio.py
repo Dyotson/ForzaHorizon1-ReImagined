@@ -146,10 +146,16 @@ class RadioTests(unittest.TestCase):
         from xdc_decode import tiled_offset
         self.assertEqual(struct.unpack_from(">I", xds, 32)[0] & 63, 6)
         self.assertEqual(struct.unpack_from(">I", xds, 36)[0], (99 << 13) | 209)
-        for x, y in ((0, 0), (209, 99), (109, 53)):
-            offset = 52 + tiled_offset(x, y, 224)
+        pitch = ((struct.unpack_from(">I", xds, 28)[0] >> 22) & 0x1FF) * 32
+        self.assertEqual(pitch, 224)
+        for x, y in ((105, 10), (105, 53)):
+            offset = 52 + tiled_offset(x, y, pitch)
             a, r, g, b = xds[offset:offset + 4]
             self.assertEqual((a, r, g, b), (211, 23, 67, 149))
+        for x in (0, 105, 209):
+            self.assertEqual(xds[52 + tiled_offset(x, 99, pitch)], 0)
+        small = radio.logo_xds(p, 64, 32)
+        self.assertEqual(((struct.unpack_from(">I", small, 28)[0] >> 22) & 0x1FF) * 32, 64)
 
     def test_native_xml_extensions_survive_output(self):
         data = b'<RadioSystem><RadioStation name="Radio1" 3dPanLevel="1"><MusicTrack artist="Chase &amp; Status & Guest"/></RadioStation></RadioSystem>'
