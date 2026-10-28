@@ -16,7 +16,7 @@ Last updated: 2026-10-28. Every change to this policy is a change to this file, 
 - Separately, on Windows with an NVIDIA graphics card, the first Play downloads NVIDIA's DLSS runtime from GitHub, and actions you start (Build, Make HD pack) download tools. See "Downloads".
 - Settings > Online > Server > "Offline" stops all contact with game servers.
 - When you play online, the server receives your gamertag, a random player ID (your XUID) and your IP addresses. Other players see your gamertag and XUID.
-- Traffic to the game server is not encrypted. That includes chat messages and your friends key.
+- Traffic to the game server is not encrypted. That includes chat messages. Your keys are not sent: the game and the launcher sign their requests with your signing key, and the server keeps only its public key. The one exception is your friends key from older versions, which the game sends once to the public server to move your account to the signing key.
 - The public server keeps most records with no time limit. Its status page and leaderboards are public.
 
 ## Who is involved
@@ -45,7 +45,7 @@ Their privacy policies:
 ### Shader-list sharing (on by default when you play online)
 
 - What: after each game session, the launcher sends the server descriptions of the graphics pipelines the game built: shader hashes, render settings, how to rebuild each shader from your own game files, and which kind of render-target path your graphics card supports. Each entry is sent once; shader_share.json on your PC records what was sent. No game code or data, file paths, gamertag or logs are sent.
-- The request headers carry your XUID and your friends key, so that the server counts each player once. The request uses plain HTTP, so it is not encrypted.
+- The request headers carry your XUID and a signature made with your signing key (not the key itself), so that the server counts each player once. The request uses plain HTTP, so it is not encrypted.
 - Where: the server you play on (the public server or your own). Nothing is sent in "Offline" or "This PC" mode.
 - What the server keeps: for each entry, a hashed form of your XUID, with no time limit, and counters per day that are cleared every day. It publishes only entries that several players reported, without player IDs.
 - Turn off: Settings > Online > "Share shader list". "Offline" and "This PC" also stop it.
@@ -53,7 +53,7 @@ Their privacy policies:
 
 ### Co-op campaign results (on by default when you play online)
 
-- What: after each session on "Public server" or "My own server", the launcher asks the server for your pending co-op campaign results, then confirms the ones it handled. It does this only when you have a save and a Forza Live identity on this PC. These requests carry your XUID and friends key over plain HTTP. The answer can include the gamertag of the player who hosted the event.
+- What: after each session on "Public server" or "My own server", the launcher asks the server for your pending co-op campaign results, then confirms the ones it handled. It does this only when you have a save and a Forza Live identity on this PC. These requests carry your XUID and a signature made with your signing key (not the key itself) over plain HTTP. The answer can include the gamertag of the player who hosted the event.
 - Turn off: Settings > Online > "Co-op campaign results". "Offline" and "This PC" also stop it.
 
 ### Downloads
@@ -91,7 +91,7 @@ While a server is set, the game sends it the following every few seconds, from t
 - your XUID, a random player ID created on your PC the first time you play online;
 - your gamertag. If you have not set one in Settings > Profile > Gamertag, the game makes one: your computer's login name where it can read one (on Linux and the Steam Deck it can), otherwise "Driver" and four digits;
 - your PC's local network (LAN) IP address and the game's network port;
-- your room name and your friends key.
+- your room name, your public key and a signature made with your signing key (not the key itself), which proves to the server that the XUID is yours. If the public server still has your account under the friends key of an older version, the game also sends that friends key once, to move the account to your signing key.
 
 The server also sees the IP address you connect from. On the public server you connect through playit.gg's tunnel, so playit.gg sees it. These messages are sent even when "Sign in to Xbox LIVE" is off. Only "Offline" stops them.
 
@@ -103,7 +103,7 @@ While "Sign in to Xbox LIVE" is on (the default), the game also:
 - sends the chat messages you write, and the list of sessions you are in;
 - in Horizon World free roam, sends your car's in-game position, heading and speed four times a second, for head-to-head challenges (Settings > Online > "Head-to-head challenges" turns this off);
 - sends an invite only when you send one ("Show game invites" controls whether invites from others are shown to you);
-- uses the server's title services over plain HTTP: sign-in (gamertag and career level), profile progress (XP, credits, race history), race scores and lap times, Rivals ghost replays, photos you upload or share (image, preview, title, description), car clubs and the cars shared in them, auctions and gifts, and Message Center checks. Each of these requests carries your XUID and friends key.
+- uses the server's title services over plain HTTP: sign-in (gamertag and career level), profile progress (XP, credits, race history), race scores and lap times, Rivals ghost replays, photos you upload or share (image, preview, title, description), car clubs and the cars shared in them, auctions and gifts, and Message Center checks. Each of these requests carries your XUID and a signature made with your signing key (not the key itself).
 
 None of this traffic is encrypted.
 
@@ -144,19 +144,19 @@ Your IP address and other players:
   - saves, the built game, downloaded tools and shader caches;
   - forza.log, the game's log;
   - shader_share.json, which records the shader entries already sent;
-  - live_identity.txt, which holds your XUID, gamertag and friends key;
+  - live_identity.txt, which holds your XUID, gamertag, friends key and signing key;
   - with "This PC": the local server's data in live_server, including its server.log and its player and friends records;
   - with "Continue a Xenia Canary save": a copy of that save in a xenia-<XUID> folder.
 - In the Flatpak, both folders are inside ~/.var/app/io.github.dyotson.ForzaHorizon1ReImagined.
 - Uninstalling keeps all of these files. Delete the folders yourself to remove them.
 - forza.log can record your LAN IP address, your public IP address (on a server you connect to directly), the server's address, your country and language settings, other players' IP addresses, gamertags and XUIDs, and the chat messages you send and receive. Check it before you attach it to a public issue.
-- Keep live_identity.txt private. Its friends key is the secret that proves to the server that your friends list is yours.
+- Keep live_identity.txt private. Its signing key (and, for older versions, its friends key) is the secret that proves to the server that your friends list is yours.
 
 ## What the public server keeps, and for how long
 
 Records are kept by XUID.
 - Player record: gamertag, last sign-in time, number of sign-ins, career level and progress, credits, and details of your last race. No time limit.
-- Friends: your gamertag, when you were last seen, a hash of your friends key, and your friends, friend requests, blocks and chat mutes. If you have no friends, requests or blocks, the record is removed when the server restarts more than 180 days after you were last seen. Otherwise there is no time limit.
+- Friends: your gamertag, when you were last seen, the public key of your signing key (until your game has moved your account to it: a hash of your friends key), and your friends, friend requests, blocks and chat mutes. If you have no friends, requests or blocks, the record is removed when the server restarts more than 180 days after you were last seen. Otherwise there is no time limit.
 - Scores and Rivals ghosts: your best score on each leaderboard, with gamertag, date, car, class and assists, and your best ghost replay. A new best replaces the old one. No time limit. The maintainer may use the driven lines in ghost replays to draw roads on the map on the project website; no names or player IDs are shown there.
 - Skill stats: rating and number of games, with gamertag. No time limit.
 - Photos you upload: image, preview, title, description and time, up to 100 per player. You can remove shared photos in the game, and the oldest can be replaced. No time limit.
@@ -164,7 +164,7 @@ Records are kept by XUID.
 - Message Center notifications: removed when you clear them. After 30 days they are no longer shown, but they are not deleted.
 - Co-op campaign results: removed once they are handled, or after 30 days.
 - Shader lists: see "Shader-list sharing" above.
-- Community events, only if an organizer enrolled you: your XUID, a hash of your friends key, attendance times and rewards. No time limit.
+- Community events, only if an organizer enrolled you: your XUID, your public key (or a hash of your friends key), attendance times and rewards. No time limit.
 - Chat: the last 200 messages are held in memory, where only the server's administrator can read them. They are lost when the server restarts and are not written to disk. Mutes and bans set by the administrator are stored until they expire.
 - Connection state: for the players online at that moment, the server writes their addresses and ports, session token, XUID, gamertag, room and presence to a file every 30 seconds, so that a restart does not drop them. The file is overwritten, not deleted.
 - Backups: the server may keep one previous copy of each of its data files.
@@ -201,4 +201,4 @@ To have your records on the public server removed, see "Contact".
 
 ## Contact
 
-For questions or corrections, or to ask for your records on the public server to be removed, open an issue at https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues. Issues are public. Include your gamertag, but never post your friends key or the contents of live_identity.txt.
+For questions or corrections, or to ask for your records on the public server to be removed, open an issue at https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/issues. Issues are public. Include your gamertag, but never post your friends key, your signing key or the contents of live_identity.txt.

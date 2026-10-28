@@ -103,8 +103,9 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   what you can do: send a friend request, accept, decline, take a request back, remove,
   block, unblock. A request or an accepted one shows a short notice. A blocked player can't
   invite you or send you requests (they are dropped without telling them). Your friends
-  are tied to `friends_key` in `live_identity.txt`: keep that file (it also holds your
-  XUID) to keep your friends on another computer. With a server older than this, everyone
+  are tied to `signing_seed` (and, for older versions, `friends_key`) in
+  `live_identity.txt`: keep that file private (it also holds your XUID), and copy it to keep
+  your friends on another computer. With a server older than this, everyone
   online counts as a friend, as before.
   **Text chat (#92):** `F9` (`live_chat_key`) opens the friends screen on its **Chat** tab
   (with a controller: hold the left stick press, then LB to Chat; a friend's "Send a

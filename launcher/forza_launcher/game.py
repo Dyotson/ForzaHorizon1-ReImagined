@@ -905,10 +905,14 @@ class Session:
                 data_dir.mkdir(parents=True, exist_ok=True)
                 # Popen gives the child its own handle. Close our copy immediately, including
                 # when starting the server fails; otherwise Windows keeps server.log locked.
+                # Its name for signed requests, and, as only this PC uses it, an XUID bound there
+                # by a game before them goes to this game's public key (#515).
+                server_env = {**cleanenv.clean_environment(), "FORZA_REBIND_LEGACY": "1",
+                              "FORZA_SERVER_NAMES": LOCAL_SERVER.split(":")[0]}
                 with open(data_dir / "server.log", "ab") as server_log:
                     self.server = subprocess.Popen(plan.server_argv, stdout=server_log,
                                                    stderr=subprocess.STDOUT, creationflags=flags,
-                                                   stdin=subprocess.DEVNULL, env=cleanenv.clean_environment())
+                                                   stdin=subprocess.DEVNULL, env=server_env)
                 self.log("Started a local Forza Live server")
             self._start_game({})
         except BaseException:
