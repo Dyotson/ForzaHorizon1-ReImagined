@@ -73,6 +73,11 @@ def main():
         copy(REPO / "server" / "playground_rounds.xml", out / "server" / "playground_rounds.xml")
     copy(Path(a.overlay), out / "sdk-overlay" / "rexglue-overlay-linux-amd64.tar.gz")
     copy(REPO / "LICENSE", out / "licenses" / "ForzaHorizon1-ReImagined.txt")
+    # The GPLv3 section 7 additional permission and the relicensing note travel with the license, and so
+    # does the license of the Forza Live server (AGPL-3.0-or-later), whose files are packaged above.
+    copy(REPO / "NOTICE.md", out / "licenses" / "NOTICE.txt")
+    if (REPO / "server" / "LICENSE").is_file():
+        copy(REPO / "server" / "LICENSE", out / "licenses" / "forza-live.txt")
     if a.sdk_license:
         copy(Path(a.sdk_license), out / "licenses" / "rexglue-sdk.txt")
     print(out)
