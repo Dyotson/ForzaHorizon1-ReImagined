@@ -53,7 +53,7 @@ implementations were inspected during the provenance audit.
 | ReIGlue `src/ui/vulkan/vulkan_presenter.cpp`, `include/rex/ui/vulkan/presenter.h` | Separate SDK PR #5 replaces image ownership, format selection, composition/output pass construction and coverage/output recording. Stable interface declarations, cache invalidation and shutdown calls remain for final provenance review. The game pin still uses the prior implementation. |
 | ReIGlue `src/ui/shaders/hdr_output.ps.glsl`, `hdr_ui_mask.ps.glsl` and their `vulkan_spirv/*` headers | Replacement shaders and regenerated binaries exist on the separate ReIGlue branch; the pinned SDK still carries the adaptation. |
 | ReIGlue `src/graphics/shaders/hdr_hud_mask.cs.glsl` and generated header | Review found the first replacement retained the original threshold/dilation policy. A subsequent per-pixel compositing lower-bound design replaces it; the pinned SDK still carries the adaptation. |
-| ReIGlue Vulkan command processor and render-target cache HDR paths | SDK PR #5 replaces compute construction, descriptor recording and image allocations, including reused VR allocation/sharpening helpers. The extracted capture decision still implements the inherited policy, and `CopyHdrScene` remains inherited. Neither is cleared by a rename or passing tests. |
+| ReIGlue Vulkan command processor and render-target cache HDR paths | SDK PR #5 replaces compute construction, descriptor recording and image allocations, including reused VR allocation/sharpening helpers. Checkpoint `8c97dd5` replaces `CopyHdrScene` with a typed, validated exact copy and tracked image transitions; source review accepted the substantive replacement. The capture decision still implements the inherited policy. Capture timing, source selection and rendering remain unresolved. |
 | `forza-recomp/src/hooks/ai_catchup.cpp`, `src/platform/ai_catchup.h` | Review found substantive carryover in the original ordered config neutralization despite different hooks and traces. That policy is removed in the new query-isolation draft; historical research credit and notices remain. Config offsets retained for tracing are game-layout facts, not a clearance claim. |
 | `docs/launcher.md`, `launcher/forza_launcher/save_editor.py`, `saves.py` | Research citation retained. Initial commit `ad75b8b` records the save manager/editor. A later audit also inspected upstream `tools/fh1-profile.py`; its depth/name limits were shared with the first parser. The subsequent iterative design removes those policies. Save management's staging/journal/hash flow differs from upstream. The crypto/key-derivation provenance audit is separate and is not cleared by parser tests or by absence of matching lines. |
 | macOS tuning/performance comparison documents | Historical measurements and citations retained. They are not runtime dependencies. |
@@ -102,7 +102,9 @@ This checkpoint also linked and passed DLL loader/ABI checks. Independent review
 then identified substantive carryover in the curve, calibration, coverage,
 capture and AI policies. The subsequent HDR redesign and AI query-isolation
 mechanism change those policies and require new qualification; the inherited
-scene trigger and copy remain unresolved. The new SDK design is recorded in
+scene trigger remains unresolved. The later exact-copy replacement passed its
+private build and loader/ABI checks at `8c97dd5`, without GPU qualification.
+The new SDK design is recorded in
 `docs/reiglue/independent-hdr-design.md` in PR #5. No existing notices are removed.
 
 The source comparison is evidence about particular implementations, not an
@@ -111,3 +113,15 @@ are not removed to conceal provenance. Historical branches, published binaries
 and the current SDK pin retain their original source and required notices.
 The active ReGPU branch also inherits its game's existing presentation code;
 its newly added backend was the part checked for additional Pinyon imports.
+
+On 2026-10-28, work resumed at unchanged remote heads `3d18dd6` (game #493)
+and `6ef569d` (ReIGlue #5). The next SDK source commit, `342686e`, replaces the
+hot-toggle predicate with a request/commit protocol: one setting snapshot drives
+connection attempts; a fully successful connection acknowledges that request
+even for SDR fallback; the next changed request triggers capability selection.
+Existing retirement, thread exclusion and reconnect failure handling remain
+dependencies. Derivation and the bounded private build plan are recorded in the
+SDK design document. The presenter passes syntax checking; request, format and
+exact-copy contracts pass. No new DLL link or game/GPU run occurred. The game SDK
+pin, required notices and remaining capture/integration/crypto limitations are
+unchanged. Runtime qualification still requires a separate resource grant.
