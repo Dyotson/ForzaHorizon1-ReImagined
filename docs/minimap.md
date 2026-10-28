@@ -26,3 +26,7 @@ and opened and closed the full map before resuming gameplay. Full-map and previe
 exclusion also pass the native adapter fixtures; the new pause-menu preview was
 not separately exercised in that stock-pause runtime check. Hardware coverage is
 limited to the Windows/Vulkan test host; other rendering platforms remain untested.
+
+The native HUD hook validates guest address ranges without querying OS page
+protections. This avoids per-frame `/proc/self/maps` scans on Linux kernels
+without `PROCMAP_QUERY`; adapter tests require zero protection queries.

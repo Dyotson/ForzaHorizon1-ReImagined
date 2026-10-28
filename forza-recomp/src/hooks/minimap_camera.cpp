@@ -6,7 +6,6 @@
 #include "../platform/guest_memory.h"
 #include "../platform/xr.h"
 #include <rex/cvar.h>
-#include <rex/memory/utils.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
@@ -21,18 +20,12 @@ REXCVAR_DECLARE(bool, vr_head_pose_test);
 namespace forza::minimap {
 #if FORZA_TU4
 namespace {
-uint8_t* Memory(uint8_t* base, uint32_t address, size_t count, bool write = false) {
-  if (!base || address < 0x100000 || uint64_t(address) + count > 0xF0000000ull) return nullptr;
-  auto* pointer = GuestPtr(base, address);
-  for (size_t offset = 0; offset < count;) {
-    size_t region = 0;
-    rex::memory::PageAccess access;
-    if (!rex::memory::QueryProtect(pointer + offset, region, access) ||
-        (int(access) & (write ? 3 : 1)) != (write ? 3 : 1)) return nullptr;
-    const auto page = rex::memory::page_size();
-    offset += std::min(count - offset, page - (uintptr_t(pointer + offset) % page));
-  }
-  return pointer;
+uint8_t* Memory(uint8_t* base, uint32_t address, size_t count) {
+  // The native map pass owns these objects in the fixed guest mapping. Match
+  // camera_fov's range guard; OS protection queries can parse /proc/self/maps.
+  if (!base || address < 0x00100000 || address >= 0xF0000000 ||
+      count > 0xF0000000 - address) return nullptr;
+  return GuestPtr(base, address);
 }
 uint32_t Word(uint8_t* base, uint32_t address) {
   const auto* p = Memory(base, address, 4);
@@ -59,7 +52,7 @@ MapScope::MapScope(const PPCContext& context, uint8_t* base) {
     if (record) return; // ambiguous HUD ownership
     record = candidate;
   }
-  if (!record || !Memory(base, record, 0x28, true) || !GuestPtr(base, record + 0x1C)[0]) return;
+  if (!record || !Memory(base, record, 0x28) || !GuestPtr(base, record + 0x1C)[0]) return;
   const auto world = camera::camera_world.load(std::memory_order_relaxed);
   const auto* world_memory = Memory(base, world, 0x2C);
   const auto sample = REXCVAR_GET(forza_minimap_camera) && !REXCVAR_GET(vr_head_pose_test) &&
@@ -67,7 +60,7 @@ MapScope::MapScope(const PPCContext& context, uint8_t* base) {
       ? heading.Read(world, NowMs()) : std::nullopt;
   if (!sample && previous_record != record) return;
   const auto map = Word(base, record + 0x20), map_camera = Word(base, record + 0x24);
-  if (!Memory(base, map, 8) || !Word(base, map + 4) || !Memory(base, map_camera, 0x150, true)) return;
+  if (!Memory(base, map, 8) || !Word(base, map + 4) || !Memory(base, map_camera, 0x150)) return;
   base_ = base; camera_ = map_camera;
   std::copy_n(GuestPtr(base, camera_ + 0x20), direction_.size(), direction_.begin());
   std::copy_n(GuestPtr(base, camera_ + 0x50), matrices_.size(), matrices_.begin());
@@ -98,7 +91,7 @@ MapScope::MapScope(const PPCContext& context, uint8_t* base) {
 }
 MapScope::~MapScope() {
   if (!camera_) return;
-  if (!Memory(base_, camera_, 0x150, true) ||
+  if (!Memory(base_, camera_, 0x150) ||
       std::memcmp(GuestPtr(base_, camera_ + 0x20), applied_direction_.data(), applied_direction_.size()) ||
       std::memcmp(GuestPtr(base_, camera_ + 0x50), applied_matrices_.data(), applied_matrices_.size())) return;
   std::copy(direction_.begin(), direction_.end(), GuestPtr(base_, camera_ + 0x20));

@@ -13,8 +13,8 @@
 #include <cstring>
 namespace {
 std::array<uint8_t, 0x20000> memory{};
-bool active_vr = false, writable = true;
-unsigned reads = 0, calls = 0;
+bool active_vr = false;
+unsigned reads = 0, calls = 0, protection_queries = 0;
 float drawn_x = 0, drawn_z = 0;
 void Check(bool ok) { if (!ok) std::abort(); }
 constexpr uint32_t service = 0x101000, entries = 0x102000, record = 0x103000,
@@ -33,7 +33,8 @@ bool forza_minimap_camera = false, vr_head_pose_test = false;
 namespace forza::xr { bool CockpitActive() { return active_vr; } }
 namespace rex::memory {
 bool FixtureProtect(const void*, size_t& region, PageAccess& access) {
-  region = 4096; access = PageAccess(writable ? 3 : 1); return true;
+  ++protection_queries;
+  region = 4096; access = PageAccess(3); return true;
 }
 size_t FixturePageSize() { return 4096; }
 }
@@ -74,7 +75,7 @@ void Rebuild(PPCContext& ctx, uint8_t* base) {
   ctx.r3.u64 = 0x12345678;
 }
 void Setup() {
-  memory.fill(0); writable = true; active_vr = false; calls = 0;
+  memory.fill(0); active_vr = false; calls = 0;
   forza::minimap::previous_record = 0;
   Store(0x833F0410, service); Store(service + 0x74, entries); Store(service + 0x78, entries + 4);
   Store(entries, record); Store(record + 0x20, map); Store(record + 0x24, camera);
@@ -93,6 +94,11 @@ auto FixtureResolve(uint32_t address) -> decltype(ResolveIndirectFunction(addres
 }
 int main() {
   using forza::minimap::MapScope;
+  Check(!forza::minimap::Memory(nullptr, service, 4));
+  Check(!forza::minimap::Memory(memory.data(), 0xFFFFF, 4));
+  Check(!forza::minimap::Memory(memory.data(), 0xF0000000, 0));
+  Check(!forza::minimap::Memory(memory.data(), 0xEFFFFFFC, 8));
+  Check(!forza::minimap::Memory(memory.data(), service, size_t(-1)));
   Setup(); PPCContext ctx{}; ctx.r1.u64 = 0x2222; ctx.r3.u64 = service;
   auto before_context = ctx;
   reads = 0;
@@ -114,7 +120,7 @@ int main() {
     if (reason == 1) active_vr = true;
     if (reason == 2) Store(record, 2); // pause-preview/full-map record
     if (reason == 3) ctx.r4.u64 = 1; // not phase zero
-    if (reason == 4) writable = false;
+    if (reason == 4) Store(record + 0x24, 0xEFFFFFF0); // camera extent outside guest range
     if (reason == 5) forza::minimap::heading.Publish({}, world, forza::minimap::NowMs());
     { MapScope scope(ctx, memory.data()); } Check(!calls);
     ctx.r4.u64 = 0;
@@ -122,4 +128,5 @@ int main() {
   Setup(); forza_minimap_camera = true;
   { MapScope scope(ctx, memory.data()); At(camera + 0x50)[0] = 0x77; }
   Check(At(camera + 0x50)[0] == 0x77); // a newer native write wins
+  Check(protection_queries == 0); // no OS memory-map queries in any adapter path
 }
