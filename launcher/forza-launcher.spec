@@ -4,6 +4,7 @@
 # files beside it. The Forza Live server runs inside this executable (--live-server), so
 # the stdlib modules it imports are collected as hidden imports.
 import ast
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -89,11 +90,26 @@ if sys.platform == "win32":
     a.binaries = [entry for entry in a.binaries
                   if Path(entry[0]).name.lower() not in {"icu.dll", "icuuc.dll", "icuin.dll"}]
 pyz = PYZ(a.pure)
+# The Windows version resource (company, product, description, versions, original file name) of
+# forza-launcher.exe, generated from forza_launcher/_version.py (#482, #354). Windows only: the Linux
+# build has no version resource and does not run packaging/windows_version_info.py.
+version_file = None
+if sys.platform == "win32":
+    _wvi_spec = importlib.util.spec_from_file_location("windows_version_info", root / "packaging" / "windows_version_info.py")
+    _wvi = importlib.util.module_from_spec(_wvi_spec)
+    _wvi_spec.loader.exec_module(_wvi)
+    _version_ns = {}
+    exec((root / "forza_launcher" / "_version.py").read_text(encoding="utf-8"), _version_ns)
+    _work = Path(globals().get("workpath") or root / "build")
+    _work.mkdir(parents=True, exist_ok=True)
+    version_file = _work / "forza-launcher-version.txt"
+    version_file.write_text(_wvi.version_file_text(_version_ns["__version__"]), encoding="utf-8", newline="\n")
 exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="forza-launcher",
     console=False,
     icon=str(repo / "forza-recomp" / "resources" / "forza.ico") if sys.platform == "win32" else None,
+    version=str(version_file) if version_file else None,
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="forza-launcher")

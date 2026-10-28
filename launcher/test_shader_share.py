@@ -243,8 +243,10 @@ class SettingTests(Base):
         s = next(s for s in schema.S if s.key == "share_shader_list")
         self.assertIs(s.default, True)
         self.assertEqual(s.group, "Online")
-        for words in ("shader hashes", "render settings", "no game data", "nothing personal"):
+        # What the request carries is said (#497): not "nothing personal", since it sends the XUID and key.
+        for words in ("shader hashes", "render settings", "no game data", "player id and friends key"):
             self.assertIn(words, s.help.lower().replace("\n", " "))
+        self.assertNotIn("nothing personal", s.help.lower())
         self.assertTrue(self.cfg.settings["share_shader_list"])
         self.cfg.settings["share_shader_list"] = False
         self.assertNotIn("share_shader_list", render_toml(self.cfg))

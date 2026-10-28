@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, errors, game, installer, paths, pins,
-               shader_prebuild, vr)
+from .. import (GITHUB_URL, PRIVACY_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, errors, game,
+               installer, paths, pins, shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -1185,6 +1185,7 @@ class AboutPage(QWidget):
         lay.addWidget(self.updates)
         for text, url in (("Project page and source", GITHUB_URL),
                           ("Releases", GITHUB_URL + "/releases/latest"),
+                          ("Privacy policy", PRIVACY_URL),
                           ("Report a problem", GITHUB_URL + "/issues")):
             b = QPushButton(text)
             b.setObjectName("link")

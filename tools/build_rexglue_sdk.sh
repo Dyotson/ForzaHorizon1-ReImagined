@@ -38,13 +38,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightly-20261002-bd833a2a)
 # Includes the merged cockpit instrument raster fix (#419, ReIGlue PR #2),
-# controller disconnect reporting (#3), and digital keyboard taps (#4).
-# Temporarily (#473): ReIGlue branch issue-473, main 7d17ea51 plus 0400 (the small code model on
-# Linux), until it is merged there.
+# controller disconnect reporting (#3), digital keyboard taps (#4), 0364: asynchronous pipelines
+# built across frame ends (#167, ReIGlue PR #7), and 0400: the small code model on Linux (#473,
+# ReIGlue PR #10).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
-REIGLUE_COMMIT=d58b4055cfaecf5bd462b2e048677dbf68d087aa
+REIGLUE_COMMIT=74085fdc17545c0c58036d2761a140bba3346d49  # merged ReIGlue #10 (on top of #7)
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"

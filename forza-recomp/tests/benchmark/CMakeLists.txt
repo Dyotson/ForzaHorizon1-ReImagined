@@ -20,6 +20,21 @@ target_include_directories(input_caps_test PRIVATE ../../src)
 target_link_libraries(input_caps_test PRIVATE rex::runtime)
 
 enable_testing()
+foreach(version 0 4)
+    add_executable(benchmark_session_tu${version}_test ../benchmark_session_test.cpp)
+    target_compile_definitions(benchmark_session_tu${version}_test PRIVATE FORZA_TITLE_UPDATE=${version})
+    target_link_libraries(benchmark_session_tu${version}_test PRIVATE rex::runtime)
+    if(MSVC)
+        target_compile_options(benchmark_session_tu${version}_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(benchmark_session_tu${version}_test PRIVATE -UNDEBUG)
+    endif()
+    foreach(scenario confirmation success success-dlc failure invalid)
+        add_test(NAME benchmark_session_tu${version}_${scenario}
+            COMMAND benchmark_session_tu${version}_test ${scenario}
+            "${CMAKE_CURRENT_BINARY_DIR}/session-tu${version}-${scenario}")
+    endforeach()
+endforeach()
 foreach(test title_menu benchmark_stats benchmark_profile input_caps benchmark_camera_settings)
     # The existing standalone tests use assert, including in Release builds.
     if(MSVC)

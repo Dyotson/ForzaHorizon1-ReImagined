@@ -30,7 +30,8 @@ finish-args:
   - --filesystem=/run/media:ro
   - --filesystem=/mnt:ro
   - --talk-name=org.freedesktop.ScreenSaver
-  # Local Rich Presence, only when the player enables it. No Discord account access.
+  # Local Rich Presence (on by default; Settings > Online > "Share activity on Discord" and the
+  # first-run "Online features" question turn it off, PRIVACY.md). No Discord account access.
   - --filesystem=xdg-run/discord-ipc-0
   - --filesystem=xdg-run/app/com.discordapp.Discord
   - --filesystem=xdg-run/app/com.discordapp.DiscordCanary
