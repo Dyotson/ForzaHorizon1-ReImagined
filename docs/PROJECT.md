@@ -82,6 +82,10 @@ launcher, so the build takes ReIGlue's CMake helpers; a build folder configured 
 as its prefix keeps the nightly's (`-mcmodel=large`) until it is configured again with
 `-Drexglue_DIR=$HOME/rexglue-sdk-patched-forza/0.10.0.24/linux-amd64/lib/cmake/rexglue`:
 
+The launcher refreshes a development SDK and its configure stamp when the overlay's CMake
+helper changes. Older overlays without that helper remain usable with the nightly's large
+code model; rebuild the overlay to use the new policy.
+
 ```sh
 export PATH=/home/linuxbrew/.linuxbrew/bin:$PATH
 cmake -S forza-recomp -B forza-recomp/out/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release \

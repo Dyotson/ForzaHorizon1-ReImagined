@@ -612,6 +612,15 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
     return tools
 
 
+def sdk_identity(overlay: Path | None, dev: Path | None) -> str:
+    ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    if overlay is None and dev is not None:
+        helper = dev / "lib/cmake/rexglue/rexglue_helpers.cmake"
+        if helper.is_file():
+            ident += "|cmake=" + hashlib.sha256(helper.read_bytes()).hexdigest()
+    return ident
+
+
 def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
     """The patched SDK prefix: the pinned nightly plus this project's patched plugin, runtime and
     codegen tool (Linux), or the project's own SDK build (Windows). Returns the prefix."""
@@ -619,7 +628,7 @@ def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
     marker = prefix / ".forza-sdk-ready"
     overlay = sdk_overlay_archive()
     dev = dev_sdk_overlay()
-    ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    ident = sdk_identity(overlay, dev)
     if marker.is_file() and marker.read_text() == ident:
         rep.log(f"SDK ready: {prefix}")
         return prefix
@@ -1078,7 +1087,7 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     bdir = src / "out" / "build" / PLAT
     overlay = sdk_overlay_archive()
     dev = dev_sdk_overlay()
-    sdk_ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    sdk_ident = sdk_identity(overlay, dev)
     stamp = configure_stamp(tools, sdk_ident, tu is not None)
 
     # A tree CMake configured for another version of the launcher (a build that stopped, then an
