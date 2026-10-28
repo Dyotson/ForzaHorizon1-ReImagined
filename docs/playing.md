@@ -612,6 +612,15 @@ road at most 0.12 and the engine 0.075 of the motor's force, where classic at th
 style is read when the game opens the wheel: restart after changing it. Please tell us which values feel right
 on your wheel (#4).
 
+**The same vibration at every frame rate (#467).** The game sets its rumble once a frame, and every change used to
+go to the wheel: about 60 updates of the vibration a second at a 60 fps cap and two to four times as many at
+higher caps. A wheel that starts its sine again at every update (DirectInput does when it cannot change a playing
+effect) then plays a buzz at the frame rate instead of the 40 and 71 Hz vibration, which a Simagic owner felt
+"through the entire rig" at 240 fps. The vibration is now updated about 30 times a second at every cap, each time
+with the average strength (root mean square) since the last update, so it carries the same energy a second
+whatever the frame rate (SDK 0403). The log's 10 s force feedback summary shows it: `..., 1203 rumbles, 309
+vibration updates (31 a second, up to 12%), ...` (the game's rumbles, then what the wheel got).
+
 **Minimum force (#303).** The game's steering force follows the car: light cars give a light wheel, and a heavy
 one (a WRX STI on a Simagic EVO Pro in #4) several times more. `wheel_ffb_min_strength` (launcher: Minimum force,
 0 by default) lifts the weak end, SDK patch 0131: a steering force weaker than this percentage of the full force
