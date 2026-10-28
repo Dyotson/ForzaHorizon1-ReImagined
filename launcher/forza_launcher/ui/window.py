@@ -363,6 +363,10 @@ class MainWindow(QMainWindow):
                     pass
         applied = online_features.take_installer_choice(self.cfg, new)
         ask = online_features.question_due(self.cfg, new)
+        if applied:
+            # These pages were created before the installer choice was applied.
+            self.settings.rebuild()
+            self.about.updates.automatic.setChecked(bool(self.cfg.d["check_updates"]))
         if new or applied:
             try:
                 self.cfg.save()

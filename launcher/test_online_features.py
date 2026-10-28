@@ -261,6 +261,8 @@ class FirstRunWindowTests(Base):
         self.assertEqual(asked, [])
         self.assertEqual(features(self.cfg), ALL_OFF)
         self.assertEqual(Config(self.cfg.path).online["mode"], "offline")
+        self.assertTrue(win.settings.radios["offline"].isChecked())
+        self.assertFalse(win.about.updates.automatic.isChecked())
 
     def test_the_dialog_closes_with_the_choice_it_shows(self):
         from forza_launcher.ui.online_features import OnlineFeaturesDialog
