@@ -3,7 +3,8 @@
 `tools/render_test.py` plays a few fixed scenes in the TU4 game, takes screenshots and compares
 them with stored baselines. Run it by hand before a release and on pull requests that change
 rendering (the SDK overlay, shaders, graphics settings and their defaults). It is Linux only
-and needs the game build, a GPU, Pillow and a profile save; nothing of it runs in CI.
+and needs the game build, a GPU, Pillow and a profile save. CI runs only the synthetic image,
+filesystem and fake clock-worker tests; it never starts the game or opens guest memory.
 
 A check is one game session: 2 min 36 s on the test machine, comparison included, plus about
 36 s for each #512 hang it recovers from. Recording baselines plays the session three times
@@ -130,8 +131,10 @@ timing differences between runs.
   `*(world + 232)`, whose first word points back at the world. The clock is a float of seconds
   after midnight at `+10488`; the game's rate is at `+10492` (28 game seconds per second at
   noon, 40 at night) and is set by the game every frame, so it cannot be zeroed. The whole
-  chain is checked before every write, so a world being torn down is never written to. The
-  clock does not exist on the title screen and keeps its address through the race.
+  chain is checked before every write. This is a best-effort check: there is no native lifetime
+  lock, so the game can still free the object between the check and the write during loading.
+  The clock does not exist on the title screen. A worker failure invalidates the session and
+  produces an ERROR (exit 2 for check/probe), rather than a passing comparison.
 - **Game time, not loading time.** The chase and cockpit cameras sway by a few pixels over
   several seconds even with the car standing, and a 2-pixel shift of foliage is a large SSIM
   change: frames 2 s apart in one run differ by 0.1 to 0.5 dssim. The sway follows game time,
@@ -158,12 +161,19 @@ including captures whose name is not a scene, in `~/.cache/forza-render-tests/ru
 steps like `capture probe_x shots=10 interval=1` to look at a stretch of the game, pick the
 moment, add the scene to `scenes.toml`, then record. `trace on` logs the clock every 20 ms to
 the run folder. Steps and scene keys are described at the top of `scenes.toml`.
-`tools/render_test.py compare A.png B.png --scene NAME --out diff.png` compares two images with
+`tools/render_test.py compare A.png B.png --scene NAME --out /tmp/render-diff.png` compares two images with
 a scene's masks. Keep the scenes in the one session: every boot is another chance of the #512
 hang. Menu presses are 0.1 s long: the default 0.3 s of the input FIFO moves two menu rows.
 
 ## Limits
 
+- Run folders have unique names and are created exclusively. Cleanup keeps the four newest
+  finished runs marked as owned by this tool, preserving active and unmarked directories.
+  Recording replaces only marked save/baseline directories. For baselines recorded by an
+  older version without ownership markers, choose a fresh baseline folder and record again.
+  Source saves and output folders must not overlap; symlinks and Windows reparse paths are
+  rejected. Keep these private directories free of concurrent edits while the tool runs.
+  An explicit `--report` must name a new directory; image outputs must stay outside the repo.
 - Baselines belong to one machine (GPU, driver), build and save; another machine needs its own.
 - Only the guest output is captured (before the presenter's upscaling filter and the HDR
   output), at resolution scale 1.

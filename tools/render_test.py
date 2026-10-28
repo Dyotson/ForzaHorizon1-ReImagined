@@ -23,15 +23,18 @@ import errno
 import hashlib
 import html
 import json
+import math
 import os
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
 import threading
 import time
 import tomllib
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -60,6 +63,73 @@ class Hang(Exception):
     """The game stopped presenting, exited, or stopped reading input: kill it, retry once."""
 
 
+OWNER = ".forza-render-test.json"
+
+
+def is_reparse(path):
+    try:
+        return path.is_symlink() or bool(getattr(path.lstat(), "st_file_attributes", 0)
+                                        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+    except FileNotFoundError:
+        return False
+
+
+def plain_path(path):
+    """Reject aliases before resolving a path used for copying or deleting data."""
+    path = Path(path).expanduser().absolute()
+    if any(is_reparse(p) for p in (path, *path.parents)):
+        raise ValueError(f"refusing a symlink or reparse path: {path}")
+    return path.resolve()
+
+
+def owned(path, kind):
+    if is_reparse(path) or is_reparse(path / OWNER):
+        return False
+    try:
+        return json.loads((path / OWNER).read_text()) == {
+            "tool": "forza-render-test", "version": 1, "kind": kind}
+    except (OSError, ValueError):
+        return False
+
+
+def mark_owned(path, kind):
+    (path / OWNER).write_text(json.dumps({"tool": "forza-render-test", "version": 1,
+                                         "kind": kind}))
+
+
+def remove_owned(path, kind, parent):
+    path, parent = plain_path(path), plain_path(parent)
+    if path.parent != parent or not owned(path, kind):
+        raise ValueError(f"refusing to replace an unowned {kind} directory: {path}")
+    if any(is_reparse(p) for p in path.rglob("*")):
+        raise ValueError(f"refusing to remove a tree containing aliases: {path}")
+    shutil.rmtree(path)
+
+
+def disjoint(a, b):
+    a, b = plain_path(a), plain_path(b)
+    if a.is_relative_to(b) or b.is_relative_to(a):
+        raise ValueError(f"paths must not overlap: {a} and {b}")
+
+
+def profile_source(path):
+    source = plain_path(path)
+    if source.name != TITLE:
+        source = plain_path(source / TITLE)
+    if not (source / "00000001").is_dir():
+        raise ValueError(f"{source} is not a Forza Horizon save folder ({TITLE}/00000001)")
+    if any(is_reparse(p) for p in source.rglob("*")):
+        raise ValueError(f"refusing a save containing symlinks or reparse points: {source}")
+    return source
+
+
+def output_tree(path):
+    path = plain_path(path)
+    if path.exists() and any(is_reparse(p) for p in path.rglob("*")):
+        raise ValueError(f"refusing an output tree containing aliases: {path}")
+    return path
+
+
 # ---------------------------------------------------------------------------------------------
 # Guest memory: the time of day (Title Update 4 addresses)
 
@@ -81,7 +151,8 @@ class Guest:
 
     def put_f32(self, addr, value):
         self.f.seek(self.BASE + addr)
-        self.f.write(struct.pack(">f", value))
+        if self.f.write(struct.pack(">f", value)) != 4:
+            raise OSError("short guest clock write")
 
     def close(self):
         self.f.close()
@@ -110,7 +181,7 @@ def clock_address(g):
         addr = tod + 10488
         value = g.f32(addr)
         return addr if 0.0 <= value <= 86400.0 else None
-    except OSError:
+    except (OSError, struct.error):
         return None
 
 
@@ -123,40 +194,46 @@ class ClockHold(threading.Thread):
         self.g = Guest(pid)
         self.target = None
         self.addr = None
+        self.error = None
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.trace = None  # (file, t0): "trace" steps log the clock every 20 ms
 
     def set(self, seconds):
+        if seconds is not None and (not math.isfinite(seconds) or not 0 <= seconds <= 86400):
+            raise ValueError("clock target must be finite seconds between 0 and 86400")
         with self.lock:
             self.target = seconds
+            self.addr = None
 
     def run(self):
         last_trace = 0.0
-        while not self.stop.is_set():
-            with self.lock:
-                target = self.target
-            if self.trace and time.monotonic() - last_trace >= 0.02:
-                last_trace = time.monotonic()
-                a = clock_address(self.g)
-                try:
-                    v = self.g.f32(a) if a is not None else -1.0
-                except OSError:
-                    v = -1.0
-                self.trace[0].write(f"{last_trace - self.trace[1]:.3f} {v:.2f}\n")
-            if target is None:
-                time.sleep(0.005 if self.trace else 0.05)
-                continue
-            # The whole chain is checked before every write: a world being torn down (loading)
-            # must never get a float written into freed memory.
-            self.addr = clock_address(self.g)
-            if self.addr is not None:
-                try:
-                    self.g.put_f32(self.addr, target)
-                except OSError:
-                    self.addr = None
-            time.sleep(0.015)
-        self.g.close()
+        try:
+            while not self.stop.is_set():
+                with self.lock:
+                    target = self.target
+                    if self.trace and time.monotonic() - last_trace >= 0.02:
+                        last_trace = time.monotonic()
+                        a = clock_address(self.g)
+                        try:
+                            v = self.g.f32(a) if a is not None else -1.0
+                        except (OSError, struct.error):
+                            v = -1.0
+                        self.trace[0].write(f"{last_trace - self.trace[1]:.3f} {v:.2f}\n")
+                    # Best-effort validation, not a native object lifetime lock: the game can
+                    # still free this object between the pointer reads and the write.
+                    self.addr = clock_address(self.g) if target is not None else None
+                    if self.addr is not None:
+                        self.g.put_f32(self.addr, target)
+                self.stop.wait(0.015 if target is not None else 0.005 if self.trace else 0.05)
+        except Exception as e:
+            self.error = e
+        finally:
+            self.addr = None
+            try:
+                self.g.close()
+            except Exception as e:
+                self.error = self.error or e
 
 
 # ---------------------------------------------------------------------------------------------
@@ -207,20 +284,28 @@ class Session:
         self.burst = int(cfg["game"].get("burst", 1))
         self.pool = ThreadPoolExecutor(max_workers=2)
         self.converting = []
+        self.created = False
 
     # -- start / stop
     def start(self):
+        work = output_tree(self.args.work)
+        d = plain_path(self.dir)
+        runs = plain_path(work / "runs")
+        if d.parent != runs:
+            raise ValueError(f"run must be a direct child of {runs}")
+        source = profile_source(self.save_dir)
+        disjoint(source, self.args.work)
+        runs.mkdir(parents=True, exist_ok=True)
+        d.mkdir()  # Exclusive: even a same-name unfinished run must never be replaced.
+        self.dir, self.created = d, True
+        mark_owned(d, "run-active")
         avail = int(next(l.split()[1] for l in open("/proc/meminfo") if l.startswith("MemAvailable"))) // 1048576
         if os.environ.get("FORZA_IGNORE_MEM") != "1" and avail < 10:
-            sys.exit(f"only {avail} GB of memory available; not starting (FORZA_IGNORE_MEM=1 overrides)")
-        d = self.dir
-        if d.exists():
-            shutil.rmtree(d)
+            raise Hang(f"only {avail} GB of memory available; not starting (FORZA_IGNORE_MEM=1 overrides)")
         ud = d / "ud"
-        shutil.copytree(self.save_dir, ud / PROFILE_DIR / TITLE)
+        shutil.copytree(source, ud / PROFILE_DIR / TITLE)
         for sub in ("config", "data", "state"):
             (d / "xdg" / sub).mkdir(parents=True)
-        work = self.args.work
         (work / "cache").mkdir(parents=True, exist_ok=True)
         (work / "xdg-cache").mkdir(parents=True, exist_ok=True)
         os.mkfifo(d / "in.fifo")
@@ -267,14 +352,26 @@ class Session:
         log(f"started the game (pid {self.proc.pid}) in {d}")
 
     def stop(self):
-        for job in self.converting:
-            try:
+        try:
+            self._stop_game()
+            for job in self.converting:
                 job.result()
-            except OSError as e:
-                log(f"a capture could not be converted: {e}")
-        self.pool.shutdown()
+            if self.clock and self.clock.error:
+                raise Hang(f"clock worker failed: {self.clock.error}")
+        finally:
+            self.pool.shutdown()
+            if (self.created and owned(self.dir, "run-active")
+                    and (self.proc is None or self.proc.poll() is not None)
+                    and (self.clock is None or not self.clock.is_alive())):
+                mark_owned(plain_path(self.dir), "run-finished")
+
+    def _stop_game(self):
         if self.clock:
             self.clock.stop.set()
+            if self.clock.ident is not None:
+                self.clock.join()  # No more guest-memory writes before process cleanup.
+            else:
+                self.clock.g.close()
         if self.proc and self.proc.poll() is None:
             self.proc.send_signal(signal.SIGINT)
             try:
@@ -295,12 +392,15 @@ class Session:
                     pass
             if not mapped:
                 os.remove(self.shm)
-        fifo = self.dir / "in.fifo"
-        if fifo.exists():
-            fifo.unlink()
+        if self.created:
+            fifo = plain_path(self.dir / "in.fifo")
+            if fifo.exists():
+                fifo.unlink()
 
     # -- watching
     def check(self):
+        if self.clock and (self.clock.error or not self.clock.is_alive()):
+            raise Hang(f"clock worker stopped: {self.clock.error or 'unexpected exit'}")
         if self.proc.poll() is not None:
             raise Hang(f"the game exited (status {self.proc.returncode})")
         try:
@@ -468,22 +568,28 @@ def play(cfg, args, wanted, label, save_dir, xuid):
             continue
         for attempt in range(1, args.retries + 2):
             bench_lock_wait(args.lock_wait)
-            run_dir = args.work / "runs" / f"{label}-{sess['name']}-{attempt}"
+            run_dir = args.work / "runs" / f"{label}-{sess['name']}-{attempt}-{uuid.uuid4().hex}"
             s = Session(cfg, args, run_dir, save_dir, xuid)
             t0 = time.monotonic()
+            failure = None
             try:
                 s.start()
                 s.run_steps(sess["steps"], wanted)
+            except Exception as e:
+                failure = e
+            finally:
+                try:
+                    s.stop()
+                except Exception as e:
+                    failure = failure or e
+            if failure is None:
                 shots.update(s.shots)
                 log(f"session {sess['name']} done in {time.monotonic() - t0:.0f} s")
                 break
-            except Hang as e:
-                log(f"session {sess['name']} attempt {attempt}: {e}; killed")
-                if attempt == args.retries + 1:
-                    for n in set(names) & wanted:
-                        errors[n] = f"session {sess['name']} failed {attempt} times ({e}); log in {run_dir}"
-            finally:
-                s.stop()
+            log(f"session {sess['name']} attempt {attempt}: {failure}")
+            if attempt == args.retries + 1:
+                for n in set(names) & wanted:
+                    errors[n] = f"session {sess['name']} failed {attempt} times ({failure}); log in {run_dir}"
     return shots, errors
 
 
@@ -635,20 +741,30 @@ def provenance(args):
 
 def cmd_record(cfg, args):
     names = selected(cfg, args)
-    base = args.baselines
-    save = base / "save"
+    base = output_tree(args.baselines)
+    output_tree(args.work)
+    disjoint(base, args.work)
+    save = plain_path(base / "save")
+    source = profile_source(args.save) if args.save else None
+    # Validate every replacement before touching either a source save or stored baselines.
+    if source:
+        disjoint(source, base)
+        disjoint(source, args.work)
+    for name, kind in [("save", "save")] + [(n, "baseline") for n in names]:
+        if Path(name).name != name or name in (".", "..", "save") and kind != "save":
+            raise ValueError(f"invalid scene directory: {name}")
+        dest = plain_path(base / name)
+        if dest.exists() and (kind != "save" or source) and not owned(dest, kind):
+            raise ValueError(f"refusing to replace unowned {kind} directory: {dest}")
     if args.save:
-        src = Path(args.save)
-        if src.name != TITLE:
-            src = src / TITLE
-        if not (src / "00000001").is_dir():
-            sys.exit(f"{src} is not a Forza Horizon save folder ({TITLE}/00000001)")
         if not args.xuid:
             sys.exit("--save needs --xuid (the profile's XUID, as tools/play.sh --xenia uses)")
         if save.exists():
-            shutil.rmtree(save)
-        shutil.copytree(src, save / TITLE)
-        (save / "save.json").write_text(json.dumps({"xuid": args.xuid, "source": str(src)}, indent=1))
+            remove_owned(save, "save", base)
+        save.mkdir(parents=True)
+        mark_owned(save, "save")
+        shutil.copytree(source, save / TITLE)
+        (save / "save.json").write_text(json.dumps({"xuid": args.xuid, "source": str(source)}, indent=1))
     if not (save / "save.json").exists():
         sys.exit(f"no save in {save}: pass --save DIR --xuid XUID once (docs/render-tests.md)")
     xuid = json.loads((save / "save.json").read_text())["xuid"]
@@ -666,8 +782,9 @@ def cmd_record(cfg, args):
         scene = cfg["scenes"][name]
         d = base / name
         if d.exists():
-            shutil.rmtree(d)
+            remove_owned(d, "baseline", base)
         d.mkdir(parents=True)
+        mark_owned(d, "baseline")
         files = []
         for i, r in enumerate(runs):
             files.append([])
@@ -711,8 +828,8 @@ def cmd_check(cfg, args):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     t0 = time.monotonic()
     shots, errors = play(cfg, args, names, f"{stamp}-check", save / TITLE, xuid)
-    out = Path(args.report) if args.report else args.work / "reports" / stamp
-    out.mkdir(parents=True, exist_ok=True)
+    out = plain_path(args.report if args.report else args.work / "reports" / f"{stamp}-{uuid.uuid4().hex}")
+    out.mkdir(parents=True)  # A report is a new directory, never an existing tree to overwrite.
     rows = []
     for name in sorted(names):
         scene = cfg["scenes"][name]
@@ -786,22 +903,24 @@ def cmd_probe(cfg, args):
     if args.save:
         if not args.xuid:
             sys.exit("--save needs --xuid (the profile's XUID)")
-        src = Path(args.save)
-        save, xuid = (src if src.name == TITLE else src / TITLE), args.xuid
+        save, xuid = profile_source(args.save), args.xuid
     else:
         save = args.baselines / "save" / TITLE
         xuid = json.loads((args.baselines / "save" / "save.json").read_text())["xuid"]
     stamp = time.strftime("%Y%m%d-%H%M%S")
+    failed = False
     for sess in cfg["session"]:
         if args.session and sess["name"] != args.session:
             continue
         names = {s.split()[1] for s in sess["steps"] if s.split()[0] == "capture"}
         one = dict(cfg, session=[sess])
         shots, errors = play(one, args, names, f"{stamp}-probe", save, xuid)
+        failed |= bool(errors)
         for err in sorted(set(errors.values())):
             print(err)
         for name, paths in shots.items():
             print(f"{name}: {len(paths)} frames, {paths[0].parent}/{name}_*.png")
+    return 2 if failed else 0
 
 
 def cmd_compare(cfg, args):
@@ -813,10 +932,12 @@ def cmd_compare(cfg, args):
 
 
 def prune_runs(work):
-    """Keeps the four newest run folders (logs and raw shots of the last attempts)."""
-    runs = sorted((work / "runs").glob("*"), key=lambda p: p.stat().st_mtime)
+    """Keep the four newest finished, owned runs; never prune active or unowned data."""
+    root = plain_path(plain_path(work) / "runs")
+    runs = sorted((p for p in root.glob("*") if p.is_dir() and owned(p, "run-finished")),
+                  key=lambda p: p.stat().st_mtime)
     for d in runs[:-4]:
-        shutil.rmtree(d, ignore_errors=True)
+        remove_owned(d, "run-finished", root)
 
 
 def main():
@@ -859,12 +980,26 @@ def main():
     args = p.parse_args()
     cfg = load_cfg()
     if args.cmd == "compare":
+        if args.out:
+            args.out = plain_path(args.out)
+            if args.out.is_relative_to(ROOT):
+                sys.exit("diff images must live outside the repository")
         return cmd_compare(cfg, args)
     for k in ("baselines", "work", "build", "sdk", "game_data", "update_data"):
-        setattr(args, k, getattr(args, k).expanduser().resolve())
-    report = Path(getattr(args, "report", None) or "/").expanduser().resolve()
+        setattr(args, k, plain_path(getattr(args, k)))
+    args.baselines, args.work = output_tree(args.baselines), output_tree(args.work)
+    report = plain_path(getattr(args, "report", None) or args.work / "reports")
     if any(p.is_relative_to(ROOT) for p in (args.baselines, args.work, report)):
         sys.exit("baselines, run folders and reports must live outside the repository (game images)")
+    disjoint(args.baselines, args.work)
+    disjoint(args.baselines, report)
+    if getattr(args, "report", None):
+        disjoint(args.work, report)
+        args.report = str(report)
+    if getattr(args, "save", None):
+        source = profile_source(args.save)
+        for dest in (args.baselines, args.work, report):
+            disjoint(source, dest)
     if not (args.build / "forza").exists():
         sys.exit(f"no game in {args.build} (--build; the TU4 build, docs/PROJECT.md)")
     if args.cmd == "probe":
