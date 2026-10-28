@@ -2,8 +2,8 @@
 
 This is an implementation and provenance record, not a declaration that the
 project is free of Pinyon Shift code. The BSD notice and packaging remain because
-the HDR implementation, SDK dependency and historical patch copies still require
-review and replacement. The BSD-3-Clause terms require preserving the copyright,
+the HDR implementation, SDK dependency and possible reused source still require
+review and replacement. Three obsolete archive copies have been removed. The BSD-3-Clause terms require preserving the copyright,
 conditions and disclaimer in source distributions and reproducing them with
 binary distributions; they do not require relicensing this project's own code.
 
@@ -40,13 +40,13 @@ These replacements were written from the existing interfaces and documented
 behavior. This is not a claim of a segregated clean-room process: the previous
 implementations were inspected during the provenance audit.
 
-## Remaining covered or unresolved material
+## Removed archives and remaining covered or unresolved material
 
 | Location | Status |
 | --- | --- |
-| `patches/rexglue-sdk/0063-native-ultrawide-and-hud.patch` | Historical source still includes the old HUD/view presentation implementation. ReIGlue has the live implementation. Retain notice until obsolete covered source is removed. |
-| `patches/rexglue-sdk/0082-spirv-apple-color-shader-contraction.patch` | Historical copy of the old shader-builder adaptation. Live ReIGlue replacement uses a completed-module pass. |
-| `patches/rexglue-sdk/0091-hdr-scrgb-presenter.patch` | Contains adapted HDR presenter and shaders, including generated SPIR-V. Still retained and covered. |
+| `patches/rexglue-sdk/0063-native-ultrawide-and-hud.patch` | Removed from the obsolete archive. It is not consumed by current builds; historical Git revisions retain the original notices. |
+| `patches/rexglue-sdk/0082-spirv-apple-color-shader-contraction.patch` | Removed from the obsolete archive. Live ReIGlue replacement uses a completed-module pass. |
+| `patches/rexglue-sdk/0091-hdr-scrgb-presenter.patch` | Removed from the obsolete archive, including its embedded generated SPIR-V. The live SDK still contains remaining covered integration. |
 | ReIGlue `src/ui/vulkan/vulkan_presenter.cpp`, `include/rex/ui/vulkan/presenter.h` | HDR stand-in images, output pass, swapchain selection and resource lifecycle derive from ShiftGlue. Not cleared by replacing shader code alone. |
 | ReIGlue `src/ui/shaders/hdr_output.ps.glsl`, `hdr_ui_mask.ps.glsl` and their `vulkan_spirv/*` headers | Replacement shaders and regenerated binaries exist on the separate ReIGlue branch; the pinned SDK still carries the adaptation. |
 | ReIGlue `src/graphics/shaders/hdr_hud_mask.cs.glsl` and generated header | A shared-tile replacement exists on the separate ReIGlue branch; the pinned SDK still carries the adaptation. |
