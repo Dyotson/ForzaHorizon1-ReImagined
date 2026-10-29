@@ -10,6 +10,7 @@
 #include "../platform/native_car_tuning_menu.h"
 #include "../platform/native_pause_layout.h"
 #include "../platform/native_pause_pages.h"
+#include "../platform/native_pause_dialog.h"
 #include "../platform/native_pause_assets.h"
 #include "../platform/fh1_pause_actions.h"
 #include "../platform/fh1_current_car.h"
@@ -1097,18 +1098,9 @@ bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
 }
 menu::PauseDialogOutcome BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
   using Outcome=menu::PauseDialogOutcome;
-  if(!Owns(ctx.r3.u32)||!state.exit_dialog||
-     !fh1_pause_actions::MatchesDialog(base,ctx.r3.u32,*state.exit_dialog,ctx.r4.u32,ctx.r5.u32))
-    return Outcome::Ignored;
-  // Difficulty and marketplace children need not return UI4PopupResults.
-  // The common native handler owns their results; this adapter reads no choice.
-  const bool returns=menu::NativePauseDialogReturns(state.exit_dialog->id);
-  if (!returns && (!ctx.r6.u32 || Read(base,ctx.r6.u32)!=0x82033168)) return Outcome::Ignored;
-  const auto outcome=returns ? Outcome::Cancel :
-      menu::NativePauseDialogOutcome(state.exit_dialog->id,Read(base,ctx.r6.u32+12));
+  if(!Owns(ctx.r3.u32))return Outcome::Ignored;
+  const auto outcome=native_pause_dialog::Before(ctx,base,state.screen,state.exit_dialog);
   if(outcome!=Outcome::Leave)return outcome;
-  if(!fh1_pause_actions::HasRequiredExitCallback(base,ctx.r3.u32,state.exit_dialog->id,
-                                                Read(base,ctx.r6.u32+12))) return Outcome::Cancel;
   // The original result handler ends the online activity and invokes done.
   // Release the composition before that transition can load gameplay UI.
   return_bookmark.reset();
@@ -1119,23 +1111,14 @@ menu::PauseDialogOutcome BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
 void AfterExitDialog(PPCContext& ctx,uint8_t* base,uint32_t screen,
                      menu::PauseDialogOutcome outcome,bool close_child) {
   if (!Owns(screen) || outcome==menu::PauseDialogOutcome::Ignored) return;
-  if (outcome==menu::PauseDialogOutcome::Restart) {
-    // 827E5CA8 checks the native restart gate before setting +468. A rejected
-    // restart closes the popup without leaving pause; retain its composition.
-    if (GuestPtr(base,screen+468)[0]) {
-      return_bookmark.reset();offline_cars::ClearReload(base);
-      Native ui(ctx,base);if(ui.scratch)Release(ui,true);
-      return;
-    }
-    outcome=menu::PauseDialogOutcome::Cancel;
+  const auto completion=native_pause_dialog::After(ctx,base,screen,outcome,close_child);
+  if (completion.next) state.exit_dialog=completion.next;
+  if (completion.effect==native_pause_dialog::Effect::Release) {
+    return_bookmark.reset();offline_cars::ClearReload(base);
+    Native ui(ctx,base);if(ui.scratch)Release(ui,true);
+  } else if (completion.effect==native_pause_dialog::Effect::Restore) {
+    Page(ctx,base,screen,true);
   }
-  // A difficulty/marketplace choice may replace the dialog with another
-  // native child. Adopt that request before considering a parent restore.
-  if (const auto next=fh1_pause_actions::QueuedDialog(ctx,base,screen)) {
-    state.exit_dialog=next;
-    return;
-  }
-  if (close_child && outcome==menu::PauseDialogOutcome::Cancel) Page(ctx,base,screen,true);
 }
 void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (screen != state.screen) return;

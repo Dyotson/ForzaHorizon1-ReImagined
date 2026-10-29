@@ -98,7 +98,9 @@ Focused source tests exercise the actual native dispatch adapter for all 20
 native IDs; rejected missing, disabled, duplicate and malformed models; preserved
 guest bytes and PPC caller registers; denied Club guard with/without a prompt;
 accepted child request IDs/parameter identity and wrong-parent/stale-result
-rejection; contextual labels; absent/disabled DLC rows; Rally difficulty;
+rejection; the production Before/After result lifecycle with keep-open flags,
+replacement content prompts, stale callbacks, accepted/rejected restarts and
+the delayed Difficulty delegate; contextual labels; absent/disabled DLC rows; Rally difficulty;
 modal choice distinctions; spatial navigation and tab
 overflow. Existing car access/reload tests remain covered. Source-disabled TU0
 and TU4 builds and the enabled TU4 scene translation unit compile locally.
