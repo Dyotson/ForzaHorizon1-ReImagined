@@ -41,6 +41,8 @@
 // Everything else goes to the SDK. FORZA_NETTRACE=1 logs every XMsg call (as net.cpp
 // did before) and what we answered. Message layouts follow the Xenia netplay fork
 // (AdrianCassar/xenia-canary, BSD), see RecompiledHaloReach's docs/online_plan.md.
+// Parts that follow Xenia: Copyright (c) 2022, Ben Vanik and Xenia project contributors,
+// BSD 3-Clause License (https://github.com/xenia-project/xenia/blob/master/LICENSE).
 
 #include "../platform/guest_memory.h"
 #include "../platform/sdk_import.h"
