@@ -149,3 +149,14 @@ The SDK records exact hashes and limits in
 `docs/reiglue/validation/2026-10-28-hdr-off-smoke.json`. Source profile/cache,
 shared game data and private runtime inputs were unchanged; Job and full game
 process enumeration were empty on closure. Required notices and SDK pin remain.
+
+On 2026-10-29, the companion SDK working tree adds a narrow connection-status
+replacement after the request policy. Surface capability remains private during
+construction; one atomic observation is published only after all connection
+resources succeed, and retirement clears both capability and active status.
+The new status and existing request contracts pass, as does the production
+presenter syntax check. The SDK records commands, source hashes and limits in
+`docs/reiglue/validation/2026-10-29-hdr-status-source.json`. No production object,
+DLL link or GPU session qualifies this additional source change. Scene acquisition,
+resource lifetime and the other listed provenance gates remain open. The game SDK
+pin and all required notices remain unchanged.
