@@ -1072,6 +1072,8 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
         if not (src / manifest).is_file():
             raise BuildError("These project sources have no Title Update 4 support (forza_manifest_tu4.toml).")
     cmake_extra.append("-DFORZA_TITLE_UPDATE=" + ("4" if tu is not None else "0"))
+    # The build the game names to the Forza Live server (X-Forza-Build, kept with its leaderboard rows).
+    cmake_extra.append("-DFORZA_BUILD_ID=" + __version__)
     rep.log("building " + ("with Title Update 4 (" + manifest + ")" if tu is not None else "the base game"))
     target = cpu_target()
     cmake_extra.append("-DFORZA_CPU_TARGET=" + target)

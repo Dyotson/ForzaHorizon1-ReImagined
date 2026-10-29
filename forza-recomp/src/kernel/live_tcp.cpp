@@ -9,7 +9,8 @@
 // codes, and connections to the Forza Live server's address sent to its HTTP port
 // (forza::LiveServerHttp), whatever LSP port the game picked. Requests on those connections
 // carry our Live identity's friends key (lsp_request_header.h), which tells the server the
-// call is this player's own.
+// call is this player's own, and the build (X-Forza-Build), which the server keeps with each
+// leaderboard row so a bad build's rows can be found (#517).
 
 #include "live_tcp.h"
 
@@ -31,6 +32,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using forza::GuestPtr;
@@ -62,8 +64,9 @@ void Store32(uint8_t* p, uint32_t v) {
 
 std::mutex mutex;
 std::unordered_map<uint32_t, sock::Handle> fds;  // guest handle -> host socket
-// Connections to the title servers: each request gets the X-Friends-Key line, and what the
-// socket has not taken yet waits in the stream (lsp_request_header.h LspTitleStream).
+// Connections to the title servers: each request gets the X-Friends-Key and X-Forza-Build
+// lines (the stream inserts them as one, named by the first), and what the socket has not
+// taken yet waits in the stream (lsp_request_header.h LspTitleStream).
 struct Title {
   explicit Title(std::string line) : stream(std::move(line)) {}
   std::mutex mutex;
@@ -89,6 +92,17 @@ std::string FriendsKeyLine() {
     line += hex;
   }
   return line + "\r\n";
+}
+
+#ifndef FORZA_BUILD_ID
+#define FORZA_BUILD_ID "dev"
+#endif
+
+// The build line: CMake's FORZA_BUILD_ID (the launcher's version, or git-<commit> for a
+// source build) and the title update, "0.2.0/tu4".
+std::string BuildLine() {
+  return std::string("X-Forza-Build: ") + FORZA_BUILD_ID + "/tu" +
+         std::to_string(FORZA_TITLE_UPDATE) + "\r\n";
 }
 
 // The socket write a title stream uses: bytes written, or -1 (would_block when it is full;
@@ -167,11 +181,9 @@ int32_t Connect(uint32_t handle, uint32_t ip, uint16_t port) {
                   http_port);
     }
     port = http_port;
-    const std::string line = FriendsKeyLine();
-    if (!line.empty()) {
-      std::lock_guard<std::mutex> lock(mutex);
-      titles[handle] = std::make_shared<Title>(line);
-    }
+    auto title = std::make_shared<Title>(FriendsKeyLine() + BuildLine());
+    std::lock_guard<std::mutex> lock(mutex);
+    titles[handle] = std::move(title);
   }
   sockaddr_in a{};
   a.sin_family = AF_INET;
