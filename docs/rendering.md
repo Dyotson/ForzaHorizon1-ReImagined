@@ -244,6 +244,13 @@ driver; it needs a capture from an affected machine first to see which draw.
   `RDC_CAP=cap.rdc RDC_OUT=DIR qrenderdoc --python tools/rdc_float_scan.py`: the first draw that
   leaves NaN, Inf or more than 31.875 in each float target, with texel positions. For a blown-out
   object, take RenderDoc's pixel history on it from there.
+- **RenderDoc startup (#511):** the SDK connects only to a RenderDoc library that is already
+  loaded into the process. Installing RenderDoc alone does not activate it; launch through
+  RenderDoc when a capture is intended. ReIGlue 0407 uses a counted `RTLD_NOLOAD` probe on
+  Linux and `GetModuleHandleExW` on Windows; macOS capture remains unsupported. The small
+  real-library fixture passes on Linux and Windows, including reference lifetime and final
+  unload. This is loader validation, not a new interactive capture qualification. The approach
+  follows Pinyon Shift and retains its BSD notice in ReIGlue.
 - **A colour on screen:** a short script over the screenshots (Pillow) that counts saturated
   pixels of the reported colour (cyan: G and B above 215, R 70 below G) finds the frames to look at;
   check the hits, the radio HUD's logo is cyan too.
