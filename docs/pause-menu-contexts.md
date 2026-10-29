@@ -158,6 +158,21 @@ Map, then resumed Garage free roam. Cleanup, frozen configuration and source
 guards passed; the copied profile authenticated with checked progression fields
 unchanged. This qualifies map movement and return only.
 
+A final 591.032-second run used the authenticated native save from that map
+attempt, with its complete file inventory and all 229 decoded profile fields
+frozen before launch. Digital input reached Oakley Blitz. Details identified
+Gladstone Dirt Sprint, a two-lap mixed-surface circuit race displaying 100 points
+and 3,000 credits as rewards; restrictions required class B or below and AWD.
+The current car's drivetrain eligibility was not established. Fast Travel
+Anywhere displayed an unlock requirement, so the offer was canceled without
+acceptance. Back restored Home/World Map and then the free-roam HUD outside
+Dak's Garage. No driving, event sign-up, countdown or race HUD occurred. Five
+native still frames were inspected; no video was recorded. The run stopped
+early with no native fault or remaining game process. The original seed, prior
+run's continuation source, frozen evidence, assets and runtime stayed unchanged;
+the new native copy authenticated with checked progression fields unchanged.
+Race Activity, Restart and Quit Race behavior therefore remain unqualified.
+
 ### Remaining runtime acceptance
 
 Before accepting the feature, complete these against isolated profile copies,
