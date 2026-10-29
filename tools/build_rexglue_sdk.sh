@@ -40,11 +40,12 @@ SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightl
 # Includes the merged cockpit instrument raster fix (#419, ReIGlue PR #2),
 # controller disconnect reporting (#3), digital keyboard taps (#4), 0364: asynchronous pipelines
 # built across frame ends (#167, ReIGlue PR #7), and 0400: the small code model on Linux (#473,
-# ReIGlue PR #10).
+# ReIGlue PR #10), and 0406: direct scaled depth uploads on NVIDIA (#500,
+# ReIGlue PR #11; pending review).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
-REIGLUE_COMMIT=74085fdc17545c0c58036d2761a140bba3346d49  # merged ReIGlue #10 (on top of #7)
+REIGLUE_COMMIT=ff1db6f6ff64f237ec2dbd28f06680205a6b8b1a  # ReIGlue #11, on top of merged #10
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
