@@ -130,12 +130,14 @@ set(FORZA_SOURCES
     src/debug/thread_trace.cpp
     src/debug/frame_dump.cpp
     src/hooks/compressed_stream_stall.cpp
+    src/hooks/ffcb_wake.cpp
     src/hooks/database_query.cpp
     src/hooks/crowd_anim.cpp
     src/hooks/movie_texture.cpp
     src/hooks/movie_memory.cpp
     src/hooks/map_alpha.cpp
     src/hooks/minimap_icons.cpp
+    src/hooks/minimap_camera.cpp
     src/hooks/map_entity_time.cpp
     src/hooks/cockpit_gauges.cpp
     src/hooks/garage_camera.cpp
@@ -143,6 +145,7 @@ set(FORZA_SOURCES
     src/hooks/ultrawide_projection.cpp
     src/hooks/vr_culling.cpp
     src/hooks/vr_head_pose.cpp
+    src/hooks/camera_fov.cpp
     src/hooks/vr_cockpit_space.cpp
     src/hooks/frame_time.cpp
     src/hooks/graphics_menu.cpp
@@ -171,6 +174,7 @@ set(FORZA_SOURCES
     src/hooks/world_challenge.cpp
     src/hooks/ambient_leaderboard.cpp
     src/hooks/teleport_velocity.cpp
+    src/hooks/custom_race.cpp
     src/hooks/challenge_hud.cpp
     src/hooks/lobby_buckets.cpp
     src/hooks/world_drop_in.cpp
@@ -198,6 +202,7 @@ set(FORZA_SOURCES
     src/kernel/xecrypt_rsa.cpp
     src/kernel/xekeys.cpp
     src/platform/achievement_toast.cpp
+    src/platform/guest_cpu.cpp
     src/platform/discord_presence.cpp
     src/platform/cursor_idle.cpp
     src/platform/auto_pause.cpp
@@ -264,6 +269,11 @@ add_custom_command(TARGET forza POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_d
     "${CMAKE_CURRENT_SOURCE_DIR}/resources/forza-telemetry.json" "$<TARGET_FILE_DIR:forza>/forza-telemetry.json")
 target_compile_definitions(forza PRIVATE FORZA_TITLE_UPDATE=${FORZA_TITLE_UPDATE})
 forza_apply_native_pause(forza)
+
+# Experimental CPU optimization, independent of the GPU/driver. Keep the host
+# bootstrap at the SDK baseline so it can reject an incompatible CPU safely.
+include(cmake/GuestFma.cmake)
+forza_configure_guest_fma(forza)
 
 # The CPU the generated code is compiled for (baseline or x86-64-v3, chosen by the launcher).
 include(cmake/CpuTarget.cmake)

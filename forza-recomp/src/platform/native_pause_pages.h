@@ -91,13 +91,15 @@ inline std::vector<Page> MakePausePages(const PauseCapabilities& caps = {}, bool
           {"festival_progress", "FESTIVAL PROGRESS", {64, 464, 560, 106}, "festival_progress"},
           {"settings", "SETTINGS", {640, 464, 576, 106}, "settings_page"},
       }},
+      // Viewing car information must not depend on the offline Change Car
+      // action. Keep each action's capability check on its own tile.
       {"cars", "CARS", {
           {"current_car", "CURRENT CAR", {64, 166, 560, 404}, ""},
           {"change_car", "CHANGE CAR", {640, 166, 280, 194}, "change_car", true, caps.change_car},
           {"car_tuning", "TUNE CAR", {936, 166, 280, 194}, "car_tuning", true, caps.world_map && caps.car_tuning},
           {"garage", "GO TO GARAGE", {640, 376, 280, 194}, "garage", true, caps.world_map && caps.garage},
           {"autoshow", "GO TO AUTOSHOW", {936, 376, 280, 194}, "autoshow", true, caps.world_map && caps.autoshow},
-      }, true, caps.change_car},
+      }},
       {"social", "SOCIAL", {
           {"friends", "FRIENDS", {64, 166, 560, 282}, "friends"},
           {"free_roam", "HORIZON WORLD", {640, 166, 280, 194}, "free_roam", true, caps.free_roam},

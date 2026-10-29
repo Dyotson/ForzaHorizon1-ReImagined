@@ -361,10 +361,17 @@ def locked_note(result):
             f'server keeps it{keep}.')
 
 
+def enabled(cfg) -> bool:
+    """Settings > Online > "Co-op campaign results" (the "Online features" choice turns it off)."""
+    return cfg.settings.get('coop_results', True) is True
+
+
 def after_session(cfg, profile, log=print, base=None, identity=None, request=None):
     """Fetches the player's pending co-op results and applies those earned in this save's
     sessions to it. Returns a short result (for the log); `log` gets the lines the player
     reads (the Play page shows them)."""
+    if not enabled(cfg):
+        return 'off'
     base = shader_share.server_base(cfg) if base is None else base
     if not base:
         return 'no server'
@@ -451,7 +458,7 @@ def after_session_quietly(cfg, profile, log=print):
 
 def after_session_in_background(cfg, profile, log=print):
     """After a session: the fetch and the save edit in a daemon thread (the game is closed)."""
-    if profile is None or not shader_share.server_base(cfg):
+    if profile is None or not enabled(cfg) or not shader_share.server_base(cfg):
         return None
     t = threading.Thread(target=after_session_quietly, args=(cfg, profile, log), name='coop-results', daemon=True)
     t.start()

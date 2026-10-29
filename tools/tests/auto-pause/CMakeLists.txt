@@ -6,18 +6,24 @@ find_package(rexglue 0.10.0 REQUIRED CONFIG)
 enable_testing()
 set(test_sources auto_pause_test)
 # The actual InputSystem disconnect fixture is unconditional in ReIGlue change 0399.
-# Client tests cover the optional export contract: supported bridge and pinned r2 fallback.
+# Client tests cover the current SDK export and an injected missing-export fallback.
 if(WIN32)
-    list(APPEND test_sources auto_pause_native_probe auto_pause_legacy_sdk_probe)
+    list(APPEND test_sources auto_pause_native_probe auto_pause_native_tu4_probe
+        auto_pause_sdk_probe auto_pause_missing_bridge_probe)
 endif()
 foreach(name IN LISTS test_sources)
     set(source_name ${name})
-    if(name STREQUAL "auto_pause_legacy_sdk_probe")
+    if(NOT name STREQUAL "auto_pause_test")
         set(source_name auto_pause_native_probe)
     endif()
     add_executable(${name} ../../../forza-recomp/tests/${source_name}.cpp)
-    if(name STREQUAL "auto_pause_legacy_sdk_probe")
-        target_compile_definitions(${name} PRIVATE FORZA_AUTO_PAUSE_LEGACY_SDK=1)
+    target_include_directories(${name} PRIVATE ../../../forza-recomp/src)
+    if(name STREQUAL "auto_pause_sdk_probe")
+        target_compile_definitions(${name} PRIVATE FORZA_AUTO_PAUSE_SDK_BRIDGE=1)
+    elseif(name STREQUAL "auto_pause_missing_bridge_probe")
+        target_compile_definitions(${name} PRIVATE FORZA_AUTO_PAUSE_MISSING_BRIDGE=1)
+    elseif(name STREQUAL "auto_pause_native_tu4_probe")
+        target_compile_definitions(${name} PRIVATE FORZA_TITLE_UPDATE=4)
     endif()
     target_link_libraries(${name} PRIVATE rex::runtime)
     if(MSVC)
@@ -35,8 +41,10 @@ foreach(name IN LISTS test_sources)
     set_tests_properties(${name} PROPERTIES TIMEOUT 30)
 endforeach()
 if(WIN32)
-    set_tests_properties(auto_pause_native_probe PROPERTIES
+    set_tests_properties(auto_pause_native_probe auto_pause_native_tu4_probe PROPERTIES
         PASS_REGULAR_EXPRESSION "native auto-pause: live paused")
-    set_tests_properties(auto_pause_legacy_sdk_probe PROPERTIES
-        PASS_REGULAR_EXPRESSION "legacy SDK auto-pause: actual missing export")
+    set_tests_properties(auto_pause_sdk_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION "SDK auto-pause: actual export")
+    set_tests_properties(auto_pause_missing_bridge_probe PROPERTIES
+        PASS_REGULAR_EXPRESSION "missing bridge auto-pause: injected absence")
 endif()

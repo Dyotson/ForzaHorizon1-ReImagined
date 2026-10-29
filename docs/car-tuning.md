@@ -47,6 +47,18 @@ are required.
 If tuning is enabled but its prepared resources are unavailable,
 Play shows a warning and an **Open Setup → Build** action. Select Title Update 4
 and build again to prepare the resources. The warning does not block ordinary play.
+After a preparation failure, the warning shows the saved reason and its next step
+even after restarting the launcher. It distinguishes no TU4 selection, missing
+launcher tools, an unsupported original archive and file-access problems. Repeating
+Build alone does not repair a missing tool or unsupported input.
+
+The build log records the preparation error, a diagnostic code and the tool's
+bounded output. Archive mismatches include the expected and actual SHA-256 and
+the checked file path; a mismatch means unsupported input, not proof of corruption.
+The last result is stored in `runtime/native-tuning-status.json`. A successful
+preparation replaces the previous failure. Older installations without this file
+still show the generic warning and direct players who already rebuilt to the
+preparation error in their build log. Original game/update inputs remain unchanged.
 
 The isolation starts on current main and carries tuning from the combined
 `d877a127cc301c9bcc23e06f64d5427c9e0519de` checkpoint, including its native footer,

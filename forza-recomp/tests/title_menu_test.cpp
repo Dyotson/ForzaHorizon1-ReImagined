@@ -139,6 +139,14 @@ bool TryDestroy(PPCContext&, uint8_t*) { Unexpected(); return false; }
 bool TryInput(PPCContext&, uint8_t*) { Unexpected(); return false; }
 void Tick(const PPCContext&, uint8_t*) { Check(graphics_snapshot, "title layout tick only"); }
 }
+// Custom Race shares the difficulty-style screen hooks; it never claims a title menu.
+namespace forza::custom_race {
+bool TryBind(PPCContext&, uint8_t*) { return false; }
+bool TryNotify(PPCContext&, uint8_t*) { return false; }
+bool TryDestroy(PPCContext&, uint8_t*) { return false; }
+bool TryInput(PPCContext&, uint8_t*) { return false; }
+void Tick(PPCContext&, uint8_t*) {}
+}
 namespace forza::ultrawide {
 Extent OutputSize() { Check(graphics_snapshot, "snapshot only for Graphics"); return {}; }
 Extent DrawingSize() { Unexpected(); return {}; }

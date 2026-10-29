@@ -9,7 +9,10 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
   (`forza-recomp/generated*/`), saves, DLC, disc images or builds in commits, issues or PRs.
   Screenshots and logs are fine.
 - Don't say where a copy of the game came from. Players use their own.
-- Keep the repository free of anything you can't publish under its license (`LICENSE`).
+- Keep the repository free of anything you can't publish under its license: GPL-3.0-or-later
+  with the additional permission in `NOTICE.md` (`LICENSE`). Your contribution is licensed the
+  same way. Third-party code needs a license that is compatible with the GPL (MIT, BSD,
+  Apache-2.0, zlib and similar) and its notice kept beside it.
   Third-party binaries (for example NVIDIA's DLSS runtime) are downloaded by the launcher
   at run time with a pinned hash, never committed.
 
@@ -35,8 +38,10 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
 - **SDK changes** go to [ReIGlue](https://github.com/FH1-ReImagined/ReIGlue), the project's
   fork of the ReXGlue SDK: one commit per change on its `main`, the subject starting with the
   next free number (`NNNN Area: what`) and the message saying what changes and why. A new
-  ReIGlue tag is then pinned in `tools/build_rexglue_sdk.sh` (`REIGLUE_TAG`), which CI builds on
-  Linux, Windows and macOS. To try a change locally, build your ReIGlue checkout with
+  ReIGlue revision is then pinned in `tools/build_rexglue_sdk.sh` (`REIGLUE_COMMIT`), which CI builds on
+  Linux, Windows and macOS. A reviewed full commit can be used before a maintainer publishes
+  a tag; leave `REIGLUE_TAG` empty in that case. When supplied, the tag must resolve to the
+  pinned commit. Both paths verify ancestry against the nightly SDK base. To try a change locally, build your ReIGlue checkout with
   `REIGLUE_DEV=1 REXSDK_SRC=<checkout> tools/build_rexglue_sdk.sh` (its source and submodules
   are used as checked out; initialize and prepare submodules separately). Change behaviour on every
   GPU only on purpose: gate vendor-specific fixes on the vendor or a cvar, and keep debug

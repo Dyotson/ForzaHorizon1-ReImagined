@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLin
                                QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QTabBar, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import (GITHUB_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, game, installer, paths, pins,
-               shader_prebuild, vr)
+from .. import (GITHUB_URL, PRIVACY_URL, PUBLIC_SERVER, __version__, build_env, builder, datafolder, errors, game,
+               installer, paths, pins, shader_prebuild, vr)
 from ..config import Config
 from . import theme, workers
 from .widgets import Disclosure, Hero, SpinBox, StatusRow, card, label
@@ -69,6 +69,7 @@ class PlayPage(QWidget):
 
         self.tuning_notice = label("Native car tuning is enabled, but its resources are missing. "
                                    "Open Setup and press Build with Title Update 4 selected.", "warn")
+        self.tuning_notice.setTextFormat(Qt.PlainText)
         self.tuning_notice.hide()
         lay.addWidget(self.tuning_notice)
         self.tuning_setup = QPushButton("Open Setup → Build")
@@ -160,12 +161,15 @@ class PlayPage(QWidget):
         state, detail = builder.build_status(cfg.data_home(), cfg["tu_package"])
         install, looked = game.find_game(cfg)
         tuning_needs_build = install is not None and game.native_tuning_needs_build(cfg, install)
+        if tuning_needs_build:
+            self.tuning_notice.setText(game.native_tuning_warning(cfg, install))
         self.tuning_notice.setVisible(tuning_needs_build)
         self.tuning_setup.setVisible(tuning_needs_build)
         if install is not None:
             self.r_build.set(True if state != "stale" else None,
                              f"{game.game_version(install)}" +
-                             (" · Update available in Setup" if state == "stale" else " · Ready to play"))
+                             (" · Update available in Setup" if state == "stale" else
+                              " · Ready to play (tuning unavailable)" if tuning_needs_build else " · Ready to play"))
         else:
             self.r_build.set(False if state != "partial" else None, detail + " Open Setup and press Build.")
         n = game.installed_dlc(cfg)
@@ -1091,10 +1095,12 @@ class SetupPage(QWidget):
         """Show a failure in red and keep it there: refresh() runs right after a task ends and
         used to wipe the message, so a failed extraction just looked like the bar vanishing."""
         self.fail[key] = message
+        label_widget.setTextFormat(Qt.PlainText)
         label_widget.setText(message)
         label_widget.setStyleSheet(f"color: {theme.ERR};")
 
     def _finished(self, ok, message):
+        failure_title = errors.title(getattr(self.task, "name", "setup"))
         self.timer.stop()
         self._bar.setVisible(self._bar is self.bar3)
         if self._cancel_btn:
@@ -1110,8 +1116,8 @@ class SetupPage(QWidget):
         elif ok and self._bar is self.bar3 and self.cfg.advanced.get("blocked_root"):
             self.cfg.advanced["blocked_root"] = ""
             self.cfg.save()
-        if not ok and self._bar is self.bar3 and not blocked:
-            message += "  Press Resume build to continue."
+        if failed and self._bar is self.bar3 and not blocked:
+            message += "\nAfter addressing the error, use Resume build to retry."
         if failed:
             self.tabs.setCurrentIndex(2 if self._bar in (self.bar3, self.bar4) else 1 if self._bar is self.bar2 else 0)
             self._show_fail(key, self._msg, message)
@@ -1130,11 +1136,11 @@ class SetupPage(QWidget):
         self.refresh()
         self.changed.emit()
         if failed and blocked:
-            if QMessageBox.question(self, "The folder is blocked", message + "\n\nChoose another folder now?") \
+            if QMessageBox.question(self, "The folder is blocked", errors.dialog_text(message + "\n\nChoose another folder now?")) \
                     == QMessageBox.Yes:
                 self.change_folder()
         elif failed:
-            QMessageBox.warning(self, "Something went wrong", message)
+            QMessageBox.warning(self, failure_title, errors.dialog_text(message))
         elif warn:
             QMessageBox.warning(self, "Damaged DLC", message)
 
@@ -1173,12 +1179,17 @@ class AboutPage(QWidget):
         cl.addWidget(label("Forza Horizon is (c) Microsoft. This project is not affiliated with, endorsed by or "
                            "sponsored by Microsoft, Playground Games or Turn 10 Studios. It contains no game code "
                            "or assets; you must own the game.", "muted"))
+        cl.addWidget(label("Free software under the GNU General Public License, version 3 or later, with an "
+                           "additional permission for graphics, VR and platform components. It comes with "
+                           "ABSOLUTELY NO WARRANTY.", "muted"))
         lay.addWidget(c)
         from .updates import UpdateCard
         self.updates = UpdateCard(cfg, window)
         lay.addWidget(self.updates)
         for text, url in (("Project page and source", GITHUB_URL),
                           ("Releases", GITHUB_URL + "/releases/latest"),
+                          ("Privacy policy", PRIVACY_URL),
+                          ("License and notices", GITHUB_URL + "/blob/main/NOTICE.md"),
                           ("Report a problem", GITHUB_URL + "/issues")):
             b = QPushButton(text)
             b.setObjectName("link")

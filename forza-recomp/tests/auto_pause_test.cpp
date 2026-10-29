@@ -37,5 +37,14 @@ int main() {
   assert(!vr.Poll(6, 2, 1, true, true, true, true, true));  // START still wins in VR
   assert(!vr.Poll(7, 2, 1, true, true, true, false, true));
   assert(vr.Poll(8, 3, 1, true, true, true, false));  // flat focus loss works again
+  Policy combined;
+  assert(!combined.Poll(0, 0, 0, true, true, true, false));
+  assert(combined.Poll(1, 1, 1, true, true, true, false));  // both reasons pending
+  assert(combined.Poll(2, 1, 1, true, true, true, false, true));  // VR retains pad loss
+  assert(!combined.Poll(3, 1, 1, true, false, true, false, true));  // no focus-only remainder
+  assert(!combined.Poll(4, 1, 1, true, true, true, false));  // no deferred auto-resume
+  assert(combined.Poll(5, 2, 2, true, true, true, false, true));
+  assert(!combined.Poll(6, 2, 2, true, true, false, false, true));  // paused cancels in VR
+  assert(!combined.Poll(7, 2, 2, true, true, true, false));
   std::puts("auto-pause policy: focus/disconnect edges, guards, release and legacy SDK pass");
 }

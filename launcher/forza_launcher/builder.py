@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import __version__, paths, pins
+from . import __version__, paths, pins, tuning_status
 from . import build_env, cleanenv, datafolder, fetch, specs
 from .fetch import Cancelled
 
@@ -382,6 +382,22 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     """Run a command, streaming its output to rep.log; raises BuildError on failure and
     Cancelled when the player cancels."""
     rep.log("$ " + " ".join(str(c) for c in cmd))
+    output_tail = ""
+    error_lines = []
+
+    def failure(message, code=None, kind=BuildError):
+        error = kind(message)
+        error.command = str(cmd[0])
+        error.exit_code = code
+        error.cwd = str(cwd)
+        # Output is evidence, not a guessed diagnosis. The complete stream is
+        # already in the build log; keep both early diagnostics and a bounded tail.
+        context = (f"Command: {str(cmd[0])[:512]}\nWorking directory: {str(cwd)[:512]}"
+                   + (f"\nExit code: {code}" if code is not None else ""))
+        first = "\nFirst error lines:\n" + "\n".join(error_lines) if error_lines else ""
+        tail = "\nLast command output:\n" + output_tail if output_tail else ""
+        error.detail = (context + first + tail)[:8192]
+        return error
     kw = {}
     if IS_WIN:
         kw["creationflags"] = 0x08000000 | 0x00000200 | (0x00004000 if low_priority else 0)
@@ -394,7 +410,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
                                 encoding="utf-8", errors="replace", bufsize=1, **kw)
     except OSError as e:
-        raise BuildError(f"Could not start {cmd[0]}: {e}")
+        raise failure(f"Could not start {cmd[0]}: {e}") from e
     denied = []     # lines saying access was denied (Windows: OneDrive, antivirus, Controlled folder access)
     mon = None
     if monitor is not None:
@@ -411,6 +427,11 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
     try:
         for line in proc.stdout:
             line = line.rstrip("\n")
+            output_tail = (output_tail + "\n" + line[-2000:])[-5500:]
+            if len(error_lines) < 3 and re.search(
+                    r"(?:^|\s)(?:fatal error|error(?:\s+[A-Z]+\d+)?):|^CMake Error|^FAILED:",
+                    line, re.IGNORECASE):
+                error_lines.append(line[:400])
             if IS_WIN and len(denied) < 3 and datafolder.ACCESS_DENIED_RE.search(line):
                 denied.append(line)
             if on_line:
@@ -419,6 +440,7 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
         code = proc.wait()
     finally:
         stop.set()
+        proc.stdout.close()
         if mon:
             mon.stop_flag.set()
             monitor["peak"] = max(monitor.get("peak", 0), mon.peak)
@@ -426,12 +448,12 @@ def run(cmd, cwd, env, rep: Reporter, on_line=None, low_priority=False, monitor=
         raise Cancelled()
     if code != 0:
         if denied:
-            raise FolderBlocked(datafolder.blocked_message(root_hint(cwd), denied[0]))
+            raise failure(datafolder.blocked_message(root_hint(cwd), denied[0]), code, FolderBlocked)
         if IS_WIN and CURRENT_ROOT:     # a denied folder can also look like "file not found" to a program
             why = datafolder.read_problem(CURRENT_ROOT)
             if why:
-                raise FolderBlocked(datafolder.blocked_message(CURRENT_ROOT, why))
-        raise BuildError(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the log above.")
+                raise failure(datafolder.blocked_message(CURRENT_ROOT, why), code, FolderBlocked)
+        raise failure(f"{Path(str(cmd[0])).name} failed (exit code {code}); see the build log for full output.", code)
 
 
 # ---- the build tree's file times -------------------------------------------------------------
@@ -590,6 +612,15 @@ def ensure_toolchain(opts: Options, rep: Reporter, lo, hi):
     return tools
 
 
+def sdk_identity(overlay: Path | None, dev: Path | None) -> str:
+    ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    if overlay is None and dev is not None:
+        helper = dev / "lib/cmake/rexglue/rexglue_helpers.cmake"
+        if helper.is_file():
+            ident += "|cmake=" + hashlib.sha256(helper.read_bytes()).hexdigest()
+    return ident
+
+
 def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
     """The patched SDK prefix: the pinned nightly plus this project's patched plugin, runtime and
     codegen tool (Linux), or the project's own SDK build (Windows). Returns the prefix."""
@@ -597,7 +628,7 @@ def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
     marker = prefix / ".forza-sdk-ready"
     overlay = sdk_overlay_archive()
     dev = dev_sdk_overlay()
-    ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    ident = sdk_identity(overlay, dev)
     if marker.is_file() and marker.read_text() == ident:
         rep.log(f"SDK ready: {prefix}")
         return prefix
@@ -619,7 +650,10 @@ def ensure_sdk(opts: Options, rep: Reporter, lo, hi) -> Path:
         if overlay is not None:
             fetch.extract_tar(overlay, stage, cancelled=rep.cancelled)
         else:  # development: the checkout's own overlay
-            for rel in ("lib/librexgpu-xenos.so", "lib/librexruntime.so", "bin/rexglue"):
+            for rel in ("lib/librexgpu-xenos.so", "lib/librexruntime.so", "bin/rexglue",
+                        "lib/cmake/rexglue/rexglue_helpers.cmake"):
+                if rel.endswith(".cmake") and not (dev / rel).is_file():
+                    continue  # an overlay made before it carried ReIGlue's CMake helpers
                 dst = stage / rel
                 dst.unlink(missing_ok=True)
                 shutil.copy2((dev / rel).resolve(), dst)
@@ -749,27 +783,52 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
     the codegen input and is never modified. Return whether native resources were installed.
     """
     work = build_dir(opts.root).resolve()
+    rt = runtime_dir(opts.root)
+
+    def record(value):
+        try:
+            tuning_status.write(rt, value)
+        except OSError as error:
+            rep.log(f"Could not save tuning diagnostic: {error}")
+
+    def unavailable(value):
+        record(value)
+        rep.log(tuning_status.summary(value) + f" Diagnostic: {value['code']}. Installing the stock FH1 update.")
+        if value["detail"]:
+            rep.log("Tuning preparation details: " + value["detail"])
+        _publish_runtime_update(opts.root, None, rep, "update-native")
+        return False
+
     if tu is not None and work.is_relative_to(tu.resolve()):
         raise BuildError("The source title update must not contain the build workspace.")
     # Always install the unmodified update. Restart-only options select the
     # independent prepared overlay at launch, without requiring a rebuild.
     _publish_runtime_update(opts.root, tu, rep)
     if tu is None:
-        _publish_runtime_update(opts.root, None, rep, "update-native")
-        return False
+        return unavailable(tuning_status.failure("no_title_update", "This build has no Title Update 4 selected.",
+                           "Select your FH1 Title Update 4 package in Setup, then Build."))
     work.mkdir(parents=True, exist_ok=True)
     script = native_tuning_script()
     if script is None:
-        rep.log("Native car tuning unavailable: preparation tools are missing; installing the stock FH1 update.")
-        _publish_runtime_update(opts.root, None, rep, "update-native")
-        return False
+        return unavailable(tuning_status.failure("missing_tools", "This launcher is missing the tuning preparation tool.",
+                           "Reinstall the current launcher release, then Build with Title Update 4 selected."))
     with tempfile.TemporaryDirectory(prefix="native-tuning-", dir=work) as directory:
         prepared = Path(directory) / "overlay"
         rep.status("Preparing native tuning resources from your FH1 update")
+        output_lines = []
+        diagnostic = None
+
+        def preparation_line(line):
+            nonlocal diagnostic
+            output_lines.append(line[-1000:])
+            del output_lines[:-8]
+            diagnostic = tuning_status.tool_failure(line) or diagnostic
+
         try:
             cmd = [sys.executable] + (["--run-script"] if paths.FROZEN else []) + [
                 script, tu, "--output", prepared]
-            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority)
+            run(cmd, opts.root, cleanenv.clean_environment(), rep, low_priority=opts.low_priority,
+                on_line=preparation_line)
             required = (*TU_EXECUTABLES, "media.zip", "native-tuning-provenance.json")
             missing = [name for name in required if not (prepared / name).is_file()]
             if missing:
@@ -780,11 +839,18 @@ def stage_runtime_update(opts: Options, rep: Reporter, tu: Path | None) -> bool:
                     len(report["source_archive_sha256"]) != 64 or not isinstance(report.get("entries"), list):
                 raise BuildError("Preparation produced an unrecognized resource manifest")
         except (BuildError, OSError, ValueError) as error:
-            rep.log(f"Native car tuning unavailable: {error}; installing the stock FH1 update.")
-            _publish_runtime_update(opts.root, None, rep, "update-native")
-            return False
+            if diagnostic is None:
+                denied = isinstance(error, (PermissionError, FolderBlocked))
+                diagnostic = tuning_status.failure(
+                    "access_denied" if denied else "preparation_failed",
+                    "Tuning preparation could not access a required file." if denied else "Tuning resource preparation failed.",
+                    "Check the file access error and your selected data folder." if denied else
+                    "Send the build log, including the preparation error; another rebuild alone may not fix it.",
+                    str(error) + ("\n" + "\n".join(output_lines) if output_lines else ""))
+            return unavailable(diagnostic)
         _publish_runtime_update(opts.root, prepared, rep, "update-native")
     rep.log("Installed native tuning resources prepared from FH1; no other game files are needed.")
+    record(tuning_status.failure("ready", "Tuning resources were prepared successfully.", ""))
     return True
 
 
@@ -1021,7 +1087,7 @@ def _run_build(opts: Options, rep: Reporter, game_files: Path) -> Path:
     bdir = src / "out" / "build" / PLAT
     overlay = sdk_overlay_archive()
     dev = dev_sdk_overlay()
-    sdk_ident = f"{pins.SDK_TAG}|{overlay.stat().st_size if overlay else (str(dev) if dev else 'none')}"
+    sdk_ident = sdk_identity(overlay, dev)
     stamp = configure_stamp(tools, sdk_ident, tu is not None)
 
     # A tree CMake configured for another version of the launcher (a build that stopped, then an

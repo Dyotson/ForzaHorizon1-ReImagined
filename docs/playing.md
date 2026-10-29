@@ -244,24 +244,24 @@ Focus-loss auto-pause is suppressed while an OpenXR session is running, includin
 and cockpit modes; controller-disconnect auto-pause remains available.
 Controller detection needs the optional `ForzaInputDisconnectSequence` export. Its ReIGlue
 implementation is [change 0399, SDK PR #3](https://github.com/FH1-ReImagined/ReIGlue/pull/3).
-The pinned r2 runtime does not include it: a maintainer must publish a new SDK revision before
-this branch can pin the implementation. An older runtime logs a warning once if disconnect
-detection is requested and still supports focus auto-pause.
+The current SDK pin `ff1db6f6ff64f237ec2dbd28f06680205a6b8b1a` includes the merged change.
+An older runtime without the export logs a warning once if disconnect detection is requested
+and still supports focus auto-pause.
 
-Validation (Windows x64, 2026-10-26): `tools/tests/auto-pause` runs the event policy and
-production pause poller against mapped guest-world flags, including manual START, paused,
-loading, rewind and inaccessible-world guards. A separate process uses real symbol discovery
-against pinned r2: the missing export must retain focus auto-pause without manufacturing a
-disconnect event. XR cases consume focus events, including a pending pulse, without deferring
-them until the session ends; supported-bridge cases retain disconnect events in VR.
+Validation (Windows x64, 2026-10-29): `tools/tests/auto-pause` passes all five tests against
+the pinned SDK. The production world-update hook publishes each new world to both auto-pause
+and the camera before forwarding the native update, exercised for disc and TU4. The production
+pause poller checks manual START, paused, loading, rewind and inaccessible-world guards.
+A separate process requires the actual SDK export through production symbol discovery;
+another injects its absence to test the older-runtime fallback. XR cases cancel a pending
+focus pulse and consume new focus events without deferring them until the session ends.
+Disconnect requests remain active in VR, including when both reasons were pending.
 
-The actual SDK device-assignment fixture now lives in ReIGlue PR #3, where it is unconditional
-in the SDK build workflow. It covers active pad loss with keyboard still connected, idle spare
-removal, reconnect and synthetic removal. The local SDK fixture used the current input-system
-translation unit in a private relink with older compatible runtime objects; it does not
-establish a full current SDK build or runtime qualification. Changed client poller, telemetry
-and input hooks compile for disc and TU4; changed XR code compiles against verified r2 headers.
-Live Alt-Tab, physical USB/Bluetooth unplug, wheel, multiplayer and headset checks remain pending.
+The exact pinned SDK's device-assignment fixture also passes against the full CI-built SDK
+runtime, covering active pad loss with keyboard still connected, idle spare removal, reconnect
+and synthetic removal. Client input hooks compile for disc and TU4; five launcher auto-pause
+and camera-settings tests pass. These fixtures inject events/device lists. Live Alt-Tab,
+physical USB/Bluetooth unplug, wheel, multiplayer and headset checks remain pending.
 
 ## Keyboard and mouse
 
