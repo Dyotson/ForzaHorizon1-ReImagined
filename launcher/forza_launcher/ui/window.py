@@ -279,6 +279,11 @@ class MainWindow(QMainWindow):
         self._busy = busy
 
     def closeEvent(self, e):
+        if self.about.steam is not None and self.about.steam.busy():
+            self.status("Finishing the Steam shortcut before closing. Keep Steam closed…")
+            QTimer.singleShot(100, self.close)
+            e.ignore()
+            return
         if self.catalogs.busy():
             self.catalogs.closing = True
             self.catalogs.cancel_task()
