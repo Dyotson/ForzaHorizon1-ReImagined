@@ -150,13 +150,24 @@ The SDK records exact hashes and limits in
 shared game data and private runtime inputs were unchanged; Job and full game
 process enumeration were empty on closure. Required notices and SDK pin remain.
 
-On 2026-10-29, the companion SDK working tree adds a narrow connection-status
+On 2026-10-29, companion SDK source `e6c1711` adds a narrow connection-status
 replacement after the request policy. Surface capability remains private during
 construction; one atomic observation is published only after all connection
 resources succeed, and retirement clears both capability and active status.
-The new status and existing request contracts pass, as does the production
-presenter syntax check. The SDK records commands, source hashes and limits in
-`docs/reiglue/validation/2026-10-29-hdr-status-source.json`. No production object,
-DLL link or GPU session qualifies this additional source change. Scene acquisition,
-resource lifetime and the other listed provenance gates remain open. The game SDK
-pin and all required notices remain unchanged.
+Independent review, the new status/existing request contracts and presenter
+syntax checking pass. Normal CMake registration retains Release assertions and
+portable thread linkage; a private negative control fails its retirement assertion.
+The SDK records source evidence in
+`docs/reiglue/validation/2026-10-29-hdr-status-source.json`.
+
+All fourteen affected production units then compiled privately without PCH, and
+exports regenerated. The first 64.344-second window stopped on a driver parser
+error before linking; its receipt and object hashes remain preserved. After parser
+regressions and hash checks, a separately granted 2.797-second link-only window
+passed both private DLL links and loader/ABI checks without recompilation. All
+135 imports resolved against 11,280 exports, ABI 1 and invalid-request rejection
+passed, and initial HDR status was `false/false`. All 347 protected hashes matched.
+Exact evidence is in `docs/reiglue/validation/2026-10-29-hdr-status-build.json`.
+No game/GPU run qualifies these changes. Connection transitions, HDR/VR, this PR's
+AI/presentation, scene acquisition and the other provenance gates remain open.
+The game SDK pin, shared binaries and all required notices remain unchanged.
