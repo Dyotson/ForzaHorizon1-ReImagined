@@ -621,6 +621,10 @@ the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_textu
   `sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz`, which CI builds and the installer carries.
   Redistribution: the SDK is BSD-3-Clause (copyright Tom Clay, portions Xenia); the binary
   form must reproduce the notice, which `licenses/rexglue-sdk.txt` in every package does.
+  The project's own license is GPL-3.0-or-later (`licenses/ForzaHorizon1-ReImagined.txt`), with the
+  additional permission for graphics, VR and platform components and the history of the earlier MIT
+  releases in `licenses/NOTICE.txt` (the repository's `NOTICE.md`); the Forza Live server in the package is
+  AGPL-3.0-or-later (`licenses/forza-live.txt`, copied from `server/LICENSE`).
   The overlay holds SDK code only, no game code.
 * Windows (built once in the VM, see "Windows"): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
   way. The MSVC CRT and Windows SDK come from an installed Visual Studio 2022 (17.3+) / Build Tools

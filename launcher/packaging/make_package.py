@@ -34,6 +34,10 @@ of Forza Horizon (Xbox 360, Games on Demand package), and it builds the game on 
 What the launcher and the game send over the network, and how to turn it off:
 licenses/PRIVACY.txt (https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/blob/main/PRIVACY.md).
 
+License: GNU General Public License, version 3 or later, with an additional permission for graphics,
+VR and platform components (licenses/ForzaHorizon1-ReImagined.txt and licenses/NOTICE.txt). The
+Forza Live server in server/ is under the GNU Affero General Public License (licenses/forza-live.txt).
+
 Forza Horizon is (c) Microsoft. This project is not affiliated with, endorsed by or sponsored
 by Microsoft, Playground Games or Turn 10 Studios.
 """
@@ -78,6 +82,11 @@ def main():
     if a.overlay:
         copy(Path(a.overlay), stage / "sdk-overlay" / f"rexglue-overlay-{a.platform}-amd64.tar.gz")
     copy(REPO / "LICENSE", stage / "licenses" / "ForzaHorizon1-ReImagined.txt")
+    # The GPLv3 section 7 additional permission and the relicensing note travel with the license, and so
+    # does the license of the Forza Live server (AGPL-3.0-or-later), whose files are packaged above.
+    copy(REPO / "NOTICE.md", stage / "licenses" / "NOTICE.txt")
+    if (REPO / "server" / "LICENSE").is_file():
+        copy(REPO / "server" / "LICENSE", stage / "licenses" / "forza-live.txt")
     # The privacy policy: the Windows installer shows it (installer.iss, InfoBeforeFile).
     copy(REPO / "PRIVACY.md", stage / "licenses" / "PRIVACY.txt")
     if a.sdk_license:

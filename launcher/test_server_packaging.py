@@ -27,7 +27,7 @@ class ServerPackaging(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         self.repo = self.base / "repo"
-        for name in ("launcher/forza_launcher/__init__.py", "launcher/main.py", "LICENSE", "PRIVACY.md",
+        for name in ("launcher/forza_launcher/__init__.py", "launcher/main.py", "LICENSE", "NOTICE.md", "PRIVACY.md",
                      "forza-recomp/src/fixture.cpp", "tools/cmake/fixture.cmake"):
             self.write(name)
         for name in flatpak.ASSETS:

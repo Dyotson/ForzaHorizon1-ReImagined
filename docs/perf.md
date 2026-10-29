@@ -1972,6 +1972,75 @@ compiler is required when building the game. To regenerate the shader binary,
 compile `texture_load_32bpb_scaled_image.cs.glsl` with glslang (`-V -S comp`) and
 convert the resulting little-endian uint32 words into the checked-in header.
 
+## NVIDIA scaled depth uploads (#500, duplicate #523, 2026-10-28)
+
+At a 2560x1440 scene, the scaled loader still converted UNorm24 and float20e4
+depth textures into a scratch buffer and copied them into R32 float images.
+ReIGlue 0406 extends the existing direct storage-image upload to those depth
+formats. It preserves the original conversion bits, including UNorm24 rounding
+and float20e4 denormals. Scene/HUD resolution, MSAA, filtering and depth/stencil
+render-target transfers are unchanged.
+
+The path remains limited to NVIDIA, tiled scaled resolves, single-layer 2D base
+levels and supported storage views. Other vendors/layouts and allocation/view
+failures retain the original path. `--vulkan_direct_scaled_depth_upload=false`
+disables just this extension; the existing `vulkan_direct_scaled_texture_upload`
+switch also disables it.
+
+A local Windows RTX 5060 Ti (617.14) comparison used game `cbd5855` and SDK
+`74085fd` plus 0406, the same renderer binary with the new switch false/true,
+copied Mustang saves, and the production native FR02 benchmark. Output was set
+to 1440p, world/HUD were 2560x1440, Game MSAA, upscaling off, AF2x, soft/high
+shadows, AO off, VSync on and cap120. Windows DPI made the host swapchain
+3200x1800 in the captures. Each run settled for 15 seconds and measured 60
+seconds of guest swaps. Runs were in the background with focus uncontrolled;
+AI traffic and collisions vary, so this is not a deterministic replay or a
+foreground shipping FPS claim.
+
+| Depth upload | Average FPS | p99 frame time | Worst frame |
+| --- | ---: | ---: | ---: |
+| Scratch buffer + copy | 74.22 | 15.16 ms | 27.88 ms |
+| Direct storage image | 80.56 | 15.56 ms | 44.96 ms |
+| Scratch buffer + copy, repeat | 73.63 | 15.64 ms | 28.55 ms |
+| Final renderer, default direct upload | 80.59 | 15.03 ms | 25.68 ms |
+
+The first pair gained 8.5% average FPS; it does not establish better tail latency.
+All four measurement intervals compiled zero pipelines/shaders and had no
+texture evictions or render-target trims. GPU clocks averaged about 2802 MHz.
+These results do not reproduce or resolve the reporters' RTX2060Super/3060Ti
+performance; keep #500 open for their retests.
+
+Paired three-swap RenderDoc captures at FR02 settling reduced buffer-to-image
+event GPU time from 3.918 to 0.201 ms, removing the five R32 depth destinations'
+15 copies. Summed GPU event time was 44.505 versus 41.000 ms; scene variation
+also changes other work, and these sums exclude idle/barrier/CPU/present time.
+The capture host privately retried failed Vulkan instance creation without the
+portability-enumeration extension and used non-sparse, non-threaded submission;
+it is excluded from ordinary FPS measurements and is not shipped. Both last
+presented frames were inspected: world, cockpit, shadows, mirrors and HUD render
+correctly. They are different simulation frames, not a pixel-equality test.
+
+The GPU equivalence check now covers both depth formats alongside the three
+existing color formats. All 1,960 cases passed against the unmodified compiled
+buffer-loader shaders: independent X/Y scales 1-7, four endian modes,
+aligned/ragged extents, source offsets, destination canaries, and depth
+conversion boundaries (including 0xC00000 UNorm rounding and float20e4
+denormals). Run the optional test with the updated SDK:
+
+```sh
+python tools/test_vulkan_scaled_texture_upload.py --sdk /path/to/ReIGlue
+```
+
+Windows validation rebuilt the changed Vulkan texture-cache translation unit
+and linked the GPU plugin at j1 against audited, unchanged SDK objects. No
+runtime/header ABI changes are involved. Linux/macOS builds and the reporters'
+hardware remain CI/retest coverage.
+
+SDK change: [ReIGlue #11](https://github.com/FH1-ReImagined/ReIGlue/pull/11),
+commit `ff1db6f6ff64f237ec2dbd28f06680205a6b8b1a`; the game pin depends on its
+review. Regenerating the final GLSL produces exactly the checked-in 2,081-word
+SPIR-V header.
+
 ## Steam Deck frame collapses (#45, 2026-10-23)
 
 The player's Deck video (0.1.28, Steam overlay on): steady free roam at 28-30 fps, but 10-15 fps near AI
