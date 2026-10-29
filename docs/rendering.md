@@ -238,6 +238,13 @@ driver; it needs a capture from an affected machine first to see which draw.
   magenta on screen is render target memory the game reads without writing, which is zero on
   some drivers and old data on others. `=1` fills with zero. Each fill is logged
   ("filled new render target", first 64).
+- **D3D12 fence completion ([SDK #13](https://github.com/FH1-ReImagined/ReIGlue/issues/13)):**
+  the SDK pin includes [SDK PR #14](https://github.com/FH1-ReImagined/ReIGlue/pull/14),
+  which checks both the queue signal and event-registration HRESULT before waiting for
+  out-of-submission operations. The original boolean check could skip registration and
+  wait indefinitely. The actual production branch passes 32 CPU mock cases; the full
+  translation unit passes a syntax check. No D3D12 device or Rt.25 map traversal was tested,
+  so this correction does not establish the cause of the reported location-specific hitch.
 - **NaN / Inf / out of range per draw:** capture a frame (`renderdoccmd capture -w -c DIR/cap
   ./forza ...` with `VK_ADD_IMPLICIT_LAYER_PATH=~/renderdoc/layer`, so the RenderDoc layer is
   found, and `FORZA_RDCAPTURE_TRIGGER`), then

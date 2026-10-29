@@ -42,11 +42,12 @@ SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightl
 # built across frame ends (#167, ReIGlue PR #7), and 0400: the small code model on Linux (#473,
 # ReIGlue PR #10), 0406: direct scaled depth uploads on NVIDIA (#500,
 # ReIGlue PR #11), and 0407: connect only to an already-loaded RenderDoc (#511,
-# ReIGlue PR #12).
+# ReIGlue PR #12), and the D3D12 out-of-submission fence HRESULT correction
+# (ReIGlue PR #14).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
-REIGLUE_COMMIT=b935dd86de220a9e431f7c0ca5e023fac0035ab3  # ReIGlue #12, on top of merged #11
+REIGLUE_COMMIT=3fcab351300f6e727529a36c303a28bdc133bd14  # ReIGlue #14, on top of merged #12
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
