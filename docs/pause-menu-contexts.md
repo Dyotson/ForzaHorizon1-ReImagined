@@ -147,6 +147,17 @@ Race checks remain unqualified. Owned cleanup and all source/runtime guards
 passed; the copied profile remained authenticated with checked progression
 fields unchanged after native travel, filter changes and autosave.
 
+A further 319.656-second run applied the Festival Events-only filter and
+confirmed that normal digital D-pad input moves the native map cursor. `U`
+and `N` selected local facilities; `U+N` moved the cursor out of the facility
+cluster, and individual `N` inputs advanced it toward a visible event. The
+small increments and observation time exhausted the event-entry window before
+the marker was reached. Its identity, class, eligibility and travel offer remain
+unverified. No event entry or race pause checks ran. Back restored Home/World
+Map, then resumed Garage free roam. Cleanup, frozen configuration and source
+guards passed; the copied profile authenticated with checked progression fields
+unchanged. This qualifies map movement and return only.
+
 ### Remaining runtime acceptance
 
 Before accepting the feature, complete these against isolated profile copies,
