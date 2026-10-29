@@ -24,15 +24,19 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
 - **Cockpit gauges:** the game lights the instruments only when the headlights are on;
   `cockpit_gauges_lit = true` in `forza.toml` (launcher: Display, Picture, Cockpit gauges
   always lit) keeps them lit by day too, for your own car only.
-- **Radio stations (#401):** the game takes the next station about 3.5 s after the last
-  (a 1 s wait, and none while the station banner shows) and fades the music out and in
-  over 0.5 s each; the new stream starts within a frame or two of the fade out, so the
-  wait is the game's, also on the console. `radio_station_switch = "fast"` (launcher:
-  Audio, Radio, Station changes: Fast) takes a new station every 0.15 s, also while the
-  banner shows (it shows the new one), fades over the game's own 0.25 s for player changes,
-  and quick presses end on the last station picked. The new station then starts about
-  0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
-  (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
+- **Radio station changes:** Audio > Radio > **Station changes** keeps the original
+  **Game** behavior by default: the station banner delays repeated changes and the
+  music fades out and in over 0.5 s each. **Fast** removes the banner gate, uses a
+  0.15 s repeat guard and the native 0.25 s fades. **Instant** uses a 0.075 s repeat
+  guard and 0.04 s fades, retaining the native zero-volume stream handoff. Both
+  quicker modes retarget an ongoing fade to the newest accepted station request,
+  including Radio Off, and apply to stock and custom radio stations. The repeat
+  guard bounds held/repeating bindings. Set `radio_station_switch` to `"game"`,
+  `"fast"`, or `"instant"` in `forza.toml`.
+  Stream startup, scheduling and the audio mixer still add latency. Instant has
+  production-wrapper CPU coverage for disc and TU4; fresh audible latency, click,
+  rapid-input/HUD and event-transition acceptance remain pending. It does not
+  shorten global music, dialogue, ducking or scripted-event fades.
 - **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
   `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
   their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20

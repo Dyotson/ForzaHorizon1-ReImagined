@@ -706,9 +706,11 @@ generated `forza.toml` and command line). Keys that hold their default are not w
 Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
 keeps the instrument backlight of your own car on by day too; the headlights and other cars
 stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
-Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
-a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
-0.5 s ([playing.md](playing.md#running-the-game)).
+Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast
+uses a 0.15 s repeat guard and 0.25 s station fades; Instant uses a 0.075 s guard and
+0.04 s fades. Both retarget to the newest accepted request and work with stock and custom
+stations. Stream startup still adds latency; fresh audible Instant-mode acceptance is
+pending ([playing.md](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
