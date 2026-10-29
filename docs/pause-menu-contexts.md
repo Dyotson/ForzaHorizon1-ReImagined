@@ -136,6 +136,17 @@ and runtime binaries. Their copied profiles remained authenticated; native
 autosave changed their file hashes while the checked progression fields stayed
 unchanged. Supervisor shutdown is not evidence of native desktop-exit success.
 
+A subsequent 303.422-second race-entry attempt on the same host reached Race
+Central through its offered 0-credit map travel. Rivals > Festival Events >
+Yellow Wristband Events returned the native offline-service error. Normal Back
+returned to free roam. Digital `J` navigated the native map filter, but mouse
+click/drag and short stick-key input did not move the native selector to the
+nearby Festival event. Its identity, class and sign-up remained unverified.
+No race countdown/HUD occurred, so Activity race selection, Restart and Quit
+Race checks remain unqualified. Owned cleanup and all source/runtime guards
+passed; the copied profile remained authenticated with checked progression
+fields unchanged after native travel, filter changes and autosave.
+
 ### Remaining runtime acceptance
 
 Before accepting the feature, complete these against isolated profile copies,
