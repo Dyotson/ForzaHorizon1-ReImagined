@@ -202,24 +202,37 @@ event only. Restart confirmation acceptance, difficulty, later race contexts,
 completion/rewards, eligible Club, party behavior and camera/fade remain untested
 by this run.
 
-A final targeted Restart attempt used a fresh copy of the same ten-file
+A targeted Restart attempt used a fresh copy of the same ten-file
 checkpoint and unchanged host. Window activation failed, and one documented
 fresh-window retry returned `GetCursorPos failed: Access is denied. (0x80070005)`.
 No test input was sent. The owned process closed after 55.594 seconds with no
 remaining game process; source saves, prior evidence, assets and runtime guards
 passed, and the copied profile was byte-identical. This is a UI access blocker
-of unknown cause, not a Restart result or a game defect. Confirmed Restart
-remains unqualified.
+of unknown cause, not a Restart result or a game defect.
+
+After the user unlocked Windows, documented window activation and capture
+succeeded. A fresh-copy retry of the unchanged host then qualified **confirmed
+Restart** in Horizon Heats. Restart > Yes returned to the native Start Race
+menu. Starting again reset the race timer from a saved 00:10.833 to 00:00.833,
+then it advanced to 00:08.317. Pause reopened Activity visibly, left moved the
+selection from Restart to Quit Race, and Back resumed the HUD at 00:20.983.
+Confirmed retirement then returned to the Horizon Heats sign-up area.
+
+The retry ended early at 287.297 seconds with no native fault or remaining game
+process. Thirteen saved native frames were inspected. Source checkpoint, prior
+evidence, assets and runtime stayed unchanged; the native copied profile and
+player database authenticated, checked progression remained unchanged, and
+career event-result rows remained empty. This qualifies confirmed Restart and
+subsequent menu/navigation/resume in the observed introductory event only.
 
 ### Remaining runtime coverage
 
-Confirmed Restart is the next focused acceptance check. The following contexts
-remain unqualified and should be tested against isolated profile copies with
-source and runtime revisions recorded. The partial results above do not qualify
-another event, progression, party or hardware context:
+The following contexts remain unqualified and should be tested against isolated
+profile copies with source and runtime revisions recorded. The partial results
+above do not qualify another event, progression, party or hardware context:
 
-- Career race: extend the Horizon Heats cancellation/quit/resume evidence to
-  later career contexts; test Restart Confirm, difficulty child and Back, and
+- Career race: extend the Horizon Heats cancel/restart/quit/resume evidence to
+  later career contexts; test difficulty child and Back, and
   completion/reward/progression behavior.
 - PR Stunt and Rivals: context-specific labels, quit/restart/finish/retire
   confirmations and native destination on each accepted result.
