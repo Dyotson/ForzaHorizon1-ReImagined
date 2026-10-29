@@ -120,7 +120,8 @@ and normal UI input, starting outside Dak's Garage in Colorado free roam.
 - Native Quit displayed title/desktop/cancel choices. Cancel restored Home;
   accepted title and desktop exits were not exercised.
 - With explicit digital D-pad bindings (`U` up, `J` down, `H` left, `N` right),
-  `N` moved Rally to 1000 Club. The other three directions were not exercised.
+  `N` moved Rally to 1000 Club. The other three directions were not exercised
+  in that tab-switching run.
   Short default stick/chord inputs had not moved focus in the previous run;
   that input-delivery limitation is not classified as a menu defect.
 - Selecting Club invoked the native unavailable message requiring a green
@@ -142,8 +143,8 @@ Yellow Wristband Events returned the native offline-service error. Normal Back
 returned to free roam. Digital `J` navigated the native map filter, but mouse
 click/drag and short stick-key input did not move the native selector to the
 nearby Festival event. Its identity, class and sign-up remained unverified.
-No race countdown/HUD occurred, so Activity race selection, Restart and Quit
-Race checks remain unqualified. Owned cleanup and all source/runtime guards
+No race countdown/HUD occurred, so that attempt did not qualify Activity race
+selection, Restart or Quit Race. Owned cleanup and all source/runtime guards
 passed; the copied profile remained authenticated with checked progression
 fields unchanged after native travel, filter changes and autosave.
 
@@ -158,7 +159,7 @@ Map, then resumed Garage free roam. Cleanup, frozen configuration and source
 guards passed; the copied profile authenticated with checked progression fields
 unchanged. This qualifies map movement and return only.
 
-A final 591.032-second run used the authenticated native save from that map
+A 591.032-second run used the authenticated native save from that map
 attempt, with its complete file inventory and all 229 decoded profile fields
 frozen before launch. Digital input reached Oakley Blitz. Details identified
 Gladstone Dirt Sprint, a two-lap mixed-surface circuit race displaying 100 points
@@ -171,16 +172,55 @@ native still frames were inspected; no video was recorded. The run stopped
 early with no native fault or remaining game process. The original seed, prior
 run's continuation source, frozen evidence, assets and runtime stayed unchanged;
 the new native copy authenticated with checked progression fields unchanged.
-Race Activity, Restart and Quit Race behavior therefore remain unqualified.
+That map attempt did not qualify race Activity, Restart or Quit Race.
 
-### Remaining runtime acceptance
+On 2026-10-29, a 293.407-second run of the same host qualified the targeted
+race paths in the **offline introductory Horizon Heats** event. A preserved
+ten-file checkpoint matched its original inventory exactly and both profile
+and player database authenticated. It loaded beside the native sign-up prompt;
+the event card identified Horizon Heats, asphalt point-to-point, C open, with
+the current Corrado VR6 C400 eligible. Ordinary X/A entry and Start Race led to
+an actual race HUD showing 0% progress and place 8/8. No driving, fast travel,
+benchmark control, AI driver, private input or progression edit was used.
 
-Before accepting the feature, complete these against isolated profile copies,
-recording the source and runtime revisions. The partial results above do not
-qualify another event, progression, party or hardware context:
+- Start opened Activity with Quit Race selected and Restart available.
+- Restart's native confirmation canceled with B and restored the selected
+  Restart tile. A fresh left input selected Quit Race, proving live navigation.
+- Quit Race's native Retire From Event confirmation canceled with B and
+  restored the selected Quit Race tile. Back resumed the race HUD and its timer.
+- Reopening pause and confirming Quit Race returned to the Horizon Heats
+  sign-up area. Pause then opened Home/World Map visibly; right selected My
+  Cars, and Back resumed the free-roam HUD. No hidden parent was observed.
 
-- Career race: Quit Race Cancel/Confirm, Restart Cancel/Confirm, difficulty
-  child and Back, then race resume and reward/progression behavior.
+Thirteen saved native still frames were visually inspected; no video was
+recorded. The owned process closed early with no native fault or remaining game
+process. Source checkpoint, prior evidence, assets and runtime hashes stayed
+unchanged. The native copy authenticated afterward; checked progression fields
+remained 500 credits, zero XP/races and wristband level 0, with no career result
+rows before or after retirement. This qualifies the observed introductory
+event only. Restart confirmation acceptance, difficulty, later race contexts,
+completion/rewards, eligible Club, party behavior and camera/fade remain untested
+by this run.
+
+A final targeted Restart attempt used a fresh copy of the same ten-file
+checkpoint and unchanged host. Window activation failed, and one documented
+fresh-window retry returned `GetCursorPos failed: Access is denied. (0x80070005)`.
+No test input was sent. The owned process closed after 55.594 seconds with no
+remaining game process; source saves, prior evidence, assets and runtime guards
+passed, and the copied profile was byte-identical. This is a UI access blocker
+of unknown cause, not a Restart result or a game defect. Confirmed Restart
+remains unqualified.
+
+### Remaining runtime coverage
+
+Confirmed Restart is the next focused acceptance check. The following contexts
+remain unqualified and should be tested against isolated profile copies with
+source and runtime revisions recorded. The partial results above do not qualify
+another event, progression, party or hardware context:
+
+- Career race: extend the Horizon Heats cancellation/quit/resume evidence to
+  later career contexts; test Restart Confirm, difficulty child and Back, and
+  completion/reward/progression behavior.
 - PR Stunt and Rivals: context-specific labels, quit/restart/finish/retire
   confirmations and native destination on each accepted result.
 - Rally: its three-row pause model, native difficulty apply/cancel and restart;
