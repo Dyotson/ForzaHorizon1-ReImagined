@@ -16,6 +16,15 @@ on:
       - 'forza-recomp/src/platform/offline_cars.h'
       - 'forza-recomp/src/platform/pause_car_access.h'
       - 'forza-recomp/src/platform/pause_camera*.h'
+      - 'forza-recomp/src/platform/pause_*.h'
+      - 'forza-recomp/src/platform/guest_protected_range.h'
+      - 'forza-recomp/src/platform/guest_write_transaction.h'
+      - 'forza-recomp/tests/pause-recorded/**'
+      - 'forza-recomp/tests/pause_recorded_*'
+      - 'forza-recomp/tests/pause_fixed_pose_hold_test.cpp'
+      - 'patches/pause-camera-sdk/**'
+      - 'tools/pause_sdk_patch_tree.py'
+      - 'tools/test_pause_sdk_patch_tree.py'
       - 'forza-recomp/src/platform/social_presence.h'
       - 'forza-recomp/src/kernel/live_connection.h'
       - 'forza-recomp/src/platform/native_pause*.h'
@@ -64,12 +73,18 @@ jobs:
           python -m unittest discover -s tools -p 'test_horizon2*.py' -v
           python -m unittest discover -s tools -p 'test_offline_cars_flow.py' -v
           python -m unittest discover -s tools -p 'test_native*.py' -v
+          python -m unittest discover -s tools -p 'test_pause_sdk_patch_tree.py' -v
           python -m unittest discover -s launcher -p 'test_native_menu*.py' -v
       - name: Original menu behavior without SDK or game files
         run: |
           cmake -S forza-recomp/tests/menu-model -B build/menu-model
           cmake --build build/menu-model --parallel 2
           ctest --test-dir build/menu-model --output-on-failure
+      - name: Recorded owner, fixed hold and TU0/disabled scope guards
+        run: |
+          cmake -S forza-recomp/tests/pause-recorded -B build/pause-recorded
+          cmake --build build/pause-recorded --parallel 2
+          ctest --test-dir build/pause-recorded --output-on-failure
       - name: Disabled pause API stubs without the SDK
         run: |
           cmake -S forza-recomp/tests/pause-stubs -B build/pause-stubs

@@ -34,6 +34,7 @@
 #include "../platform/guest_memory.h"
 #include "../platform/scene_resolution.h"
 #include "../platform/scene_tiling.h"
+#include "../platform/pause_camera.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -56,7 +57,11 @@ REXCVAR_DECLARE(std::string, scene_msaa);       // src/hooks/scene_tiling.cpp
 REXCVAR_DECLARE(bool, forza_ultrawide);         // src/platform/ultrawide.cpp
 
 #if FORZA_TU4
+#if defined(FORZA_NATIVE_PAUSE)
+#define WorldViewRender forza_phase_a_scene_resolution_824744D0
+#else
 #define WorldViewRender sub_824744D0
+#endif
 #define OriginalWorldViewRender __imp__sub_824744D0
 #define PostQuad sub_82415620
 #define OriginalPostQuad __imp__sub_82415620
@@ -290,6 +295,9 @@ extern "C" REX_FUNC(PostPass) {
 
 // Draws a view of the world (r3); its viewport is at +0x1A8 (x, y, width, height).
 extern "C" REX_FUNC(WorldViewRender) {
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
+  (void)forza::pause_camera::ObserveSceneView(base,ctx.r3.u32);
+#endif
   const uint32_t w = forza::g_width.load(std::memory_order_relaxed);
   uint8_t* vp = forza::GuestPtr(base, ctx.r3.u32 + 0x1A8);
   if (!w || forza::Load32(vp) != 0 || forza::Load32(vp + 4) != 0 ||

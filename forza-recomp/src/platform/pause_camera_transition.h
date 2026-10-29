@@ -106,6 +106,11 @@ public:
   bool Active() const { return owner_!=0; }
   uint32_t owner() const { return owner_; }
   uint32_t car() const { return car_; }
+  Frame WheelHold() const {
+    if(!Active())return {};
+    const Vec3 up{0,1,0};const auto f=Unit(Vec3{anchor_.forward.x,0,anchor_.forward.z});const auto r=Cross(up,f);const auto wheel=anchor_.rear_wheel;
+    return {{wheel+r*1.65f-f*.6f+up*.35f,wheel,up},0,1.0};
+  }
   Frame Advance(double dt) {
     // Freeze through long stalls; never fast-forward a wheel shot on return.
     if(std::isfinite(dt)&&dt>=0&&dt<=.25)time_+=dt;

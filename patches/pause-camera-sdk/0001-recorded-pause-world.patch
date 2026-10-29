@@ -1,0 +1,1326 @@
+diff --git a/include/rex/graphics/fh1_partial_policy.h b/include/rex/graphics/fh1_partial_policy.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_partial_policy.h
+@@ -0,0 +1,19 @@
++#pragma once
++#include <array>
++#include <charconv>
++#include <string_view>
++namespace fh1::partial {
++struct Identity {uint32_t session=0,screen=0,graphics=0,core=0,camera=0,selected=0;uint64_t generation=0,issued=0;};
++inline Identity Parse(std::string_view s){std::array<uint64_t,8> v{};for(size_t i=0;i<v.size();++i){const auto end=s.find(',');const auto part=s.substr(0,end);auto r=std::from_chars(part.data(),part.data()+part.size(),v[i]);if(r.ec!=std::errc{}||r.ptr!=part.data()+part.size()||(i<7&&end==s.npos)||(i==7&&end!=s.npos))return {};if(i<7)s.remove_prefix(end+1);}for(size_t i=0;i<6;++i)if(!v[i]||v[i]>UINT32_MAX)return {};if(!v[6]||!v[7])return {};return {uint32_t(v[0]),uint32_t(v[1]),uint32_t(v[2]),uint32_t(v[3]),uint32_t(v[4]),uint32_t(v[5]),v[6],v[7]};}
++inline bool Same(const Identity&a,const Identity&b){return a.session==b.session&&a.screen==b.screen&&a.graphics==b.graphics&&a.core==b.core&&a.camera==b.camera&&a.selected==b.selected&&a.generation==b.generation;}
++inline bool Fresh(const Identity&i,uint32_t token,uint64_t now){return i.session&&i.session==token&&i.screen&&i.graphics&&i.core&&i.camera&&i.selected&&i.generation&&i.issued&&now>=i.issued&&now-i.issued<=250000;}
++inline bool Matches(const Identity&i,const recorded::Context&c){return c.valid&&c.graphics==i.graphics&&c.core==i.core&&c.camera==i.camera&&c.selected==i.selected&&c.world_generation==i.generation;}
++enum class Reason:uint32_t {Off,NoFrame,NoUID,Source,Changed,Eligible};
++struct Permit {
++ Identity source{};uint32_t uid=0,frame=0;uint64_t replay=0;
++ void Reset(){source={};uid=frame=0;replay=0;}
++ void Refresh(bool requested,const Identity&i,uint32_t token,uint64_t now,uint32_t allowed){if(!requested||!Fresh(i,token,now)||!allowed||allowed!=uid||(uid&&!Same(i,source)))Reset();}
++ bool Begin(bool requested,const Identity&i,uint32_t token,uint64_t now,const recorded::Context&c,uint32_t allowed){Reset();if(!requested||!Fresh(i,token,now)||!allowed||c.uid!=allowed||!Matches(i,c))return false;source=i;uid=c.uid;frame=c.frame;replay=c.replay;return true;}
++ Reason Check(bool requested,const Identity&i,uint32_t token,uint64_t now,const recorded::Context&c,uint32_t allowed)const{if(!requested)return Reason::Off;if(!c.valid||!uid)return Reason::NoFrame;if(!allowed||allowed!=uid||c.uid!=allowed)return Reason::NoUID;if(!Fresh(i,token,now))return Reason::Source;if(!Same(i,source)||!Matches(i,c)||c.frame!=frame||c.replay!=replay)return Reason::Changed;return Reason::Eligible;}
++};
++}
+diff --git a/include/rex/graphics/fh1_partial_receipts.h b/include/rex/graphics/fh1_partial_receipts.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_partial_receipts.h
+@@ -0,0 +1,19 @@
++#pragma once
++// Diagnostic receipts only. No value in this header authorizes a raster.
++namespace fh1::partial {
++inline bool SameScene(const Identity&a,const Identity&b){return a.screen==b.screen&&a.graphics==b.graphics&&a.core==b.core&&a.camera==b.camera&&a.selected==b.selected&&a.generation==b.generation;}
++struct SealReceipt {uint32_t record_uid=0,sealed_uid=0;uint64_t us=0;Identity source{};};
++inline SealReceipt ParseSeal(std::string_view s){uint64_t v[3]{};for(size_t i=0;i<3;++i){const auto n=s.find(',');if(n==s.npos)return {};const auto part=s.substr(0,n);auto r=std::from_chars(part.data(),part.data()+part.size(),v[i]);if(r.ec!=std::errc{}||r.ptr!=part.data()+part.size())return {};s.remove_prefix(n+1);}if(v[0]>UINT32_MAX||v[1]>UINT32_MAX)return {};return {uint32_t(v[0]),uint32_t(v[1]),v[2],Parse(s)};}
++inline uint64_t Age(uint64_t now,uint64_t stamp){return stamp&&now>=stamp?now-stamp:UINT64_MAX;}
++struct Receipts {
++ Identity session{};bool active=false;uint32_t rows=0,end_rows=0,first_accepted_uid=0,first_permitted_uid=0;uint64_t first_accepted_us=0,first_permitted_us=0,first_source_age=UINT64_MAX,first_seal_age=UINT64_MAX,frames=0,seen=0,eligible=0,rejected=0,suppressed=0;Reason last_reason=Reason::Off;
++ bool HasSource(bool requested,const Identity&i,uint32_t token)const{return requested&&i.session&&i.session==token&&i.screen&&i.graphics&&i.core&&i.camera&&i.selected&&i.generation&&i.issued;}
++ bool NeedsStart(bool requested,const Identity&i,uint32_t token)const{return HasSource(requested,i,token)&&(!active||!SameScene(session,i));}
++ void Start(const Identity&i){*this={};session=i;active=true;}
++ void Accept(uint32_t uid,uint64_t now,const Identity&i,const SealReceipt&seal){if(!active||!uid)return;if(!first_accepted_uid){first_accepted_uid=uid;first_accepted_us=now;first_source_age=Age(now,i.issued);first_seal_age=seal.sealed_uid==uid?Age(now,seal.us):UINT64_MAX;}}
++ void Observe(uint32_t uid,Reason reason,uint64_t now){if(!active)return;last_reason=reason;if(uid&&reason==Reason::Eligible&&!first_permitted_uid){first_permitted_uid=uid;first_permitted_us=now;}}
++ bool Frame(uint64_t s,uint64_t e,uint64_t r,uint64_t omit){if(!active)return false;++frames;seen+=s;eligible+=e;rejected+=r;suppressed+=omit;if(rows==720)return false;++rows;return true;}
++ bool Summary(){if(!active||end_rows==128)return false;++end_rows;return true;}
++ void Stop(){active=false;}
++};
++}
+diff --git a/include/rex/graphics/fh1_provenance.h b/include/rex/graphics/fh1_provenance.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_provenance.h
+@@ -0,0 +1,198 @@
++#pragma once
++#include <array>
++#include <cstdint>
++#include <span>
++#include <cstddef>
++#include <atomic>
++
++// Phase A is observation only. This protocol never authorizes a raster change.
++namespace fh1::provenance {
++constexpr uint32_t kMagic=0x46483150, kVersion=1, kWords=10;
++constexpr uint32_t kNop=0xC0001000u|((kWords-1)<<16);
++inline void StoreBigEndian(uint8_t* destination,uint32_t value) {
++  for(unsigned i=0;i<4;++i)destination[i]=uint8_t(value>>(24-i*8));
++}
++inline uint32_t NextId(std::atomic<uint32_t>& counter) {
++  auto old=counter.load();
++  while(old!=UINT32_MAX){if(counter.compare_exchange_weak(old,old+1))return old+1;}
++  return 0; // Exhausted for process lifetime, never wraps to a reused token.
++}
++inline bool TraceAllowed(bool armed,uint32_t eligible,uint32_t& records) {
++  return armed&&eligible&&records<4096?(++records,true):false;
++}
++enum class Op:uint16_t {Reset=1,FrameBegin,FrameEnd,Begin,End,Target,Context};
++enum class Phase:uint32_t {Unknown,OriginalFrame,PlayerCar,OtherCar,Scene,Sky};
++struct Record {
++  Op op=Op::Reset;uint32_t token=0,serial=0;Phase phase=Phase::Unknown;
++  // Target records: native color0/depth, their native descriptor28/32 words,
++  // and binding serial. Context records carry graphics/core/camera/car/generation.
++  std::array<uint32_t,5> data{};
++};
++inline std::array<uint32_t,kWords> Encode(const Record& r) {
++  return {kMagic,(kVersion<<16)|uint16_t(r.op),r.token,r.serial,uint32_t(r.phase),
++          r.data[0],r.data[1],r.data[2],r.data[3],r.data[4]};
++}
++enum class DecodeResult {Unrelated,Valid,Malformed};
++inline DecodeResult Decode(std::span<const uint32_t> words,Record& r) {
++  if(words.empty()||words[0]!=kMagic)return DecodeResult::Unrelated;
++  if(words.size()!=kWords||words[1]>>16!=kVersion||
++     uint16_t(words[1])<uint16_t(Op::Reset)||uint16_t(words[1])>uint16_t(Op::Context)||
++     words[4]>uint32_t(Phase::Sky))return DecodeResult::Malformed;
++  r={Op(uint16_t(words[1])),words[2],words[3],Phase(words[4]),
++     {words[5],words[6],words[7],words[8],words[9]}};
++  return DecodeResult::Valid;
++}
++struct Context {
++  Phase phase=Phase::Unknown;
++  uint32_t token=0,frame=0,binding=0,color=0,depth=0,color_desc=0,depth_desc=0;
++  bool valid=false; // Valid provenance, never a main-target/auxiliary classification.
++};
++class Consumer {
++ public:
++  void Eligibility(uint32_t token) {
++    if(token!=eligible_){Reset();eligible_=token;last_frame_=0;}
++  }
++  void Reset() {current_={};depth_=0;last_serial_=0;fault_=false;}
++  void Fault() {current_={};depth_=0;fault_=true;}
++  Context context()const{return current_;}
++  bool fault()const{return fault_;}
++  uint32_t eligible()const{return eligible_;}
++  void Consume(std::span<const uint32_t> words) {
++    if(!eligible_)return;
++    Record r;const auto d=Decode(words,r);
++    if(d==DecodeResult::Unrelated)return;
++    if(d!=DecodeResult::Valid||r.token!=eligible_){Fault();return;}
++    if(r.op==Op::Reset){Reset();return;}
++    if(r.op==Op::FrameBegin) {
++      if(current_.valid||!r.serial||r.serial<=last_frame_){Fault();return;}
++      Reset();last_frame_=r.serial;last_serial_=r.serial;
++      current_={Phase::Unknown,r.token,r.serial,0,0,0,0,0,true};return;
++    }
++    if(fault_||!current_.valid)return;
++    if(r.op==Op::FrameEnd) {
++      if(depth_||r.serial!=current_.frame){Fault();return;}
++      Reset();return;
++    }
++    if(r.op==Op::Begin) {
++      if(depth_==stack_.size()||r.serial<=last_serial_){Fault();return;}
++      stack_[depth_++]={current_.phase,r.serial};last_serial_=r.serial;
++      current_.phase=r.phase;return;
++    }
++    if(r.op==Op::End) {
++      if(!depth_||stack_[depth_-1].serial!=r.serial){Fault();return;}
++      current_.phase=stack_[--depth_].phase;return;
++    }
++    if(r.serial<=last_serial_){Fault();return;}
++    last_serial_=r.serial;
++    if(r.op==Op::Target) {
++      if(!r.data[4]||r.data[4]<=current_.binding){Fault();return;}
++      current_.color=r.data[0];current_.depth=r.data[1];
++      current_.color_desc=r.data[2];current_.depth_desc=r.data[3];current_.binding=r.data[4];
++    }
++  }
++  // Indirect buffers execute synchronously in the same ordered GPU stream.
++  // A native scope may begin in one slab and end in its sibling. Transport
++  // recursion is bounded, but only explicit markers/lifecycle events change
++  // the logical scope. Never restore a stale parent snapshot on ReturnIB.
++  bool EnterBuffer() {
++    if(buffers_==8){Fault();return false;}
++    ++buffers_;return true;
++  }
++  void LeaveBuffer() {
++    if(!buffers_){Fault();return;}
++    --buffers_;
++  }
++ private:
++  struct Entry {Phase phase=Phase::Unknown;uint32_t serial=0;};
++  Context current_{};uint32_t eligible_=0,last_frame_=0,last_serial_=0;
++  size_t depth_=0,buffers_=0;bool fault_=false;
++  std::array<Entry,16> stack_{};
++};
++
++// This is the production NOP parser used by the CP and the byte-path test.
++// Diagnostics may inspect disabled packets, but never enable consumption or
++// introduce a fault when the ordinary disabled path would have skipped them.
++enum class NopDisposition {Disabled,Unrelated,CountMismatch,Consumed,Truncated};
++struct NopReceipt {
++  NopDisposition disposition=NopDisposition::Disabled;
++  uint32_t count=0,available=0;
++  std::array<uint32_t,kWords> words{};
++  bool ok=true,recognized=false;
++};
++template<class Reader> NopReceipt ParseNop(Reader& reader,uint32_t count,Consumer& consumer,
++                                         bool inspect_disabled=false) {
++  NopReceipt result;result.count=count;result.available=reader.read_count();
++  const bool eligible=consumer.eligible()!=0;
++  if(!eligible&&!inspect_disabled){reader.AdvanceRead(count*4);return result;}
++  if(uint64_t(count)*4>reader.read_count()) {
++    result.disposition=NopDisposition::Truncated;
++    if(eligible){consumer.Fault();result.ok=false;}
++    // The disabled production path only advances, even for malformed input.
++    else reader.AdvanceRead(count*4);
++    return result;
++  }
++  if(!count)return result;
++  result.words[0]=reader.template ReadAndSwap<uint32_t>();
++  if(result.words[0]!=kMagic) {
++    reader.AdvanceRead((count-1)*4);result.disposition=NopDisposition::Unrelated;return result;
++  }
++  result.recognized=true;
++  if(count!=kWords) {
++    reader.AdvanceRead((count-1)*4);result.disposition=NopDisposition::CountMismatch;
++    if(eligible)consumer.Fault();return result;
++  }
++  for(uint32_t i=1;i<count;++i)result.words[i]=reader.template ReadAndSwap<uint32_t>();
++  if(eligible){consumer.Consume(result.words);result.disposition=NopDisposition::Consumed;}
++  return result;
++}
++
++// Independent of frame-trace arming and consumer resets. Only diagnostics call
++// this object; production-disabled calls leave every counter and cap untouched.
++struct IngressDiagnostics {
++  uint32_t packets=0,eligible=0,recognized=0,disabled_markers=0,malformed=0;
++  uint32_t epoch=0,lines=0;
++  void Observe(bool enabled,uint32_t token,const NopReceipt& r) {
++    if(!enabled)return;
++    auto increment=[](uint32_t& n){if(n!=UINT32_MAX)++n;};
++    increment(packets);if(token)increment(eligible);
++    if(r.recognized){increment(recognized);if(!token)increment(disabled_markers);}
++    if(r.disposition==NopDisposition::CountMismatch||r.disposition==NopDisposition::Truncated)increment(malformed);
++  }
++  bool Admit(bool enabled) {return enabled&&lines<256?(++lines,true):false;}
++  void Swap(bool enabled) {if(enabled&&epoch!=UINT32_MAX)++epoch;}
++};
++inline void ResetAtSwap(Consumer& consumer,IngressDiagnostics& diagnostic,bool enabled) {
++  consumer.Reset();diagnostic.Swap(enabled);
++}
++
++struct Scene {uint32_t core=0,camera=0,car=0,graphics=0;uint64_t generation=0;};
++inline bool ExactContext(const Scene& scene,uint32_t core,uint32_t camera,uint32_t graphics) {
++  return scene.generation&&scene.core&&scene.camera&&scene.car&&scene.graphics&&
++         core==scene.core&&camera==scene.camera&&graphics==scene.graphics;
++}
++inline Phase CarPhase(const Scene& scene,uint32_t car,uint32_t parent) {
++  if(!scene.generation||!car||parent!=scene.core)return Phase::Unknown;
++  return car==scene.car?Phase::PlayerCar:Phase::OtherCar;
++}
++// Native48 is the last written dword; limit56 bounds available immediate slab.
++// Do not allocate/flush/extend a recording. If unavailable, emit nothing and
++// invalidate this host session. Ordinary native code still forwards unchanged.
++inline bool Capacity(uint32_t cursor,uint32_t limit,uint32_t bytes,bool recording) {
++  return !recording&&cursor&&!(cursor&3)&&!(limit&3)&&bytes&&!(bytes&3)&&
++         uint64_t(cursor)+bytes<=limit;
++}
++template<class IO> bool Emit(IO& io,const Record& r) {
++  uint32_t cursor=0,limit=0;bool recording=true;
++  if(!io.Writer(cursor,limit,recording)||!Capacity(cursor,limit,(kWords+1)*4,recording)||
++     !io.Writable(cursor+4,(kWords+1)*4))return false;
++  const auto words=Encode(r);
++  io.Store(cursor+4,kNop);
++  for(uint32_t i=0;i<kWords;++i)io.Store(cursor+8+i*4,words[i]);
++  io.Commit(cursor+(kWords+1)*4);return true;
++}
++template<class IO,class Forward> void ObserveAndForward(IO& io,Phase phase,Forward&& forward) {
++  struct Exit {IO& io;uint32_t serial;~Exit(){if(serial)io.End(serial);}};
++  const Exit exit{io,io.Begin(phase)};
++  forward(); // Even when recording is disabled or the marker cannot be emitted.
++}
++} // namespace fh1::provenance
+diff --git a/include/rex/graphics/fh1_provenance_capture.h b/include/rex/graphics/fh1_provenance_capture.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_provenance_capture.h
+@@ -0,0 +1,45 @@
++#pragma once
++#include <rex/graphics/fh1_provenance.h>
++#include <cstdio>
++#include <string>
++namespace fh1::provenance {
++class MarkerCapture {
++ public:
++  bool consumed()const{return consumed_;}
++  bool TryStart(bool enabled,const char* path,const NopReceipt& receipt,
++                const Consumer& consumer,FILE*& file,uint32_t& draws,uint32_t& records) {
++    if(!enabled||consumed_||file||!path||!*path)return false;
++    const auto context=consumer.context();
++    if(!receipt.ok||!receipt.recognized||receipt.count!=kWords||
++       receipt.disposition!=NopDisposition::Consumed||
++       receipt.words[1]!=((kVersion<<16)|uint16_t(Op::FrameBegin))||
++       !consumer.eligible()||consumer.fault()||!context.valid||
++       context.token!=consumer.eligible()||context.token!=receipt.words[2]||
++       context.frame!=receipt.words[3])return false;
++    const std::string arm=std::string(path)+".marker-trigger";
++    FILE* trigger=std::fopen(arm.c_str(),"rb");if(!trigger)return false;
++    std::fclose(trigger);
++    FILE* opened=std::fopen(path,"wb");if(!opened)return false;
++    if(std::remove(arm.c_str())!=0){std::fclose(opened);return false;}
++    file=opened;consumed_=true;draws=0;records=0;
++    std::fprintf(file,"B provenance-start token=%u frame=%u\n",context.token,context.frame);
++    return true;
++  }
++ private:
++  bool consumed_=false;
++};
++// Same production M format and budget as before; shared with the file-backed
++// regression so first-record ordering is tested through actual trace code.
++inline bool TraceMarker(FILE* file,const Consumer& consumer,const NopReceipt& receipt,uint32_t& records) {
++  if(receipt.disposition!=NopDisposition::Consumed||!TraceAllowed(file!=nullptr,consumer.eligible(),records))return false;
++  const auto c=consumer.context();const auto& words=receipt.words;
++  std::fprintf(file,"M token=%u serial=%u op=%u phase=%u valid=%u fault=%u data=%08X,%08X,%08X,%08X,%08X\n",
++    words[2],words[3],words[1]&65535,words[4],c.valid,consumer.fault(),words[5],words[6],words[7],words[8],words[9]);
++  return true;
++}
++inline void CloseTraceAtSwap(FILE*& file,uint32_t draws) {
++  if(!file)return;
++  std::fprintf(file,"E frame end, %u draws\n",draws);
++  std::fclose(file);file=nullptr;
++}
++} // namespace fh1::provenance
+diff --git a/include/rex/graphics/fh1_record_execution.h b/include/rex/graphics/fh1_record_execution.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_record_execution.h
+@@ -0,0 +1,24 @@
++#pragma once
++#include <array>
++#include <cstdint>
++namespace fh1::record_execution {
++struct Invocation {uint32_t ptr=0,words=0,call_packet=0;uint64_t id=0;};
++struct Location {
++  uint32_t kind=0,ptr=0,count=0,depth=0,parent=0,packet_phys=0;
++  uint64_t instance=0,parent_instance=0;std::array<Invocation,8> chain{};bool overflow=false;
++};
++inline Location Enter(const Location& saved,uint32_t kind,uint32_t ptr,uint32_t words,bool enabled,uint64_t& counter){
++  Location out;out.kind=kind;out.ptr=ptr;out.count=words;out.depth=kind==1?0:saved.depth+1;out.parent=saved.ptr;
++  if(!enabled)return out;
++  out.parent_instance=saved.instance;
++  if(counter==UINT64_MAX){out.overflow=true;return out;}
++  out.instance=++counter;if(kind!=1)out.chain=saved.chain;
++  out.overflow=saved.overflow||out.depth>=out.chain.size();
++  if(out.depth<out.chain.size())out.chain[out.depth]={ptr,words,saved.packet_phys,out.instance};
++  return out;
++}
++inline uint32_t Packet(const Location& location,uint32_t offset){
++  const auto physical=uint64_t(location.ptr&0x1FFFFFFFu)+offset;
++  return physical<0x20000000ull?uint32_t(physical):UINT32_MAX;
++}
++} // namespace fh1::record_execution
+diff --git a/include/rex/graphics/fh1_recorded_capture.h b/include/rex/graphics/fh1_recorded_capture.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_recorded_capture.h
+@@ -0,0 +1,28 @@
++#pragma once
++#include <rex/graphics/fh1_recorded_provenance.h>
++#include <cstdio>
++#include <string>
++namespace fh1::recorded {
++class MarkerCapture {
++ public:
++  bool consumed()const{return consumed_;}bool checked()const{return checked_;}
++  bool TryStart(bool enabled,const char* path,const Receipt& receipt,const Consumer& consumer,FILE*& file,uint32_t& draws,uint32_t& records){
++    if(!enabled||checked_||file||!path||!*path)return false;
++    const auto c=consumer.context();
++    if(!receipt.recognized||!receipt.ok||receipt.count!=kWords||receipt.words[1]!=((kVersion<<16)|uint16_t(Op::FrameBegin))||!c.valid||consumer.fault()||!consumer.eligible()||c.uid!=consumer.eligible()||c.uid!=receipt.words[2]||c.frame!=receipt.words[3])return false;
++    // One lookup, at the first accepted recorded Begin. Never stat per NOP or
++    // fall through to a later frame when the prearm file was absent/failed.
++    checked_=true;const std::string arm=std::string(path)+".marker-trigger";
++    FILE* trigger=std::fopen(arm.c_str(),"rb");if(!trigger)return false;std::fclose(trigger);
++    FILE* opened=std::fopen(path,"wb");if(!opened)return false;
++    if(std::remove(arm.c_str())!=0){std::fclose(opened);return false;}
++    file=opened;consumed_=true;draws=0;records=0;
++    std::fprintf(file,"B recorded-start uid=%u frame=%u replay=%llu\n",c.uid,c.frame,(unsigned long long)c.replay);return true;
++  }
++ private:bool checked_=false,consumed_=false;
++};
++inline bool TraceMarker(FILE* file,const Receipt& receipt,const Consumer& consumer,uint32_t& records){
++  if(!file||records>=4096||!receipt.recognized)return false;++records;const auto& w=receipt.words;const auto c=consumer.context();
++  std::fprintf(file,"Q uid=%u frame=%u replay=%llu op=%u serial=%u phase=%u valid=%u fault=%u data=%08X,%08X,%08X,%08X,%08X\n",w[2],c.valid?c.frame:receipt.prior_frame,(unsigned long long)(c.valid?c.replay:receipt.prior_replay),w[1]&65535,w[3],w[4],c.valid,consumer.fault(),w[5],w[6],w[7],w[8],w[9]);return true;
++}
++}
+diff --git a/include/rex/graphics/fh1_recorded_provenance.h b/include/rex/graphics/fh1_recorded_provenance.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_recorded_provenance.h
+@@ -0,0 +1,123 @@
++#pragma once
++#include <array>
++#include <cstdint>
++#include <span>
++#include <cstddef>
++// Include the existing provenance protocol first. Separate wire magic and
++// consumer: recorded replay never weakens the immediate protocol's serial rules.
++namespace fh1::recorded {
++namespace p=fh1::provenance;
++constexpr uint32_t kMagic=0x46485236,kVersion=6,kWords=10,kBytes=44;
++using Record=p::Record;using Op=p::Op;using Phase=p::Phase;
++constexpr Phase kMainTrack=Phase(6),kMainModels=Phase(7),kMainVegetation=Phase(8),kMainCharacters=Phase(9),kMainSkinnedCrowd=Phase(10),kMainCrowdComponent=Phase(11),kMainParticles=Phase(12);
++constexpr bool CrowdPhase(Phase phase){return phase==kMainSkinnedCrowd||phase==kMainCrowdComponent;}
++constexpr uint32_t LeafEntry(Phase phase){return phase==kMainModels?0x82447B70u:phase==kMainVegetation?0x824436A0u:phase==kMainCharacters?0x8248A270u:0u;}constexpr uint32_t kSurface24=0x53524631;
++inline auto Encode(const Record& r){auto w=p::Encode(r);w[0]=kMagic;w[1]=(kVersion<<16)|uint16_t(r.op);return w;}
++struct Retention {uint32_t device=0,anchor=0,generation=0,ring=0;bool operator==(const Retention&)const=default;};
++struct AllocatorState {std::array<uint32_t,7> v{};bool readable=true;};
++inline constexpr std::array<uint32_t,7> kAllocatorOffsets{48,52,11068,13600,13604,15324,15332};
++template<class Read> AllocatorState ReadAllocatorState(Read&& read){AllocatorState out;for(size_t i=0;i<kAllocatorOffsets.size();++i)out.readable&=read(kAllocatorOffsets[i],out.v[i]);return out;}
++inline Retention Retained(const AllocatorState& s,uint32_t device){return {device,s.v[3],s.v[4],s.v[5]};}
++template<class Context,class Forward> uint32_t ReserveCopied(const Context& original,uint32_t device,uint32_t words,Forward&& forward){Context copy=original;copy.r3.u64=device;copy.r4.u64=words;forward(copy);return copy.r3.u32;}
++template<class Setter> void Revoke(uint32_t current,Setter&& set){if(current)set(0u);}
++// One pending record, one published UID. No address table or lifetime list.
++enum class SealFailure:uint32_t {None,NoUID,Failed,Unclosed,Submitted,WorldActive,Flags,Retention};
++enum class ProducerFailure:uint32_t {None,NoUID,Failed,Closed,Token,DuplicateFrame,ZeroFrame,MissingFrame,FrameEndDepth,FrameEndSerial,EndEmpty,EndSerial,SerialOrder,Depth};
++class Producer {
++ public:
++  uint32_t uid=0;Retention retention{};bool failed=false,closed=false,submitted=false;ProducerFailure failure=ProducerFailure::None;SealFailure seal_failure=SealFailure::None;
++  bool Start(uint32_t id,Retention r){*this={};if(!id||!r.device||!r.anchor)return false;uid=id;retention=r;return true;}
++  void Fail(){failed=true;}
++  bool Observe(const Record& r){
++    const auto bad=[&](ProducerFailure why){failure=why;Fail();return false;};
++    if(!uid)return bad(ProducerFailure::NoUID);if(failed)return bad(ProducerFailure::Failed);if(closed)return bad(ProducerFailure::Closed);if(r.token!=uid)return bad(ProducerFailure::Token);
++    if(r.op==Op::FrameBegin){if(begun_)return bad(ProducerFailure::DuplicateFrame);if(!r.serial)return bad(ProducerFailure::ZeroFrame);begun_=true;frame_=last_=r.serial;return true;}
++    if(!begun_)return bad(ProducerFailure::MissingFrame);
++    if(r.op==Op::FrameEnd){if(depth_)return bad(ProducerFailure::FrameEndDepth);if(r.serial!=frame_)return bad(ProducerFailure::FrameEndSerial);closed=true;return true;}
++    if(r.op==Op::End){if(!depth_)return bad(ProducerFailure::EndEmpty);if(stack_[depth_-1]!=r.serial)return bad(ProducerFailure::EndSerial);--depth_;return true;}
++    if(r.serial<=last_)return bad(ProducerFailure::SerialOrder);last_=r.serial;
++    if(r.op==Op::Begin){if(depth_==stack_.size())return bad(ProducerFailure::Depth);stack_[depth_++]=r.serial;}
++    return true;
++  }
++  template<class Match> uint32_t SealChecked(Retention current,bool world_active,uint32_t flags,Match&& match){
++    const auto bad=[&](SealFailure why){seal_failure=why;return 0u;};
++    if(!uid)return bad(SealFailure::NoUID);if(failed)return bad(SealFailure::Failed);if(!closed)return bad(SealFailure::Unclosed);if(submitted)return bad(SealFailure::Submitted);if(world_active)return bad(SealFailure::WorldActive);if(flags&0x80200000u)return bad(SealFailure::Flags);if(!match(retention,current))return bad(SealFailure::Retention);
++    seal_failure=SealFailure::None;submitted=true;return uid;
++  }
++  uint32_t Seal(Retention current,bool world_active,uint32_t flags=0){return SealChecked(current,world_active,flags,[](const Retention&a,const Retention&b){return a==b;});}
++ private:
++  uint32_t frame_=0,last_=0;size_t depth_=0;bool begun_=false;std::array<uint32_t,16> stack_{};
++};
++// Reserve is an exactly-once native allocator call. Allocation may flush/rotate;
++// validation therefore reads state AFTER it returns. Failed writes never commit.
++enum class EmitFailure:uint32_t {None,Disabled,Snapshot,NullCursor,Alignment,Cursor,Flags,Retention,Capacity,Writable};
++template<class IO,class Report,class Match> bool EmitValidated(IO& io,bool enabled,const Record& r,Retention expected,Report&& report,Match&& match){
++  const auto fail=[&](EmitFailure reason){report(reason);return false;};
++  if(!enabled)return fail(EmitFailure::Disabled);
++  const uint32_t cursor=io.Reserve(kWords+1);
++  uint32_t actual=0,hard=0,flags=0;Retention current;
++  if(!io.Snapshot(actual,hard,flags,current))return fail(EmitFailure::Snapshot);
++  if(!cursor)return fail(EmitFailure::NullCursor);
++  if(cursor&3)return fail(EmitFailure::Alignment);
++  if(actual!=cursor)return fail(EmitFailure::Cursor);
++  if(flags&0x80200000u)return fail(EmitFailure::Flags);
++  if(!match(expected,current))return fail(EmitFailure::Retention);
++  if(uint64_t(cursor)+kBytes>hard)return fail(EmitFailure::Capacity);
++  if(!io.Writable(cursor+4,kBytes))return fail(EmitFailure::Writable);
++  const auto words=fh1::recorded::Encode(r);io.Store(cursor+4,p::kNop);
++  for(uint32_t i=0;i<kWords;++i)io.Store(cursor+8+4*i,words[i]);
++  io.Commit(cursor+kBytes);return true;
++}
++template<class IO,class Report> bool EmitChecked(IO& io,bool enabled,const Record& r,Retention expected,Report&& report){return EmitValidated(io,enabled,r,expected,report,[](const Retention&a,const Retention&b){return a==b;});}
++template<class IO> bool Emit(IO& io,bool enabled,const Record& r,Retention expected){return EmitChecked(io,enabled,r,expected,[](EmitFailure){});}
++
++constexpr uint32_t kSceneSource=0x53434E31u,kTrackType=0x82003CECu;
++struct Context {
++  uint32_t uid=0,frame=0,selected=0,graphics=0,core=0,camera=0,scene_root=0,scene_type=0,main_root=0,crowd_root=0,particle_root=0;uint64_t world_generation=0,replay=0;
++  Phase phase=Phase::Unknown;uint32_t color=0,depth=0,cdesc=0,ddesc=0,binding=0,color_surface=0,depth_surface=0;bool valid=false,player_enclosing=false,other_car_enclosing=false,surface_ready=false;
++};
++class Consumer {
++ public:
++  struct EligibilityReceipt {uint32_t requested=0,before=0,retired=0,after=0;bool changed=false;const char* reason="unchanged";};
++  EligibilityReceipt Eligibility(uint32_t uid){EligibilityReceipt r{uid,allowed_,retired_,allowed_};if(uid!=allowed_){if(allowed_>retired_)retired_=allowed_;Reset();allowed_=uid>retired_?uid:0;r.changed=true;r.reason=!uid?"revoked":allowed_?"accepted-uid":"retired-uid";}r.retired=retired_;r.after=allowed_;return r;}
++  void Reset(){context_={};depth_=0;last_=0;fault_=false;}
++  void Fault(){Reset();fault_=true;}
++  uint32_t eligible()const{return allowed_;}bool fault()const{return fault_;}
++  Context context()const{return context_;}
++  bool EnterBuffer(){if(buffers_==8){Fault();return false;}++buffers_;return true;}
++  void LeaveBuffer(){if(!buffers_)Fault();else --buffers_;}
++  bool TargetMatches(uint32_t c,uint32_t d,uint32_t cd,uint32_t dd)const{return context_.valid&&context_.binding&&context_.color==c&&context_.depth==d&&context_.cdesc==cd&&context_.ddesc==dd;}
++  void Consume(std::span<const uint32_t> w){
++    if(!allowed_)return;
++    if(w.size()!=kWords||w[0]!=kMagic||w[1]>>16!=kVersion||w[2]!=allowed_||!w[3]||w[4]>uint32_t(kMainParticles)){Fault();return;}
++    const auto op=Op(uint16_t(w[1]));const auto phase=Phase(w[4]);const uint32_t serial=w[3];
++    if(op==Op::FrameBegin){
++      if(context_.valid||replay_==UINT64_MAX||!w[5]||!w[6]||!w[7]||!w[8]||!w[9]){Fault();return;}
++      Reset();context_.uid=w[2];context_.frame=serial;last_=serial;context_.graphics=w[5];context_.core=w[6];context_.camera=w[7];context_.selected=w[8];context_.world_generation=w[9];context_.replay=++replay_;context_.valid=true;return;
++    }
++    if(fault_||!context_.valid)return;
++    if(op==Op::FrameEnd){if(depth_||serial!=context_.frame){Fault();return;}Reset();return;}
++    if(op==Op::End){if(!depth_||stack_[depth_-1].serial!=serial){Fault();return;}context_.phase=stack_[--depth_].phase;context_.player_enclosing=stack_[depth_].player;context_.other_car_enclosing=stack_[depth_].other;context_.scene_root=stack_[depth_].root;context_.scene_type=stack_[depth_].type;context_.main_root=stack_[depth_].main;context_.crowd_root=stack_[depth_].crowd;context_.particle_root=stack_[depth_].particle;return;}
++    if(serial<=last_){Fault();return;}last_=serial;
++    if(op==Op::Begin){if(depth_==stack_.size()){Fault();return;}if(LeafEntry(phase)&&(!w[6]||w[5]!=LeafEntry(phase)||w[7]!=context_.graphics||!w[8]||w[9]!=4)){Fault();return;}if(CrowdPhase(phase)&&(!w[6]||w[7]!=context_.graphics||!w[8]||(phase==kMainSkinnedCrowd?(w[5]!=0x8246C158u||w[9]!=4):(w[5]!=0x824A2F60u||(w[9]!=0x82256230u&&w[9]!=0x822562D4u))))){Fault();return;}if(phase==kMainParticles&&(w[5]!=0x8249DBE8u||!w[6]||w[7]!=context_.graphics||!w[8]||(w[9]!=0x82001E8Cu&&w[9]!=0x82256574u))){Fault();return;}stack_[depth_++]={context_.phase,serial,context_.player_enclosing,context_.other_car_enclosing,context_.scene_root,context_.scene_type,context_.main_root,context_.crowd_root,context_.particle_root};context_.particle_root=phase==kMainParticles?w[8]:0;context_.crowd_root=CrowdPhase(phase)?w[8]:0;
++      if(phase==Phase::Scene){context_.scene_root=0;context_.scene_type=0;if(w[5]==kSceneSource&&w[6]==context_.graphics&&w[7]&&w[8]==kTrackType&&w[9]==context_.camera){context_.scene_root=w[7];context_.scene_type=w[8];}}
++      context_.main_root=LeafEntry(phase)?w[8]:phase==kMainTrack&&w[5]==0x82466418u&&w[6]&&w[6]==w[8]&&w[7]==context_.graphics&&w[9]==4?w[8]:0;context_.phase=phase;context_.player_enclosing|=phase==Phase::PlayerCar;context_.other_car_enclosing|=phase==Phase::OtherCar;return;}
++    if(op==Op::Target){if(!w[9]||w[9]<=context_.binding){Fault();return;}context_.color=w[5];context_.depth=w[6];context_.cdesc=w[7];context_.ddesc=w[8];context_.binding=w[9];context_.surface_ready=false;return;}
++    if(op==Op::Context){if(w[5]==kSurface24){context_.surface_ready=context_.binding&&w[8]==context_.color&&w[9]==context_.depth&&w[6]&&w[7];context_.color_surface=w[6];context_.depth_surface=w[7];}if(w[5]==0x47454E31u)context_.world_generation|=uint64_t(w[6])<<32;return;}
++    Fault();
++  }
++ private:
++  struct Entry{Phase phase=Phase::Unknown;uint32_t serial=0;bool player=false,other=false;uint32_t root=0,type=0,main=0,crowd=0,particle=0;};
++  uint32_t allowed_=0,retired_=0,last_=0;uint64_t replay_=0;size_t depth_=0,buffers_=0;bool fault_=false;Context context_{};std::array<Entry,16>stack_{};
++};
++struct Receipt{bool recognized=false,ok=true;uint32_t count=0,prior_frame=0;uint64_t prior_replay=0;std::array<uint32_t,kWords>words{};};
++// Probe a copy: unrelated/disabled NOPs retain the exact existing parser path.
++template<class Reader> Receipt TryParse(Reader& reader,uint32_t count,Consumer& consumer,bool enabled){
++  Receipt out;out.count=count;if(!enabled||!count||reader.read_count()<4)return out;
++  auto probe=reader;if(probe.template ReadAndSwap<uint32_t>()!=kMagic)return out;
++  out.recognized=true;
++  if(count!=kWords||uint64_t(count)*4>reader.read_count()){consumer.Fault();out.ok=false;return out;}
++  for(uint32_t i=0;i<kWords;++i)out.words[i]=reader.template ReadAndSwap<uint32_t>();
++  const auto before=consumer.context();out.prior_frame=before.frame;out.prior_replay=before.replay;consumer.Consume(out.words);return out;
++}
++} // namespace fh1::recorded
+diff --git a/include/rex/graphics/fh1_replay_lease.h b/include/rex/graphics/fh1_replay_lease.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_replay_lease.h
+@@ -0,0 +1,55 @@
++#pragma once
++#include <rex/graphics/fh1_partial_policy.h>
++
++namespace fh1::partial {
++// A single registry string publishes the seal, its producer revision and the
++// identity captured by that producer. Empty is a hard revoke, never RecordStart.
++struct Admission {uint32_t uid=0,epoch=0;Identity source{};};
++inline Admission ParseAdmission(std::string_view text){
++  Admission out;const auto first=text.find(',');if(first==text.npos)return {};
++  auto number=[](std::string_view s,uint32_t& v){const auto p=std::from_chars(s.data(),s.data()+s.size(),v);return p.ec==std::errc{}&&p.ptr==s.data()+s.size()&&v;};
++  if(!number(text.substr(0,first),out.uid))return {};text.remove_prefix(first+1);
++  const auto second=text.find(',');if(second==text.npos||!number(text.substr(0,second),out.epoch))return {};
++  out.source=Parse(text.substr(second+1));if(!out.source.session)return {};return out;
++}
++class ReplayLease {
++ public:
++  uint32_t uid()const{return uid_;}uint32_t retired()const{return retired_;}
++  uint32_t pending()const{return pending_;}bool active()const{return uid_!=0;}
++  void Revoke(recorded::Consumer& consumer){
++    if(uid_>retired_)retired_=uid_;if(consumer.eligible()>retired_)retired_=consumer.eligible();
++    uid_=epoch_=pending_=0;source_={};consumer.Eligibility(0);consumer.Reset();
++  }
++  recorded::Consumer::EligibilityReceipt Refresh(recorded::Consumer& consumer,
++      bool requested,bool vr,const Admission& admission,const Identity& live,
++      uint32_t token,uint64_t now){
++    const bool hard=requested&&!vr&&admission.uid&&admission.epoch&&
++        Fresh(live,token,now)&&Same(admission.source,live);
++    if(!hard||consumer.fault()||(uid_&&(admission.epoch!=epoch_||
++        !Same(source_,live)||admission.uid<uid_||admission.uid<pending_))){
++      Revoke(consumer);return consumer.Eligibility(0);
++    }
++    pending_=admission.uid;
++    // Publication churn cannot replace the currently executing sealed record.
++    return consumer.Eligibility(uid_?uid_:(admission.uid>retired_?admission.uid:0));
++  }
++  bool Observe(recorded::Consumer& consumer,const recorded::Receipt& marker,
++      const Admission& admission,const Identity& live,uint32_t token,uint64_t now){
++    if(!marker.recognized)return false;
++    if(!marker.ok||consumer.fault()){Revoke(consumer);return false;}
++    if(uint16_t(marker.words[1])!=uint16_t(recorded::Op::FrameBegin))return active();
++    const auto c=consumer.context();
++    if(!c.valid||!Fresh(live,token,now)||!Same(admission.source,live)){
++      Revoke(consumer);return false;
++    }
++    if(uid_){if(c.uid!=uid_){Revoke(consumer);return false;}return true;}
++    if(!admission.epoch||c.uid!=admission.uid||c.uid<=retired_){Revoke(consumer);return false;}
++    // GEN1 must still establish full generation before Permit::Begin authorizes
++    // any draw. This provisional pin only keeps the parser's UID stable.
++    uid_=c.uid;epoch_=admission.epoch;source_=admission.source;return true;
++  }
++  void Presented(recorded::Consumer& consumer){Revoke(consumer);}
++ private:
++  uint32_t uid_=0,epoch_=0,pending_=0,retired_=0;Identity source_{};
++};
++} // namespace fh1::partial
+diff --git a/include/rex/graphics/fh1_track_bridge.h b/include/rex/graphics/fh1_track_bridge.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_track_bridge.h
+@@ -0,0 +1,10 @@
++#pragma once
++#include <rex/graphics/fh1_provenance.h>
++#include <rex/graphics/fh1_recorded_provenance.h>
++#include <rex/graphics/fh1_track_policy.h>
++namespace rex::ui {class Presenter;}
++namespace rex::graphics {
++class CommandProcessor;
++void Fh1PauseTrackAfterPresented(const CommandProcessor*,ui::Presenter*);
++fh1::track::Decision Fh1PauseTrackDecision(const CommandProcessor*,const fh1::track::Raster&);
++}
+diff --git a/include/rex/graphics/fh1_track_policy.h b/include/rex/graphics/fh1_track_policy.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/fh1_track_policy.h
+@@ -0,0 +1,138 @@
++#pragma once
++#include <cstdint>
++// Include the recorded protocol first. No resource identities or address registry.
++namespace fh1::track {
++template<class Read> std::array<uint32_t,5> ReadScene(bool live,uint32_t graphics,uint32_t expected_graphics,uint32_t core,uint32_t camera,Read&& read){
++  uint32_t actual_core=0,root=0,type=0;
++  if(!live||!graphics||graphics!=expected_graphics||!core||!camera||uint64_t(graphics)+4>0xEFFFFFFCull||uint64_t(core)+36>0xEFFFFFFCull||!read(graphics+4,actual_core)||actual_core!=core||!read(core+36,root)||!root||!read(root,type)||type!=recorded::kTrackType)return {};
++  return {recorded::kSceneSource,graphics,root,type,camera};
++}
++struct CrowdInput {uint32_t entry=0,object=0,graphics=0,root=0,pass=0,caller=0;};
++struct CrowdProof {recorded::Phase phase=provenance::Phase::Unknown;std::array<uint32_t,5> data{};};
++template<class Read> CrowdProof ReadCrowd(bool requested,bool recording,bool original_frame,bool car_enclosing,const CrowdInput& in,uint32_t graphics,uint32_t core,uint32_t camera,Read&& read){
++  if(!requested||!recording||!original_frame||car_enclosing||!graphics||in.graphics!=graphics||!core||!camera||uint64_t(graphics)+400>0xEFFFFFFCull||uint64_t(core)+60>0xEFFFFFFCull)return {};
++  const auto source=ReadScene(true,graphics,graphics,core,camera,read);if(!source[2])return {};
++  uint32_t actual_camera=0;if(!read(graphics+400,actual_camera)||actual_camera!=camera)return {};
++  const auto root=source[2];uint32_t object=0,table=0,draw=0;
++  if(in.entry==0x8246C158u){
++    if(in.caller!=0x824752F4u||in.pass!=4||in.root!=root||uint64_t(root)+46664>0xEFFFFFFCull||!read(root+46664,object)||!object||object!=in.object||uint64_t(object)+4>0xEFFFFFFCull||!read(object+4,table))return {};
++    return {recorded::kMainSkinnedCrowd,{in.entry,object,graphics,root,4}};
++  }
++  if(in.entry==0x824A2F60u){
++    if(in.caller!=0x82475328u||!read(core+60,object)||!object||!read(object,table)||(table!=0x82256230u&&table!=0x822562D4u)||uint64_t(table)+40>0xEFFFFFFCull||!read(table+40,draw)||draw!=0x82EA82D8u)return {};
++    return {recorded::kMainCrowdComponent,{in.entry,object,graphics,root,table}};
++  }
++  return {};
++}
++struct ParticleInput {uint32_t object=0,graphics=0,kind=0,second=0,caller=0;};
++template<class Read> CrowdProof ReadParticles(bool requested,bool recording,bool original_frame,bool car_enclosing,const ParticleInput& in,uint32_t graphics,uint32_t core,uint32_t camera,Read&& read){
++  if(!requested||!recording||!original_frame||car_enclosing||!graphics||in.graphics!=graphics||!core||!camera||in.caller!=0x8249DE48u||in.second!=2||uint64_t(graphics)+448>0xEFFFFFFCull||uint64_t(core)+96>0xEFFFFFFCull)return {};
++  const auto source=ReadScene(true,graphics,graphics,core,camera,read);if(!source[2])return {};
++  uint32_t actual_camera=0,kind=0,object=0,table=0,draw=0;
++  if(!read(graphics+400,actual_camera)||actual_camera!=camera||!read(graphics+448,kind)||kind!=in.kind||(kind!=2&&kind!=3)||!read(core+96,object)||!object||object!=in.object||!read(object,table)||(table!=0x82001E8Cu&&table!=0x82256574u)||!read(table+92,draw)||draw!=0x8249DBE8u)return {};
++  return {recorded::kMainParticles,{0x8249DBE8u,object,graphics,source[2],table}};
++}
++struct LeafInput {uint32_t object=0,graphics=0,root=0,stack=0,entry=0;};
++inline recorded::Phase LeafPhase(uint32_t entry,uint32_t table){
++  if(entry==0x82447B70u&&table==0x82002B64u)return recorded::kMainModels;
++  if(entry==0x824436A0u&&table==0x82002AB4u)return recorded::kMainVegetation;
++  if(entry==0x8248A270u&&table==0x820028A4u)return recorded::kMainCharacters;
++  return provenance::Phase::Unknown;
++}
++template<class Read> recorded::Phase ReadLeaf(bool requested,bool recording,bool outer_scene,bool car_enclosing,const LeafInput& input,uint32_t graphics,uint32_t core,Read&& read){
++  if(!requested||!recording||!outer_scene||car_enclosing||!input.object||!graphics||input.graphics!=graphics||!core||uint64_t(input.stack)+84>0xEFFFFFFCull||uint64_t(core)+36>0xEFFFFFFCull)return provenance::Phase::Unknown;
++  uint32_t pass=0,root=0,table=0;
++  if(!read(input.stack+84,pass)||pass!=4||!read(core+36,root)||!root||input.root!=root||!read(input.object,table))return provenance::Phase::Unknown;
++  return LeafPhase(input.entry,table);
++}
++inline bool SourceMainPass(bool recording,bool outer_scene,uint32_t pass,uint32_t core,uint32_t root){return recording&&outer_scene&&pass==4&&core&&core==root;}
++struct Raster {uint32_t mode=0,surface=0,color[4]{},depth=0,effective_mask=0,raw_mask=0,shader_exports=0;bool memexport=false,query=false;};
++enum class Reason:uint32_t {Off,Unowned,Player,OtherOwner,MissingSurface,TargetMismatch,UnsupportedFormat,MRT,UnsupportedMode,Memexport,Query,Suppress};
++struct Decision {bool suppress=false;Reason reason=Reason::Off;};
++struct Probe {uint32_t uid=0,capture_uid=0;bool used=false;
++  bool Begin(bool requested,const recorded::Context& c){if(!requested||used||!c.valid)return false;used=true;uid=c.uid;capture_uid=c.uid;return true;}
++  void Eligibility(uint32_t allowed){if(allowed!=uid)uid=0;}
++  void Presented(){uid=0;capture_uid=0;}
++};
++inline uint32_t CanonicalColor(uint32_t word){return ((word>>16)&15)==12?(word&~0xF0000u)|0x30000u:word;}
++inline Decision QualifiedRaster(const recorded::Context& c,const Raster& r){
++  if(!c.surface_ready||!c.binding||!c.color||!c.depth)return {false,Reason::MissingSurface};
++  const uint32_t format=(c.cdesc>>16)&15;
++  if(format!=3&&format!=12)return {false,Reason::UnsupportedFormat};
++  // 82438A90 copies surface+24; 82439AF0 aliases format3/12 while
++  // preserving all other color fields. HIZ pitch is separate from the primary
++  // attachment key (Vulkan RT cache uses pitch/MSAA, color/depth base+format).
++  constexpr uint32_t geometry=0x00033FFFu;
++  if(((c.color_surface|c.depth_surface|r.surface)&0xC000u)||!(c.color_surface&0x3FFFu)||((c.color_surface^c.depth_surface)&geometry)||
++     ((c.color_surface^r.surface)&geometry)||CanonicalColor(c.cdesc)!=CanonicalColor(r.color[0])||c.ddesc!=r.depth)return {false,Reason::TargetMismatch};
++  // Production GetNormalizedColorMask combines static shader exports, raw mask,
++  // and existing format components. Bound secondary descriptors may be stale.
++  if(r.effective_mask&0xFFF0u)return {false,Reason::MRT};
++  if(r.mode!=4&&r.mode!=5)return {false,Reason::UnsupportedMode};
++  if(r.memexport)return {false,Reason::Memexport};
++  if(r.query)return {false,Reason::Query};
++  return {true,Reason::Suppress};
++}
++inline Decision Decide(bool requested,const recorded::Context& c,uint32_t allowed,const Raster& r,bool procedural_requested=false){
++  if(!requested&&!procedural_requested)return {};
++  if(!c.valid||!allowed||c.uid!=allowed)return {false,Reason::Unowned};
++  if(c.player_enclosing||c.phase==provenance::Phase::PlayerCar)return {false,Reason::Player};
++  if(c.other_car_enclosing||c.phase==provenance::Phase::OtherCar)return {false,Reason::OtherOwner};
++  if(!((requested&&c.phase==recorded::kMainTrack)||(procedural_requested&&recorded::LeafEntry(c.phase))))return {false,Reason::OtherOwner};
++  return QualifiedRaster(c,r);
++}
++enum class SceneReason:uint32_t {Off,Untyped,BeforeWitness,IdentityMismatch,TargetMismatch,Car,Guard,Eligible};
++struct SceneDecision {Decision raster{};SceneReason reason=SceneReason::Off;};
++struct MainTargetWitness {
++  recorded::Context identity{};Raster attachment{};bool ready=false;
++  void Reset(){identity={};attachment={};ready=false;}
++  bool SameFrame(const recorded::Context& c,uint32_t allowed)const{return c.valid&&allowed&&c.uid==allowed&&identity.uid==c.uid&&identity.frame==c.frame&&identity.replay==c.replay&&identity.world_generation==c.world_generation&&identity.graphics==c.graphics&&identity.core==c.core&&identity.camera==c.camera&&identity.selected==c.selected;}
++  void Synchronize(const recorded::Context& c,uint32_t allowed){if(ready&&!SameFrame(c,allowed))Reset();}
++  bool SameTarget(const recorded::Context& c,const Raster& r)const{return c.binding==identity.binding&&c.color==identity.color&&c.depth==identity.depth&&CanonicalColor(c.cdesc)==CanonicalColor(identity.cdesc)&&c.ddesc==identity.ddesc&&c.color_surface==identity.color_surface&&c.depth_surface==identity.depth_surface&&c.surface_ready&&r.surface==attachment.surface&&CanonicalColor(r.color[0])==CanonicalColor(attachment.color[0])&&r.depth==attachment.depth;}
++  void Observe(bool requested,const recorded::Context& c,uint32_t allowed,const Raster& r,const Decision& decision){
++    Synchronize(c,allowed);
++    if(!requested){Reset();return;}
++    if(ready&&decision.suppress&&!(c.phase==recorded::kMainTrack||recorded::LeafEntry(c.phase)))Reset();
++    if(ready&&(c.phase==recorded::kMainTrack||recorded::LeafEntry(c.phase))&&(c.scene_root!=identity.scene_root||c.scene_type!=identity.scene_type||c.main_root!=c.scene_root))Reset();
++    if(!requested||!decision.suppress||!c.valid||c.uid!=allowed||!c.scene_root||c.scene_type!=recorded::kTrackType||c.main_root!=c.scene_root||c.player_enclosing||c.other_car_enclosing||!(c.phase==recorded::kMainTrack||recorded::LeafEntry(c.phase)))return;
++    identity=c;attachment=r;ready=true;
++  }
++  SceneDecision Decide(bool requested,const recorded::Context& c,uint32_t allowed,const Raster& r){
++    Synchronize(c,allowed);
++    if(!requested){Reset();return {};}
++    if(!c.valid||!allowed||c.uid!=allowed)return {{false,Reason::Unowned},SceneReason::IdentityMismatch};
++    if(c.player_enclosing||c.phase==provenance::Phase::PlayerCar)return {{false,Reason::Player},SceneReason::Car};
++    if(c.other_car_enclosing||c.phase==provenance::Phase::OtherCar)return {{false,Reason::OtherOwner},SceneReason::Car};
++    if(c.phase!=provenance::Phase::Scene||!c.scene_root||c.scene_type!=recorded::kTrackType){if(c.phase==provenance::Phase::Scene)Reset();return {{false,Reason::OtherOwner},SceneReason::Untyped};}
++    if(!ready)return {{false,Reason::OtherOwner},SceneReason::BeforeWitness};
++    if(c.scene_root!=identity.scene_root||c.scene_type!=identity.scene_type){Reset();return {{false,Reason::OtherOwner},SceneReason::IdentityMismatch};}
++    if(!SameTarget(c,r)){Reset();return {{false,Reason::TargetMismatch},SceneReason::TargetMismatch};}
++    const auto result=QualifiedRaster(c,r);return {result,result.suppress?SceneReason::Eligible:SceneReason::Guard};
++  }
++  SceneDecision DecideCrowd(bool requested,const recorded::Context& c,uint32_t allowed,const Raster& r){
++    Synchronize(c,allowed);if(!requested)return {};
++    if(!c.valid||!allowed||c.uid!=allowed)return {{false,Reason::Unowned},SceneReason::IdentityMismatch};
++    if(c.player_enclosing||c.phase==provenance::Phase::PlayerCar)return {{false,Reason::Player},SceneReason::Car};
++    if(c.other_car_enclosing||c.phase==provenance::Phase::OtherCar)return {{false,Reason::OtherOwner},SceneReason::Car};
++    if(!recorded::CrowdPhase(c.phase)||!c.crowd_root)return {{false,Reason::OtherOwner},SceneReason::Untyped};
++    if(!ready)return {{false,Reason::OtherOwner},SceneReason::BeforeWitness};
++    if(c.crowd_root!=identity.scene_root){Reset();return {{false,Reason::OtherOwner},SceneReason::IdentityMismatch};}
++    if(!SameTarget(c,r)){Reset();return {{false,Reason::TargetMismatch},SceneReason::TargetMismatch};}
++    const auto result=QualifiedRaster(c,r);return {result,result.suppress?SceneReason::Eligible:SceneReason::Guard};
++  }
++  SceneDecision DecideParticles(bool requested,const recorded::Context& c,uint32_t allowed,const Raster& r){
++    Synchronize(c,allowed);if(!requested)return {};
++    if(!c.valid||!allowed||c.uid!=allowed)return {{false,Reason::Unowned},SceneReason::IdentityMismatch};
++    if(c.player_enclosing||c.phase==provenance::Phase::PlayerCar)return {{false,Reason::Player},SceneReason::Car};
++    if(c.other_car_enclosing||c.phase==provenance::Phase::OtherCar)return {{false,Reason::OtherOwner},SceneReason::Car};
++    if(c.phase!=recorded::kMainParticles||!c.particle_root)return {{false,Reason::OtherOwner},SceneReason::Untyped};
++    if(!ready)return {{false,Reason::OtherOwner},SceneReason::BeforeWitness};
++    if(c.particle_root!=identity.scene_root){Reset();return {{false,Reason::OtherOwner},SceneReason::IdentityMismatch};}
++    if(!SameTarget(c,r)){Reset();return {{false,Reason::TargetMismatch},SceneReason::TargetMismatch};}
++    const auto result=QualifiedRaster(c,r);return {result,result.suppress?SceneReason::Eligible:SceneReason::Guard};
++  }
++
++};
++
++template<class Draw> void EmitGuestRaster(const Decision& d,Draw&& draw){if(!d.suppress)draw();}
++}
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -10,9 +10,22 @@
+  */
+ 
+ #include "fh1_command_cursor.h"
++#include <rex/graphics/fh1_provenance.h>
++#include <rex/graphics/fh1_recorded_provenance.h>
++#include <rex/graphics/fh1_recorded_capture.h>
++#include <rex/graphics/fh1_track_bridge.h>
++#include <rex/graphics/fh1_partial_policy.h>
++#include <rex/graphics/fh1_replay_lease.h>
++#include <rex/graphics/fh1_partial_receipts.h>
++#include <rex/ui/presenter.h>
++#include <rex/graphics/fh1_provenance_capture.h>
++#include <rex/graphics/fh1_record_execution.h>
+ #include "fh1_frame_cost.h"
+ #include "fh1_vr_stereo.h"
+ #include <algorithm>
++#include <charconv>
++#include <chrono>
++#include <array>
+ #include <cinttypes>
+ #include <cmath>
+ #include <cstdio>
+@@ -761,7 +774,117 @@
+ 
+ void CommandProcessor::ReturnFromWait() {}
+ 
++namespace {
++using Fh1Location=fh1::record_execution::Location;
++struct Fh1Stream {
++  const CommandProcessor* owner=nullptr;fh1::provenance::Consumer observer;
++  fh1::provenance::IngressDiagnostics diagnostic;
++  fh1::recorded::Consumer recorded;fh1::recorded::MarkerCapture recorded_capture;uint32_t recorded_lines=0,recorded_trace=0,recorded_marker_trace=0,recorded_events=0;bool recorded_mode=false;uint32_t last_requested=0,last_after=0,last_retired=0;const char* last_reason="unchanged";
++  Fh1Location location;
++  fh1::partial::Receipts partial_receipts;fh1::partial::SealReceipt partial_seal;std::string partial_event;
++  fh1::partial::ReplayLease replay_lease;fh1::partial::Admission partial_admission;fh1::partial::Permit partial;fh1::partial::Identity partial_live{};bool partial_requested=false;uint32_t partial_token=0,partial_lines=0;uint64_t partial_seen=0,partial_eligible=0,partial_suppressed=0,partial_rejected=0;uint32_t partial_seen_uid=0,partial_eligible_uid=0,partial_marker_uid=0,partial_rejected_uid=0;uint64_t partial_marker_rejected=0;
++  fh1::track::Probe track_probe;fh1::track::MainTargetWitness main_target;std::array<uint64_t,8> scene_reasons{},crowd_reasons{},particle_reasons{};uint32_t track_trace=0;bool track_capture_done=false;std::array<uint64_t,12> track_counts{};std::array<uint64_t,13> role_draws{},role_suppressed{};
++  uint64_t manifest_invocations=0;bool manifest_active=false;
++  uint32_t marker_lines=0,ordinary_lines=0,buffer_lines=0,swap_lines=0,trace_lines=0;
++};
++Fh1Stream& Fh1State(const CommandProcessor* owner) {
++  thread_local Fh1Stream stream;
++  if(stream.owner!=owner){stream={};stream.owner=owner;}
++  return stream;
++}
++fh1::provenance::Consumer& Fh1Provenance(const CommandProcessor* owner) {
++  // The command processor executes a stream on its worker. Separate threads
++  // and CP objects never share scope stacks. A new worker starts empty.
++  return Fh1State(owner).observer;
++}
++bool Fh1DiagnosticEnabled() {
++  const auto enabled=rex::cvar::GetFlagByName("forza_pause_provenance");
++  if(enabled!="true"&&enabled!="1")return false;
++  const auto diagnostic=rex::cvar::GetFlagByName("forza_pause_provenance_diagnostics");
++  return diagnostic=="true"||diagnostic=="1";
++}
++bool Fh1ManifestEnabled() {
++  const auto enabled=rex::cvar::GetFlagByName("forza_pause_record_manifest");
++  if(enabled!="true"&&enabled!="1")return false;
++  const auto diagnostic=rex::cvar::GetFlagByName("forza_pause_provenance_diagnostics");
++  return diagnostic=="true"||diagnostic=="1";
++}
++uint64_t Fh1DiagnosticTime(){return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());}
++uint32_t Fh1ProvenanceEligibility() {
++  const auto enabled=rex::cvar::GetFlagByName("forza_pause_provenance");
++  if(enabled!="true"&&enabled!="1")return 0;
++  const auto value=rex::cvar::GetFlagByName("forza_pause_provenance_token");
++  uint32_t token=0;
++  const auto parsed=std::from_chars(value.data(),value.data()+value.size(),token);
++  return parsed.ec==std::errc{}&&parsed.ptr==value.data()+value.size()?token:0;
++}
++bool Fh1RecordedEnabled(){const auto enabled=rex::cvar::GetFlagByName("forza_pause_recorded_provenance");const auto phase=rex::cvar::GetFlagByName("forza_pause_provenance");return (enabled=="true"||enabled=="1")&&(phase=="true"||phase=="1");}
++void Fh1PartialSummary(Fh1Stream& s,const std::string& reason){if(!s.partial_receipts.Summary())return;const auto& d=s.partial_receipts;REXGPU_INFO("FH1PV summary us={} event={} screen={} generation={} frames={} rows={} seen={} eligible={} rejected={} suppressed={} first_accepted_uid={} first_accepted_us={} first_permitted_uid={} first_permitted_us={} first_source_age_us={} first_seal_age_us={} last_reason={} latest={} marker_uid={} rejected_uid={} source_session={} source_token={}",Fh1DiagnosticTime(),reason,d.session.screen,d.session.generation,d.frames,d.rows,d.seen,d.eligible,d.rejected,d.suppressed,d.first_accepted_uid,d.first_accepted_us,d.first_permitted_uid,d.first_permitted_us,d.first_source_age,d.first_seal_age,uint32_t(d.last_reason),s.recorded.eligible(),s.partial_marker_uid,s.partial_rejected_uid,s.partial_live.session,s.partial_token);}
++void Fh1RefreshRecordedEligibility(Fh1Stream& stream){
++  const bool mode=Fh1RecordedEnabled();const bool mode_changed=mode!=stream.recorded_mode;stream.recorded_mode=mode;
++  uint32_t uid=0;bool parsed_ok=true;
++  if(mode){const auto value=rex::cvar::GetFlagByName("forza_pause_recorded_sealed_uid");const auto parsed=std::from_chars(value.data(),value.data()+value.size(),uid);parsed_ok=parsed.ec==std::errc{}&&parsed.ptr==value.data()+value.size();if(!parsed_ok)uid=0;}
++  const auto partial_flag=rex::cvar::GetFlagByName("forza_pause_persistent_partial");stream.partial_requested=mode&&(partial_flag=="true"||partial_flag=="1");
++  stream.partial_live=fh1::partial::Parse(rex::cvar::GetFlagByName("forza_pause_partial_identity"));stream.partial_token=Fh1ProvenanceEligibility();
++  stream.partial_admission=fh1::partial::ParseAdmission(rex::cvar::GetFlagByName("forza_pause_partial_admission"));
++  const auto vr=rex::cvar::GetFlagByName("vr_mode");const auto pose=rex::cvar::GetFlagByName("vr_head_pose_test");
++  const bool vr_active=(!vr.empty()&&vr!="off")||pose=="true"||pose=="1";
++  if(!stream.partial_requested&&stream.replay_lease.active())stream.replay_lease.Revoke(stream.recorded);
++  const auto receipt=stream.partial_requested?stream.replay_lease.Refresh(stream.recorded,true,vr_active,stream.partial_admission,stream.partial_live,stream.partial_token,Fh1DiagnosticTime()):stream.recorded.Eligibility(uid);
++  stream.track_probe.Eligibility(receipt.after);
++  stream.partial.Refresh(stream.partial_requested,stream.partial_live,stream.partial_token,Fh1DiagnosticTime(),receipt.after);
++  const bool receipt_requested=stream.partial_requested&&Fh1DiagnosticEnabled();
++  if(stream.partial_receipts.NeedsStart(receipt_requested,stream.partial_live,stream.partial_token)){if(stream.partial_receipts.active)Fh1PartialSummary(stream,"session-change");stream.partial_receipts.Start(stream.partial_live);}
++  stream.partial_seal=fh1::partial::ParseSeal(rex::cvar::GetFlagByName("forza_pause_partial_seal"));
++  const auto partial_event=rex::cvar::GetFlagByName("forza_pause_partial_event");
++  if(partial_event!=stream.partial_event){stream.partial_event=partial_event;if(stream.partial_receipts.active&&!partial_event.empty()){Fh1PartialSummary(stream,partial_event);if(partial_event.find("camera-")!=std::string::npos)stream.partial_receipts.Stop();}}
++  if(!receipt_requested&&stream.partial_receipts.active){Fh1PartialSummary(stream,"mode-or-diagnostics-off");stream.partial_receipts.Stop();}
++
++
++  const char* reason=!mode?"mode-off":!parsed_ok?"invalid-uid-value":receipt.reason;
++  const bool event=mode_changed||receipt.changed||!parsed_ok;
++  if(event&&(mode_changed||uid!=stream.last_requested||receipt.after!=stream.last_after||receipt.retired!=stream.last_retired||std::strcmp(reason,stream.last_reason)!=0)){
++    stream.last_requested=uid;stream.last_after=receipt.after;stream.last_retired=receipt.retired;stream.last_reason=reason;
++    if(stream.recorded_events<128&&Fh1DiagnosticEnabled()){++stream.recorded_events;REXGPU_INFO("FH1RP eligibility us={} mode={} parsed={} requested={} before={} retired={} after={} reason={}",Fh1DiagnosticTime(),mode,parsed_ok,uid,receipt.before,receipt.retired,receipt.after,reason);}
++  }
++}
++struct Fh1RecordedBuffer {Fh1Stream& stream;bool entered=false;explicit Fh1RecordedBuffer(Fh1Stream& s):stream(s){Fh1RefreshRecordedEligibility(stream);if(stream.recorded_mode)entered=stream.recorded.EnterBuffer();}~Fh1RecordedBuffer(){if(entered){Fh1RefreshRecordedEligibility(stream);stream.recorded.LeaveBuffer();}}};
++
++struct Fh1ProvenanceBuffer {
++  fh1::provenance::Consumer& consumer;bool entered=false;
++  explicit Fh1ProvenanceBuffer(fh1::provenance::Consumer& c):consumer(c){consumer.Eligibility(Fh1ProvenanceEligibility());entered=consumer.EnterBuffer();}
++  ~Fh1ProvenanceBuffer(){consumer.Eligibility(Fh1ProvenanceEligibility());if(entered)consumer.LeaveBuffer();}
++};
++struct Fh1DiagnosticBuffer {
++  Fh1Stream& stream;Fh1Location saved;bool enabled;
++  Fh1DiagnosticBuffer(const CommandProcessor* owner,uint32_t kind,uint32_t ptr,uint32_t count):
++      stream(Fh1State(owner)),saved(stream.location),enabled(Fh1DiagnosticEnabled()||Fh1ManifestEnabled()) {
++    stream.manifest_active=Fh1ManifestEnabled()||Fh1RecordedEnabled();
++    if(!enabled)return;
++    stream.location=fh1::record_execution::Enter(saved,kind,ptr,count,stream.manifest_active,stream.manifest_invocations);
++    if(stream.observer.eligible()&&stream.buffer_lines<16&&stream.diagnostic.Admit(true)) {
++      ++stream.buffer_lines;
++      REXGPU_INFO("FH1PC buffer us={} epoch={} token={} kind={} ptr={:08X} mask29={:08X} words={} depth={} parent={:08X}",
++        Fh1DiagnosticTime(),stream.diagnostic.epoch,stream.observer.eligible(),kind,ptr,ptr&0x1FFFFFFFu,count,stream.location.depth,saved.ptr);
++    }
++  }
++  ~Fh1DiagnosticBuffer(){if(enabled)stream.location=saved;}
++};
++} // namespace
++
++void Fh1PauseTrackAfterPresented(const CommandProcessor* owner,ui::Presenter* presenter){
++  auto& stream=Fh1State(owner);if(!stream.track_probe.capture_uid||stream.track_capture_done||!presenter)return;stream.track_capture_done=true;
++  static const char* folder=std::getenv("FORZA_FRAMEDUMP_DIR");if(!folder||!*folder)return;
++  ui::RawImage image;const bool captured=presenter->CaptureGuestOutput(image);
++  if(!captured){REXGPU_WARN("FH1PF capture uid={} success=false",stream.track_probe.capture_uid);return;}
++  char name[96];std::snprintf(name,sizeof(name),"/forza_shot_track_probe_uid_%08u.ppm",stream.track_probe.capture_uid);const std::string path=std::string(folder)+name;
++  FILE* file=std::fopen(path.c_str(),"wb");if(!file){REXGPU_WARN("FH1PF capture uid={} success=false reason=open",stream.track_probe.capture_uid);return;}
++  std::fprintf(file,"P6\n%u %u\n255\n",image.width,image.height);std::vector<uint8_t>row(size_t(image.width)*3);
++  for(uint32_t y=0;y<image.height;++y){const uint8_t* src=image.data.data()+y*image.stride;for(uint32_t x=0;x<image.width;++x)std::memcpy(row.data()+3*x,src+4*x,3);std::fwrite(row.data(),1,row.size(),file);}std::fclose(file);
++  REXGPU_INFO("FH1PF capture uid={} success=true suppressed={} width={} height={} path={}",stream.track_probe.capture_uid,stream.track_counts[size_t(fh1::track::Reason::Suppress)],image.width,image.height,path);
++}
+ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t write_index) {
++  Fh1DiagnosticBuffer diagnostic_buffer(this,1,primary_buffer_ptr_,primary_buffer_size_/4);
+   SCOPE_profile_cpu_f("gpu");
+ 
+   // Execute commands!
+@@ -793,6 +916,9 @@
+ }
+ 
+ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
++  Fh1DiagnosticBuffer diagnostic_buffer(this,2,ptr,count);
++  Fh1ProvenanceBuffer provenance_buffer(Fh1Provenance(this));
++  Fh1RecordedBuffer recorded_buffer(Fh1State(this));
+   SCOPE_profile_cpu_f("gpu");
+ 
+   // Execute commands!
+@@ -810,6 +936,9 @@
+ }
+ 
+ void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
++  Fh1DiagnosticBuffer diagnostic_buffer(this,3,ptr,count);
++  Fh1ProvenanceBuffer provenance_buffer(Fh1Provenance(this));
++  Fh1RecordedBuffer recorded_buffer(Fh1State(this));
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
+   reader.set_write_offset(count * sizeof(uint32_t));
+@@ -842,17 +971,15 @@
+ FILE* file = nullptr;
+ bool armed = false;
+ uint32_t draws = 0;
++uint32_t provenance_records=0;
++fh1::provenance::MarkerCapture marker_capture;
+ inline const char* Path() {
+   static const char* path = std::getenv("FORZA_GPU_FRAME_TRACE");
+   return path && *path ? path : nullptr;
+ }
+ // At a swap: ends a traced frame, or starts one when the trigger file is there.
+ inline void OnSwap() {
+-  if (file) {
+-    std::fprintf(file, "E frame end, %u draws\n", draws);
+-    std::fclose(file);
+-    file = nullptr;
+-  }
++  fh1::provenance::CloseTraceAtSwap(file,draws);
+   const char* path = Path();
+   if (!path) return;
+   std::string trigger = std::string(path) + ".trigger";
+@@ -861,11 +988,17 @@
+     std::remove(trigger.c_str());
+     file = std::fopen(path, "wb");
+     draws = 0;
++    provenance_records=0;
+   }
+ }
+ }  // namespace fh1_frame_trace
+ 
++
++
++
+ bool CommandProcessor::ExecutePacket(memory::RingBuffer* reader) {
++  auto& manifest_stream=Fh1State(this);
++  if(manifest_stream.manifest_active)manifest_stream.location.packet_phys=fh1::record_execution::Packet(manifest_stream.location,reader->read_offset());
+   uint32_t packet = reader->ReadAndSwap<uint32_t>();
+   // Zero words and type-2 packets do nothing. The D3D library pads its command
+   // buffers with type-2 packets (about two million a second in a race, more than
+@@ -912,6 +1045,7 @@
+ 
+   uint32_t count = ((packet >> 16) & 0x3FFF) + 1;
+   if (reader->read_count() < count * sizeof(uint32_t)) {
++    Fh1Provenance(this).Fault(); // No stale category after a truncated packet.
+     REXGPU_ERROR("ExecutePacketType0 overflow (read count {:08X}, packet count {:08X})",
+                  reader->read_count(), count * sizeof(uint32_t));
+     return false;
+@@ -1316,11 +1450,77 @@
+   return true;
+ }
+ 
++fh1::track::Decision Fh1PauseTrackDecision(const CommandProcessor* owner,const fh1::track::Raster& raster){
++  auto& stream=Fh1State(owner);Fh1RefreshRecordedEligibility(stream);
++  const auto value=rex::cvar::GetFlagByName("forza_pause_track_binary");const auto proc=rex::cvar::GetFlagByName("forza_pause_procedural_binary");const auto partial_reason=stream.partial.Check(stream.partial_requested,stream.partial_live,stream.partial_token,Fh1DiagnosticTime(),stream.recorded.context(),stream.recorded.eligible());const bool partial_allowed=partial_reason==fh1::partial::Reason::Eligible;const bool permitted=stream.partial_requested?partial_allowed:(stream.track_probe.uid&&stream.track_probe.uid==stream.recorded.context().uid);const bool requested=permitted&&(value=="true"||value=="1");const bool procedural_requested=permitted&&(proc=="true"||proc=="1");
++  const auto scene_flag=rex::cvar::GetFlagByName("forza_pause_scene_binary");const bool scene_requested=permitted&&(scene_flag=="true"||scene_flag=="1");
++  const auto crowd_flag=rex::cvar::GetFlagByName("forza_pause_crowd_binary");const bool crowd_requested=permitted&&(crowd_flag=="true"||crowd_flag=="1");
++  const auto particle_flag=rex::cvar::GetFlagByName("forza_pause_particles_binary");const bool particle_requested=permitted&&(particle_flag=="true"||particle_flag=="1");
++  const auto c=stream.recorded.context();auto decision=fh1::track::Decide(requested,c,stream.recorded.eligible(),raster,procedural_requested);
++  stream.main_target.Synchronize(c,stream.recorded.eligible());stream.main_target.Observe(scene_requested||crowd_requested||particle_requested,c,stream.recorded.eligible(),raster,decision);
++  auto scene_reason=fh1::track::SceneReason::Off;if(c.phase==fh1::provenance::Phase::Scene){const auto scene=stream.main_target.Decide(scene_requested,c,stream.recorded.eligible(),raster);if(scene_requested)decision=scene.raster;scene_reason=scene.reason;if(stream.track_probe.capture_uid)++stream.scene_reasons[size_t(scene_reason)];}
++  auto crowd_reason=fh1::track::SceneReason::Off;if(fh1::recorded::CrowdPhase(c.phase)){const auto crowd=stream.main_target.DecideCrowd(crowd_requested,c,stream.recorded.eligible(),raster);if(crowd_requested)decision=crowd.raster;crowd_reason=crowd.reason;if(stream.track_probe.capture_uid)++stream.crowd_reasons[size_t(crowd_reason)];}
++  auto particle_reason=fh1::track::SceneReason::Off;if(c.phase==fh1::recorded::kMainParticles){const auto particle=stream.main_target.DecideParticles(particle_requested,c,stream.recorded.eligible(),raster);if(particle_requested)decision=particle.raster;particle_reason=particle.reason;if(stream.track_probe.capture_uid)++stream.particle_reasons[size_t(particle_reason)];}
++  if(stream.partial_requested){stream.partial_receipts.Observe(c.uid,partial_reason,Fh1DiagnosticTime());++stream.partial_seen;stream.partial_seen_uid=c.uid;if(partial_allowed){++stream.partial_eligible;stream.partial_eligible_uid=c.uid;stream.partial_suppressed+=decision.suppress;}else ++stream.partial_rejected;}
++  if(stream.track_probe.capture_uid&&uint32_t(c.phase)<stream.role_draws.size()){++stream.role_draws[uint32_t(c.phase)];stream.role_suppressed[uint32_t(c.phase)]+=decision.suppress;}
++  if(stream.track_probe.capture_uid&&stream.track_counts[size_t(decision.reason)]!=UINT64_MAX)++stream.track_counts[size_t(decision.reason)];
++  if(stream.track_probe.used&&fh1_frame_trace::file&&stream.track_trace++<4096)std::fprintf(fh1_frame_trace::file,"F uid=%u replay=%llu phase=%u player=%u other_car=%u valid=%u suppressed=%u reason=%u scene_reason=%u crowd_reason=%u particle_reason=%u partial_reason=%u lease_uid=%u lease_pending=%u lease_retired=%u memexport=%u query=%u mode=%u surf=%08X c0=%08X depth=%08X raw_mask=%08X effective_mask=%08X shader_exports=%08X c1=%08X c2=%08X c3=%08X instance=%llu packet=%08X\n",c.uid,(unsigned long long)c.replay,uint32_t(c.phase),c.player_enclosing,c.other_car_enclosing,c.valid,decision.suppress,uint32_t(decision.reason),uint32_t(scene_reason),uint32_t(crowd_reason),uint32_t(particle_reason),uint32_t(partial_reason),stream.replay_lease.uid(),stream.replay_lease.pending(),stream.replay_lease.retired(),raster.memexport,raster.query,raster.mode,raster.surface,raster.color[0],raster.depth,raster.raw_mask,raster.effective_mask,raster.shader_exports,raster.color[1],raster.color[2],raster.color[3],(unsigned long long)stream.location.instance,stream.location.packet_phys);
++  return decision;
++}
+ bool CommandProcessor::ExecutePacketType3_NOP(memory::RingBuffer* reader, uint32_t packet,
+                                               uint32_t count) {
+-  // skip N 32-bit words to get to the next packet
+-  // No-op, ignore some data.
+-  reader->AdvanceRead(count * sizeof(uint32_t));
++  // Phase A decodes a bounded private marker only; ordinary NOPs stay inert.
++  Fh1Provenance(this).Eligibility(Fh1ProvenanceEligibility());
++  auto& stream=Fh1State(this);
++  const bool diagnostic=Fh1DiagnosticEnabled();
++  const uint32_t payload_offset=reader->read_offset();
++  const uint32_t header_offset=payload_offset?payload_offset-4:reader->capacity()-4;
++  Fh1RefreshRecordedEligibility(stream);
++  if(stream.recorded_mode){
++    const auto recorded=fh1::recorded::TryParse(*reader,count,stream.recorded,true);
++    if(recorded.recognized){
++      if(stream.partial_requested&&!stream.replay_lease.Observe(stream.recorded,recorded,stream.partial_admission,stream.partial_live,stream.partial_token,Fh1DiagnosticTime())){stream.partial.Reset();stream.main_target.Reset();}
++      if(stream.partial_requested){stream.partial_marker_uid=recorded.words[2];if(!recorded.ok||!stream.recorded.context().valid){++stream.partial_marker_rejected;stream.partial_rejected_uid=recorded.words[2];}}
++      const auto partial_op=recorded.words[1]&65535;
++      if(recorded.ok&&partial_op==uint16_t(fh1::recorded::Op::FrameBegin)&&stream.recorded.context().valid)stream.partial_receipts.Accept(stream.recorded.context().uid,Fh1DiagnosticTime(),stream.partial_live,stream.partial_seal);
++      if(partial_op==uint16_t(fh1::recorded::Op::FrameBegin)||partial_op==uint16_t(fh1::recorded::Op::FrameEnd)||stream.recorded.fault())stream.partial.Reset();
++      if(recorded.ok&&partial_op==uint16_t(fh1::recorded::Op::Context)&&recorded.words[5]==0x47454E31u)stream.partial.Begin(stream.partial_requested,stream.partial_live,stream.partial_token,Fh1DiagnosticTime(),stream.recorded.context(),stream.recorded.eligible());
++      if(recorded.words[1]%65536==uint16_t(fh1::recorded::Op::FrameBegin)||recorded.words[1]%65536==uint16_t(fh1::recorded::Op::FrameEnd)||recorded.words[1]%65536==uint16_t(fh1::recorded::Op::Target)||stream.recorded.fault())stream.main_target.Reset();
++      if(recorded.words[1]==((fh1::recorded::kVersion<<16)|uint16_t(fh1::recorded::Op::FrameBegin))&&stream.recorded.context().valid&&!stream.track_probe.used){
++        const auto flag=rex::cvar::GetFlagByName("forza_pause_track_binary");const auto proc=rex::cvar::GetFlagByName("forza_pause_procedural_binary");const auto scene=rex::cvar::GetFlagByName("forza_pause_scene_binary");const auto crowd=rex::cvar::GetFlagByName("forza_pause_crowd_binary");const auto particle=rex::cvar::GetFlagByName("forza_pause_particles_binary");if(stream.track_probe.Begin(flag=="true"||flag=="1"||proc=="true"||proc=="1"||scene=="true"||scene=="1"||crowd=="true"||crowd=="1"||particle=="true"||particle=="1",stream.recorded.context())){stream.track_counts={};stream.scene_reasons={};stream.crowd_reasons={};stream.particle_reasons={};stream.main_target.Reset();stream.role_draws={};stream.role_suppressed={};stream.track_trace=0;REXGPU_INFO("FH1PF probe us={} uid={} on=true one_presented_frame=true",Fh1DiagnosticTime(),stream.track_probe.capture_uid);}
++      }
++
++      if(!stream.recorded_capture.checked()&&recorded.ok&&recorded.words[1]==((fh1::recorded::kVersion<<16)|uint16_t(fh1::recorded::Op::FrameBegin))&&stream.recorded.context().valid){
++        stream.recorded_capture.TryStart(diagnostic,fh1_frame_trace::Path(),recorded,stream.recorded,fh1_frame_trace::file,fh1_frame_trace::draws,fh1_frame_trace::provenance_records);
++      }
++      fh1::recorded::TraceMarker(fh1_frame_trace::file,recorded,stream.recorded,stream.recorded_marker_trace);
++
++      if(diagnostic&&stream.recorded_lines<4096){++stream.recorded_lines;const auto c=stream.recorded.context();const auto& loc=stream.location;
++        REXGPU_INFO("FH1RP marker us={} uid={} op={} serial={} phase={} allowed={} valid={} fault={} replay={} buffer={:08X} packet={:08X} depth={} data={:08X},{:08X},{:08X},{:08X},{:08X}",Fh1DiagnosticTime(),recorded.words[2],recorded.words[1]&65535,recorded.words[3],recorded.words[4],stream.recorded.eligible(),c.valid,stream.recorded.fault(),c.valid?c.replay:recorded.prior_replay,loc.ptr,loc.packet_phys,loc.depth,recorded.words[5],recorded.words[6],recorded.words[7],recorded.words[8],recorded.words[9]);}
++      return recorded.ok;
++    }
++  }
++  const auto receipt=fh1::provenance::ParseNop(*reader,count,stream.observer,diagnostic);
++  stream.diagnostic.Observe(diagnostic,stream.observer.eligible(),receipt);
++  fh1_frame_trace::marker_capture.TryStart(diagnostic&&!stream.recorded_mode,fh1_frame_trace::Path(),receipt,stream.observer,
++    fh1_frame_trace::file,fh1_frame_trace::draws,fh1_frame_trace::provenance_records);
++  if(diagnostic) {
++    const bool marker=receipt.recognized;
++    auto& lines=marker?stream.marker_lines:stream.ordinary_lines;
++    if(lines<(marker?96u:4u)&&(marker||stream.observer.eligible())&&stream.diagnostic.Admit(true)) {
++      ++lines;const auto& loc=stream.location;const auto c=stream.observer.context();
++      REXGPU_INFO("FH1PC nop us={} epoch={} armed={} kind={} buffer={:08X} words={} depth={} parent={:08X} header_offset={:08X} header_phys={:08X} header={:08X} count={} available={} magic={:08X} disposition={} eligible={} token={} serial={} op={} phase={} data={:08X},{:08X},{:08X},{:08X},{:08X} valid={} fault={} ingress={} recognized={} disabled_markers={}",
++        Fh1DiagnosticTime(),stream.diagnostic.epoch,fh1_frame_trace::file!=nullptr,loc.kind,loc.ptr,loc.count,loc.depth,loc.parent,
++        header_offset,(loc.ptr&0x1FFFFFFFu)+header_offset,packet,count,receipt.available,receipt.words[0],uint32_t(receipt.disposition),
++        stream.observer.eligible(),receipt.words[2],receipt.words[3],receipt.words[1]&65535,receipt.words[4],receipt.words[5],receipt.words[6],receipt.words[7],receipt.words[8],receipt.words[9],c.valid,stream.observer.fault(),
++        stream.diagnostic.packets,stream.diagnostic.recognized,stream.diagnostic.disabled_markers);
++    }
++  }
++  if(!receipt.ok)return false;
++  if(receipt.disposition!=fh1::provenance::NopDisposition::Consumed)return true;
++  // Existing frame trace is explicitly armed and ends at the next swap.
++  // Cap marker records independently so malformed guests cannot grow it.
++  fh1::provenance::TraceMarker(fh1_frame_trace::file,stream.observer,receipt,fh1_frame_trace::provenance_records);
+   return true;
+ }
+ 
+@@ -1383,7 +1583,26 @@
+   rexui_SetNextGuestOutputTag(frame_tag);
+   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
+   rexui_SetNextGuestOutputTag(0);
++  auto& provenance_stream=Fh1State(this);
++  if(provenance_stream.track_probe.capture_uid){REXGPU_INFO("FH1PF frame uid={} suppressed={} player_preserved={} unowned={} other={} target_missing={} target_mismatch={} format={} MRT={} mode={} memexport={} query={} off=true after_present=true",provenance_stream.track_probe.capture_uid,provenance_stream.track_counts[11],provenance_stream.track_counts[2],provenance_stream.track_counts[1],provenance_stream.track_counts[3],provenance_stream.track_counts[4],provenance_stream.track_counts[5],provenance_stream.track_counts[6],provenance_stream.track_counts[7],provenance_stream.track_counts[8],provenance_stream.track_counts[9],provenance_stream.track_counts[10]);for(uint32_t role=0;role<provenance_stream.role_draws.size();++role)REXGPU_INFO("FH1PF role uid={} phase={} draws={} suppressed={} preserved={}",provenance_stream.track_probe.capture_uid,role,provenance_stream.role_draws[role],provenance_stream.role_suppressed[role],provenance_stream.role_draws[role]-provenance_stream.role_suppressed[role]);for(uint32_t reason=0;reason<provenance_stream.scene_reasons.size();++reason)REXGPU_INFO("FH1PF scene uid={} reason={} draws={}",provenance_stream.track_probe.capture_uid,reason,provenance_stream.scene_reasons[reason]);for(uint32_t reason=0;reason<provenance_stream.crowd_reasons.size();++reason)REXGPU_INFO("FH1PF crowd uid={} reason={} draws={}",provenance_stream.track_probe.capture_uid,reason,provenance_stream.crowd_reasons[reason]);for(uint32_t reason=0;reason<provenance_stream.particle_reasons.size();++reason)REXGPU_INFO("FH1PF particle uid={} reason={} draws={}",provenance_stream.track_probe.capture_uid,reason,provenance_stream.particle_reasons[reason]);provenance_stream.main_target.Reset();provenance_stream.track_probe.Presented();}
++  if(provenance_stream.partial_receipts.Frame(provenance_stream.partial_seen,provenance_stream.partial_eligible,provenance_stream.partial_rejected,provenance_stream.partial_suppressed)){REXGPU_INFO("FH1PV frame us={} seen_uid={} eligible_uid={} seen={} eligible={} rejected={} suppressed={} latest={} marker_uid={} rejected_uid={} marker_rejected={} source_session={} source_token={} source_age_us={} screen={} generation={} graphics={} core={} camera={} selected={} frames={} total_seen={} total_eligible={} total_rejected={} total_suppressed={} last_reason={} first_accepted_uid={} first_accepted_us={} first_permitted_uid={} first_permitted_us={} seal_record_uid={} seal_uid={} seal_us={} seal_to_now_us={} partial=true camera_ready=false pan=false",Fh1DiagnosticTime(),provenance_stream.partial_seen_uid,provenance_stream.partial_eligible_uid,provenance_stream.partial_seen,provenance_stream.partial_eligible,provenance_stream.partial_rejected,provenance_stream.partial_suppressed,provenance_stream.recorded.eligible(),provenance_stream.partial_marker_uid,provenance_stream.partial_rejected_uid,provenance_stream.partial_marker_rejected,provenance_stream.partial_live.session,provenance_stream.partial_token,Fh1DiagnosticTime()>=provenance_stream.partial_live.issued?Fh1DiagnosticTime()-provenance_stream.partial_live.issued:UINT64_MAX,provenance_stream.partial_receipts.session.screen,provenance_stream.partial_receipts.session.generation,provenance_stream.partial_receipts.session.graphics,provenance_stream.partial_receipts.session.core,provenance_stream.partial_receipts.session.camera,provenance_stream.partial_receipts.session.selected,provenance_stream.partial_receipts.frames,provenance_stream.partial_receipts.seen,provenance_stream.partial_receipts.eligible,provenance_stream.partial_receipts.rejected,provenance_stream.partial_receipts.suppressed,uint32_t(provenance_stream.partial_receipts.last_reason),provenance_stream.partial_receipts.first_accepted_uid,provenance_stream.partial_receipts.first_accepted_us,provenance_stream.partial_receipts.first_permitted_uid,provenance_stream.partial_receipts.first_permitted_us,provenance_stream.partial_seal.record_uid,provenance_stream.partial_seal.sealed_uid,provenance_stream.partial_seal.us,fh1::partial::Age(Fh1DiagnosticTime(),provenance_stream.partial_seal.us));}
++  provenance_stream.partial_seen=provenance_stream.partial_eligible=provenance_stream.partial_rejected=provenance_stream.partial_suppressed=0;provenance_stream.partial_seen_uid=provenance_stream.partial_eligible_uid=provenance_stream.partial_marker_uid=provenance_stream.partial_rejected_uid=0;provenance_stream.partial_marker_rejected=0;provenance_stream.partial.Reset();provenance_stream.main_target.Reset();
++  const bool provenance_diagnostic=Fh1DiagnosticEnabled();
++  const bool trace_before=fh1_frame_trace::file!=nullptr;
++  fh1::provenance::ResetAtSwap(provenance_stream.observer,provenance_stream.diagnostic,provenance_diagnostic);
++  if(provenance_stream.partial_requested||provenance_stream.replay_lease.active())provenance_stream.replay_lease.Presented(provenance_stream.recorded);
++  Fh1RefreshRecordedEligibility(provenance_stream);
++  if(provenance_stream.recorded_mode||provenance_stream.recorded.eligible()){provenance_stream.recorded.Reset();provenance_stream.recorded_trace=0;provenance_stream.recorded_marker_trace=0;}
+   fh1_frame_trace::OnSwap();  // patch 0396
++  if(provenance_diagnostic) {
++    const bool changed=trace_before!=(fh1_frame_trace::file!=nullptr);
++    auto& lines=changed?provenance_stream.trace_lines:provenance_stream.swap_lines;
++    if(lines<(changed?8u:16u)&&(changed||provenance_stream.observer.eligible()||provenance_stream.diagnostic.recognized)&&provenance_stream.diagnostic.Admit(true)) {
++      ++lines;const auto& d=provenance_stream.diagnostic;
++      REXGPU_INFO("FH1PC swap us={} epoch={} trace_before={} trace_after={} eligible={} ingress={} eligible_nops={} recognized={} disabled_markers={} malformed={} consumer_reset=true",
++        Fh1DiagnosticTime(),d.epoch,trace_before,fh1_frame_trace::file!=nullptr,provenance_stream.observer.eligible(),d.packets,d.eligible,d.recognized,d.disabled_markers,d.malformed);
++    }
++  }
+   Fh1StereoOnSwap();
+ 
+   ++counter_;
+@@ -1839,7 +2058,7 @@
+             "D %u prim=%u n=%u src=%u vs=%016llX ps=%016llX surf=%08X mode=%08X c0=%08X c1=%08X "
+             "c2=%08X c3=%08X mask=%08X depth=%08X dctl=%08X vte=%08X vp=%g,%g,%g,%g,%g,%g "
+             "woff=%08X wsc=%08X,%08X ssc=%08X,%08X sc=%08X copy=%08X dest=%08X dpitch=%08X "
+-            "dinfo=%08X binsel=%llX binmask=%llX tf0=%08X,%08X,%08X dma=%08X\n",
++            "dinfo=%08X binsel=%llX binmask=%llX tf0=%08X,%08X,%08X dma=%08X",
+             fh1_frame_trace::draws++, uint32_t(vgt_draw_initiator.prim_type),
+             uint32_t(vgt_draw_initiator.num_indices), uint32_t(vgt_draw_initiator.source_select),
+             (unsigned long long)(active_vertex_shader_ ? active_vertex_shader_->ucode_data_hash() : 0),
+@@ -1860,6 +2079,27 @@
+             r[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0], r[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 1],
+             r[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + 2],
+             is_indexed ? index_buffer_info.guest_base : 0u);
++        const auto& manifest=Fh1State(this);
++        if(manifest.manifest_active){const auto& loc=manifest.location;
++          std::fprintf(fh1_frame_trace::file," cp_instance=%llu cp_parent_instance=%llu cp_kind=%u cp_buffer=%08X cp_words=%u cp_depth=%u cp_packet=%08X cp_overflow=%u cp_chain=",
++            (unsigned long long)loc.instance,(unsigned long long)loc.parent_instance,loc.kind,loc.ptr,loc.count,loc.depth,loc.packet_phys,loc.overflow);
++          for(uint32_t i=0;i<loc.chain.size()&&i<=loc.depth;++i){const auto& invocation=loc.chain[i];
++            std::fprintf(fh1_frame_trace::file,"%s%llu:%08X:%u:%08X",i?",":"",(unsigned long long)invocation.id,invocation.ptr,invocation.words,invocation.call_packet);}
++        }
++        std::fprintf(fh1_frame_trace::file,"\n");
++      }
++      Fh1Provenance(this).Eligibility(Fh1ProvenanceEligibility());
++      if(fh1::provenance::TraceAllowed(fh1_frame_trace::file!=nullptr,Fh1Provenance(this).eligible(),fh1_frame_trace::provenance_records)) {
++        const auto c=Fh1Provenance(this).context();
++        const RegisterFile& r=*register_file_;
++        std::fprintf(fh1_frame_trace::file,"V token=%u frame=%u phase=%u valid=%u bind=%u color=%08X depth=%08X cdesc=%08X ddesc=%08X rt=%08X,%08X,%08X dctl=%08X\n",
++          c.token,c.frame,uint32_t(c.phase),c.valid,c.binding,c.color,c.depth,c.color_desc,c.depth_desc,
++          r[XE_GPU_REG_RB_SURFACE_INFO],r[XE_GPU_REG_RB_COLOR_INFO],r[XE_GPU_REG_RB_DEPTH_INFO],r[XE_GPU_REG_RB_DEPTHCONTROL]);
++      }
++      Fh1RefreshRecordedEligibility(Fh1State(this));
++      if(Fh1State(this).recorded_mode){
++        auto& state=Fh1State(this);const auto c=state.recorded.context();
++        if(fh1_frame_trace::file&&state.recorded_trace<4096){++state.recorded_trace;std::fprintf(fh1_frame_trace::file,"R uid=%u frame=%u replay=%llu phase=%u valid=%u player=%u selected=%08X world=%llu binding=%u color=%08X depth=%08X cdesc=%08X ddesc=%08X fault=%u\n",c.uid,c.frame,(unsigned long long)c.replay,uint32_t(c.phase),c.valid,c.player_enclosing,c.selected,(unsigned long long)c.world_generation,c.binding,c.color,c.depth,c.cdesc,c.ddesc,state.recorded.fault());}
+       }
+       bool major_mode_explicit =
+           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
+diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
+--- a/src/graphics/vulkan/command_processor.cpp
++++ b/src/graphics/vulkan/command_processor.cpp
+@@ -37,6 +37,7 @@
+ #include <glslang/Include/Types.h>
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
++#include <rex/graphics/fh1_track_bridge.h>
+ #include <rex/graphics/util/fh1_hud.h>
+ #include "fh1_device_memory.h"
+ #include "fh1_render_target_trim.h"
+@@ -4981,7 +4982,7 @@
+           ? hdr_scene.view
+           : VK_NULL_HANDLE;
+ 
+-  presenter->RefreshGuestOutput(
++  const bool pause_output_refreshed=presenter->RefreshGuestOutput(
+       guest_output_width, guest_output_height, display_width, display_height,
+       [this, guest_output_width, guest_output_height, frontbuffer_format, swap_texture_view,
+        swap_post_effect, swap_source_needs_rb_swap, hud_snapshot_view,
+@@ -5550,6 +5551,7 @@
+   // End the frame even if did not present for any reason (the image refresher
+   // was not called), to prevent leaking per-frame resources.
+   EndSubmission(true);
++  if(pause_output_refreshed)Fh1PauseTrackAfterPresented(this,presenter);
+ }
+ 
+ bool VulkanCommandProcessor::PushBufferMemoryBarrier(
+@@ -7282,11 +7284,20 @@
+     }
+   }
+ 
++  // Private partial static-track prototype. Only guest raster emission changes;
++  // IssueDraw setup/validation/state/barriers, aux passes and copy paths remain.
++  ::fh1::track::Raster pause_raster;
++  pause_raster.mode=uint32_t(edram_mode);pause_raster.surface=regs[XE_GPU_REG_RB_SURFACE_INFO];
++  pause_raster.color[0]=regs[XE_GPU_REG_RB_COLOR_INFO];pause_raster.color[1]=regs[XE_GPU_REG_RB_COLOR1_INFO];pause_raster.color[2]=regs[XE_GPU_REG_RB_COLOR2_INFO];pause_raster.color[3]=regs[XE_GPU_REG_RB_COLOR3_INFO];
++  pause_raster.depth=regs[XE_GPU_REG_RB_DEPTH_INFO];pause_raster.effective_mask=normalized_color_mask;
++  pause_raster.raw_mask=regs[XE_GPU_REG_RB_COLOR_MASK];pause_raster.shader_exports=pixel_shader?pixel_shader->writes_color_targets():0;
++  pause_raster.memexport=memexport_writes_possible;pause_raster.query=active_occlusion_query_.valid;
++  const auto pause_track=Fh1PauseTrackDecision(this,pause_raster);
+   // Draw.
+   if (primitive_processing_result.index_buffer_type ==
+           PrimitiveProcessor::ProcessedIndexBufferType::kNone ||
+       shader_32bit_index_dma) {
+-    deferred_command_buffer_.CmdVkDraw(primitive_processing_result.host_draw_vertex_count, 1, 0, 0);
++    ::fh1::track::EmitGuestRaster(pause_track,[&]{deferred_command_buffer_.CmdVkDraw(primitive_processing_result.host_draw_vertex_count, 1, 0, 0);});
+   } else {
+     std::pair<VkBuffer, VkDeviceSize> index_buffer;
+     switch (primitive_processing_result.index_buffer_type) {
+@@ -7317,8 +7328,8 @@
+         primitive_processing_result.host_index_format == xenos::IndexFormat::kInt16
+             ? VK_INDEX_TYPE_UINT16
+             : VK_INDEX_TYPE_UINT32);
+-    deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
+-                                              0, 0, 0);
++    ::fh1::track::EmitGuestRaster(pause_track,[&]{deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
++                                              0, 0, 0);});
+   }
+ 
+   // FH1 (#380): after the shadow mask's blur, multiplies the world AO into it.
+diff --git a/tests/fh1_pause/CMakeLists.txt b/tests/fh1_pause/CMakeLists.txt
+new file mode 100644
+--- /dev/null
++++ b/tests/fh1_pause/CMakeLists.txt
+@@ -0,0 +1,18 @@
++cmake_minimum_required(VERSION 3.20)
++project(fh1_pause_sdk_tests LANGUAGES CXX)
++enable_testing()
++find_package(Python3 REQUIRED COMPONENTS Interpreter)
++get_filename_component(SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
++execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/extract_production.py"
++    "${SDK_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}" COMMAND_ERROR_IS_FATAL ANY)
++foreach(test replay_lease partial_permit)
++    add_executable(${test} "${test}_test.cpp")
++    target_compile_features(${test} PRIVATE cxx_std_20)
++    target_include_directories(${test} PRIVATE "${SDK_ROOT}/include" "${CMAKE_CURRENT_BINARY_DIR}")
++    if(MSVC)
++        target_compile_options(${test} PRIVATE /UNDEBUG /W4 /WX)
++    else()
++        target_compile_options(${test} PRIVATE -UNDEBUG)
++    endif()
++    add_test(NAME ${test} COMMAND ${test})
++endforeach()
+diff --git a/tests/fh1_pause/extract_production.py b/tests/fh1_pause/extract_production.py
+new file mode 100644
+--- /dev/null
++++ b/tests/fh1_pause/extract_production.py
+@@ -0,0 +1,17 @@
++from pathlib import Path
++import sys
++SDK=Path(sys.argv[1]);OUT=Path(sys.argv[2]);OUT.mkdir(parents=True,exist_ok=True)
++source=SDK/'src/graphics/command_processor.cpp'
++text=source.read_text()
++a=text.index('void Fh1RefreshRecordedEligibility(')
++z=text.index('struct Fh1RecordedBuffer',a)
++(OUT/'actual_replay_refresh.inc').write_text(text[a:z])
++a=text.index('    if(recorded.recognized){')+len('    if(recorded.recognized){')
++z=text.index('      if(recorded.words[1]==',a)
++(OUT/'actual_replay_marker.inc').write_text(text[a:z])
++a=text.index('fh1::track::Decision Fh1PauseTrackDecision(')
++z=text.index('bool CommandProcessor::ExecutePacketType3_NOP',a)
++(OUT/'actual_replay_decision.inc').write_text(text[a:z])
++a=text.index('  if(provenance_stream.partial_requested||provenance_stream.replay_lease.active())provenance_stream.replay_lease.Presented(')
++z=text.index('  fh1_frame_trace::OnSwap()',a)
++(OUT/'actual_replay_swap.inc').write_text(text[a:z])
+diff --git a/tests/fh1_pause/partial_permit_test.cpp b/tests/fh1_pause/partial_permit_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/fh1_pause/partial_permit_test.cpp
+@@ -0,0 +1,25 @@
++#include <rex/graphics/fh1_provenance.h>
++#include <rex/graphics/fh1_recorded_provenance.h>
++#include <rex/graphics/fh1_track_policy.h>
++#include <rex/graphics/fh1_partial_policy.h>
++#include <cassert>
++#include <cstdio>
++namespace r=fh1::recorded;namespace v=fh1::partial;namespace t=fh1::track;
++static r::Context C(){r::Context c;c.valid=true;c.uid=7;c.frame=31;c.replay=1;c.graphics=20;c.core=30;c.camera=40;c.selected=50;c.world_generation=60;return c;}
++int main(){
++ const auto i=v::Parse("1,10,20,30,40,50,60,1000000");assert(i.session==1&&i.screen==10&&i.issued==1000000);
++ for(auto s:{"","1","0,10,20,30,40,50,60,1000000","1,10,20,30,40,50,0,1000000","1,10,20,30,40,50,60,0","1,10,20,30,40,50,60,1000000,9","1,10,20,30,40,50,60,bad","4294967296,10,20,30,40,50,60,1000000"})assert(!v::Parse(s).session);
++ auto c=C();v::Permit p;assert(p.Check(true,i,1,1000000,c,7)==v::Reason::NoFrame);assert(p.Begin(true,i,1,1000000,c,7));assert(p.Check(true,i,1,1250000,c,7)==v::Reason::Eligible);assert(p.Check(true,i,1,1250001,c,7)==v::Reason::Source);assert(p.Check(true,i,1,999999,c,7)==v::Reason::Source);
++ for(unsigned bad=0;bad<18;++bad){auto cc=c;auto ii=i;bool on=true;auto token=1u,allowed=7u;uint64_t now=1000000;if(bad==0)on=false;if(bad==1)token=0;if(bad==2)allowed=0;if(bad==3)cc.uid++;if(bad==4)cc.valid=false;if(bad==5)cc.graphics++;if(bad==6)cc.core++;if(bad==7)cc.camera++;if(bad==8)cc.selected++;if(bad==9)cc.world_generation++;if(bad==10)now+=250001;if(bad==11)now--;if(bad==12)ii.session++;if(bad==13)ii.graphics++;if(bad==14)ii.core++;if(bad==15)ii.camera++;if(bad==16)ii.selected++;if(bad==17)ii.generation++;assert(!p.Begin(on,ii,token,now,cc,allowed));}
++ assert(p.Begin(true,i,1,1000000,c,7));
++ for(unsigned bad=0;bad<5;++bad){auto cc=c;auto ii=i;if(bad==0)cc.frame++;if(bad==1)cc.replay++;if(bad==2)ii.screen++;if(bad==3)ii.session++;if(bad==4)ii.generation++;assert(p.Check(true,ii,1,1000000,cc,7)!=v::Reason::Eligible);}
++ t::Probe capture;assert(capture.Begin(true,c));capture.Presented();assert(!capture.uid&&capture.used);
++ r::Consumer consumer;consumer.Eligibility(7);
++ for(uint32_t uid:{7u,8u,9u}){
++  if(uid!=7){consumer.Eligibility(0);assert(consumer.Eligibility(uid-1).after==0);consumer.Eligibility(uid);}
++  for(unsigned replay=0;replay<3;++replay){consumer.Consume(r::Encode({r::Op::FrameBegin,uid,31,fh1::provenance::Phase::Unknown,{20,30,40,50,60}}));auto cc=consumer.context();assert(cc.valid);assert(p.Begin(true,i,1,1000000,cc,uid));assert(p.Check(true,i,1,1000000,cc,uid)==v::Reason::Eligible);assert(!capture.Begin(true,cc));t::MainTargetWitness witness;assert(!witness.ready);consumer.Consume(r::Encode({r::Op::FrameEnd,uid,31,fh1::provenance::Phase::Unknown,{}}));p.Reset();assert(p.Check(true,i,1,1000000,consumer.context(),uid)!=v::Reason::Eligible);}
++ }
++ for(unsigned reason=0;reason<7;++reason){assert(p.Begin(true,i,1,1000000,c,7));auto ii=i;bool on=true;auto token=1u,allowed=7u;uint64_t now=1000000;if(reason==0)on=false;if(reason==1)ii={};if(reason==2)token=0;if(reason==3)allowed=0;if(reason==4)allowed=8;if(reason==5)now+=250001;if(reason==6)ii.screen++;p.Refresh(on,ii,token,now,allowed);assert(!p.uid);}
++ assert(p.Begin(true,i,1,1000000,c,7));auto fresh=i;fresh.issued+=10;p.Refresh(true,fresh,1,1000010,7);assert(p.Check(true,fresh,1,1000010,c,7)==v::Reason::Eligible);
++ assert(!capture.Begin(false,c));puts("PASS separateonecapture/persistentfreshUID+replays; exactsource/session/screen/frame/generation; defaultoff/invalid/missing/stale/expired/future/revoked/retiredUID failopen; perreplaywitnessreset");
++}
+diff --git a/tests/fh1_pause/replay_lease_test.cpp b/tests/fh1_pause/replay_lease_test.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/fh1_pause/replay_lease_test.cpp
+@@ -0,0 +1,120 @@
++#include <rex/graphics/fh1_provenance.h>
++#include <rex/graphics/fh1_recorded_provenance.h>
++#include <rex/graphics/fh1_track_policy.h>
++#include <rex/graphics/fh1_replay_lease.h>
++#include <rex/graphics/fh1_partial_receipts.h>
++#include <cassert>
++#include <cstring>
++#include <string>
++#include <unordered_map>
++#include <cstdio>
++namespace r=fh1::recorded;namespace p=fh1::partial;
++static std::unordered_map<std::string,std::string> flags;
++namespace rex::cvar {std::string GetFlagByName(const char* name){return flags[name];}}
++static uint64_t now=1000000;
++static uint64_t Fh1DiagnosticTime(){return now;}
++static bool Fh1DiagnosticEnabled(){return false;}
++static bool Fh1RecordedEnabled(){return flags["forza_pause_recorded_provenance"]=="true";}
++static uint32_t Fh1ProvenanceEligibility(){const auto s=flags["forza_pause_provenance_token"];uint32_t v=0;std::from_chars(s.data(),s.data()+s.size(),v);return v;}
++template<class... T>void log_stub(const T&...){}
++#define REXGPU_INFO(...) log_stub(__VA_ARGS__)
++struct Fh1Stream {
++ r::Consumer recorded;fh1::track::Probe track_probe;fh1::track::MainTargetWitness main_target;
++ p::ReplayLease replay_lease;p::Admission partial_admission;p::Permit partial;p::Identity partial_live{};
++ p::Receipts partial_receipts;p::SealReceipt partial_seal;std::string partial_event;
++ bool recorded_mode=false,partial_requested=false;uint32_t partial_token=0,partial_marker_uid=0,partial_rejected_uid=0;
++ uint64_t partial_marker_rejected=0;uint32_t last_requested=0,last_after=0,last_retired=0,recorded_events=0,recorded_trace=0,recorded_marker_trace=0;const char* last_reason="unchanged";
++ uint64_t partial_seen=0,partial_eligible=0,partial_suppressed=0,partial_rejected=0;uint32_t partial_seen_uid=0,partial_eligible_uid=0,track_trace=0;
++ std::array<uint64_t,13> role_draws{},role_suppressed{};std::array<uint64_t,12> track_counts{};std::array<uint64_t,8> scene_reasons{},crowd_reasons{},particle_reasons{};
++ struct{uint64_t instance=0;uint32_t packet_phys=0;} location;
++};
++static void Fh1PartialSummary(Fh1Stream&,const std::string&){}
++// Generated verbatim from the production SDK function and NOP marker prefix.
++#include "actual_replay_refresh.inc"
++struct CommandProcessor{Fh1Stream* stream;};
++static Fh1Stream& Fh1State(const CommandProcessor* owner){return *owner->stream;}
++namespace fh1_frame_trace{static FILE* file=nullptr;}
++#include "actual_replay_decision.inc"
++static void ObserveMarker(Fh1Stream& stream,const r::Receipt& recorded){
++#include "actual_replay_marker.inc"
++}
++struct Reader {
++ std::array<uint32_t,r::kWords> words;size_t at=0;
++ size_t read_count()const{return (words.size()-at)*4;}
++ template<class T>T ReadAndSwap(){return T(words[at++]);}
++};
++static void feed(Fh1Stream&s,r::Op op,uint32_t serial,std::array<uint32_t,5> data={},uint32_t uid=7,r::Phase phase=r::Phase::Unknown){
++ Fh1RefreshRecordedEligibility(s);Reader reader{r::Encode({op,uid,serial,phase,data})};
++ auto receipt=r::TryParse(reader,r::kWords,s.recorded,true);ObserveMarker(s,receipt);
++}
++static std::string identity="1,10,20,30,40,50,60,1000000";
++static void setup(){flags={{"forza_pause_recorded_provenance","true"},{"forza_pause_recorded_sealed_uid","7"},{"forza_pause_persistent_partial","true"},{"forza_pause_partial_identity",identity},{"forza_pause_provenance_token","1"},{"forza_pause_partial_admission","7,5,"+identity},{"vr_mode","off"},{"forza_pause_track_binary","true"},{"forza_pause_scene_binary","true"}};now=1000000;}
++static void begin(Fh1Stream&s,uint32_t uid=7){feed(s,r::Op::FrameBegin,31,{20,30,40,50,60},uid);feed(s,r::Op::Context,32,{0x47454E31,0,1,0,50},uid);}
++static bool eligible(Fh1Stream&s){Fh1RefreshRecordedEligibility(s);return s.partial.Check(s.partial_requested,s.partial_live,s.partial_token,now,s.recorded.context(),s.recorded.eligible())==p::Reason::Eligible;}
++static void finish(Fh1Stream&s){feed(s,r::Op::FrameEnd,31);assert(!eligible(s));assert(!s.main_target.ready);}
++static void swap(Fh1Stream&s){s.partial.Reset();s.main_target.Reset();auto& provenance_stream=s;
++#include "actual_replay_swap.inc"
++}
++int main(){
++ for(unsigned repeats:{2u,3u}){
++  setup();Fh1Stream s;begin(s);assert(eligible(s));
++  flags["forza_pause_recorded_sealed_uid"]="0";assert(eligible(s));
++  flags["forza_pause_recorded_sealed_uid"]="8";flags["forza_pause_partial_admission"]="8,5,"+identity;
++  assert(eligible(s)&&s.recorded.eligible()==7&&s.replay_lease.pending()==8);
++  for(unsigned n=0;n<repeats;++n){if(n)begin(s);assert(eligible(s));s.main_target.ready=true;finish(s);}
++  swap(s);assert(s.replay_lease.retired()==7&&!s.replay_lease.active());
++  begin(s,8);assert(eligible(s));finish(s);swap(s);
++  flags["forza_pause_partial_admission"]="7,5,"+identity;flags["forza_pause_recorded_sealed_uid"]="7";
++  begin(s);assert(!eligible(s));
++ }
++ // Exercise the actual per-draw production entry, not only Permit::Check.
++ setup();{Fh1Stream s;CommandProcessor cp{&s};fh1::track::Raster raster;
++ raster.mode=4;raster.surface=0x14020500;raster.color[0]=0x000C0000;raster.depth=0x00010400;raster.effective_mask=7;
++ for(unsigned replay=0;replay<3;++replay){
++  begin(s);feed(s,r::Op::Begin,33,{r::kSceneSource,20,99,r::kTrackType,40},7,r::Phase::Scene);
++  feed(s,r::Op::Target,34,{100,200,0x00030000,0x00010400,1});
++  feed(s,r::Op::Context,35,{r::kSurface24,0x14020500,0x14020500,100,200});
++  feed(s,r::Op::Begin,36,{0x82466418,99,20,99,4},7,r::kMainTrack);
++  assert(Fh1PauseTrackDecision(&cp,raster).suppress&&s.main_target.ready);
++  flags["forza_pause_recorded_sealed_uid"]="0";
++  flags["forza_pause_partial_admission"]="8,5,"+identity;
++  assert(Fh1PauseTrackDecision(&cp,raster).suppress);
++  feed(s,r::Op::Begin,37,{},7,r::Phase::PlayerCar);
++  assert(!Fh1PauseTrackDecision(&cp,raster).suppress);
++  feed(s,r::Op::End,37);assert(Fh1PauseTrackDecision(&cp,raster).suppress);
++  auto side=raster;side.query=true;assert(!Fh1PauseTrackDecision(&cp,side).suppress);
++  side=raster;side.memexport=true;assert(!Fh1PauseTrackDecision(&cp,side).suppress);
++  feed(s,r::Op::End,36);feed(s,r::Op::End,33);finish(s);
++  assert(!Fh1PauseTrackDecision(&cp,raster).suppress);
++ }
++ flags["forza_pause_partial_admission"]="";assert(!Fh1PauseTrackDecision(&cp,raster).suppress);
++ swap(s);begin(s);assert(!Fh1PauseTrackDecision(&cp,raster).suppress);
++ }
++ for(unsigned failure=0;failure<14;++failure){
++  setup();Fh1Stream s;begin(s);assert(eligible(s));
++  if(failure==0)flags["forza_pause_partial_admission"]="";
++  if(failure==1)flags["forza_pause_provenance_token"]="0";
++  if(failure==2)flags["forza_pause_partial_identity"]="";
++  if(failure==3)flags["forza_pause_partial_identity"]="1,11,20,30,40,50,60,1000000";
++  if(failure==4)flags["forza_pause_partial_identity"]="1,10,20,30,40,51,60,1000000";
++  if(failure==5)flags["forza_pause_partial_identity"]="1,10,20,30,40,50,61,1000000";
++  if(failure==6)flags["vr_mode"]="openxr";
++  if(failure==7)flags["forza_pause_recorded_provenance"]="false";
++  if(failure==8)now+=250001;
++  if(failure==9)flags["forza_pause_partial_admission"]="7,6,"+identity;
++  if(failure==10)flags["forza_pause_partial_admission"]="8,5,1,10,20,30,40,51,60,1000000";
++  if(failure==11)flags["forza_pause_partial_admission"]="8,5,"+identity+",half-update";
++  if(failure==12)flags["vr_head_pose_test"]="true";
++  if(failure==13)flags["forza_pause_persistent_partial"]="false";
++  assert(!eligible(s));assert(!s.replay_lease.active());
++  // Restoring stale fields cannot reacquire the revoked record in a new epoch.
++  setup();flags["forza_pause_partial_admission"]="7,6,"+identity;begin(s);assert(!eligible(s));
++ }
++ setup();{Fh1Stream s;begin(s);assert(eligible(s));feed(s,r::Op::Begin,33,{},8);assert(!eligible(s));}
++ setup();{Fh1Stream s;begin(s);assert(eligible(s));feed(s,r::Op::End,33);assert(!eligible(s));}
++ setup();{Fh1Stream s;feed(s,r::Op::FrameBegin,31,{20,30,40,50,60});assert(!eligible(s));feed(s,r::Op::Context,32,{0x47454E31,1,1,0,50});assert(!eligible(s));}
++ setup();{Fh1Stream s;begin(s);assert(eligible(s));for(unsigned n=0;n<8;++n)assert(s.recorded.EnterBuffer());assert(!s.recorded.EnterBuffer());assert(!eligible(s));}
++ setup();{Fh1Stream s;begin(s);assert(s.recorded.EnterBuffer());flags["forza_pause_recorded_sealed_uid"]="0";Fh1RefreshRecordedEligibility(s);s.recorded.LeaveBuffer();assert(eligible(s));finish(s);assert(!eligible(s));}
++ for(const auto& bad:std::array<std::string,5>{"","0,5,"+identity,"7,0,"+identity,"7,5,"+identity+",extra","4294967296,5,"+identity})assert(!p::ParseAdmission(bad).uid);
++ puts("PASS actual SDK refresh+NOP prefix, wire parser/consumer, stable2/3replays, publication churn, hard cancel/interleavings, identity/VR/mode/TTL, nested faults, FrameEnd and swap retirement");
++}

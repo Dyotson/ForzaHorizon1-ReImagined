@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "base_commit": "317216e8d66d766bd13abdb672975458f30ca576",
+  "base_tag": "fh1-0.10.0.24-r2",
+  "patches": [
+    {
+      "file": "0001-recorded-pause-world.patch",
+      "sha256": "9984d6ad0f4399c8383b0c8455616452e3c252a0443bbee0f1f71682e15559d5"
+    }
+  ],
+  "files": {
+    "include/rex/graphics/fh1_partial_policy.h": {
+      "before_sha256": null,
+      "after_sha256": "613acddfcedb2d2e702dfabfcb455acd7f913093a09e9c8b22bc2309557905af"
+    },
+    "include/rex/graphics/fh1_partial_receipts.h": {
+      "before_sha256": null,
+      "after_sha256": "efc124aabd36929fa34e89a574e16d76530ec61a229760cfe7ea8474f62c1233"
+    },
+    "include/rex/graphics/fh1_provenance.h": {
+      "before_sha256": null,
+      "after_sha256": "b874615205be2f023cbf0ebba4944aea31406ace47db5f4865a090069fef55b8"
+    },
+    "include/rex/graphics/fh1_provenance_capture.h": {
+      "before_sha256": null,
+      "after_sha256": "d83718559e6b37119eb20ced44950c5e543649d114bea4ff2befc8fb74e729e8"
+    },
+    "include/rex/graphics/fh1_record_execution.h": {
+      "before_sha256": null,
+      "after_sha256": "9651982eb090b46569bbfd79e6da4b141dc89495587c8928bb0688de458d476d"
+    },
+    "include/rex/graphics/fh1_recorded_capture.h": {
+      "before_sha256": null,
+      "after_sha256": "6cad10606a466e055ee06530dce3f21dbda9a0b9ca1ba61b9eede7bc38f6bb6e"
+    },
+    "include/rex/graphics/fh1_recorded_provenance.h": {
+      "before_sha256": null,
+      "after_sha256": "a6d093797c9d2daded93ab7007587c615de185d6425b6eefc74467bff456838a"
+    },
+    "include/rex/graphics/fh1_replay_lease.h": {
+      "before_sha256": null,
+      "after_sha256": "2e70367ca7ebba7032633307d62fbccc264e3895057c931550519b7c3e50d710"
+    },
+    "include/rex/graphics/fh1_track_bridge.h": {
+      "before_sha256": null,
+      "after_sha256": "6a08d0eb1a039881222dff2cdda1d9d1de58841878899e2f08c218455bd3ab22"
+    },
+    "include/rex/graphics/fh1_track_policy.h": {
+      "before_sha256": null,
+      "after_sha256": "bc34105ce08d45fd2062cf9f9e7a16c731fa8e0cfed42898b590515bb7ea61bc"
+    },
+    "src/graphics/command_processor.cpp": {
+      "before_sha256": "e9fe5e432b89b965c8f981669bd39e10b8e80930b41c5dd43f9028f2e1ebc1bc",
+      "after_sha256": "e5817b847ebceb4fca750322e284d787505306046dda13de78e776a2756532f7"
+    },
+    "src/graphics/vulkan/command_processor.cpp": {
+      "before_sha256": "2ebe84a9335f85e2b2af5c82709a6da12dfdde86860518618765426080ae73eb",
+      "after_sha256": "2b4173d3cb646c600d071387cd35353c8ee32f3847ab3ed900452774361b0efc"
+    },
+    "tests/fh1_pause/CMakeLists.txt": {
+      "before_sha256": null,
+      "after_sha256": "2f3d120132662d55bd8dcec8673bb056ad4fff39b676bc4d218a2f5a02438dc4"
+    },
+    "tests/fh1_pause/extract_production.py": {
+      "before_sha256": null,
+      "after_sha256": "9cbd182fd708a78d59feb3498bf0dedbdace8774ec7ff5cab0889fe9f2389f7d"
+    },
+    "tests/fh1_pause/partial_permit_test.cpp": {
+      "before_sha256": null,
+      "after_sha256": "0316d0224281fb0371b6213f230543bfc4c98b6b52044f992290159375b43c94"
+    },
+    "tests/fh1_pause/replay_lease_test.cpp": {
+      "before_sha256": null,
+      "after_sha256": "79d0357c0b81493d69a69836289ce14f9beae33024f07d7821d058d0c7e2449e"
+    }
+  },
+  "scope": "Recorded pause-world provenance, typed Vulkan scenery raster filter, immutable presented-frame lease, paired host admission certificate; default-off; no fade/compositor",
+  "source_normalization": "Git LF text; preserve upstream source notices",
+  "qualified_private_candidate": "lease-integration-r19",
+  "runtime_qualification": "pending root r19 validation; no TU0/non-Vulkan/platform claim"
+}

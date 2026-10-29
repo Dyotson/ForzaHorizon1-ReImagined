@@ -95,15 +95,19 @@ else
         { echo "$REIGLUE_TAG resolves to $target, expected $REIGLUE_COMMIT" >&2; exit 1; }
     git -C "$SRC" merge-base --is-ancestor "$SDK_COMMIT" "$target" ||
         { echo "$REIGLUE_TAG is not based on the nightly's commit $SDK_COMMIT" >&2; exit 1; }
-    # Check out the tag without touching files that already match it: HEAD and the index go to
-    # the tag, then only the files whose content differs are rewritten. Files that already match
+    # The pause producer/consumer overlay is audited against this exact pin. Build
+    # its desired tree before checking local files so repeated runs accept their
+    # own overlay while still refusing unrelated SDK edits.
+    desired="$(python3 "$ROOT/tools/pause_sdk_patch_tree.py" --sdk "$SRC" --base "$target")"
+    # HEAD stays at the tag; the index describes the audited overlay. Only files
+    # whose content differs are rewritten. Files that already match
     # keep their timestamps, so a re-run changes no source file, and a clone that had the old
     # patch series applied (the same content) is taken over without rebuilding the SDK.
-    [ "$fresh" = 1 ] || require_expected_changes "$SRC" "$target" SDK
+    [ "$fresh" = 1 ] || require_expected_changes "$SRC" "$desired" SDK
     if [ "$fresh" = 1 ] || [ "$(git -C "$SRC" rev-parse HEAD)" != "$target" ]; then
         git -C "$SRC" update-ref --no-deref HEAD "$target"
-        git -C "$SRC" read-tree "$target"
     fi
+    git -C "$SRC" read-tree "$desired"
     git -C "$SRC" update-index -q --refresh > /dev/null || true
     changed="$(git -C "$SRC" diff-files --ignore-submodules --name-only | wc -l)"
     if [ "$changed" -gt 0 ]; then

@@ -10,11 +10,14 @@ struct NativeScene {
   uint32_t screen=0,world_car=0,core=0,camera=0,selection=0;
   uint64_t frame=0;
   std::array<float,16> view{};
+  uint32_t render_view=0,selection_id=0;
+  uint64_t generation=0;
 };
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 bool Enabled();
 bool CompositionActive(uint32_t screen);
 void ObserveSceneCamera(uint8_t* base,uint32_t camera);
+NativeScene ObserveSceneView(uint8_t* base,uint32_t view);
 bool ReadObservedScene(uint32_t screen,NativeScene& scene);
 // UI lifecycle on the main loop thread. A visible, validated native pause must
 // pulse every tick; hides/releases cancel before invoking any native transition.
@@ -39,6 +42,7 @@ private:
 inline bool Enabled() { return false; }
 inline bool CompositionActive(uint32_t) { return false; }
 inline void ObserveSceneCamera(uint8_t*,uint32_t) {}
+inline NativeScene ObserveSceneView(uint8_t*,uint32_t) { return {}; }
 inline bool ReadObservedScene(uint32_t,NativeScene&) { return false; }
 inline void Pulse(uint32_t,bool,uint32_t=0) {}
 inline void Cancel(uint32_t) {}

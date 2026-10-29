@@ -35,6 +35,7 @@
 #include "../platform/guest_memory.h"
 #include "../platform/scene_resolution.h"
 #include "../platform/scene_tiling.h"
+#include "../platform/pause_scene_provenance.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -275,6 +276,9 @@ extern "C" REX_FUNC(HasRecordedList) {
 // layer, item, r9) over the direct path. For passes 3 and 5 the function does the pass's own
 // work and finds no list; pass 4's are drawn after it.
 extern "C" REX_FUNC(TrackDrawPass) {
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
+  forza::pause_scene_provenance::TrackMainScope main_track(base,ctx.r3.u32,ctx.r4.u32);
+#endif
   const uint32_t pass = ctx.r4.u32;
   const uint32_t list_pass = tiling::RecordedListPass(pass);
   if (list_pass == pass || !(ctx.r10.u32 & 0xFF)) {
@@ -306,6 +310,9 @@ extern "C" REX_FUNC(TrackDrawPass) {
 // (its ninth argument, r1 + 84) and layer (r9) from each model's recorded lists, skipping
 // models without one; it has no direct path. Passes 3 and 5 are drawn as pass 4.
 extern "C" REX_FUNC(ProceduralDrawPass) {
+#if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
+  forza::pause_scene_provenance::ProceduralMainScope procedural(base,ctx.r3.u32,ctx.r5.u32,ctx.r6.u32,ctx.r1.u32,0x82447B70);
+#endif
   const uint32_t at = ctx.r1.u32 + 84;
   const uint32_t pass = Load32(base, at);
   const uint32_t list_pass = tiling::RecordedListPass(pass);

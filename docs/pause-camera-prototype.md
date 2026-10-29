@@ -238,3 +238,40 @@ Strict adapter tests cover cross-thread observation, ambiguous cameras/changed
 selection, stale context, VR, cancellation and disabled operation. All three
 affected TU4 units compile and the production host links. These observations
 own no native objects and are not GPU readiness or a rendered studio scene.
+
+## Recorded world experiment
+
+The TU4 native-pause build now includes a default-off recorded producer and its
+paired SDK consumer. `tools/build_rexglue_sdk.sh` applies the pinned SDK overlay
+described in `patches/pause-camera-sdk/README.md`; the host and SDK changes must
+be used together. This path observes the original world render and never creates
+another scene, retains a borrowed guest view, or calls a duplicate world render.
+
+The producer emits ordered frame, target and typed-owner records through the
+original native allocator. A successful seal publishes its UID, captured revision
+and source identity in one certificate. The consumer pins that exact record until
+the real swap boundary, resets context and target witnesses at each replay end,
+and stops immediately on lifecycle cancellation or changed source identity. Car,
+UI, query, memory-export, target and freshness guards remain active. Native ring
+rotation requires a bounded retained-span witness; unsupported metadata or slow
+allocation stays rejected. The fixed rear-wheel hold does not advance the pan.
+
+The diagnostic switches are `forza_pause_camera`, `forza_pause_provenance`,
+`forza_pause_recorded_provenance`, `forza_pause_persistent_partial` and the typed
+`forza_pause_{track,procedural,scene,crowd,particles}_binary` switches. All are off
+by default. They are an experimental developer path, not a completed menu option.
+
+Actual gameplay-to-pause-to-resume video has been captured. The car and native menu
+remain visible and resume works, but complete scenery can still reappear: one
+closed run had 17 rejected records among 111 completed pause-frame receipts,
+all at the conservative native metadata witness. Persistent isolation is not
+qualified. Progressive background fade and an unobscured complete pan remain
+unimplemented; the old owned-studio provider is not part of this integration.
+
+The SDK-free ownership and disabled/TU0 checks run with:
+
+```sh
+cmake -S forza-recomp/tests/pause-recorded -B build/pause-recorded
+cmake --build build/pause-recorded --parallel 1
+ctest --test-dir build/pause-recorded --output-on-failure
+```

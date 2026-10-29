@@ -2,10 +2,12 @@
 // connected until the car/background render boundary has been qualified.
 #include "../platform/guest_addr.h"
 #include "../platform/pause_camera.h"
+#include "../platform/pause_scene_provenance.h"
 
 #if FORZA_TU4 && defined(FORZA_NATIVE_PAUSE)
 #include "../platform/guest_memory.h"
 #include "../platform/pause_camera_framing.h"
+#include "../platform/pause_fixed_pose_hold.h"
 #include "../platform/ultrawide.h"
 #include "../platform/xr.h"
 #include <rex/cvar.h>
@@ -23,6 +25,7 @@ REXCVAR_DEFINE_BOOL(forza_pause_camera_trace, false, "Debug",
     "Log pause-camera eligibility and rejection reasons once per consumer (maximum 64 records)");
 REXCVAR_DECLARE(bool, vr_head_pose_test);
 
+REXCVAR_DECLARE(bool, forza_pause_persistent_partial);
 namespace forza::pause_camera {
 namespace {
 using Clock=std::chrono::steady_clock;
@@ -31,10 +34,11 @@ struct State {
   uint32_t requested=0,world=0,director=0;
   Clock::time_point pulse{},world_time{},previous{},frame_time{};
   Transition transition;
+  FixedPoseHold partial_hold;
   Anchor anchor{};
   std::array<float,16> view{};
   NativeScene scene{};
-  uint64_t frame_serial=0;
+  uint64_t frame_serial=0,generation=1;
   bool scene_ambiguous=false;
   bool frame=false,blocked=false;
 } state;
@@ -141,7 +145,9 @@ bool Camera(uint8_t* base,uint32_t& director,uint32_t& car,Anchor& anchor,float&
   return locals==1||Reject(site,"no-local-car",first,last);
 }
 void Reset(bool block=false) {
-  state.transition.Cancel();state.director=0;state.frame=false;state.blocked=block;
+  pause_scene_provenance::Cancel(block?"camera-blocked-reset":"camera-lifecycle-reset");
+  if(++state.generation==0)++state.generation;
+  state.transition.Cancel();state.partial_hold.Reset();state.director=0;state.frame=false;state.blocked=block;
   state.scene={};state.scene_ambiguous=false;
 }
 bool Gates(uint8_t* base,Clock::time_point now,Site site) {
@@ -163,8 +169,9 @@ bool Gates(uint8_t* base,Clock::time_point now,Site site) {
 // Observed only, after the original world update. No simulation control.
 void World(uint32_t world) {
   if(!REXCVAR_GET(forza_pause_camera))return;
-  std::lock_guard lock(state.mutex);state.world=world;state.world_time=Clock::now();
-  Trace(Site::Lifecycle,"world-observed",world);
+  std::lock_guard lock(state.mutex);
+  if(state.world!=world&&state.transition.Active())Reset();
+  state.world=world;state.world_time=Clock::now();
 }
 bool Enabled() { return REXCVAR_GET(forza_pause_camera); }
 bool CompositionActive(uint32_t screen) {
@@ -209,8 +216,67 @@ void ObserveSceneCamera(uint8_t* base,uint32_t camera) {
   if(state.scene.camera&&(state.scene.camera!=camera||state.scene.core!=core||state.scene.selection!=selection)) {
     state.scene={};state.scene_ambiguous=true;Trace(Site::Presentation,"ambiguous-scene-camera");return;
   }
-  state.scene={state.requested,state.transition.car(),core,camera,selection,state.frame_serial,state.view};
+  const auto render_view=state.scene.render_view,selection_id=state.scene.selection_id;
+  state.scene={state.requested,state.transition.car(),core,camera,selection,state.frame_serial,state.view,
+               render_view,selection_id,state.generation};
   Trace(Site::Presentation,"native-scene-observed",camera,selection);
+}
+NativeScene ObserveSceneView(uint8_t* base,uint32_t view) {
+  if(!REXCVAR_GET(forza_pause_camera)||!pause_scene_provenance::Enabled()||
+     REXCVAR_GET(vr_head_pose_test)||xr::CockpitActive())return {};
+  uint32_t type=0,core=0,camera=0,selection=0,id=0;
+  if(!Word(base,view,type)||type!=0x8200254C||!Word(base,view+4,core)||
+     !Word(base,core,type)||type!=0x82003744||
+     !Word(base,view+400,camera))return {};
+  // The caller currently holds this native view. These are bounded read-only
+  // equivalents of the core's view/camera lists and +B8 car identity lookup.
+  // Membership proves this call's context; it does not retain guest pointers.
+  const auto member=[&](uint32_t offset,uint32_t needle,uint32_t limit) {
+    uint32_t begin=0,end=0;
+    if(!needle||!Word(base,core+offset,begin)||!Word(base,core+offset+4,end)||
+       !begin||(begin&3)||(end&3)||end<begin||uint64_t(end)-begin>limit*4)return false;
+    unsigned matches=0;
+    for(uint32_t p=begin;p<end;p+=4){uint32_t item=0;if(!Word(base,p,item))return false;matches+=item==needle;}
+    return matches==1;
+  };
+  // TU4 82E92630 inserts cameras at core+10104; 82E90468 removes from
+  // that same vector. core+4 is a different native collection.
+  bool valid=Word(base,camera,type)&&type==0x82002F6C&&
+      Word(base,camera+4,type)&&type==core&&Word(base,camera+484,selection)&&
+      member(20,view,128)&&member(10104,camera,128)&&member(40,selection,256);
+  uint32_t begin=0,end=0;
+  valid=valid&&Word(base,selection+2680,id)&&Word(base,core+40,begin)&&Word(base,core+44,end);
+  unsigned identities=0;
+  for(uint32_t p=begin;valid&&p<end;p+=4) {
+    uint32_t car=0,table=0,parent=0,getter=0,identity=0;
+    valid=Word(base,p,car)&&Word(base,car,table)&&table==0x82003A6C&&
+        Word(base,car+8,parent)&&parent==core&&Word(base,table+0x1B8,getter)&&
+        getter==0x82E95360&&Word(base,car+2680,identity);
+    identities+=valid&&identity==id;
+  }
+  if(!valid||identities!=1) {
+    std::lock_guard lock(state.mutex);
+    if(state.scene.camera==camera){state.scene={};state.scene_ambiguous=true;}
+    Trace(Site::Presentation,"render-scene-membership-rejected",view,camera);return {};
+  }
+  ObserveSceneCamera(base,camera);
+  std::lock_guard lock(state.mutex);
+  // ObserveSceneCamera may reject a changed pose without replacing an older
+  // candidate. Never attach a render witness to that older candidate.
+  for(unsigned i=0;i<16;++i) {
+    uint32_t word=0;
+    if(!Word(base,camera+16+i*4,word)||word!=std::bit_cast<uint32_t>(state.view[i])) {
+      if(state.scene.camera==camera)state.scene={};
+      return {};
+    }
+  }
+  if(!state.scene_ambiguous&&state.scene.camera==camera&&state.scene.core==core&&
+     state.scene.selection==selection&&state.scene.frame==state.frame_serial) {
+    state.scene.render_view=view;state.scene.selection_id=id;
+    Trace(Site::Presentation,"native-render-scene-observed",view,selection);
+    return state.scene;
+  }
+  return {};
 }
 bool ReadObservedScene(uint32_t screen,NativeScene& scene) {
   scene={};
@@ -274,7 +340,8 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
       REXLOG_INFO("Pause camera: camera-only experiment began, screen {:08X}, director {:08X}, car {:08X}; studio fade unbound",
                    state.requested,director,car);
     }
-    const auto sample=state.transition.Advance(std::chrono::duration<double>(now-state.previous).count());
+    const bool partial_requested=REXCVAR_GET(forza_pause_persistent_partial)&&pause_scene_provenance::Enabled();
+    const auto sample=FixedPoseHold::Sample(partial_requested,state.transition,std::chrono::duration<double>(now-state.previous).count());
     state.previous=now;
     if(!WorldShotAllowed(sample)){
       Trace(site,"studio-required-for-pan",director);Reset(true);return;
@@ -284,6 +351,7 @@ ScopedView::ScopedView(uint8_t* base,uint32_t director,bool presentation) {
       Trace(site,"composition-frame-invalid",director);Reset(true);return;
     }
     state.frame=View(framed,state.view);state.frame_time=now;
+    if(!state.partial_hold.Check(partial_requested,fov_bits,aspect,state.view)){Reset(true);return;}
     ++state.frame_serial;state.scene={};state.scene_ambiguous=false;
     if(!state.frame)Trace(site,"sample-view-invalid");
   }
