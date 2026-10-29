@@ -58,20 +58,33 @@ save/flush/title completion checks still control desktop closure.
 
 ## Confirmation and return contracts
 
-The custom adapter always forwards the original `827E5CA8` result handler.
-It recognizes its pending confirmation only for the current pause owner, a child
-whose parent matches that owner, and the native 16-byte Result type. The
-pending ID is optional because **0 is a valid PR Stunt confirmation**.
+The custom adapter forwards the common native result handler `827618F8` exactly
+once. That handler owns the high-numbered content/marketplace results and
+delegates the pause-specific results to `827E5CA8`. The adapter records accepted
+native child requests (`82F240C8`: pending flag +264, owned parameters +160),
+reads the ID through the same virtual getter as `82F28AD0`, and matches both the
+returning child's parent and retained parameters. Confirmation choices require
+the native 16-byte Result type. Information/difficulty returns do not read a
+choice. **0 is a valid PR Stunt confirmation ID.**
+
+No accepted child on a confirmation-only route restores the custom page. A
+scoped observer forwards the original Club guard `827540F8` once and detects
+its no-child rejection paths. The adapter does not rerun content checks or
+infer success from dispatch alone. Follow-up native children retain the hidden
+parent, and the native result handler's keep-open flag is respected.
 
 | Confirmation | Choice | Custom composition handling |
 |---|---|---|
-| 0, 1, 17, 18, 19 | 0 | Release composition before original event transition |
-| 0, 1, 17, 18, 19 | Cancel | Restore page after forwarding original handler |
+| 0, 1, 3, 17, 18, 19, 23 | 0 | Release composition before original event transition |
+| 0, 1, 3, 17, 18, 19, 23 | Cancel | Restore page after forwarding original handler |
 | 2 (Quit) | 0 or 6 (leave with party) | Release before original quit delegate |
 | 2 (Quit) | Cancel | Restore page |
-| 5 (Restart) | 0 | Release before native restart progression |
+| 5 (Restart) | 0 | Release only after the original restart gate accepts (+468); otherwise restore page |
 | 5 (Restart) | 3 (B) | Restore page |
-| 5 (Restart) | 6 (difficulty child) | Keep parent hidden; preserve original child/return flow |
+| 5 (Restart) | 6 (difficulty) | Keep parent hidden; preserve the native delegate's full-screen 170 route and return bookmark |
+| 16, 20, 21 | Any | Restore after native information/eligibility prompt dismissal |
+| 22 (Rally difficulty) | Return | Preserve native apply handler, then restore page |
+| 100005, 100007, 100011–100014 | Return | Preserve common native content/marketplace handling; follow any replacement child before restoring |
 
 No custom action directly resets an event, changes rewards, writes a save or
 calls a quit/restart delegate in place of the native confirmation.
@@ -80,8 +93,10 @@ calls a quit/restart delegate in place of the native confirmation.
 
 Focused source tests exercise the actual native dispatch adapter for all 20
 native IDs; rejected missing, disabled, duplicate and malformed models; preserved
-guest bytes and PPC caller registers; contextual labels; absent/disabled DLC
-rows; Rally difficulty; modal choice distinctions; spatial navigation and tab
+guest bytes and PPC caller registers; denied Club guard with/without a prompt;
+accepted child request IDs/parameter identity and wrong-parent/stale-result
+rejection; contextual labels; absent/disabled DLC rows; Rally difficulty;
+modal choice distinctions; spatial navigation and tab
 overflow. Existing car access/reload tests remain covered. Source-disabled TU0
 and TU4 builds and the enabled TU4 scene translation unit compile locally.
 
@@ -96,7 +111,9 @@ runtime revisions:
 - Rally: its three-row pause model, native difficulty apply/cancel and restart;
   Colorado-to-Rally entry only when the native flow offers it.
 - 1000 Club and Sponsor Challenges: available and unavailable content/activity
-  states, child Back, and native challenge data.
+  states, child Back, native challenge data, and no-child eligibility rejection.
+- Message Center, native Multiplayer and Rally entry: Cancel/OK on eligibility
+  errors, confirmation cancellation, and native marketplace follow-up returns.
 - Multiplayer host/guest: co-op entry, retire versus leave, End Free Roam and
   party-leader choice 6; no offline desktop extension in these contexts.
 - Free roam: original four tabs, new Horizon pages, resume, native title quit,

@@ -87,6 +87,8 @@ inline constexpr std::array<NativePauseBinding,13> kNativePauseBindings{{
 inline std::optional<uint32_t> NativePauseDialog(uint32_t action) {
   switch (action) {
     case 0: case 1: return action;
+    case 6: return 23;
+    case 7: return 3;
     case 10: return 5;
     case 14: return 17;
     case 15: return 18;
@@ -95,15 +97,28 @@ inline std::optional<uint32_t> NativePauseDialog(uint32_t action) {
     default: return {};
   }
 }
-enum class PauseDialogOutcome { Child, Cancel, Leave };
+enum class PauseDialogOutcome { Ignored, Child, Cancel, Leave, Restart };
+inline bool NativePauseDialogReturns(uint32_t dialog) {
+  // Information/error prompts return without an activity transition.
+  // Marketplace choices first run the common native 827618F8 handler; the
+  // adapter must respect its keep-open flag and any follow-up child request.
+  return dialog == 16 || dialog == 20 || dialog == 21 || dialog == 22 ||
+      dialog == 100005 || dialog == 100007 || dialog == 100011 || dialog == 100012 ||
+      dialog == 100013 || dialog == 100014;
+}
 inline PauseDialogOutcome NativePauseDialogOutcome(uint32_t dialog, uint32_t choice) {
+  if (NativePauseDialogReturns(dialog)) return PauseDialogOutcome::Cancel;
   // Restart's B result is 3; X=6 opens native difficulty. Quit's X=6
   // is the party-leader leave-with-party choice, not cancellation.
   if (dialog == 5)
-    return choice == 0 ? PauseDialogOutcome::Leave : choice == 3 ?
+    return choice == 0 ? PauseDialogOutcome::Restart : choice == 3 ?
         PauseDialogOutcome::Cancel : PauseDialogOutcome::Child;
-  if (choice == 0 || (dialog == 2 && choice == 6)) return PauseDialogOutcome::Leave;
-  return PauseDialogOutcome::Cancel;
+  switch (dialog) {
+    case 0: case 1: case 2: case 3: case 17: case 18: case 19: case 23:
+      return choice == 0 || (dialog == 2 && choice == 6) ?
+          PauseDialogOutcome::Leave : PauseDialogOutcome::Cancel;
+    default: return PauseDialogOutcome::Child;
+  }
 }
 inline std::optional<uint32_t> NativePauseAction(std::string_view id) {
   for (const auto& binding : kNativePauseBindings)

@@ -51,7 +51,54 @@ private:
 inline bool IsPause(uint8_t* base, uint32_t screen) {
   return base && screen && Read(base, screen) == 0x82061F94;
 }
+struct GuardObservation {
+  uint8_t* base;
+  uint32_t screen, action;
+  bool rejected = false;
+};
+inline thread_local GuardObservation* guard_observation = nullptr;
+struct ObserveGuard {
+  GuardObservation* previous;
+  explicit ObserveGuard(GuardObservation& observation)
+      : previous(guard_observation) { guard_observation = &observation; }
+  ~ObserveGuard() { guard_observation = previous; }
+};
 } // namespace detail
+
+// Only the scoped native dispatch observes this result. The original guard
+// still runs once and retains all content/license prompts and side effects.
+inline void ObserveClubGuard(uint8_t* base, uint32_t screen, bool accepted) {
+  auto* observation = detail::guard_observation;
+  if (observation && observation->base == base && observation->screen == screen &&
+      observation->action == 19) observation->rejected = !accepted;
+}
+
+struct DialogRequest {
+  uint32_t id = 0, params = 0;
+};
+inline bool ChildQueued(uint8_t* base, uint32_t screen) {
+  // 82F240C8 sets +264 only after accepting a native child request and
+  // transfers its owned parameters to +160. The later child retains them.
+  return detail::IsPause(base, screen) && GuestPtr(base, screen + 264)[0] != 0;
+}
+inline std::optional<DialogRequest> QueuedDialog(const PPCContext& context,
+                                                uint8_t* base, uint32_t screen) {
+  if (!ChildQueued(base, screen)) return {};
+  const auto params = detail::Read(base, screen + 160);
+  if (!params) return {};
+  const auto table = detail::Read(base, params);
+  const auto getter = table ? detail::Read(base, table + 4) : 0;
+  if (!getter) return {};
+  detail::Native native(context, base);
+  // This is the same native ID getter used by 82F28AD0 when returning a child.
+  return DialogRequest{native.Call(getter, {params}), params};
+}
+inline bool MatchesDialog(uint8_t* base, uint32_t screen, const DialogRequest& request,
+                          uint32_t id, uint32_t child) {
+  return detail::IsPause(base, screen) && child && request.params && id == request.id &&
+      detail::Read(base, child + 156) == screen &&
+      detail::Read(base, child + 164) == request.params;
+}
 
 struct Row {
   uint32_t address = 0, text = 0;
@@ -112,8 +159,12 @@ inline bool Dispatch(const PPCContext& context, uint8_t* base, uint32_t screen,
   if (!Available(base, screen, action)) return false;
   detail::Native native(context, base);
   native.Call(0x827DABD0, {screen});
+  detail::GuardObservation observation{base, screen, action};
+  detail::ObserveGuard scope(observation);
   native.Call(0x827EBEE0, {screen, 2, 0, action});
-  return true; // Dispatched, not a claim that the requested screen opened.
+  // Club can reject without a prompt (missing resource/availability). A
+  // rejection with an accepted child is still a native prompt to return from.
+  return !observation.rejected || ChildQueued(base, screen);
 }
 
 // Original COptions selection branches. These branches use only the common

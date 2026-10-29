@@ -12,19 +12,30 @@ std::map<uint32_t,std::array<uint8_t,4096>> pages;
 std::vector<uint32_t> calls;
 uint32_t selected=0,dispatch_address=0;
 constexpr uint32_t screen=0x10000,entries=0x20000,row=0x30000;
+constexpr uint32_t params=0x50000,table=0x60000,getter=0x70000,child=0x80000;
+bool observe_guard=false,accept_guard=false,queue_child=false;
+uint32_t observed_screen=screen;
 void Word(uint32_t address,uint32_t value) {
   auto* p=TestGuestPtr(address);
   for(int i=3;i>=0;--i){p[i]=uint8_t(value);value>>=8;}
 }
-void Native(PPCContext& ctx,uint8_t*) {
+void Native(PPCContext& ctx,uint8_t* base) {
+  if (dispatch_address==getter) {
+    assert(ctx.r3.u32==params);
+    ctx.r3.u32=forza::fh1_pause_actions::detail::Read(base,params+4);
+    return;
+  }
   assert(ctx.r3.u32==screen);
   if(dispatch_address==0x827EBEE0) {
     assert(ctx.r4.u32==2 && ctx.r5.u32==0 && ctx.r6.u32==selected);
+    if (queue_child) TestGuestPtr(screen+264)[0]=1;
+    if (observe_guard) forza::fh1_pause_actions::ObserveClubGuard(base,observed_screen,accept_guard);
   } else assert(dispatch_address==0x827DABD0);
   ctx.r3.u64=0xAAAAAAAA;ctx.r4.u64=0xBBBBBBBB;ctx.r6.u64=0xCCCCCCCC;
 }
 void Setup(uint32_t id) {
   pages.clear();calls.clear();selected=id;
+  observe_guard=accept_guard=queue_child=false;observed_screen=screen;
   Word(screen,0x82061F94);Word(screen+0x19C,entries);Word(screen+0x1A0,entries+4);
   Word(entries,row);Word(row+8,id);Word(row+12,0x40000);TestGuestPtr(row+20)[0]=1;
 }
@@ -70,4 +81,45 @@ int main() {
   assert(!Dispatch(ctx,nullptr,screen,14) && !Dispatch(ctx,&memory,0,14));
   assert(!Dispatch(ctx,&memory,screen,20) && !Dispatch(ctx,&memory,screen,0x7000));
   assert(calls.empty());
+
+  // The native Club guard may deny without creating any child. Its failure
+  // must not be mistaken for a successful transition or leak into later calls.
+  Setup(19);observe_guard=true;
+  assert(!Dispatch(ctx,&memory,screen,19));
+  assert((calls==std::vector<uint32_t>{0x827DABD0,0x827EBEE0}));
+  assert(std::memcmp(&ctx,&original,sizeof(ctx))==0);
+  queue_child=true;
+  assert(Dispatch(ctx,&memory,screen,19)); // Native eligibility prompt queued.
+  queue_child=false;TestGuestPtr(screen+264)[0]=0;accept_guard=true;
+  assert(Dispatch(ctx,&memory,screen,19));
+  accept_guard=false;observed_screen=screen+4;
+  assert(Dispatch(ctx,&memory,screen,19)); // A different parent cannot veto it.
+  Setup(7);observe_guard=true;
+  assert(Dispatch(ctx,&memory,screen,7)); // Nor a different native action.
+  ObserveClubGuard(&memory,screen,false); // Outside a dispatch has no effect.
+  Setup(19);assert(Dispatch(ctx,&memory,screen,19));
+
+  // Capture accepted parameters through the native virtual ID getter; zero
+  // is valid. Results require the same retained params AND parent identity.
+  Setup(0);Word(screen+160,params);Word(params,table);Word(table+4,getter);
+  Word(child+156,screen);Word(child+164,params);
+  assert(!QueuedDialog(ctx,&memory,screen));
+  TestGuestPtr(screen+264)[0]=1;
+  for (uint32_t id : {0u,3u,5u,16u,20u,21u,22u,23u,100007u,100011u,100012u,100013u,100014u}) {
+    Word(params+4,id);calls.clear();const auto before=pages;
+    const auto request=QueuedDialog(ctx,&memory,screen);
+    assert(request && request->id==id && request->params==params);
+    assert((calls==std::vector<uint32_t>{getter}));
+    assert(std::memcmp(&ctx,&original,sizeof(ctx))==0 && pages==before);
+    assert(MatchesDialog(&memory,screen,*request,id,child));
+    assert(!MatchesDialog(&memory,screen,*request,id+1,child));
+    assert(!MatchesDialog(&memory,screen,*request,id,0));
+    Word(child+156,screen+4);assert(!MatchesDialog(&memory,screen,*request,id,child));
+    Word(child+156,screen);Word(child+164,params+4);
+    assert(!MatchesDialog(&memory,screen,*request,id,child));Word(child+164,params);
+  }
+  Word(table+4,0);assert(!QueuedDialog(ctx,&memory,screen));
+  Word(params,0);assert(!QueuedDialog(ctx,&memory,screen));
+  Word(screen+160,0);assert(!QueuedDialog(ctx,&memory,screen));
+  assert(!QueuedDialog(ctx,nullptr,screen));
 }

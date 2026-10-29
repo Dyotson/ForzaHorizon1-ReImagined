@@ -498,15 +498,19 @@ void NativeContextPages() {
   menu.SetPages(MakePausePages(caps));assert(!menu.FocusTile("difficulty"));
 
   using O=PauseDialogOutcome;
-  for (uint32_t action : {0u,1u,10u,14u,15u,16u,17u}) {
+  for (uint32_t action : {0u,1u,6u,7u,10u,14u,15u,16u,17u}) {
     const auto dialog=NativePauseDialog(action);assert(dialog);
-    assert(NativePauseDialogOutcome(*dialog,0)==O::Leave);
+    assert(NativePauseDialogOutcome(*dialog,0)==(*dialog==5?O::Restart:O::Leave));
     assert(NativePauseDialogOutcome(*dialog,*dialog==5?3:1)==O::Cancel);
   }
   assert(NativePauseDialog(0)==0); // Zero is a real confirmation ID.
   assert(!NativePauseDialog(19));
   assert(NativePauseDialogOutcome(5,6)==O::Child);
   assert(NativePauseDialogOutcome(2,6)==O::Leave);
+  for (uint32_t dialog : {16u,20u,21u,22u,100005u,100007u,100011u,100012u,100013u,100014u})
+    for (uint32_t choice : {0u,1u,3u,6u})
+      assert(NativePauseDialogOutcome(dialog,choice)==O::Cancel);
+  assert(NativePauseDialogOutcome(999,0)==O::Child);
 }
 
 void NativeLayoutContract() {

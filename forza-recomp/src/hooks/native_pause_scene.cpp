@@ -37,7 +37,8 @@ REXCVAR_DEFINE_BOOL(forza_native_pause, false, "Interface",
 extern "C" REX_FUNC(__imp__sub_827DFB18);
 extern "C" REX_FUNC(__imp__sub_827DAB28);
 extern "C" REX_FUNC(__imp__sub_827DE0D0);
-extern "C" REX_FUNC(__imp__sub_827E5CA8);
+extern "C" REX_FUNC(__imp__sub_827618F8);
+extern "C" REX_FUNC(__imp__sub_827540F8);
 extern "C" REX_FUNC(__imp__XamInputGetState);
 extern "C" REX_FUNC(__imp__XamUserGetName);
 
@@ -95,7 +96,7 @@ struct State {
   size_t session_offset=0;
   bool online_entry_available=false;
   bool end_free_roam=false;
-  std::optional<uint32_t> exit_dialog;
+  std::optional<fh1_pause_actions::DialogRequest> exit_dialog;
   std::string social_return="social_connection";
   std::optional<float> completion;
   bool recovery = false;
@@ -884,6 +885,20 @@ void SocialHelp(Native& ui,bool show) {
   state.controller.FocusTile(show?"social_back":state.social_return);
   state.controller.Resume();state.previous_pad=0xffff;
 }
+bool DispatchNative(Native& ui, uint32_t action) {
+  const auto screen=state.screen;
+  const bool dispatched=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,action);
+  if (!Owns(screen)) return dispatched;
+  state.exit_dialog=fh1_pause_actions::QueuedDialog(ui.ctx,ui.base,screen);
+  // These branches always open a confirmation/difficulty child, including
+  // Rally/Multiplayer eligibility prompts. No accepted child means no handoff.
+  if (menu::NativePauseDialog(action) || action==18)
+    return dispatched && state.exit_dialog.has_value();
+  // Message Center and Club otherwise invoke their original bound callbacks.
+  if ((action==5 || action==19) && !state.exit_dialog &&
+      !Read(ui.base,screen+(action==5?500:516))) return false;
+  return dispatched;
+}
 void Activate(Native& ui, const std::string& id) {
   const auto action = menu::FindPauseAction(id);
   if (!action) return;
@@ -943,9 +958,7 @@ void Activate(Native& ui, const std::string& id) {
   using A = menu::PauseAction;
   switch (*action) {
     case A::NativeActivity:
-      state.exit_dialog=menu::NativePauseDialog(*native_action);
-      requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,*native_action);
-      if (!requested) state.exit_dialog.reset();
+      requested=DispatchNative(ui,*native_action);
       break;
     case A::WorldMap: requested = fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 2); break;
     case A::ChangeCar: requested = offline_cars::Open(ui.ctx, ui.base, screen); break;
@@ -957,9 +970,7 @@ void Activate(Native& ui, const std::string& id) {
     case A::SocialStats: requested = fh1_pause_actions::OpenProgress(ui.ctx, ui.base, screen); break;
     case A::LeaveSession:
       if(const auto exit=LeaveAction(ui.base)){
-        state.exit_dialog=*exit==15?18:2;
-        requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,*exit);
-        if(!requested)state.exit_dialog.reset();
+        requested=DispatchNative(ui,*exit);
       }
       break;
     case A::FreeRoam: case A::CreateGame: {
@@ -976,7 +987,7 @@ void Activate(Native& ui, const std::string& id) {
     case A::Video: requested = fh1_pause_actions::OpenVideo(ui.ctx, ui.base, screen); break;
     case A::Difficulty: {
       if (ActionAvailable(ui.base,18)) {
-        requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,18);
+        requested=DispatchNative(ui,18);
         break;
       }
       const auto params = ui.Call(0x824265c8, {0x88});
@@ -1006,14 +1017,15 @@ void OpenQuit(Native& ui) {
   return_bookmark=ReturnBookmark{Read(ui.base,screen+0x10c),
       state.controller.page_id().value_or("home"),state.controller.focused_tile_id().value_or(""),
       state.social_help,state.social_return,state.social_session,state.help_from_session};
-  Page(ui.ctx,ui.base,screen,false);state.exit_dialog=2;
+  Page(ui.ctx,ui.base,screen,false);
   uint32_t presence=0,region=0;
   const bool activity_known=LiveLocalActivity(presence,region);
   const bool desktop_context=menu::DesktopQuitContext(Capabilities(ui),activity_known,presence,region);
   const bool requested=desktop_context && native_quit::Available(ui.base,screen) ?
       native_quit::Open(ui.ctx,ui.base,screen,Read(ui.base,screen+0x10c)) :
-      fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,17);
-  if(!requested){
+      DispatchNative(ui,17);
+  if (Owns(screen)) state.exit_dialog=fh1_pause_actions::QueuedDialog(ui.ctx,ui.base,screen);
+  if(!requested || (Owns(screen) && !state.exit_dialog)){
     native_quit::Cancel();state.exit_dialog.reset();return_bookmark.reset();Page(ui.ctx,ui.base,screen,true);
   }
 }
@@ -1077,26 +1089,51 @@ bool Input(PPCContext& ctx, uint8_t* base) {
 bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
   if (screen != state.screen) return false;
   state.visible = show;
-  if (show) { state.controller.Resume(); state.previous_pad = 0xffff; }
+  if (show) { state.exit_dialog.reset(); state.controller.Resume(); state.previous_pad = 0xffff; }
   else { state.controller.Suspend(); fh1_map_preview::Update(ctx, base, screen, false); }
   Native ui(ctx, base);
   if (ui.scratch && state.ready) Visibility(ui, show);
   return state.ready;
 }
-bool BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
-  if(!Owns(ctx.r3.u32)||!state.exit_dialog||ctx.r4.u32!=*state.exit_dialog||
-     !ctx.r5.u32||!ctx.r6.u32||Read(base,ctx.r5.u32+156)!=ctx.r3.u32||
-     Read(base,ctx.r6.u32)!=0x82033168)return false;
-  const auto outcome=menu::NativePauseDialogOutcome(*state.exit_dialog,Read(base,ctx.r6.u32+12));
-  state.exit_dialog.reset();
-  if(outcome==menu::PauseDialogOutcome::Cancel)return true;
-  if(outcome==menu::PauseDialogOutcome::Child)return false;
+menu::PauseDialogOutcome BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
+  using Outcome=menu::PauseDialogOutcome;
+  if(!Owns(ctx.r3.u32)||!state.exit_dialog||
+     !fh1_pause_actions::MatchesDialog(base,ctx.r3.u32,*state.exit_dialog,ctx.r4.u32,ctx.r5.u32))
+    return Outcome::Ignored;
+  // Difficulty and marketplace children need not return UI4PopupResults.
+  // The common native handler owns their results; this adapter reads no choice.
+  const bool returns=menu::NativePauseDialogReturns(state.exit_dialog->id);
+  if (!returns && (!ctx.r6.u32 || Read(base,ctx.r6.u32)!=0x82033168)) return Outcome::Ignored;
+  const auto outcome=returns ? Outcome::Cancel :
+      menu::NativePauseDialogOutcome(state.exit_dialog->id,Read(base,ctx.r6.u32+12));
+  if(outcome!=Outcome::Leave)return outcome;
   // The original result handler ends the online activity and invokes done.
   // Release the composition before that transition can load gameplay UI.
   return_bookmark.reset();
   offline_cars::ClearReload(base);
   Native ui(ctx,base);if(ui.scratch)Release(ui,true);
-  return false;
+  return outcome;
+}
+void AfterExitDialog(PPCContext& ctx,uint8_t* base,uint32_t screen,
+                     menu::PauseDialogOutcome outcome,bool close_child) {
+  if (!Owns(screen) || outcome==menu::PauseDialogOutcome::Ignored) return;
+  if (outcome==menu::PauseDialogOutcome::Restart) {
+    // 827E5CA8 checks the native restart gate before setting +468. A rejected
+    // restart closes the popup without leaving pause; retain its composition.
+    if (GuestPtr(base,screen+468)[0]) {
+      return_bookmark.reset();offline_cars::ClearReload(base);
+      Native ui(ctx,base);if(ui.scratch)Release(ui,true);
+      return;
+    }
+    outcome=menu::PauseDialogOutcome::Cancel;
+  }
+  // A difficulty/marketplace choice may replace the dialog with another
+  // native child. Adopt that request before considering a parent restore.
+  if (const auto next=fh1_pause_actions::QueuedDialog(ctx,base,screen)) {
+    state.exit_dialog=next;
+    return;
+  }
+  if (close_child && outcome==menu::PauseDialogOutcome::Cancel) Page(ctx,base,screen,true);
 }
 void Destroy(PPCContext& ctx, uint8_t* base, uint32_t screen) {
   if (screen != state.screen) return;
@@ -1425,15 +1462,26 @@ extern "C" REX_FUNC(sub_827DE0D0) {
   __imp__sub_827DE0D0(ctx, base);
   forza::native_pause_scene::Tick(ctx, base, screen);
 }
-extern "C" REX_FUNC(sub_827E5CA8) {
+extern "C" REX_FUNC(sub_827618F8) {
   const auto screen=ctx.r3.u32;
-  bool cancelled=false;
+  if (!forza::native_pause_scene::Owns(screen)) {
+    __imp__sub_827618F8(ctx,base);
+    return;
+  }
+  const auto close_flag=ctx.r7.u32;
+  auto outcome=forza::menu::PauseDialogOutcome::Ignored;
   forza::native_quit::WithChoice(ctx,base,[&]{
-    cancelled=forza::native_pause_scene::BeforeExitDialog(ctx,base);
-    __imp__sub_827E5CA8(ctx,base);
+    outcome=forza::native_pause_scene::BeforeExitDialog(ctx,base);
+    __imp__sub_827618F8(ctx,base);
   });
   // Modal cancellation does not rebind the parent or run its setup callback.
-  if(cancelled)forza::native_pause_scene::Page(ctx,base,screen,true);
+  forza::native_pause_scene::AfterExitDialog(ctx,base,screen,outcome,
+      !close_flag || forza::GuestPtr(base,close_flag)[0]!=0);
+}
+extern "C" REX_FUNC(sub_827540F8) {
+  const auto screen=ctx.r3.u32;
+  __imp__sub_827540F8(ctx,base);
+  forza::fh1_pause_actions::ObserveClubGuard(base,screen,(ctx.r3.u32&0xff)!=0);
 }
 #else
 namespace forza::native_pause_scene {
