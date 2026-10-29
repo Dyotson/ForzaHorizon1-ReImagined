@@ -95,7 +95,7 @@ struct State {
   size_t session_offset=0;
   bool online_entry_available=false;
   bool end_free_roam=false;
-  uint32_t exit_dialog=0;
+  std::optional<uint32_t> exit_dialog;
   std::string social_return="social_connection";
   std::optional<float> completion;
   bool recovery = false;
@@ -143,18 +143,9 @@ uint32_t Named(Native& ui, uint32_t root, const char* name) {
   return nodes.empty() ? 0u : nodes.front();
 }
 bool ActionAvailable(uint8_t* base, uint32_t action) {
-  if (!state.screen) return false;
-  const auto begin = Read(base, state.screen + 0x19c);
-  const auto end = Read(base, state.screen + 0x1a0);
-  if (!begin || end < begin || end - begin > 1024 || (end - begin) % 4)
-    return false;
-  for (auto entry = begin; entry < end; entry += 4) {
-    const auto row = Read(base, entry);
-    if (row && Read(base, row + 8) == action)
-      return GuestPtr(base, row + 0x14)[0] != 0;
-  }
-  return false;
+  return fh1_pause_actions::Available(base, state.screen, action);
 }
+std::string NativeRowLabel(Native& ui, uint32_t text);
 std::optional<uint32_t> LeaveAction(uint8_t* base) {
   // End Free Roam is a host round action. Quit (17) uses the separate native
   // quit/quit_to_new_party delegates. Retire (14) leaves a guest in the round.
@@ -171,7 +162,7 @@ menu::PauseCapabilities Capabilities(Native& ui) {
   state.online_entry_available=online_entry;
   const auto session=LiveCurrentSession();
   state.end_free_roam=session.has_value()&&ActionAvailable(ui.base,15);
-  return {ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
+  menu::PauseCapabilities caps{ActionAvailable(ui.base, 2), ActionAvailable(ui.base, 11),
           ActionAvailable(ui.base, 12),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Garage),
           fh1_festival_travel::Available(ui.ctx, ui.base, D::Autoshow),
@@ -181,6 +172,11 @@ menu::PauseCapabilities Capabilities(Native& ui) {
           LiveConnected() && session.has_value() && LeaveAction(ui.base).has_value(),
           session&&session->members.size()>5,state.end_free_roam,
           ActionAvailable(ui.base,2)&&offline_cars::Available(ui.base,state.screen)};
+  for (uint32_t action = 0; action < caps.native.size(); ++action) {
+    if (const auto row = fh1_pause_actions::FindRow(ui.base,state.screen,action))
+      caps.native[action] = {true,row->enabled,NativeRowLabel(ui,row->text)};
+  }
+  return caps;
 }
 void Depth(Native& ui, const Donor& d, uint32_t node, float value) {
   if (!node || ui.Scalar(d.presentation, node, "position.z", value)) return;
@@ -292,6 +288,18 @@ bool BindCard(Native& ui, Card& card, bool tab = false) {
   return Require("card", "BigPane01.Material866", card.material);
 }
 std::string Description(std::string_view id, bool enabled) {
+  if (menu::NativePauseAction(id)) {
+    if (!enabled) return "Unavailable in this activity";
+    if (id=="horizon_rally") return "Open Horizon Rally";
+    if (id=="thousand_club") return "Car challenges and medals";
+    if (id=="coop_challenges") return "Free roam co-op challenges";
+    if (id=="sponsor_challenges") return "View sponsor challenges";
+    if (id=="message_center") return "Open the message center";
+    if (id=="native_multiplayer") return "Enter multiplayer";
+    if (id=="head_tracking") return "Native head tracking options";
+    return "Confirmation required";
+  }
+  if (id=="difficulty" && !enabled) return "Unavailable in this activity";
   if (!enabled && (id == "my_cars" || id == "change_car" || id == "car_tuning"))
     return NetworkOn() ? "Offline free roam only" : "Unavailable here";
   if (!enabled && (id == "garage" || id == "autoshow")) return "Unavailable here";
@@ -452,6 +460,31 @@ std::string RenderedText(Native& ui,uint32_t node) {
   }
   return text;
 }
+std::string NativeRowLabel(Native& ui,uint32_t text) {
+  // The original row owns this IString reference. 82F3A728 calls its +0x1C
+  // accessor on the UI thread, then copies the returned UTF-16 string.
+  if (!text) return {};
+  const auto chars = ui.Virtual(text,0x1C,{text});
+  if (!chars) return {};
+  std::string result;
+  for (unsigned i=0;i<240;++i) {
+    const auto* p = GuestPtr(ui.base,chars+2*i);
+    uint32_t c = uint32_t(p[0])<<8|p[1];
+    if (!c) return result;
+    if (c>=0xD800 && c<=0xDBFF && i+1<240) {
+      const auto* next=GuestPtr(ui.base,chars+2*i+2);
+      const uint32_t low=uint32_t(next[0])<<8|next[1];
+      if (low>=0xDC00 && low<=0xDFFF) {c=0x10000+((c-0xD800)<<10)+low-0xDC00;++i;}
+    }
+    if (c<32 || c==127) c=' ';
+    if (c>=0xD800 && c<=0xDFFF) c=0xFFFD;
+    if (c<0x80) result+=char(c);
+    else if (c<0x800) {result+=char(0xC0|(c>>6));result+=char(0x80|(c&63));}
+    else if (c<0x10000) {result+=char(0xE0|(c>>12));result+=char(0x80|((c>>6)&63));result+=char(0x80|(c&63));}
+    else {result+=char(0xF0|(c>>18));result+=char(0x80|((c>>12)&63));result+=char(0x80|((c>>6)&63));result+=char(0x80|(c&63));}
+  }
+  return {}; // Reject an unterminated/oversized native label.
+}
 void RefreshData(Native& ui) {
   ui.ctx.r3.u64 = 0; ui.ctx.r4.u64 = ui.scratch + 1800; ui.ctx.r5.u64 = 16;
   __imp__XamUserGetName(ui.ctx, ui.base);
@@ -599,7 +632,7 @@ void HeaderLayout(Native& ui) {
   for (auto node : {state.footer,state.bumpers[0],state.bumpers[1]})
     ui.Show(d.presentation,node,false);
   const bool subpage=state.social_help||state.social_session;
-  const bool quit=native_quit::Available(ui.base,state.screen)&&ActionAvailable(ui.base,17);
+  const bool quit=ActionAvailable(ui.base,17);
   if (!state.footer_bound || state.footer_recovery!=state.recovery || state.footer_social_help!=subpage || state.footer_quit!=quit) {
     state.footer_bound=FooterButtons(ui,state.screen,
         {{0,"SELECT"},{1,subpage?"BACK":"RESUME"},{8,"PREV TAB"},{9,"NEXT TAB"},
@@ -879,6 +912,11 @@ void Activate(Native& ui, const std::string& id) {
   }
   // Revalidate gates immediately before transitions, not just on pause entry.
   const auto caps = Capabilities(ui);
+  const auto native_action = menu::NativePauseAction(id);
+  if (*action == menu::PauseAction::NativeActivity &&
+      (!native_action || !ActionAvailable(ui.base,*native_action))) return;
+  if (*action == menu::PauseAction::Difficulty &&
+      !caps.my_profile && !ActionAvailable(ui.base,18)) return;
   if ((*action == menu::PauseAction::FreeRoam && !caps.free_roam) ||
       (*action == menu::PauseAction::CreateGame && !caps.create_game)) return;
   if(*action==menu::PauseAction::LeaveSession&&!caps.leave_session)return;
@@ -904,6 +942,11 @@ void Activate(Native& ui, const std::string& id) {
   bool requested = false;
   using A = menu::PauseAction;
   switch (*action) {
+    case A::NativeActivity:
+      state.exit_dialog=menu::NativePauseDialog(*native_action);
+      requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,*native_action);
+      if (!requested) state.exit_dialog.reset();
+      break;
     case A::WorldMap: requested = fh1_pause_actions::Dispatch(ui.ctx, ui.base, screen, 2); break;
     case A::ChangeCar: requested = offline_cars::Open(ui.ctx, ui.base, screen); break;
     case A::TuneCar: requested = car_tuning_menu::Open(ui.ctx, ui.base, screen); break;
@@ -916,7 +959,7 @@ void Activate(Native& ui, const std::string& id) {
       if(const auto exit=LeaveAction(ui.base)){
         state.exit_dialog=*exit==15?18:2;
         requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,*exit);
-        if(!requested)state.exit_dialog=0;
+        if(!requested)state.exit_dialog.reset();
       }
       break;
     case A::FreeRoam: case A::CreateGame: {
@@ -932,6 +975,10 @@ void Activate(Native& ui, const std::string& id) {
     case A::Hud: requested = fh1_pause_actions::OpenHud(ui.ctx, ui.base, screen); break;
     case A::Video: requested = fh1_pause_actions::OpenVideo(ui.ctx, ui.base, screen); break;
     case A::Difficulty: {
+      if (ActionAvailable(ui.base,18)) {
+        requested=fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,18);
+        break;
+      }
       const auto params = ui.Call(0x824265c8, {0x88});
       if (params) {
         ui.Call(0x825a5640, {params, 0});
@@ -955,13 +1002,19 @@ void Activate(Native& ui, const std::string& id) {
 }
 void OpenQuit(Native& ui) {
   const auto screen=state.screen;
-  if(!ActionAvailable(ui.base,17)||!native_quit::Available(ui.base,screen))return;
+  if(!ActionAvailable(ui.base,17))return;
   return_bookmark=ReturnBookmark{Read(ui.base,screen+0x10c),
       state.controller.page_id().value_or("home"),state.controller.focused_tile_id().value_or(""),
       state.social_help,state.social_return,state.social_session,state.help_from_session};
   Page(ui.ctx,ui.base,screen,false);state.exit_dialog=2;
-  if(!native_quit::Open(ui.ctx,ui.base,screen,Read(ui.base,screen+0x10c))){
-    native_quit::Cancel();state.exit_dialog=0;return_bookmark.reset();Page(ui.ctx,ui.base,screen,true);
+  uint32_t presence=0,region=0;
+  const bool activity_known=LiveLocalActivity(presence,region);
+  const bool desktop_context=menu::DesktopQuitContext(Capabilities(ui),activity_known,presence,region);
+  const bool requested=desktop_context && native_quit::Available(ui.base,screen) ?
+      native_quit::Open(ui.ctx,ui.base,screen,Read(ui.base,screen+0x10c)) :
+      fh1_pause_actions::Dispatch(ui.ctx,ui.base,screen,17);
+  if(!requested){
+    native_quit::Cancel();state.exit_dialog.reset();return_bookmark.reset();Page(ui.ctx,ui.base,screen,true);
   }
 }
 std::optional<uint16_t> Pad(Native& ui) {
@@ -1031,10 +1084,13 @@ bool Page(PPCContext& ctx, uint8_t* base, uint32_t screen, bool show) {
   return state.ready;
 }
 bool BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
-  if(!Owns(ctx.r3.u32)||!state.exit_dialog||ctx.r4.u32!=state.exit_dialog||!ctx.r6.u32)return false;
-  state.exit_dialog=0;
-  const bool cancelled=Read(base,ctx.r6.u32+12)!=0;
-  if(cancelled)return true;
+  if(!Owns(ctx.r3.u32)||!state.exit_dialog||ctx.r4.u32!=*state.exit_dialog||
+     !ctx.r5.u32||!ctx.r6.u32||Read(base,ctx.r5.u32+156)!=ctx.r3.u32||
+     Read(base,ctx.r6.u32)!=0x82033168)return false;
+  const auto outcome=menu::NativePauseDialogOutcome(*state.exit_dialog,Read(base,ctx.r6.u32+12));
+  state.exit_dialog.reset();
+  if(outcome==menu::PauseDialogOutcome::Cancel)return true;
+  if(outcome==menu::PauseDialogOutcome::Child)return false;
   // The original result handler ends the online activity and invokes done.
   // Release the composition before that transition can load gameplay UI.
   return_bookmark.reset();
@@ -1213,6 +1269,7 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       ui.Call(0x82f36ab8, {player, Read(base, 0x833f44e8)});
     ui.Call(0x82f1ec20, {state.header.owner, Hash("SHOW_PLAYER_BAR") & 0x7fffffff});
     state.controller.Enter();
+    state.controller.SelectPage(menu::PauseEntryPage(Capabilities(ui)));
     if (return_bookmark && return_bookmark->context == Read(base, screen + 0x10c)) {
       state.social_help=return_bookmark->social_help;
       state.social_session=return_bookmark->social_session;
@@ -1255,7 +1312,8 @@ void Tick(PPCContext& ctx, uint8_t* base, uint32_t screen) {
       StyleCard(ui, card, tile.bounds, tile.label, focus && tile.id == *focus, tile.enabled);
       ActionArtwork(ui,card,tile);
       const bool social=page->id=="social";
-      if(social){
+      const bool context_page=page->id.starts_with("activity")||page->id.starts_with("horizon");
+      if(social||context_page){
         if(!tile.enabled)ui.Opacity(card.donor.presentation,card.paper,85);
         Label(ui,card.donor,card.title,{tile.bounds.x+20,tile.bounds.y+12,tile.bounds.width-40,40},
             tile.bounds.width<300?21:23,tile.label,tile.enabled?kTextColor:kDisabledTextColor);

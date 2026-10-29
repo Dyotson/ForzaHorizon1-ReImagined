@@ -3,6 +3,7 @@
 #include "guest_addr.h"
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <rex/ppc/context.h>
 
 #if FORZA_TU4
@@ -52,6 +53,31 @@ inline bool IsPause(uint8_t* base, uint32_t screen) {
 }
 } // namespace detail
 
+struct Row {
+  uint32_t address = 0, text = 0;
+  bool enabled = false;
+};
+// Read the native display-order vector, including its enabled flag. A numeric
+// ID alone is not authorization: the builders own event, DLC and party gates.
+inline std::optional<Row> FindRow(uint8_t* base, uint32_t screen, uint32_t action) {
+  if (!detail::IsPause(base, screen) || action > 19) return {};
+  const auto begin = detail::Read(base, screen + 0x19C);
+  const auto end = detail::Read(base, screen + 0x1A0);
+  if (!begin || end < begin || end - begin > 1024 || (end - begin) % 4) return {};
+  std::optional<Row> result;
+  for (auto entry = begin; entry < end; entry += 4) {
+    const auto row = detail::Read(base, entry);
+    if (!row || detail::Read(base, row + 8) != action) continue;
+    if (result) return {}; // An ambiguous model must not dispatch an action.
+    result = Row{row, detail::Read(base, row + 12), GuestPtr(base, row + 20)[0] != 0};
+  }
+  return result;
+}
+inline bool Available(uint8_t* base, uint32_t screen, uint32_t action) {
+  const auto row = FindRow(base, screen, action);
+  return row && row->enabled;
+}
+
 // Call once from the imported scene's replacement for 827DFB18, on the guest UI
 // thread with its live PPC context. Both model builders finish by calling
 // 827D1618: the imported scene MUST intercept that call and skip its original
@@ -83,7 +109,7 @@ inline bool InitModel(const PPCContext& context, uint8_t* base, uint32_t screen)
 // Custom Graphics/Difficulty IDs belong to the host adapter, not this helper.
 inline bool Dispatch(const PPCContext& context, uint8_t* base, uint32_t screen,
                      uint32_t action) {
-  if (!detail::IsPause(base, screen) || action > 19) return false;
+  if (!Available(base, screen, action)) return false;
   detail::Native native(context, base);
   native.Call(0x827DABD0, {screen});
   native.Call(0x827EBEE0, {screen, 2, 0, action});
