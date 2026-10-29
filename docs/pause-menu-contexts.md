@@ -105,9 +105,42 @@ modal choice distinctions; spatial navigation and tab
 overflow. Existing car access/reload tests remain covered. Source-disabled TU0
 and TU4 builds and the enabled TU4 scene translation unit compile locally.
 
-**No in-game execution is claimed for these additions.** Before accepting the
-feature, run these against isolated profile copies, recording the source and
-runtime revisions:
+### Partial in-game qualification (2026-10-29)
+
+The tested source was `793171eb97bf340c9fa66650f4d2dbaf19a3982c`, linked
+against SDK `ff1db6f6ff64f237ec2dbd28f06680205a6b8b1a`. The Windows host
+SHA-256 was `08f82cddf09f8e94cf08d4635d5290b48e857a5245e7c73c317894c852196966`.
+Tests used isolated, authenticated profile copies, verified Rally/Club content,
+and normal UI input, starting outside Dak's Garage in Colorado free roam.
+
+- Home, Cars, Social, Settings and Horizon tabs rendered and switched normally.
+- Rally opened the native single-player exit/entry confirmation. Cancel
+  restored the originating Horizon/Rally tile and subsequent navigation worked.
+- Native World Map opened and Back restored Home/World Map.
+- Native Quit displayed title/desktop/cancel choices. Cancel restored Home;
+  accepted title and desktop exits were not exercised.
+- With explicit digital D-pad bindings (`U` up, `J` down, `H` left, `N` right),
+  `N` moved Rally to 1000 Club. The other three directions were not exercised.
+  Short default stick/chord inputs had not moved focus in the previous run;
+  that input-delivery limitation is not classified as a menu defect.
+- Selecting Club invoked the native unavailable message requiring a green
+  wristband. OK restored the identical Horizon/Club selection; a new `N`
+  moved to Sponsor Challenges. This qualifies the eligibility prompt and return,
+  not an eligible Club challenge child or a no-prompt rejection path.
+- Back resumed the native free-roam HUD. The earlier run also accepted the
+  native camera-cycle button after resume; driving motion was not tested.
+
+The two qualification runs ended after 237.750 and 207.922 seconds with no
+native fault, no remaining owned processes, and unchanged source saves, assets
+and runtime binaries. Their copied profiles remained authenticated; native
+autosave changed their file hashes while the checked progression fields stayed
+unchanged. Supervisor shutdown is not evidence of native desktop-exit success.
+
+### Remaining runtime acceptance
+
+Before accepting the feature, complete these against isolated profile copies,
+recording the source and runtime revisions. The partial results above do not
+qualify another event, progression, party or hardware context:
 
 - Career race: Quit Race Cancel/Confirm, Restart Cancel/Confirm, difficulty
   child and Back, then race resume and reward/progression behavior.
@@ -121,8 +154,8 @@ runtime revisions:
   errors, confirmation cancellation, and native marketplace follow-up returns.
 - Multiplayer host/guest: co-op entry, retire versus leave, End Free Roam and
   party-leader choice 6; no offline desktop extension in these contexts.
-- Free roam: original four tabs, new Horizon pages, resume, native title quit,
-  and existing save-confirmed desktop exit.
+- Free roam: remaining overflow/held-input cases, native title quit, and
+  existing save-confirmed desktop exit.
 
 Camera movement and studio fade remain separate work. No Bucket List action or
 second game's resources are included.
