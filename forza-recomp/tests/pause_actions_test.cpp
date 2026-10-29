@@ -122,4 +122,18 @@ int main() {
   Word(params,0);assert(!QueuedDialog(ctx,&memory,screen));
   Word(screen+160,0);assert(!QueuedDialog(ctx,&memory,screen));
   assert(!QueuedDialog(ctx,nullptr,screen));
+
+  // Callback removal after the prompt opened must not release the menu for a
+  // native no-op. Confirm the actual pause fields, including party-leader X.
+  for (const auto& item : std::array<std::array<uint32_t,3>,5>{{
+      {2,0,504},{2,6,508},{3,0,484},{17,0,512},{23,0,488}}}) {
+    Setup(17);
+    assert(!HasRequiredExitCallback(&memory,screen,item[0],item[1]));
+    Word(screen+item[2],0x90000);
+    assert(HasRequiredExitCallback(&memory,screen,item[0],item[1]));
+    Word(screen+item[2],0);
+    assert(!HasRequiredExitCallback(&memory,screen,item[0],item[1]));
+  }
+  for (uint32_t id : {0u,1u,18u,19u}) assert(HasRequiredExitCallback(&memory,screen,id,0));
+  assert(!HasRequiredExitCallback(nullptr,screen,2,0));
 }

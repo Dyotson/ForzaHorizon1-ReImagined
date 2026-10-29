@@ -99,6 +99,22 @@ inline bool MatchesDialog(uint8_t* base, uint32_t screen, const DialogRequest& r
       detail::Read(base, child + 156) == screen &&
       detail::Read(base, child + 164) == request.params;
 }
+inline bool HasRequiredExitCallback(uint8_t* base, uint32_t screen,
+                                    uint32_t dialog, uint32_t choice) {
+  if (!detail::IsPause(base, screen)) return false;
+  // These 827E5CA8 branches close without a transition when their callback
+  // has disappeared since the confirmation opened. Other accepted branches
+  // perform their own activity work before (or without) the done callback.
+  uint32_t offset=0;
+  switch (dialog) {
+    case 2: offset=choice==6?508:504;break;
+    case 3: offset=484;break;
+    case 17: offset=512;break;
+    case 23: offset=488;break;
+    default: return true;
+  }
+  return detail::Read(base,screen+offset)!=0;
+}
 
 struct Row {
   uint32_t address = 0, text = 0;

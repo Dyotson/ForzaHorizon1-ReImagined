@@ -72,6 +72,9 @@ scoped observer forwards the original Club guard `827540F8` once and detects
 its no-child rejection paths. The adapter does not rerun content checks or
 infer success from dispatch alone. Follow-up native children retain the hidden
 parent, and the native result handler's keep-open flag is respected.
+Confirmations that only invoke a bound exit callback recheck that reference
+before releasing the composition; if the native handler would no-op, the page
+is restored. Stunt/finish handlers retain their separate native activity work.
 
 | Confirmation | Choice | Custom composition handling |
 |---|---|---|

@@ -1107,6 +1107,8 @@ menu::PauseDialogOutcome BeforeExitDialog(PPCContext& ctx,uint8_t* base) {
   const auto outcome=returns ? Outcome::Cancel :
       menu::NativePauseDialogOutcome(state.exit_dialog->id,Read(base,ctx.r6.u32+12));
   if(outcome!=Outcome::Leave)return outcome;
+  if(!fh1_pause_actions::HasRequiredExitCallback(base,ctx.r3.u32,state.exit_dialog->id,
+                                                Read(base,ctx.r6.u32+12))) return Outcome::Cancel;
   // The original result handler ends the online activity and invokes done.
   // Release the composition before that transition can load gameplay UI.
   return_bookmark.reset();
