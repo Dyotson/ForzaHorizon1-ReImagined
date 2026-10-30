@@ -662,14 +662,16 @@ add("share_shader_list", "Share shader list", "Online", "bool", True,
     "After a game session, send the shader hashes and render settings from your pipeline cache to the "
     "server you play on (the public server or your own), once per entry. No game data, file paths or "
     "gamertag are sent, only pipeline descriptions: which shaders were used and how. The request carries "
-    "your player ID and friends key so that the server counts each player once. The server publishes "
+    "your player ID and a signature made with your signing key (not the key itself) so that the server "
+    "counts each player once. The server publishes "
     "the entries several players reported, and Prebuild shaders builds that list from your own game files, "
     "so new places and cars stop compiling shaders while you drive. Nothing is sent offline or to a "
     "server on this PC.", "Shader prebuild")
 # Launcher only: see coop_grant.py, #309.
 add("coop_results", "Co-op campaign results", "Online", "bool", True,
     "After a game session, ask the server you play on for your co-op campaign results and add the "
-    "ones you earned to the save you played with. The request carries your player ID and friends key. "
+    "ones you earned to the save you played with. The request carries your player ID and a signature "
+    "made with your signing key (not the key itself). "
     "Nothing is asked offline or of a server on this PC.", "Co-op campaign")
 # Discord status display is on by default; the "Online features" choice (PRIVACY.md) and this
 # switch turn it off. The application ID is public maintainer setup, separated from the

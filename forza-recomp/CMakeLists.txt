@@ -189,6 +189,7 @@ set(FORZA_SOURCES
     src/kernel/identity.cpp
     src/kernel/live_lsp.cpp
     src/kernel/live_tcp.cpp
+    src/kernel/live_auth.cpp
     src/kernel/live_friends.cpp
     src/kernel/live_invites.cpp
     src/kernel/live_xmsg.cpp
