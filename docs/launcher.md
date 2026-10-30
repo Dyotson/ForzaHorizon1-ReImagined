@@ -709,6 +709,11 @@ stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
 Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
 a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
 0.5 s ([playing.md](playing.md#running-the-game)).
+Audio > Radio > **Keep radio during races** (`radio_keep_in_events`, off by default)
+keeps the chosen stock/custom station or Radio Off through qualified career/Rally
+race-opening music cues. Restart after changing it. Story/post-race music and
+native dialogue, effects and loading/finish fades retain their behavior
+([scope](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).

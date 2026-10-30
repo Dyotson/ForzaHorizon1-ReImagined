@@ -543,6 +543,12 @@ add("radio_station_switch", "Station changes", "Audio", "choice", "game",
     "0.25 s fades for player changes; quick presses end on the last station picked.",
     "Radio", choices=[("game", "Game"), ("fast", "Fast")])
 
+add("radio_keep_in_events", "Keep radio during races", "Audio", "bool", False,
+    "Keep your selected stock or custom station, including Radio Off, through qualified "
+    "career and Rally race-opening music cues. Story cinematics, post-race music, dialogue "
+    "and sound effects keep their native behavior. Loading/finish fades still apply.",
+    "Radio", restart=True)
+
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
     "Through the Forza Live server: friends and LIVE lobbies.", "Forza Live")

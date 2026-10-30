@@ -33,6 +33,13 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   and quick presses end on the last station picked. The new station then starts about
   0.35 s after the press (0.57 s the game's way) and plays at full volume after 0.56 s
   (1.0 s). Measured and explained in `src/hooks/radio_station.cpp`.
+- **Radio during races:** Audio > Radio > **Keep radio during races**
+  (`radio_keep_in_events = true`, off by default; restart after changing) keeps the
+  selected stock or custom station, including Radio Off, through qualified career
+  and Rally race-opening music cues. The original soundtrack remains the default.
+  Story cinematics, post-race music, dialogue and sound effects keep their native
+  behavior; normal loading and finish fades still apply. Unrecognized or shared
+  fallback cues retain the original soundtrack.
 - **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
   `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
   their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20
