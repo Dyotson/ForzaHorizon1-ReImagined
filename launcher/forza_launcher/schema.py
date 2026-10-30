@@ -537,11 +537,11 @@ add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
 add("radio_station_switch", "Station changes", "Audio", "choice", "game",
-    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
-    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
-    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
-    "0.25 s fades for player changes; quick presses end on the last station picked.",
-    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
+    "Game: original radio HUD delay and 0.5 s fades. Fast: 0.15 s repeat guard and 0.25 s fades. "
+    "Instant: 0.075 s repeat guard and 0.04 s fades. Fast and Instant accept the latest station "
+    "during a fade. Applies to stock and custom stations. Stream startup still adds latency.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast"), ("instant", "Instant")])
+
 
 # --- Online ----------------------------------------------------------------------------
 add("live_signin", "Sign in to Xbox LIVE", "Online", "bool", True,
