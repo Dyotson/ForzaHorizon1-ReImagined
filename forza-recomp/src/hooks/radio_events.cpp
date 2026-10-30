@@ -27,6 +27,7 @@
 #include <rex/ppc/func.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -49,6 +50,10 @@ extern "C" REX_FUNC(DestroyOwnedString);
 namespace {
 using namespace forza::radio_event_native;
 bool Enabled() { static const bool enabled = REXCVAR_GET(radio_keep_in_events); return enabled; }
+bool Trace() {
+  static const bool trace = [] { const char* value = std::getenv("FORZA_RADIO_EVENTLOG"); return value && value[0] == '1'; }();
+  return trace;
+}
 uint32_t Read(uint8_t* base, uint32_t a) {
   const auto* p = forza::GuestPtr(base, a);
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
@@ -148,6 +153,7 @@ bool Valid(const Request& r) {
 
 extern "C" REX_FUNC(EventRequestCopy) {
   if (!Enabled()) { OriginalEventRequestCopy(ctx, base); return; }
+  if (Trace()) REXLOG_INFO("RADIOEVENT accepted-copy receiver={:08X} caller={:08X}", ctx.r3.u32, uint32_t(ctx.lr));
   Transition transition(base, ctx.r3.u32);
   OriginalEventRequestCopy(ctx, base);
 }
@@ -156,11 +162,16 @@ extern "C" REX_FUNC(RaceCutsceneLookup) {
   const auto receiver = ctx.r3.u32;
   const auto token = Enabled() && caller == kPrepareReturn ? Snapshot(base) : std::nullopt;
   const auto name = token ? String(base, ctx.r4.u32) : std::nullopt;
+  if (Enabled() && Trace()) {
+    const auto diagnostic_name = String(base, ctx.r4.u32);
+    REXLOG_INFO("RADIOEVENT race-lookup caller={:08X} token={} canonical={}", uint32_t(caller), bool(token), diagnostic_name.value_or("<empty>"));
+  }
   if (!token || !name || !Canonical(*name)) { Scope mask(query, static_cast<Query*>(nullptr)); OriginalRaceCutsceneLookup(ctx, base); return; }
   Query q{*token, receiver, false, 0, {}};
   Scope scope(query, q);
   OriginalRaceCutsceneLookup(ctx, base);
   // The native first lookup owns the full key; fallbacks never confer authority.
+  if (Trace()) REXLOG_INFO("RADIOEVENT qualified key={} first={:08X} final={:08X}", q.full_key, q.record, ctx.r3.u32);
   if (receiver && q.record && ctx.r3.u32 == q.record) Bind(q);
 }
 extern "C" REX_FUNC(CutsceneLookup) {
@@ -175,6 +186,10 @@ extern "C" REX_FUNC(CutsceneLookup) {
 }
 extern "C" REX_FUNC(CutsceneMusicTrigger) {
   const auto binding = Enabled() ? Active(base, ctx.r3.u32) : std::nullopt;
+  if (Enabled() && Trace()) {
+    const auto record = ctx.r3.u32;
+    REXLOG_INFO("RADIOEVENT music record={:08X} key={} phase={}/{} bound={}", record, record ? String(base, record + 4).value_or("<empty>") : "<null>", record ? Read(base, record + 80) : 0, record ? Read(base, record + 84) : 0, bool(binding));
+  }
   Scope mask_request(request, static_cast<Request*>(nullptr));
   if (!binding) { Scope mask(music, static_cast<Request*>(nullptr)); OriginalCutsceneMusicTrigger(ctx, base); return; }
   Request r{*binding, Read(base, kPlayer), Read(base, kAudioManager)};
