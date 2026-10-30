@@ -4,6 +4,7 @@
 // game + 4) tells the racing wheel whether the player is driving (platform/driving_gate.h
 // PlayerGate, platform/wheel_bridge.cpp).
 #include "../platform/driving_gate.h"
+#include "../platform/auto_pause.h"
 #include "../platform/camera_fov.h"
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
@@ -25,6 +26,7 @@ extern "C" REX_FUNC(sub_82D4DE30) {
 extern "C" REX_FUNC(__imp__sub_823E40D8);
 extern "C" REX_FUNC(sub_823E40D8) {
   const uint32_t world = ctx.r3.u32;
+  forza::auto_pause::World(world);
   forza::camera::camera_world.store(world, std::memory_order_relaxed);
   const uint32_t substeps = g_substeps.load(std::memory_order_relaxed);
   __imp__sub_823E40D8(ctx, base);
