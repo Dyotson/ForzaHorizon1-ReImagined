@@ -654,13 +654,20 @@ add("video_mode_height", "Guest video height", "Advanced", "int", 720,
 # Launcher only (never written to forza.toml): see shader_share.py, #276.
 add("share_shader_list", "Share shader list", "Online", "bool", True,
     "After a game session, send the shader hashes and render settings from your pipeline cache to the "
-    "server you play on (the public server or your own), once per entry. No game data and nothing "
-    "personal is sent, only pipeline descriptions: which shaders were used and how. The server publishes "
+    "server you play on (the public server or your own), once per entry. No game data, file paths or "
+    "gamertag are sent, only pipeline descriptions: which shaders were used and how. The request carries "
+    "your player ID and friends key so that the server counts each player once. The server publishes "
     "the entries several players reported, and Prebuild shaders builds that list from your own game files, "
     "so new places and cars stop compiling shaders while you drive. Nothing is sent offline or to a "
     "server on this PC.", "Shader prebuild")
-# Discord status display is opt-in. The application ID is public maintainer setup,
-# separated from the ordinary sharing switch. Never request a token or secret.
+# Launcher only: see coop_grant.py, #309.
+add("coop_results", "Co-op campaign results", "Online", "bool", True,
+    "After a game session, ask the server you play on for your co-op campaign results and add the "
+    "ones you earned to the save you played with. The request carries your player ID and friends key. "
+    "Nothing is asked offline or of a server on this PC.", "Co-op campaign")
+# Discord status display is on by default; the "Online features" choice (PRIVACY.md) and this
+# switch turn it off. The application ID is public maintainer setup, separated from the
+# ordinary sharing switch. Never request a token or secret.
 add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
     "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "

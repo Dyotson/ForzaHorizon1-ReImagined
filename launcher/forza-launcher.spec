@@ -4,6 +4,7 @@
 # files beside it. The Forza Live server runs inside this executable (--live-server), so
 # the stdlib modules it imports are collected as hidden imports.
 import ast
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -55,7 +56,7 @@ hidden += ["sdl2dll"]
 
 # The title update step (a Python tool the frozen app runs itself with --run-script), and the shader
 # prebuild (#226), which imports pipeline_list, fxobj_shaders, xxh3, lzx_delta and apply_title_update.
-for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py", "native_menu_scene.py", "offline_cars_flow.py", "native_tuning_assets.py"):
+for _tool in ("apply_title_update.py", "lzx_delta.py", "xdc_decode.py", "extract_map_points.py", "livery_codec.py", "pipeline_list.py", "fxobj_shaders.py", "xxh3.py", "native_menu_scene.py", "offline_cars_flow.py", "native_tuning_assets.py"):
     if (repo / "tools" / _tool).is_file():
         datas.append((str(repo / "tools" / _tool), "tools"))
 datas.append((str(repo / "tools" / "native_menu" / "fh1_donors.json"), "tools/native_menu"))
@@ -74,7 +75,7 @@ a = Analysis(
     datas=datas,
     binaries=collect_dynamic_libs("sdl2dll"),
     hiddenimports=hidden + ["install_dlc", "xcontent_extract", "xiso_extract", "xdc_decode", "livery_codec", "tomllib", "pipeline_list",
-                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update", "offline_cars_flow"],
+                            "fxobj_shaders", "xxh3", "lzx_delta", "apply_title_update", "offline_cars_flow", "extract_map_points"],
     excludes=["tkinter", "unittest", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets",
               "PySide6.QtQml", "PySide6.QtQuick", "PySide6.Qt3DCore", "PySide6.QtMultimedia",
               "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest"],
@@ -89,11 +90,26 @@ if sys.platform == "win32":
     a.binaries = [entry for entry in a.binaries
                   if Path(entry[0]).name.lower() not in {"icu.dll", "icuuc.dll", "icuin.dll"}]
 pyz = PYZ(a.pure)
+# The Windows version resource (company, product, description, versions, original file name) of
+# forza-launcher.exe, generated from forza_launcher/_version.py (#482, #354). Windows only: the Linux
+# build has no version resource and does not run packaging/windows_version_info.py.
+version_file = None
+if sys.platform == "win32":
+    _wvi_spec = importlib.util.spec_from_file_location("windows_version_info", root / "packaging" / "windows_version_info.py")
+    _wvi = importlib.util.module_from_spec(_wvi_spec)
+    _wvi_spec.loader.exec_module(_wvi)
+    _version_ns = {}
+    exec((root / "forza_launcher" / "_version.py").read_text(encoding="utf-8"), _version_ns)
+    _work = Path(globals().get("workpath") or root / "build")
+    _work.mkdir(parents=True, exist_ok=True)
+    version_file = _work / "forza-launcher-version.txt"
+    version_file.write_text(_wvi.version_file_text(_version_ns["__version__"]), encoding="utf-8", newline="\n")
 exe = EXE(
     pyz, a.scripts, [],
     exclude_binaries=True,
     name="forza-launcher",
     console=False,
     icon=str(repo / "forza-recomp" / "resources" / "forza.ico") if sys.platform == "win32" else None,
+    version=str(version_file) if version_file else None,
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="forza-launcher")

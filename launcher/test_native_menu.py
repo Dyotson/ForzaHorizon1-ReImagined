@@ -346,6 +346,8 @@ class NativeMenuDistribution(unittest.TestCase):
         package = runpy.run_path(str(HERE / "packaging" / "make_package.py"))
         package["main"].__globals__["REPO"] = self.project
         (self.project / "LICENSE").write_text("synthetic license")
+        (self.project / "NOTICE.md").write_text("synthetic notice")
+        (self.project / "PRIVACY.md").write_text("synthetic privacy policy")
         frozen = self.root / "frozen"
         frozen.mkdir()
         (frozen / "forza-launcher.exe").write_text("synthetic launcher")
@@ -363,6 +365,8 @@ class NativeMenuDistribution(unittest.TestCase):
         (self.project / "launcher" / "forza_launcher").mkdir(parents=True)
         (self.project / "launcher" / "main.py").write_text("synthetic launcher")
         (self.project / "LICENSE").write_text("synthetic license")
+        (self.project / "NOTICE.md").write_text("synthetic notice")
+        (self.project / "PRIVACY.md").write_text("synthetic privacy policy")
         for asset in package["ASSETS"]:
             path = self.project / "docs" / "images" / asset
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -383,6 +387,8 @@ class NativeMenuDistribution(unittest.TestCase):
         package = runpy.run_path(str(HERE / "packaging" / "make_package.py"))
         package["main"].__globals__["REPO"] = self.project
         (self.project / "LICENSE").write_text("synthetic license")
+        (self.project / "NOTICE.md").write_text("synthetic notice")
+        (self.project / "PRIVACY.md").write_text("synthetic privacy policy")
         logo = self.project / "docs" / "images" / "logo.png"
         logo.parent.mkdir(parents=True)
         logo.write_bytes(b"synthetic image")

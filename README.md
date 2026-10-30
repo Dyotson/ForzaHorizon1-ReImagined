@@ -48,6 +48,8 @@ C++ is generated from that copy on your machine. No game binaries are published 
 - [More documentation](#more-documentation)
 - [Roadmap](#roadmap)
 - [Community](#community)
+- [Privacy](#privacy)
+- [Code signing policy](#code-signing-policy)
 - [Legal](#legal)
 
 ## Screenshots
@@ -128,8 +130,9 @@ This is the way to install. The launcher builds the game on your machine from yo
 Details: [`docs/launcher.md`](docs/launcher.md).
 
 To verify a download when its release includes `SHA256SUMS`, download that file from the
-same release. On Windows, run `Get-FileHash .\YourDownloadedSetup.exe -Algorithm SHA256`
-in PowerShell and compare the hash with the matching filename in `SHA256SUMS`.
+same release. On Windows, run `certutil -hashfile .\YourDownloadedSetup.exe SHA256` or, in
+PowerShell, `Get-FileHash .\YourDownloadedSetup.exe -Algorithm SHA256`, and compare the hash with
+the matching filename in `SHA256SUMS` ([details](docs/launcher.md#verify-your-download)).
 On Linux, put both files in the same folder and run
 `sha256sum --ignore-missing -c SHA256SUMS`. A match confirms the downloaded bytes match
 the published checksum; it does not certify that the program is safe or code-signed.
@@ -198,8 +201,41 @@ Bugs and feature requests: [issues](https://github.com/FH1-ReImagined/ForzaHoriz
 The website's source is in [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website).
 The bug report template asks for your OS, CPU, GPU and log.
 
+## Privacy
+
+The launcher and the game have no analytics or telemetry. With the default settings, the game plays online on the project's public server, the launcher shares shader lists with that server and asks it for your co-op campaign results after you play, checks GitHub for launcher updates, and the game shows your activity in Discord. The Windows installer's **Online features** option, or the question the launcher asks the first time it opens on Linux, turns all of that off, and each feature can be turned off on its own in the launcher. What each one sends, what the public server keeps and for how long, and what is public: [`PRIVACY.md`](PRIVACY.md).
+
+## Code signing policy
+
+Windows builds will be signed through [SignPath Foundation](https://signpath.org); until then they are unsigned.
+
+What we sign: the Windows launcher `forza-launcher.exe` and the installer `ForzaHorizon1-ReImagined-Setup-<version>.exe`. They are built by GitHub Actions from this repository ([release workflow](.github/workflows/release.yml)), and a maintainer approves each release by hand before it is signed.
+
+What we don't sign: third-party files we ship (Python, Qt/PySide6, SDL2, the Microsoft Visual C++ runtime) are included as their publishers released them, with the publishers' own signatures where they have one. `forza.exe`, which the launcher builds on your PC from your own copy of the game, is never signed by us. The Linux packages are not code-signed; check them against `SHA256SUMS` (see [Install with the launcher](#install-with-the-launcher)).
+
+Team roles:
+- Committers and reviewers: [Dyotson](https://github.com/Dyotson), [soconnor0919](https://github.com/soconnor0919)
+- Approvers: [Dyotson](https://github.com/Dyotson), [soconnor0919](https://github.com/soconnor0919)
+
+Pull requests from people outside this team are reviewed by a team member before they are merged.
+
+Privacy: see our [privacy policy](PRIVACY.md).
+
+## License
+
+Forza Horizon 1: ReImagined is free software under the
+[GNU General Public License, version 3 or later](LICENSE) (GPL-3.0-or-later), with an additional
+permission that lets the game and launcher work with the graphics, VR and platform components
+your PC supplies (NVIDIA's DLSS runtime, graphics drivers, OpenXR runtimes, the Discord client,
+system libraries). The permission, third-party licenses and the history are in
+[`NOTICE.md`](NOTICE.md). Releases and commits before this license change were published under the MIT
+License and stay available under it. The online server,
+[Forza Live](https://github.com/FH1-ReImagined/forza-live), and the
+[website](https://github.com/FH1-ReImagined/website) are under the GNU Affero General Public
+License, version 3 or later.
+
 ## Legal
 
 Forza Horizon is © Microsoft. This project is not affiliated with, endorsed by or
 sponsored by Microsoft, Playground Games or Turn 10 Studios. Forza, Forza Horizon, Xbox and Xbox LIVE are trademarks of Microsoft. It contains no game code or
-assets; you must own the game. See [`LICENSE`](LICENSE).
+assets; you must own the game. See [`LICENSE`](LICENSE) and [`NOTICE.md`](NOTICE.md).

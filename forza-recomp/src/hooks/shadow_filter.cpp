@@ -19,6 +19,7 @@
 #include "../platform/guest_addr.h"
 #include "../platform/guest_memory.h"
 #include "../platform/shadow_filter.h"
+#include "thumbnail_sync.h"
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -98,6 +99,8 @@ void Store32(uint8_t* base, uint32_t address, uint32_t value) {
 }  // namespace
 
 extern "C" REX_FUNC(ApplyShadows) {
+  // Technique 8, the high-quality disc, is photo mode's (#167, src/hooks/thumbnail_sync.cpp).
+  if (ctx.r10.u32 == 8) forza::thumbnail_sync::HoldForPhotoMode();
   const float scale = sf::TapScale(CurrentLevel());
   const uint32_t taps = ctx.r9.u32;
   if (scale == 1.0f || !taps) {

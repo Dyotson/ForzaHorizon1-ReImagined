@@ -238,12 +238,26 @@ driver; it needs a capture from an affected machine first to see which draw.
   magenta on screen is render target memory the game reads without writing, which is zero on
   some drivers and old data on others. `=1` fills with zero. Each fill is logged
   ("filled new render target", first 64).
+- **D3D12 fence completion ([SDK #13](https://github.com/FH1-ReImagined/ReIGlue/issues/13)):**
+  the SDK pin includes [SDK PR #14](https://github.com/FH1-ReImagined/ReIGlue/pull/14),
+  which checks both the queue signal and event-registration HRESULT before waiting for
+  out-of-submission operations. The original boolean check could skip registration and
+  wait indefinitely. The actual production branch passes 32 CPU mock cases; the full
+  translation unit passes a syntax check. No D3D12 device or Rt.25 map traversal was tested,
+  so this correction does not establish the cause of the reported location-specific hitch.
 - **NaN / Inf / out of range per draw:** capture a frame (`renderdoccmd capture -w -c DIR/cap
   ./forza ...` with `VK_ADD_IMPLICIT_LAYER_PATH=~/renderdoc/layer`, so the RenderDoc layer is
   found, and `FORZA_RDCAPTURE_TRIGGER`), then
   `RDC_CAP=cap.rdc RDC_OUT=DIR qrenderdoc --python tools/rdc_float_scan.py`: the first draw that
   leaves NaN, Inf or more than 31.875 in each float target, with texel positions. For a blown-out
   object, take RenderDoc's pixel history on it from there.
+- **RenderDoc startup (#511):** the SDK connects only to a RenderDoc library that is already
+  loaded into the process. Installing RenderDoc alone does not activate it; launch through
+  RenderDoc when a capture is intended. ReIGlue 0407 uses a counted `RTLD_NOLOAD` probe on
+  Linux and `GetModuleHandleExW` on Windows; macOS capture remains unsupported. The small
+  real-library fixture passes on Linux and Windows, including reference lifetime and final
+  unload. This is loader validation, not a new interactive capture qualification. The approach
+  follows Pinyon Shift and retains its BSD notice in ReIGlue.
 - **A colour on screen:** a short script over the screenshots (Pillow) that counts saturated
   pixels of the reported colour (cyan: G and B above 215, R 70 below G) finds the frames to look at;
   check the hits, the radio HUD's logo is cyan too.
@@ -574,6 +588,18 @@ hook off. The red line in the report (a red VW Corrado, not in the test save) wa
 reproduced on the cars at hand (Zonda R, M3 GTR at scale 2, AF 16x, FXAA extreme); a livery
 layer missing in the same way is a likely cause.
 
+Photo mode (#167, 2026-10-28): since ReIGlue 0364 the pipelines a frame meets are built in the
+background across frames, and draws whose pipelines are not ready are skipped in every frame
+until they are, not only in the first. A photo taken soon after entering photo mode on a slow
+driver (AMD's on Windows, 0.2-0.3 s a pipeline) could then miss them, as the photo is composed,
+resolved and read back on the CPU at SAVE. `src/hooks/thumbnail_sync.cpp` holds
+`sync_pipeline_creation` while photo mode renders (it draws the first shadow cascade with the
+high-quality filter, technique 8 of `ApplyShadows`, which play never uses; renewed at most once a
+second, 8 s after the last such frame), so its frames wait for their pipelines as before 0364.
+`FORZA_PHOTO_SYNC=0` switches it off. Any other render the game reads back while draws were
+skipped logs `Pipelines: a render the game reads back ... missed draws` and is counted in the
+`Pipelines:` line.
+
 
 ## Reused car thumbnail readbacks (Vulkan)
 
@@ -680,7 +706,15 @@ Cold pipeline cache ruled out as the cause (2026-10-17): the boot videos on TU4 
 12 screenshots from the first video to the title. With async compilation a draw whose pipeline
 is not ready is skipped, but the SDK then does not present that frame at all
 (`vulkan_async_skip_incomplete_frames`, on by default), so a cold cache gives held frames at
-worst, never stale render-target contents on screen. Purple/white frames with the right luma
+worst, never stale render-target contents on screen. Since ReIGlue 0364 (#167) a frame that
+only lacks object draws is shown after `vulkan_async_skip_incomplete_frames_ms` (100 ms) of
+holding, without those objects; a frame that lacks a screen-space pass (a movie frame, a
+composite, a full-screen effect: 6 vertices or fewer), a depth or stencil only draw, a draw
+into the 1280-wide front buffer or UI target or the native HUD, or a draw of the VR stereo
+segment is still held until the pipeline is built, so stale contents still never reach the
+screen. With `vulkan_async_skip_incomplete_frames=false` they can (objects or passes missing
+for as long as their pipelines build); the `Pipelines:` line counts frames shown without
+draws. Purple/white frames with the right luma
 and wrong colour planes do not fit that either, so no movie sync window was added. Not tested
 on AMD Windows (#108: the same cutscene was fine on the player's next run, so check whether
 that run had a warm cache and the same settings, and whether `vulkan_async_skip_incomplete_frames`

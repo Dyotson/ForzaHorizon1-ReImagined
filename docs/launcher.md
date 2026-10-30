@@ -360,6 +360,39 @@ saves and rewrites `forza.toml`. `launcher/test_bindings.py` covers the strings,
 detection and calibration math, and drives the editor with SDL virtual joysticks (a wheel and a gamepad);
 `launcher/test_wheel_devices.py` the pedal and shifter devices (a wheel, pedals and a shifter).
 
+## Verify your download
+
+Each release carries a `SHA256SUMS` file with the SHA-256 checksum of every download (the Windows
+installer, the Linux archive, the Flatpak bundle and the Windows file list). To check that your
+download is the file the release published:
+
+1. Download `SHA256SUMS` from the same release page as the installer.
+2. Hash your download. On Windows, in a Command Prompt or PowerShell in the folder of the file:
+
+   ```
+   certutil -hashfile ForzaHorizon1-ReImagined-Setup-<version>.exe SHA256
+   ```
+
+   or, in PowerShell:
+
+   ```
+   Get-FileHash .\ForzaHorizon1-ReImagined-Setup-<version>.exe -Algorithm SHA256
+   ```
+
+3. Find the line for that file name in `SHA256SUMS` (any text editor) and compare the hashes. They must
+   match letter for letter; capitals do not matter, and spaces that `certutil` may put between byte
+   pairs are not part of the hash.
+
+   On Linux: put both files in one folder and run `sha256sum --ignore-missing -c SHA256SUMS`.
+
+A match shows your copy is complete and is the file GitHub Actions built and published from this
+repository. It is not a code signature and not a malware scan. The installer and `forza-launcher.exe`
+are not code-signed yet (SmartScreen may warn), and Windows Defender sometimes flags the launcher as
+`Trojan:Win32/Bearfoos.A!ml` or `Trojan:Script/Wacatac.C!ml`, which are machine-learning guesses
+(#482, #354, #409). If that happens after the hash matches, open **Windows Security > Virus & threat
+protection > Protection history**, choose the detection and **Actions > Allow on device**. The installed
+files are listed with their hashes in `windows-build-manifest.json` in the install folder.
+
 ## Launcher updates
 
 **About > Launcher updates** checks the project's latest stable GitHub release and offers
@@ -588,6 +621,10 @@ the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_textu
   `sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz`, which CI builds and the installer carries.
   Redistribution: the SDK is BSD-3-Clause (copyright Tom Clay, portions Xenia); the binary
   form must reproduce the notice, which `licenses/rexglue-sdk.txt` in every package does.
+  The project's own license is GPL-3.0-or-later (`licenses/ForzaHorizon1-ReImagined.txt`), with the
+  additional permission for graphics, VR and platform components and the history of the earlier MIT
+  releases in `licenses/NOTICE.txt` (the repository's `NOTICE.md`); the Forza Live server in the package is
+  AGPL-3.0-or-later (`licenses/forza-live.txt`, copied from `server/LICENSE`).
   The overlay holds SDK code only, no game code.
 * Windows (built once in the VM, see "Windows"): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
   way. The MSVC CRT and Windows SDK come from an installed Visual Studio 2022 (17.3+) / Build Tools
@@ -869,7 +906,7 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   `ForzaHorizon1-ReImagined-linux-x86_64.tar.gz` with `install.sh`, `.desktop`, icon) and
   `launcher-windows` (PyInstaller, Inno Setup `launcher/packaging/installer.iss`: per-user
   install with Start menu and optional desktop shortcut, bundled VC++ 2015-2022 x64
-  redistributable installed when missing), `flatpak` (flatpak-builder in the Flathub image, see
+  redistributable installed when missing, after a page that says so), `flatpak` (flatpak-builder in the Flathub image, see
   "Flatpak" below) and `publish` (tags only) creating the release and uploading all three.
   Before upload, `launcher/packaging/release_checksums.py` hashes the final asset bytes
   and writes `SHA256SUMS`, uploaded alongside them (#354). The manifest uses sorted,
@@ -888,6 +925,39 @@ valid for the schema, warnings, the first-run / existing-settings / player-choic
   generated uninstaller or the separately bundled Microsoft redistributable. If
   payload signing is added, generate this manifest after signing. The installer
   smoke test verifies that the installed launcher matches its recorded hash.
+  Against Defender's machine-learning detections of `forza-launcher.exe` (#482, #354), the
+  `launcher-windows` job builds PyInstaller's bootloader from source and gives both executables a
+  Windows version resource. `PYINSTALLER_COMPILE_BOOTLOADER=1 pip install --no-binary pyinstaller -r
+  launcher/requirements-build.txt` replaces the stock `run.exe` and `runw.exe`, which every PyInstaller
+  program (malware included) shares, with ones compiled on the runner by PyInstaller's waf and the
+  Visual Studio C++ tools; the version is still the one `requirements-build.txt` allows.
+  `launcher/packaging/check_bootloader.py` fails the job when either file is still byte-identical to the
+  PyPI wheel's (PyInstaller's source distribution ships the stock ones and keeps them without the
+  variable). `launcher/packaging/windows_version_info.py` writes the version resource
+  (`CompanyName`, `ProductName`, `FileDescription`, `FileVersion`, `ProductVersion`, `OriginalFilename`,
+  copyright) from `forza_launcher/_version.py` when `forza-launcher.spec` runs, and a job step reads it
+  back (`test_installer.ps1` reads both programs' resources from the installed files). `installer.iss` sets the installer's own (`VersionInfoVersion` from `/DVersionNumeric`, company,
+  product, description, original file name). Linux is untouched: the spec only passes `version=` on
+  Windows, and the Linux job and the Flatpak build use the stock PyInstaller wheel or none. Marked
+  `TODO(code signing)` in the workflow are the two places a signature goes once a certificate is chosen
+  (SignPath Foundation or Certum): the launcher before the smoke test and packaging, so the manifest hashes
+  the signed file, and the installer before upload.
+  The VC++ redistributable comes from a versioned Microsoft URL pinned with its SHA-256 in
+  `launcher/forza_launcher/pins.py` (`vc-redist-x64`, fetched by `launcher/packaging/ci_fetch.py`), and
+  the job fails unless `Get-AuthenticodeSignature` says it is validly signed by Microsoft. When Microsoft
+  ships a newer one, follow `https://aka.ms/vs/17/release/vc_redist.x64.exe` to the URL it redirects to
+  and put that URL and the file's SHA-256 in the pin (the URL's path names the hash; `test_vc_redist_pin.py`
+  checks they agree).
+* Privacy (#497, [`PRIVACY.md`](../PRIVACY.md)): the installer shows the policy (`InfoBeforeFile`,
+  `licenses/PRIVACY.txt` from `make_package.py`), then an "Online features" page, ticked by default.
+  It writes the choice to `install_options.json` in the install folder with a stamp of that run;
+  `/ONLINE=no` turns it off for a silent install. `launcher/forza_launcher/online_features.py` applies
+  each stamp once: off sets Server to Offline and turns off shader-list sharing, co-op campaign results,
+  the update check and Discord activity; on keeps the settings (a new config has them on). Without an
+  installer (Linux, Flatpak, a checkout), a new `launcher.json` gets the same question in a dialog
+  (`ui/online_features.py`) before the update check runs; it is asked again until answered.
+  *Reset settings* keeps those features off for a player who chose off. `test_installer.ps1` installs
+  twice (default, then `/ONLINE=no`) and checks the file, and that the uninstaller removes it.
 * The website (forza.dyotson.dev) is its own repository,
   [FH1-ReImagined/website](https://github.com/FH1-ReImagined/website), with its Pages workflow
   and `tools/preview_site.sh`. Screenshots it shows from `docs/images` are copied there.

@@ -11,8 +11,8 @@ from . import OLD_PUBLIC_SERVERS, PUBLIC_SERVER, display, gpu, languages, paths,
 from .haptics.settings import DEFAULTS as HAPTICS_DEFAULTS, normalize as normalize_haptics
 
 # Settings of the launcher itself: not game cvars, never written to forza.toml.
-LAUNCHER_ONLY = ("share_shader_list", "battery_saver", "game_language", "vr_mode", "vr_picture",
-                 "vr_seat_height_cm")
+LAUNCHER_ONLY = ("share_shader_list", "coop_results", "battery_saver", "game_language", "vr_mode",
+                 "vr_picture", "vr_seat_height_cm")
 ONLINE_MODES = ["public", "local", "custom", "offline"]
 # First-run values that differ from the game's own defaults.
 FIRST_RUN = {"frame_rate": 60, "present_effect": "fsr"}
@@ -27,6 +27,7 @@ def _default():
         "mods": {"order": [], "disabled": []},
         # Texture packs (#384, texture_packs.py): the same for the folders in <data>/textures.
         "texture_packs": {"order": [], "disabled": []},
+        "custom_radio": {"version": 1, "ffmpeg": "", "stations": {}},
         "check_updates": True,    # one background check per packaged launcher session
         "game_package": "",       # the Games on Demand package (file)
         "tu_package": "",         # the player's title update package (TU4)
@@ -49,6 +50,9 @@ def _default():
         "power": {"applied": None},
         # Play in VR (vr.py): the first-time checklist was answered with "Don't show again".
         "vr": {"checklist_hidden": False},
+        # The "Online features" choice (online_features.py, PRIVACY.md): on (None until made), the
+        # first-run question still to ask, and the installer run whose choice was applied.
+        "online_features": {"on": None, "ask": False, "installer": ""},
         # One-time fixes of values an older launcher saved: done once, so a later choice sticks.
         "migrated": {"discord_application_id": False},
     }
@@ -96,6 +100,10 @@ class Config:
             return
         if isinstance(data, dict):
             _merge(self.d, data)
+            # Station slot names are dynamic keys, unlike the fixed settings schema.
+            custom = data.get("custom_radio")
+            if isinstance(custom, dict) and isinstance(custom.get("stations"), dict):
+                self.d["custom_radio"]["stations"] = custom["stations"]
             self.loaded = True
         # Migrate the former combined AA/upscaling selectors before choice coercion.
         if self.d["settings"].get("fh1_upscaler") == "dlaa":
