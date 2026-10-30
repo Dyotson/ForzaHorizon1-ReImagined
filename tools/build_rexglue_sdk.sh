@@ -43,7 +43,8 @@ SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightl
 # ReIGlue PR #10), 0406: direct scaled depth uploads on NVIDIA (#500,
 # ReIGlue PR #11), and 0407: connect only to an already-loaded RenderDoc (#511,
 # ReIGlue PR #12), and the D3D12 out-of-submission fence HRESULT correction
-# (ReIGlue PR #14).
+# (ReIGlue PR #14), and 0403/0404: racing wheel vibration rate and H-shifter neutral
+# (#467, #468, ReIGlue PR #8).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
