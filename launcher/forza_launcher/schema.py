@@ -669,6 +669,11 @@ add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "
     "Applies on the next game launch.", "Discord",
     restart=True)
+add("discord_presence_details", "Share car, event and area", "Online", "bool", True,
+    "Also show your car with its class and PI, the event you race in and the area of Colorado you "
+    "drive in, with the names the game uses. Off: only the activity, as before. "
+    "Applies on the next game launch.", "Discord",
+    restart=True)
 add("discord_application_id", "Discord application ID", "Advanced", "str", "1563015276583460934",
     "The public Application ID Discord shows as the game (the project's own, set by default). "
     "Change it only to use another Discord application; empty disables the connection. "
