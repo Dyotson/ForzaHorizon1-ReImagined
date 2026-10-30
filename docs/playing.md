@@ -33,10 +33,14 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   including Radio Off, and apply to stock and custom radio stations. The repeat
   guard bounds held/repeating bindings. Set `radio_station_switch` to `"game"`,
   `"fast"`, or `"instant"` in `forza.toml`.
-  Stream startup, scheduling and the audio mixer still add latency. Instant has
-  production-wrapper CPU coverage for disc and TU4; fresh audible latency, click,
-  rapid-input/HUD and event-transition acceptance remain pending. It does not
-  shorten global music, dialogue, ducking or scripted-event fades.
+  Stream startup, scheduling and the audio mixer still add latency. In two TU4
+  custom test-tone transitions, captured output crossed a fixed tone-amplitude
+  threshold 0.216 and 0.250 s after an accepted request; this measures output,
+  not the first audible sample or a guaranteed latency. Stock/custom station
+  cycles and pause/resume were exercised in bounded game runs. Disc/TU4 CPU
+  fixtures cover rapid retargeting and native locks; live sub-ramp input stress
+  and scripted-event transitions were not exercised. Global music, dialogue,
+  ducking and scripted-event fade rates retain their original values.
 - **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
   `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
   their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20

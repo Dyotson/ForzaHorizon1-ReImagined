@@ -709,8 +709,9 @@ stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
 Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast
 uses a 0.15 s repeat guard and 0.25 s station fades; Instant uses a 0.075 s guard and
 0.04 s fades. Both retarget to the newest accepted request and work with stock and custom
-stations. Stream startup still adds latency; fresh audible Instant-mode acceptance is
-pending ([playing.md](playing.md#running-the-game)).
+stations. Stream startup and mixing still add latency; TU4 custom test-tone output
+crossed a fixed amplitude threshold after 0.216 and 0.250 s in two observations
+([measurement and coverage limits](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
