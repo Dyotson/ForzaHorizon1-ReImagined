@@ -45,11 +45,12 @@ SDK_COMMIT=bd833a2ab69d305f99ddf57418fc38ffec8af93d  # nightly 0.10.0.24 (nightl
 # ReIGlue PR #12), and the D3D12 out-of-submission fence HRESULT correction
 # (ReIGlue PR #14), and 0403/0404: racing wheel vibration rate and H-shifter neutral
 # (#467, #468, ReIGlue PR #8), and 0409: the startup movies whole with the scene/HUD split
-# at a 1080p output (#539).
+# at a 1080p output (#539), and 0411: resolves into readback_resolve_wait_range copied back
+# with a GPU wait (photo mode's Big Shot, #552).
 # A reviewed full commit can be pinned before a maintainer publishes a tag.
 # When a tag is supplied, its target must still match this immutable commit.
 REIGLUE_TAG=
-REIGLUE_COMMIT=9954c68027d273ac8cea97a93efcfed572b09bd8  # 0409 (#539), on top of merged #8
+REIGLUE_COMMIT=cc3a67e3e62c6fcd6613e246c0312883b79c61a9  # 0411 (#552), on top of merged #16 (0409)
 REIGLUE_URL="${REIGLUE_URL:-https://github.com/FH1-ReImagined/ReIGlue}"
 NIGHTLY="${REXSDK_NIGHTLY:-$HOME/rexglue-sdk-nightly/0.10.0.24/linux-amd64}"
 SRC="${REXSDK_SRC:-$HOME/rexglue-sdk-src-forza/sdk}"
