@@ -22,11 +22,15 @@
 #define OriginalQueueEventMusic __imp__sub_8252A8D0
 #define MarkScriptedStation sub_825FF7A0
 #define OriginalMarkScriptedStation __imp__sub_825FF7A0
+#define QueueSelectStation sub_82509AD8
 #define QueueFreeRoam sub_825092A8
 #define FreeRoamFlag sub_82593190
 #define DestroyOwnedString sub_82441428
 namespace forza::radio_event_native {
 inline constexpr bool kTu4 = true;
+inline constexpr uint32_t kRadioFreeRoam = 0x82C97F40;
+inline constexpr uint32_t kRadioFreeRoamSlot = 0x30;
+inline constexpr uint32_t kSelectStationSlot = 0x118, kSelectStationQueue = 0x82509AD8;
 inline constexpr uint32_t kManager = 0x833D3F34;
 inline constexpr uint32_t kSettings = 0x833ED710;
 inline constexpr uint32_t kPlayer = 0x833D5BAC;
@@ -63,10 +67,14 @@ inline constexpr uint32_t kFreeRoamSlot = 0x9C;
 #define OriginalQueueEventMusic __imp__sub_824BCE00
 #define MarkScriptedStation sub_82589580
 #define OriginalMarkScriptedStation __imp__sub_82589580
+#define QueueSelectStation sub_8249D140
 #define QueueFreeRoam sub_8249C8D8
 #define DestroyOwnedString sub_82411478
 namespace forza::radio_event_native {
 inline constexpr bool kTu4 = false;
+inline constexpr uint32_t kRadioFreeRoam = 0x82BD8C28;
+inline constexpr uint32_t kRadioFreeRoamSlot = 0x2C;
+inline constexpr uint32_t kSelectStationSlot = 0x114, kSelectStationQueue = 0x8249D140;
 inline constexpr uint32_t kManager = 0x832E6364;
 inline constexpr uint32_t kSettings = 0x832FEBA0;
 inline constexpr uint32_t kPlayer = 0x832E7F7C;

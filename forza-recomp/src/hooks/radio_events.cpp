@@ -15,7 +15,8 @@
 //
 // The original helper still owns dialogue, DJ/lock cleanup and its own string.
 // Replace only its by-value deferred event-music command with the native Free
-// Roam command, including its normal one-second fade and TU4 context flag. Once
+// Roam command, including its normal one-second fade and TU4 context flag. Off
+// uses the native TU4 restore flag or disc deferred radio_off selection. Once
 // queued, the matching marker clears this request's forced-station attribution
 // even if a new load starts; normal native queue teardown remains authoritative.
 // Default off calls each original unchanged. CPU contract fixtures do not prove
@@ -47,6 +48,9 @@ extern "C" REX_FUNC(OriginalStartEventMusic);
 extern "C" REX_FUNC(OriginalQueueEventMusic);
 extern "C" REX_FUNC(OriginalMarkScriptedStation);
 extern "C" REX_FUNC(QueueFreeRoam);
+#if !defined(FORZA_TITLE_UPDATE) || FORZA_TITLE_UPDATE != 4
+extern "C" REX_FUNC(QueueSelectStation);
+#endif
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
 extern "C" REX_FUNC(FreeRoamFlag);
 #endif
@@ -172,6 +176,17 @@ bool Valid(const Request& r) {
   return active && Same(active->token, r.binding.token) && active->full_key == r.binding.full_key && active->ticket == r.binding.ticket &&
          Read(r.binding.token.base, kPlayer) == r.player;
 }
+std::optional<bool> SelectedOff(uint8_t* base, uint32_t manager) {
+  const auto worker = Read(base, manager + 12);
+  const auto radio = worker ? Read(base, worker + 52) : 0;
+  const auto table = radio ? Read(base, radio) : 0;
+  if (!table || Read(base, table + kRadioFreeRoamSlot) != kRadioFreeRoam) return {};
+  const auto normal = Read(base, radio + 168), total = Read(base, radio + 176);
+  const auto selected = Read(base, radio + 172);
+  if (normal != 3 || total <= normal || total > 64 || selected > normal) return {};
+  return selected == normal;
+}
+
 }
 
 extern "C" REX_FUNC(EventRequestCopy) {
@@ -274,19 +289,32 @@ extern "C" REX_FUNC(QueueEventMusic) {
   const auto manager = ctx.r3.u32, name = ctx.r4.u32;
   const auto table = manager && manager == r->audio_manager && manager == Read(base, kAudioManager) ? Read(base, manager) : 0;
   if (!table || Read(base, table + kFreeRoamSlot) != kFreeRoamQueue) { OriginalQueueEventMusic(ctx, base); return; }
+  const auto off = SelectedOff(base, manager);
+  if (!off || (*off && !kTu4 && Read(base, table + kSelectStationSlot) != kSelectStationQueue)) { OriginalQueueEventMusic(ctx, base); return; }
   PPCContext call = ctx;
   call.f1.f64 = 1.0; // Native play_freeroam_music_with_fades; avoids cached zero-fade skip.
   call.r5.u64 = 0; call.r6.u64 = 0;
 #if defined(FORZA_TITLE_UPDATE) && FORZA_TITLE_UPDATE == 4
   PPCContext flag = ctx;
   FreeRoamFlag(flag, base);
-  call.r6.u64 = (flag.r3.u32 & 0xFF) != 0;
+  call.r6.u64 = (flag.r3.u32 & 0xFF) != 0 || *off; // Native force-restore path is required when selected radio is Off.
 #endif
   // The native predicate must not let a reentrant load commit stale authority.
   if (!Valid(*r) || Read(base, kAudioManager) != manager || Read(base, manager) != table ||
       Read(base, table + kFreeRoamSlot) != kFreeRoamQueue) { OriginalQueueEventMusic(ctx, base); return; }
   r->redirected = true; // Queue commit: matching marker must remain coherent across later load transitions.
   QueueFreeRoam(call, base);
+#if !defined(FORZA_TITLE_UPDATE) || FORZA_TITLE_UPDATE != 4
+  // Disc's fading Free Roam command cannot restore Off. Reaffirm native radio_off
+  // through CSetRadioStation's own deferred API after the Free Roam mode cleanup.
+  // This avoids the immediate-Free-Roam command's cached-fade skip entirely.
+  if (*off && Valid(*r) && Read(base, kAudioManager) == manager && Read(base, manager) == table &&
+      Read(base, table + kSelectStationSlot) == kSelectStationQueue) {
+    PPCContext select = ctx;
+    select.r3.u64 = manager; select.r4.u64 = 3; select.r5.u64 = 0; select.r6.u64 = 1;
+    QueueSelectStation(select, base);
+  }
+#endif
   ctx.r3.u64 = name; ctx.r4.u64 = 1; ctx.r5.u64 = 0;
   DestroyOwnedString(ctx, base); // Replaced by-value queue argument, exactly once.
   REXLOG_INFO("Radio: retained selected station for a qualified career event cue");
