@@ -221,8 +221,21 @@ Pull requests from people outside this team are reviewed by a team member before
 
 Privacy: see our [privacy policy](PRIVACY.md).
 
+## License
+
+Forza Horizon 1: ReImagined is free software under the
+[GNU General Public License, version 3 or later](LICENSE) (GPL-3.0-or-later), with an additional
+permission that lets the game and launcher work with the graphics, VR and platform components
+your PC supplies (NVIDIA's DLSS runtime, graphics drivers, OpenXR runtimes, the Discord client,
+system libraries). The permission, third-party licenses and the history are in
+[`NOTICE.md`](NOTICE.md). Releases and commits before this license change were published under the MIT
+License and stay available under it. The online server,
+[Forza Live](https://github.com/FH1-ReImagined/forza-live), and the
+[website](https://github.com/FH1-ReImagined/website) are under the GNU Affero General Public
+License, version 3 or later.
+
 ## Legal
 
 Forza Horizon is © Microsoft. This project is not affiliated with, endorsed by or
 sponsored by Microsoft, Playground Games or Turn 10 Studios. Forza, Forza Horizon, Xbox and Xbox LIVE are trademarks of Microsoft. It contains no game code or
-assets; you must own the game. See [`LICENSE`](LICENSE).
+assets; you must own the game. See [`LICENSE`](LICENSE) and [`NOTICE.md`](NOTICE.md).

@@ -9,7 +9,10 @@ work gets in. The details live in `docs/` (start with `docs/PROJECT.md`).
   (`forza-recomp/generated*/`), saves, DLC, disc images or builds in commits, issues or PRs.
   Screenshots and logs are fine.
 - Don't say where a copy of the game came from. Players use their own.
-- Keep the repository free of anything you can't publish under its license (`LICENSE`).
+- Keep the repository free of anything you can't publish under its license: GPL-3.0-or-later
+  with the additional permission in `NOTICE.md` (`LICENSE`). Your contribution is licensed the
+  same way. Third-party code needs a license that is compatible with the GPL (MIT, BSD,
+  Apache-2.0, zlib and similar) and its notice kept beside it.
   Third-party binaries (for example NVIDIA's DLSS runtime) are downloaded by the launcher
   at run time with a pinned hash, never committed.
 

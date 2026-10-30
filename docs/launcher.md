@@ -621,6 +621,10 @@ the measurements: [texture packs](texture_packs.md). Tests: `launcher/test_textu
   `sdk-overlay/rexglue-overlay-<os>-amd64.tar.gz`, which CI builds and the installer carries.
   Redistribution: the SDK is BSD-3-Clause (copyright Tom Clay, portions Xenia); the binary
   form must reproduce the notice, which `licenses/rexglue-sdk.txt` in every package does.
+  The project's own license is GPL-3.0-or-later (`licenses/ForzaHorizon1-ReImagined.txt`), with the
+  additional permission for graphics, VR and platform components and the history of the earlier MIT
+  releases in `licenses/NOTICE.txt` (the repository's `NOTICE.md`); the Forza Live server in the package is
+  AGPL-3.0-or-later (`licenses/forza-live.txt`, copied from `server/LICENSE`).
   The overlay holds SDK code only, no game code.
 * Windows (built once in the VM, see "Windows"): portable LLVM (clang-cl, lld-link), CMake, ninja downloaded the same
   way. The MSVC CRT and Windows SDK come from an installed Visual Studio 2022 (17.3+) / Build Tools
@@ -702,9 +706,12 @@ generated `forza.toml` and command line). Keys that hold their default are not w
 Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
 keeps the instrument backlight of your own car on by day too; the headlights and other cars
 stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
-Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
-a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
-0.5 s ([playing.md](playing.md#running-the-game)).
+Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast
+uses a 0.15 s repeat guard and 0.25 s station fades; Instant uses a 0.075 s guard and
+0.04 s fades. Both retarget to the newest accepted request and work with stock and custom
+stations. Stream startup and mixing still add latency; TU4 custom test-tone output
+crossed a fixed amplitude threshold after 0.216 and 0.250 s in two observations
+([measurement and coverage limits](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).

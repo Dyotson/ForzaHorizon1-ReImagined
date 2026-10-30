@@ -4,7 +4,7 @@
   <name>Forza Horizon 1: ReImagined</name>
   <summary>Build and play Forza Horizon (Xbox 360) natively, from your own game files</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT AND BSD-3-Clause</project_license>
+  <project_license>GPL-3.0-or-later AND BSD-3-Clause</project_license>
   <developer id="io.github.dyotson">
     <name>Dyotson</name>
   </developer>

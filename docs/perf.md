@@ -674,6 +674,69 @@ The TU4 game also builds for Windows with the option (cross clang-cl with xwin, 
 the generated objects have the FMA and MOVBE instructions and no `fma` calls, the guard's object none of them.
 Not verified: the Windows game running (no Windows PC with a GPU here; measured on Linux only) and a Steam Deck.
 
+## Small code model on Linux (#473, 2026-10-28)
+
+The SDK compiled all Linux x86-64 code with `-mcmodel=large` and linked the game with `--no-relax`
+(ReIGlue `CMakeLists.txt` for the runtime, GPU plugin and codegen tool; `cmake/rexglue_helpers.cmake` for
+the game's executable, its generated code and the two facade DLLs): every call a `movabs` of the target's
+address and an indirect call, for code that could lie anywhere. ReIGlue 0400 makes the small model the
+default (`-DREXGLUE_X86_64_CODE_MODEL=large` gives back the old flags, `--no-relax` included). The game's
+code is far below the small model's 2 GB. Idea from Pinyon Shift (ShiftGlue `24e59df`, BSD-3), which
+measured on a Steam Deck race, together with x86-64-v3: process CPU -5.5%, simulation thread -10.5%, p99
+frame time -6.6%.
+
+The game takes its compile flags from the SDK's CMake helpers, and the Linux overlay used to take those
+from the nightly (`lib/cmake` linked to it). `tools/build_rexglue_sdk.sh` now installs ReIGlue's
+`rexglue_helpers.cmake` into the overlay and `tools/package_sdk_overlay.sh` ships it, so the launcher's
+builds (the Flatpak's too) get the small model; a source build gets it with the overlay as its SDK prefix
+(docs/PROJECT.md).
+
+**What changes** (TU4, `-DFORZA_CPU_TARGET=x86-64-v3`, the same generated sources; A = ReIGlue `7d17ea51`,
+B = with 0400):
+
+| | A (large) | B (small) |
+| --- | --- | --- |
+| Executable code (`.ltext` / `.text`) | 68.5 MB | 62.8 MB |
+| All loaded sections | 81.0 MB | 71.4 MB (3.5% of the small model's 2 GB) |
+| `movabs` | 533,097 | 23,894 |
+| Direct calls | 408 | 411,824 |
+| Indirect calls (through a register / through memory) | 126,907 / 331,464 | 48,871 / 854 |
+| GOT entries | 45,820 | 30 |
+| Relocations at load (`R_X86_64_RELATIVE`) | 128,165 | 83,044 |
+| `librexruntime.so` / `librexgpu-xenos.so` | 16.4 / 8.4 MB | 13.4 / 7.4 MB |
+
+The calls that stay indirect in B are the real ones (function pointers, the guest's indirect branches).
+B links without `--no-relax`: GNU ld relaxes the objects' 1,311 GOT loads (`R_X86_64_REX_GOTPCRELX`), the
+GOT keeps 30 entries. No relocation overflow with the host's Homebrew clang 23.1.2 and GNU ld 2.46.1
+(Fedora), nor with the Flatpak's toolchain (org.freedesktop.Sdk 26.08 with its LLVM 22 extension: clang
+22.1.8, GNU ld 2.47, CMake 4.4.3), which built and linked the whole TU4 game (`.text` 63.1 MB, 30 GOT
+entries).
+
+**Measured** (2026-10-28): TU4 with `-DFORZA_CPU_TARGET=x86-64-v3`, both builds with the #512 fix (branch
+`fix/512-ffcb-kick`, `15df09b`: without it the small-model build hung entering free roam in 4 of 8 runs at
+`frame_rate = 60`, the large one in none of 7), `tools/perf_scenario.sh`'s `race` (26 s) and `freeroam` (90 s)
+inputs, `frame_rate = 60` (a 120 Hz guest vblank), `--present_effect=fsr --resolution_scale=1`, 1280x720
+window, a copy of the golden TU4 save with 12 DLC packages, offline, audio muted, warm scratch shader cache,
+every game thread on CPUs 0-3 from the start (the samplers on 4-7). A and B alternating (ABBA), four runs each,
+BENCH lock held, no other game, at most 19% of a core of other load on CPUs 0-3 in every run. CPU ms per guest
+frame from `/proc` (`tools/thread_stats.py`), threads by their guest entry function (`eu-stack` at the end of
+the scene). Mean [min-max]:
+
+| Scene | Build | fps | p99 ms | All threads | Main loop | Render | Audio mixers | GPU commands | Vulkan submission |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| race | A (large) | 60.0 | 18.9 [18.7-19.1] | 19.77 [19.50-20.26] | 2.29 [2.27-2.31] | 3.25 [3.13-3.40] | 2.42 | 7.03 [6.89-7.34] | 1.51 |
+| race | B (small) | 59.9 | 18.8 [18.7-18.9] | 19.08 [18.70-19.24] | 2.20 [2.17-2.22] | 3.21 [3.11-3.34] | 2.41 | 6.59 [6.38-6.68] | 1.48 |
+| free roam | A (large) | 60.0 | 19.2 [18.8-19.5] | 15.30 [14.86-15.80] | 2.23 [2.17-2.30] | 2.70 [2.63-2.79] | 1.95 | 4.31 [4.14-4.50] | 1.22 |
+| free roam | B (small) | 60.0 | 19.2 [18.9-19.5] | 15.04 [14.68-15.59] | 2.17 [2.07-2.24] | 2.72 [2.63-2.83] | 1.91 | 4.23 [4.13-4.41] | 1.20 |
+
+- Race: 3.5% less CPU per frame in all; the ranges do not overlap. The GPU command processor (the SDK plugin,
+  now small-model too) uses 6.3% less, the main loop 3.9% less (no overlap either); render, audio and the
+  Vulkan submission thread change by 0-2%.
+- Free roam: 1.7% less in all, the main loop 2.7% and the command processor 1.9% less: within the run-to-run
+  spread, not a measurable gain.
+- Frame rate and p99 do not change: at 60 fps four of these 5 GHz Zen 4 cores are not the limit. Pinyon Shift's
+  figures are from a Steam Deck (Zen 2, slower cores, simulation thread -10.5%); a Deck run is still needed.
+
 ## Render thread idle loop (#234, 2026-10-21)
 
 In free roam the render thread used about 20 ms of CPU in every 33 ms frame (a race: about 2), and behind the
@@ -1908,6 +1971,75 @@ The GLSL source and its precompiled SPIR-V header are included in 0071; no shade
 compiler is required when building the game. To regenerate the shader binary,
 compile `texture_load_32bpb_scaled_image.cs.glsl` with glslang (`-V -S comp`) and
 convert the resulting little-endian uint32 words into the checked-in header.
+
+## NVIDIA scaled depth uploads (#500, duplicate #523, 2026-10-28)
+
+At a 2560x1440 scene, the scaled loader still converted UNorm24 and float20e4
+depth textures into a scratch buffer and copied them into R32 float images.
+ReIGlue 0406 extends the existing direct storage-image upload to those depth
+formats. It preserves the original conversion bits, including UNorm24 rounding
+and float20e4 denormals. Scene/HUD resolution, MSAA, filtering and depth/stencil
+render-target transfers are unchanged.
+
+The path remains limited to NVIDIA, tiled scaled resolves, single-layer 2D base
+levels and supported storage views. Other vendors/layouts and allocation/view
+failures retain the original path. `--vulkan_direct_scaled_depth_upload=false`
+disables just this extension; the existing `vulkan_direct_scaled_texture_upload`
+switch also disables it.
+
+A local Windows RTX 5060 Ti (617.14) comparison used game `cbd5855` and SDK
+`74085fd` plus 0406, the same renderer binary with the new switch false/true,
+copied Mustang saves, and the production native FR02 benchmark. Output was set
+to 1440p, world/HUD were 2560x1440, Game MSAA, upscaling off, AF2x, soft/high
+shadows, AO off, VSync on and cap120. Windows DPI made the host swapchain
+3200x1800 in the captures. Each run settled for 15 seconds and measured 60
+seconds of guest swaps. Runs were in the background with focus uncontrolled;
+AI traffic and collisions vary, so this is not a deterministic replay or a
+foreground shipping FPS claim.
+
+| Depth upload | Average FPS | p99 frame time | Worst frame |
+| --- | ---: | ---: | ---: |
+| Scratch buffer + copy | 74.22 | 15.16 ms | 27.88 ms |
+| Direct storage image | 80.56 | 15.56 ms | 44.96 ms |
+| Scratch buffer + copy, repeat | 73.63 | 15.64 ms | 28.55 ms |
+| Final renderer, default direct upload | 80.59 | 15.03 ms | 25.68 ms |
+
+The first pair gained 8.5% average FPS; it does not establish better tail latency.
+All four measurement intervals compiled zero pipelines/shaders and had no
+texture evictions or render-target trims. GPU clocks averaged about 2802 MHz.
+These results do not reproduce or resolve the reporters' RTX2060Super/3060Ti
+performance; keep #500 open for their retests.
+
+Paired three-swap RenderDoc captures at FR02 settling reduced buffer-to-image
+event GPU time from 3.918 to 0.201 ms, removing the five R32 depth destinations'
+15 copies. Summed GPU event time was 44.505 versus 41.000 ms; scene variation
+also changes other work, and these sums exclude idle/barrier/CPU/present time.
+The capture host privately retried failed Vulkan instance creation without the
+portability-enumeration extension and used non-sparse, non-threaded submission;
+it is excluded from ordinary FPS measurements and is not shipped. Both last
+presented frames were inspected: world, cockpit, shadows, mirrors and HUD render
+correctly. They are different simulation frames, not a pixel-equality test.
+
+The GPU equivalence check now covers both depth formats alongside the three
+existing color formats. All 1,960 cases passed against the unmodified compiled
+buffer-loader shaders: independent X/Y scales 1-7, four endian modes,
+aligned/ragged extents, source offsets, destination canaries, and depth
+conversion boundaries (including 0xC00000 UNorm rounding and float20e4
+denormals). Run the optional test with the updated SDK:
+
+```sh
+python tools/test_vulkan_scaled_texture_upload.py --sdk /path/to/ReIGlue
+```
+
+Windows validation rebuilt the changed Vulkan texture-cache translation unit
+and linked the GPU plugin at j1 against audited, unchanged SDK objects. No
+runtime/header ABI changes are involved. Linux/macOS builds and the reporters'
+hardware remain CI/retest coverage.
+
+SDK change: [ReIGlue #11](https://github.com/FH1-ReImagined/ReIGlue/pull/11),
+commit `ff1db6f6ff64f237ec2dbd28f06680205a6b8b1a`; the game pin depends on its
+review. Regenerating the final GLSL produces exactly the checked-in 2,081-word
+SPIR-V header.
 
 ## Steam Deck frame collapses (#45, 2026-10-23)
 

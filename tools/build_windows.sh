@@ -129,6 +129,9 @@ if [ -f "$PREFIX/share/licenses/smaa/LICENSE.txt" ]; then
     cp "$PREFIX/share/licenses/smaa/LICENSE.txt" "$DIST/licenses/SMAA.txt"
 fi
 cp "$ROOT/LICENSE" "$DIST/licenses/ForzaHorizon1-ReImagined.txt"
+# The GPLv3 section 7 additional permission and the relicensing note, and the server's license.
+cp "$ROOT/NOTICE.md" "$DIST/licenses/NOTICE.txt"
+[ -f "$ROOT/server/LICENSE" ] && cp "$ROOT/server/LICENSE" "$DIST/licenses/forza-live.txt"
 cp "$SRC/LICENSE" "$DIST/licenses/rexglue-sdk.txt"
 [ -f "$PREFIX/licenses/SDL3/LICENSE.txt" ] && cp "$PREFIX/licenses/SDL3/LICENSE.txt" "$DIST/licenses/SDL3.txt"
 # play.bat is the Windows play.sh (local Forza Live server, --offline); CRLF for cmd.exe.

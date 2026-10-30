@@ -581,7 +581,8 @@ class SetupPage(QWidget):
 
     # ---- state ------------------------------------------------------------------------
     def busy(self):
-        return self.task is not None and self.task.isRunning()
+        return ((self.task is not None and self.task.isRunning())
+                or getattr(self.window, "radio_busy", lambda: False)())
 
     def refresh_folder(self):
         cfg = self.cfg
@@ -1179,6 +1180,9 @@ class AboutPage(QWidget):
         cl.addWidget(label("Forza Horizon is (c) Microsoft. This project is not affiliated with, endorsed by or "
                            "sponsored by Microsoft, Playground Games or Turn 10 Studios. It contains no game code "
                            "or assets; you must own the game.", "muted"))
+        cl.addWidget(label("Free software under the GNU General Public License, version 3 or later, with an "
+                           "additional permission for graphics, VR and platform components. It comes with "
+                           "ABSOLUTELY NO WARRANTY.", "muted"))
         lay.addWidget(c)
         from .updates import UpdateCard
         self.updates = UpdateCard(cfg, window)
@@ -1186,6 +1190,7 @@ class AboutPage(QWidget):
         for text, url in (("Project page and source", GITHUB_URL),
                           ("Releases", GITHUB_URL + "/releases/latest"),
                           ("Privacy policy", PRIVACY_URL),
+                          ("License and notices", GITHUB_URL + "/blob/main/NOTICE.md"),
                           ("Report a problem", GITHUB_URL + "/issues")):
             b = QPushButton(text)
             b.setObjectName("link")

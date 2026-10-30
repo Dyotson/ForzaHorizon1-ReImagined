@@ -77,6 +77,12 @@ jobs:
           cmake -S forza-recomp/tests/thumbnail-sync -B "$RUNNER_TEMP/thumbnail-sync"
           cmake --build "$RUNNER_TEMP/thumbnail-sync" --config Release --parallel 1
           ctest --test-dir "$RUNNER_TEMP/thumbnail-sync" -C Release --output-on-failure
+      - if: runner.os == 'Linux'
+        name: Radio station production wrapper regressions (disc and TU4)
+        run: |
+          cmake -S forza-recomp/tests/radio-station -B "$RUNNER_TEMP/radio-station" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/radio-station" --parallel 1
+          ctest --test-dir "$RUNNER_TEMP/radio-station" --output-on-failure
       - name: Render comparison and session safety tests (no game)
         run: |
           python -m pip install Pillow

@@ -238,12 +238,26 @@ driver; it needs a capture from an affected machine first to see which draw.
   magenta on screen is render target memory the game reads without writing, which is zero on
   some drivers and old data on others. `=1` fills with zero. Each fill is logged
   ("filled new render target", first 64).
+- **D3D12 fence completion ([SDK #13](https://github.com/FH1-ReImagined/ReIGlue/issues/13)):**
+  the SDK pin includes [SDK PR #14](https://github.com/FH1-ReImagined/ReIGlue/pull/14),
+  which checks both the queue signal and event-registration HRESULT before waiting for
+  out-of-submission operations. The original boolean check could skip registration and
+  wait indefinitely. The actual production branch passes 32 CPU mock cases; the full
+  translation unit passes a syntax check. No D3D12 device or Rt.25 map traversal was tested,
+  so this correction does not establish the cause of the reported location-specific hitch.
 - **NaN / Inf / out of range per draw:** capture a frame (`renderdoccmd capture -w -c DIR/cap
   ./forza ...` with `VK_ADD_IMPLICIT_LAYER_PATH=~/renderdoc/layer`, so the RenderDoc layer is
   found, and `FORZA_RDCAPTURE_TRIGGER`), then
   `RDC_CAP=cap.rdc RDC_OUT=DIR qrenderdoc --python tools/rdc_float_scan.py`: the first draw that
   leaves NaN, Inf or more than 31.875 in each float target, with texel positions. For a blown-out
   object, take RenderDoc's pixel history on it from there.
+- **RenderDoc startup (#511):** the SDK connects only to a RenderDoc library that is already
+  loaded into the process. Installing RenderDoc alone does not activate it; launch through
+  RenderDoc when a capture is intended. ReIGlue 0407 uses a counted `RTLD_NOLOAD` probe on
+  Linux and `GetModuleHandleExW` on Windows; macOS capture remains unsupported. The small
+  real-library fixture passes on Linux and Windows, including reference lifetime and final
+  unload. This is loader validation, not a new interactive capture qualification. The approach
+  follows Pinyon Shift and retains its BSD notice in ReIGlue.
 - **A colour on screen:** a short script over the screenshots (Pillow) that counts saturated
   pixels of the reported colour (cyan: G and B above 215, R 70 below G) finds the frames to look at;
   check the hits, the radio HUD's logo is cyan too.
