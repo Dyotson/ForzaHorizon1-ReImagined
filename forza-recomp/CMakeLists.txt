@@ -181,6 +181,7 @@ set(FORZA_SOURCES
     src/hooks/world_drop_in.cpp
     src/hooks/world_events.cpp
     src/hooks/telemetry.cpp
+    src/hooks/discord_details.cpp
     src/kernel/critical_section.cpp
     src/kernel/file_delete_on_close.cpp
     src/kernel/file_size_refresh.cpp

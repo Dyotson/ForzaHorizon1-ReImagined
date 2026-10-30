@@ -196,6 +196,14 @@ void Input(bool connected, uint8_t left, uint8_t right, uint16_t buttons, int16_
   s.input_time = connected ? Now() : 0;
   s.left = left; s.right = right; s.buttons = buttons; s.steer = steer;
 }
+bool LocalCarPosition(uint8_t* base, float& x, float& z) {
+  uint32_t car;
+  std::array<float, 3> position{}, forward{};
+  if (!LocalCar(base, car, position, forward)) return false;
+  x = position[0];
+  z = position[2];
+  return true;
+}
 void Rumble(uint16_t left, uint16_t right) {
   Gate().Rumble(left, right, Now());  // always: the wheel reads it without the bridge
 }

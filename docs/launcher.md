@@ -706,13 +706,17 @@ generated `forza.toml` and command line). Keys that hold their default are not w
 Display > Picture > **Cockpit gauges always lit** (`cockpit_gauges_lit`, off by default, #183)
 keeps the instrument backlight of your own car on by day too; the headlights and other cars
 stay as the game draws them ([how](rendering.md#cockpit-gauges-lit-by-day-183)).
-Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast takes
-a new radio station every 0.15 s instead of about every 3.5 s, with 0.25 s fades instead of
-0.5 s ([playing.md](playing.md#running-the-game)).
+Audio > Radio > **Station changes** (`radio_station_switch`, Game by default, #401): Fast
+uses a 0.15 s repeat guard and 0.25 s station fades; Instant uses a 0.075 s guard and
+0.04 s fades. Both retarget to the newest accepted request and work with stock and custom
+stations. Stream startup and mixing still add latency; TU4 custom test-tone output
+crossed a fixed amplitude threshold after 0.216 and 0.250 s in two observations
+([measurement and coverage limits](playing.md#running-the-game)).
 Audio > Radio > **Keep radio during races** (`radio_keep_in_events`, off by default)
-keeps the chosen stock/custom station or Radio Off through qualified career/Rally
-race-opening music cues. Restart after changing it. Story/post-race music and
-native dialogue, effects and loading/finish fades retain their behavior
+restores the chosen stock/custom station or Radio Off at qualified career/Rally
+race-opening music cues. Earlier unqualified intro music retains its native path.
+Restart after changing it. Story/post-race music and native dialogue, effects and
+loading/finish fades retain their behavior
 ([scope](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;

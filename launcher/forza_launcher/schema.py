@@ -437,6 +437,10 @@ add("wheel_rumble_engine_strength", "Engine rumble (%)", "Controls", "int", 50,
 add("wheel_rumble_road_strength", "Road rumble (%)", "Controls", "int", 80,
     "The vibration from the road surface, kerbs and impacts (the game's left motor), 0 to 100 "
     "percent of the force feedback strength.", "Racing wheel", lo=0, hi=100, step=5)
+# How often the vibration effects are updated (ReIGlue 0403 follow-up, #467); read on every update.
+add("wheel_vibration_rate", "Wheel vibration updates per second", "Controls", "int", 60,
+    "Lower it if your wheel's vibration feels too strong. 15 to 120.", "Racing wheel",
+    lo=15, hi=120, step=5)
 add("wheel_rumble_style", "Rumble style", "Controls", "choice", "fine",
     "How the game's rumble plays on the wheel's motor. Fine: the engine and the road each as a "
     "light, quick vibration (about 70 and 40 Hz). Classic: one strong, slower vibration, as the "
@@ -537,11 +541,11 @@ add("audio_mute", "Mute", "Audio", "bool", False, "", "Output")
 add("audio_maxqframes", "Audio buffer (frames)", "Audio", "int", 8,
     "4 to 64. Lower is less delay but may crackle.", "Output", lo=4, hi=64)
 add("radio_station_switch", "Station changes", "Audio", "choice", "game",
-    "Game: as the game shipped, the next station can be picked about 3.5 s after the last "
-    "(not while the station banner shows) and the music fades out and in over 0.5 s each. "
-    "Fast: a new station every 0.15 s, also while the banner shows, with the game's own "
-    "0.25 s fades for player changes; quick presses end on the last station picked.",
-    "Radio", choices=[("game", "Game"), ("fast", "Fast")])
+    "Game: original radio HUD delay and 0.5 s fades. Fast: 0.15 s repeat guard and 0.25 s fades. "
+    "Instant: 0.075 s repeat guard and 0.04 s fades. Fast and Instant accept the latest station "
+    "during a fade. Applies to stock and custom stations. Stream startup still adds latency.",
+    "Radio", choices=[("game", "Game"), ("fast", "Fast"), ("instant", "Instant")])
+
 
 add("radio_keep_in_events", "Keep radio during races", "Audio", "bool", False,
     "Keep your selected stock or custom station, including Radio Off, through qualified "
@@ -673,6 +677,11 @@ add("coop_results", "Co-op campaign results", "Online", "bool", True,
 add("discord_presence", "Share activity on Discord", "Online", "bool", True,
     "Show your activity in the Discord desktop app: free roam, racing, shops and online lobbies. "
     "Only when the Discord desktop app runs; Discord's own activity privacy settings apply. "
+    "Applies on the next game launch.", "Discord",
+    restart=True)
+add("discord_presence_details", "Share car, event and area", "Online", "bool", True,
+    "Also show your car with its class and PI, the event you race in and the area of Colorado you "
+    "drive in, with the names the game uses. Off: only the activity, as before. "
     "Applies on the next game launch.", "Discord",
     restart=True)
 add("discord_application_id", "Discord application ID", "Advanced", "str", "1563015276583460934",

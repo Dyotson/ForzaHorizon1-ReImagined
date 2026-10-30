@@ -2,7 +2,7 @@
 
 This policy covers Forza Horizon 1: ReImagined: the Windows installer, the Linux packages, the launcher, the game the launcher builds on your PC, and the project's public Forza Live server. It says what is sent over the network, when, where it goes, what is stored and for how long, what is public, and how to turn each thing off.
 
-Last updated: 2026-10-28. Every change to this policy is a change to this file, so its history on GitHub lists them: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/commits/main/PRIVACY.md
+Last updated: 2026-10-30. Every change to this policy is a change to this file, so its history on GitHub lists them: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/commits/main/PRIVACY.md
 
 ## In short
 
@@ -11,7 +11,7 @@ Last updated: 2026-10-28. Every change to this policy is a change to this file, 
   - online play on the project's public Forza Live server;
   - after each session online: sharing shader lists with that server, and asking it for your co-op campaign results;
   - a check for launcher updates on GitHub each time the launcher opens;
-  - your activity in the game, shown through the Discord desktop app if it is running.
+  - your activity in the game (with your car, the event and the area of Colorado), shown through the Discord desktop app if it is running.
 - One choice turns all of them off: "Online features" in the Windows installer, or the same question the launcher asks the first time it opens on Linux. You can also turn each one off later in the launcher; see "How to turn each thing off".
 - Separately, on Windows with an NVIDIA graphics card, the first Play downloads NVIDIA's DLSS runtime from GitHub, and actions you start (Build, Make HD pack) download tools. See "Downloads".
 - Settings > Online > Server > "Offline" stops all contact with game servers.
@@ -116,7 +116,8 @@ Your IP address and other players:
 ### Discord activity (on by default)
 
 - If the Discord desktop app is running, the game tells it what you are doing (for example "Exploring Colorado", "Racing online", or the number of players in an online lobby) and when you started. This goes to the Discord app on your PC over a local connection. Discord then shows it to your Discord contacts, under Discord's own privacy settings and privacy policy. Your gamertag, XUID and IP address are not part of it.
-- Turn off: Settings > Online > "Share activity on Discord".
+- It also tells it your current car with its class and PI, the event you are racing in and, in free roam, the area of Colorado you are in (for example "Red Rock"), with the names the game uses. Nothing you type is part of it.
+- Turn off: Settings > Online > "Share activity on Discord". To keep only the activity: Settings > Online > "Share car, event and area".
 
 ### What stays on your PC
 
@@ -195,7 +196,7 @@ To have your records on the public server removed, see "Contact".
 - Shader-list sharing: Settings > Online > "Share shader list".
 - Co-op campaign results: Settings > Online > "Co-op campaign results".
 - Update check: About > "Check for updates when the launcher opens".
-- Discord activity: Settings > Online > "Share activity on Discord".
+- Discord activity: Settings > Online > "Share activity on Discord". Only the car, event and area in it: Settings > Online > "Share car, event and area".
 - Your computer's login name as gamertag: set Settings > Profile > Gamertag.
 - The DLSS download: Settings > Display > "Graphics API" set to Direct3D 12, with "NVIDIA DLSS" and "NVIDIA DLAA" off.
 
