@@ -409,6 +409,23 @@ input 960x540 is below the native 1280x720; using 1280x720`. At a 1080p output F
 and Balanced therefore run a 1280x720 input (Quality 1280x720 as before); 1440p and 4K are
 unchanged. DLSS 1080p Performance asked NGX for 960x540 and had the same hole.
 
+**Startup movies at a 1080p output (#539).** With the scene/HUD split at a 1080p output (FSR 3
+in every mode and SMAA 1x; DLSS and DLAA take the same path, not tested) the movies showed only their
+top-left 75%, enlarged, and the legal screen before them filled only the top-left 1280x720.
+1440p and 4K were not affected. The HUD target's raster at 1080p is 1920x1080 of the 2560x1440
+that render scale 2 gives, and the HUD's shaders scale the coordinates of every scaled screen
+texture to that part. A movie frame is decoded into a target in the scene, whose raster fills
+the whole surface, and a HUD draw then puts it on screen. ReIGlue 0409 records for each resolve
+whether it came from the scene and leaves those textures' coordinates unscaled. It also presents
+a frame without the HUD layer (the legal screen, unscaled; a frame between two movies) at its own
+size, letterboxed, instead of the output size. Such a size change replaces the presenter's output
+images; the log lists the first 16 (`FH1 split: frame N presents WxH ...`). A boot to free roam
+at 1080p has 8 or 9, at the legal screen, between movies and at loading, never one a frame. Checked
+with the startup movies on (TU4, RADV, in a 1280x720 window): FSR 3 Native AA, FSR 3 Quality and
+SMAA 1x now frame the movies and the legal screen as game default does. FSR 3 Native AA at
+1440p and game default are unchanged. The menus, the HUD in free roam and the pause menu still
+present at the output size.
+
 Quality, from the race screenshots (FSR 3 output at 1440p against the 720p FSR 1 input
 enlarged with Lanczos as a stand-in for EASU, so the FSR 1 side is if anything kinder than
 the real filter): the player car's panel lines and the engine cover slats are continuous with
