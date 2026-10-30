@@ -408,6 +408,80 @@ Notes from the first try:
 - The race scenario needs the pristine Xenia save (`~/xenia_canary_windows/content`), not a
   profile the game has since changed (a garage screen came up instead of the race).
 
+### First-seen resolves without a GPU wait (#536, 2026-10-30)
+
+Report (RX 6600, RADV, render scale 2, `scene_msaa = off`, built-in benchmark at 60): a pair of
+40-48 ms frames about once a second, `cause: resolve readbacks` with 16-25 ms GPU waits in
+`forza.log`; `none` removed them (1% low 22.0 to 31.6 fps, p99 39.6 to 26.6 ms) but breaks the
+pictures; `fast` still had the waits.
+
+**What misses.** ReIGlue 0409 logs each `some` cache miss (`Readback miss (some): frame, address
++bytes, color/depth, format, width x height, first seen / last resolved N frames before, misses
+and resolves of the key, waited N ms`: the first 20, then one every 10 s;
+`vulkan_readback_log_misses = true` logs all). After loading, nearly every miss is a car's: each
+car that comes into view gets new 64x64 RGBA8 render targets (with 128x128 to 32x1 mipmap
+levels) at fresh addresses, resolved again every frame. Traffic in free roam brings one every
+0.5-3 s; the race start brings the seven opponents' at once (48 misses in one frame, then one a
+frame for seven frames); a car out of view for over 60 frames (its readback buffer evicted) is
+a miss again, which is what #49 found on NVIDIA (16 KB resolves, 33-35 ms waits). On this PC
+(RX 9060 XT) the benchmark's measured race has no miss at all; the reporter's race has some
+(their `fast` run, which never evicts a key resolved every frame, still waits), most likely
+opponents coming back into view: their log with 0409 will say.
+
+**Why a fence on the copy does not help.** The miss waits with
+`AwaitAllQueueOperationsCompletion`, which already ends the submission holding the copy and
+waits for that submission's fence, no later work. A fence signals only when everything queued
+before it on the queue is done, so a fence for the copy alone would signal at the same time:
+the wait is the GPU's backlog (the frames the command processor is ahead), 9-13 ms here at 60
+fps and 20-21 ms uncapped (GPU-bound, about the reporter's 16-25 ms).
+
+**Holding the game's view of the GPU instead (tried, no gain).** Keeping the copy in flight and
+holding every write the game can poll (fences, scratch register write-back, MEM_WRITE, occlusion
+results) and every interrupt until the data is in guest memory would be correct by construction.
+It gains nothing: the game writes its next fence 0.6 ms of command processor time after the
+resolve and soon waits for it (the command processor reaches a WAIT_REG_MEM for the game with
+that fence held), so the stall only moves (the worst of the three frames around a car's miss,
+uncapped: 30 ms waiting at the miss, 33-34 ms held).
+
+**The change (0409, `vulkan_readback_defer`, on).** A first-seen key's copy is recorded and put
+in guest memory when the GPU has done it (checked at every resolve and frame start, a frame or
+two later), without a wait; not at all if a later resolve wrote over the range first (the GPU
+would load the older data back) or the game wrote to it meanwhile. The car targets are resolved
+again every frame and `some` never copied those later resolves, so nothing reads them on the CPU
+in that window. The pictures the game reads on the CPU right away keep the wait: the photo
+(1280x720 RGBA8, encoded at SAVE) and its 416x240 thumbnail, the 256x256 target of the car
+thumbnail; the 1280x720 and 768x288 thumbnail resolves already wait every time (0053).
+
+Checked (TU4, golden save, scratch dirs, render scale 2, `scene_msaa = off`, log of every miss):
+photo mode, TAKE PHOTO, SAVE, `PHOTO1`: the photo (1280x720) and the thumbnail (416x240) were
+logged as waited, the saved `thumb` is the photographed view and VIEW PHOTO, LOAD shows the full
+photo correctly; Horizon Outpost Montano Plains, GARAGE, AUTO UPGRADE to R2 897: a new
+`Thumbnail_25.xdc` (96,382 bytes, `tools/xdc_decode.py`: the Aventador's 3/4 and side views).
+
+Built-in benchmark (Recaro Rush), render scale 2, `scene_msaa = off`, 1920x1080 window, RX 9060
+XT, RADV, warm cache, BENCH lock held, no other game during the runs (runs with another game
+were discarded and redone); medians of three runs, interleaved; "drive and start" is the minute
+before measuring (the AI's drive to the event through traffic, the grid, the countdown):
+
+| Frame cap | `readback_resolve` | avg fps | 1% low | p99 (ms) | frames > 33 ms | `GPU slow frames` lines | drive and start: readback GPU waits | frames > 25 ms | race start: worst frame (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 60 | `some`, waiting (`vulkan_readback_defer = false`) | 60.0 | 54.9 | 17.7 | 0 | 0 | 165 ms (33 misses) | 13 | 58.0 |
+| 60 | `none` | 60.0 | 52.6 | 18.0 | 0 | 0 | 0 | 9 | 25.3 |
+| 60 | `some` with 0409 | 60.0 | 51.3 | 18.5 | 0 | 0 | 0 (33 misses) | 9 | 17.6 |
+| none (`vsync = false`) | `some`, waiting | 98.8 | 77.9 | 11.5 | 0 | 0 | 191 ms (31 misses) | 12 | 55.6 |
+| none | `none` | 97.8 | 77.0 | 11.6 | 0 | 0 | 0 | 5 | 28.9 |
+| none | `some` with 0409 | 97.8 | 78.0 | 11.6 | 0 | 0 | 0 (29 misses) | 6 | 28.8 |
+
+("Race start" is from 1 s after the race loaded to the measuring: the grid, the countdown and the
+start, where the opponents' cars miss; the race's own loading frame, 56-83 ms in every mode, is
+left out. Uncapped, the worst of the three frames around a car's miss: 24.4 ms waiting, 11.3 ms
+with 0409, frames 9.2 ms.)
+
+The measured race is the same with all three here (no misses in it). In the drive and the race
+start, `defer` has no readback waits and the same long frames as `none`. A player whose race
+does miss (like the reporter's) should see the waits go; `vulkan_readback_defer = false` brings
+the old wait back.
+
 ## Shader cache, cold and warm (#34, 2026-10-15)
 
 Where the pipeline cache lives: the SDK keeps no `VkPipelineCache` blob. It stores the
