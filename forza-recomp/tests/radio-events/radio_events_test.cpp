@@ -10,7 +10,7 @@ using namespace forza::radio_event_native;
 #include <vector>
 extern bool radio_keep_in_events;
 #define DECL(n) extern "C" REX_FUNC(n)
-DECL(EventRequestCopy); DECL(RaceCutsceneLookup); DECL(CutsceneLookup); DECL(CutsceneMusicTrigger);
+DECL(PrepareCutscene); DECL(GenericFallback); DECL(StopCutscene); DECL(EventRequestCopy); DECL(RaceCutsceneLookup); DECL(CutsceneLookup); DECL(CutsceneMusicTrigger);
 DECL(StartEventMusic); DECL(QueueEventMusic); DECL(MarkScriptedStation);
 namespace {
 std::vector<uint8_t> mem(64*1024*1024);
@@ -20,6 +20,8 @@ constexpr uint32_t flow=0x80001000,settings=0x80002000,player=0x80003000,audio=0
 constexpr uint32_t rec=0x80006000,timeline=0x80007000,canonical=0x80008000,key=0x80009000,name=0x8000A000;
 constexpr uint32_t cuts=0x8000B000,incoming=0x8000C000,other=0x8000D000;
 int originals=0,free_calls=0,event_calls=0,markers=0,outer_releases=0,queue_releases=0,side_effects=0;
+int lookup_path=0; uint32_t track_result=0,variant_result=0;
+bool other_stop_after_lookup=false,stop_after_lookup=false,qualified_reprepare_after_lookup=false,reprepare_after_lookup=false,rebind_in_helper=false;
 uint32_t marker_flag=0,marker_station=0,selected=3,first_result=rec,last_result=rec;
 uint64_t music_caller=kMusicReturn,queue_caller=kQueueReturn,marker_caller=kMarkerReturn;
 bool native_flag=false; [[maybe_unused]] bool invalidate_in_flag=false; int flag_calls=0;
@@ -29,17 +31,33 @@ void Write(uint32_t a,uint32_t x){auto*p=mem.data()+(a&0x7fffffff);for(int i=3;i
 void Str(uint32_t a,const std::string&s){auto d=s.size()>=16?a+0x200:a;std::memcpy(mem.data()+(d&0x7fffffff),s.c_str(),s.size()+1);Write(a+16,uint32_t(s.size()));Write(a+20,s.size()>=16?uint32_t(s.size()):15);if(s.size()>=16)Write(a,d);}
 void Copy(uint32_t type=3){Write(incoming+44,type);PPCContext c;c.r3.u64=flow+8;c.r4.u64=incoming;EventRequestCopy(c,mem.data());}
 void Record(uint32_t r,const std::string&k){Str(r+4,k);Write(r+80,3);Write(r+84,3);Write(r+192,timeline+(r-rec));Write(timeline+(r-rec)+4,r);}
-void Reset(){native_flag=false;invalidate_in_flag=false;flag_calls=0;native_records.clear();queue_trace.clear();marker_trace.clear();Copy();std::fill(mem.begin(),mem.end(),0);Write(kManager,flow);Write(kSettings,settings);Write(kPlayer,player);Write(kAudioManager,audio);Write(settings+4,3);Write(flow+52,3);Write(audio,vt);Write(vt+kFreeRoamSlot,kFreeRoamQueue);Record(rec,"prerace_intro_region_race");Record(other,"story_cinematic");Str(canonical,"prerace_intro");Str(key,"prerace_intro_region_race");Copy();first_result=last_result=rec;originals=free_calls=event_calls=markers=outer_releases=queue_releases=side_effects=0;marker_flag=marker_station=0;selected=3;music_caller=kMusicReturn;queue_caller=kQueueReturn;marker_caller=kMarkerReturn;nested_helper=wrong_receiver=wrong_audio=nested_unbound=nested_eligible=nested_lookup=invalidate_before_queue=transition_in_queue=false;}
-void Prepare(uint64_t caller=kPrepareReturn){PPCContext c;c.lr=caller;c.r3.u64=cuts;c.r4.u64=canonical;RaceCutsceneLookup(c,mem.data());}
+void Reset(){lookup_path=0;track_result=variant_result=0;other_stop_after_lookup=stop_after_lookup=qualified_reprepare_after_lookup=reprepare_after_lookup=rebind_in_helper=false;native_flag=false;invalidate_in_flag=false;flag_calls=0;native_records.clear();queue_trace.clear();marker_trace.clear();Copy();std::fill(mem.begin(),mem.end(),0);Write(kManager,flow);Write(kSettings,settings);Write(kPlayer,player);Write(kAudioManager,audio);Write(settings+4,3);Write(flow+52,3);Write(audio,vt);Write(vt+kFreeRoamSlot,kFreeRoamQueue);Record(rec,"prerace_intro_region_race");Record(other,"story_cinematic");Str(canonical,"prerace_intro");Str(key,"prerace_intro_region_race");Copy();first_result=last_result=rec;originals=free_calls=event_calls=markers=outer_releases=queue_releases=side_effects=0;marker_flag=marker_station=0;selected=3;music_caller=kMusicReturn;queue_caller=kQueueReturn;marker_caller=kMarkerReturn;nested_helper=wrong_receiver=wrong_audio=nested_unbound=nested_eligible=nested_lookup=invalidate_before_queue=transition_in_queue=false;}
+void Prepare(uint64_t caller=kPrepareReturn){PPCContext c;c.lr=caller;c.r3.u64=cuts;c.r4.u64=canonical;PrepareCutscene(c,mem.data());}
 void Music(uint32_t r=rec){PPCContext c;c.r3.u64=r;CutsceneMusicTrigger(c,mem.data());}
 void ExpectOriginal(){assert(originals==1&&free_calls==0&&event_calls==1&&marker_flag==1&&marker_station==2&&outer_releases==1&&queue_releases==1);}
 }
 extern "C" REX_FUNC(OriginalEventRequestCopy){assert(base==mem.data());Write(ctx.r3.u32+44,Read(ctx.r4.u32+44));}
+extern "C" REX_FUNC(OriginalPrepareCutscene){
+ if(ctx.lr==kPrepareReturn) RaceCutsceneLookup(ctx,base);
+ else { ctx.lr=0x1234;ctx.r3.u64=cuts;ctx.r4.u64=key;CutsceneLookup(ctx,base); }
+}
+extern "C" REX_FUNC(OriginalStopCutscene){assert(base==mem.data());Write(ctx.r3.u32+84,0);Write(ctx.r3.u32+80,0);}
 extern "C" REX_FUNC(OriginalRaceCutsceneLookup){
  if(nested_lookup){nested_lookup=false;auto save=ctx;auto first=first_result,last=last_result;Str(canonical,"story_cinematic");Str(key,"story_cinematic_key");first_result=last_result=other;PPCContext inner=ctx;RaceCutsceneLookup(inner,base);ctx=save;first_result=first;last_result=last;Str(canonical,"prerace_intro");Str(key,"prerace_intro_region_race");}
- ctx.lr=kQualifiedReturn;if(wrong_receiver)ctx.r3.u64=cuts+0x100;ctx.r4.u64=key;CutsceneLookup(ctx,base);ctx.r3.u64=last_result;
+ ctx.lr=kQualifiedReturn;if(wrong_receiver)ctx.r3.u64=cuts+0x100;ctx.r4.u64=key;CutsceneLookup(ctx,base);
+ if(lookup_path>0&&!ctx.r3.u32){ctx.lr=kTrackReturn;ctx.r3.u64=cuts;Str(key,"prerace_intro_track");ctx.r4.u64=key;CutsceneLookup(ctx,base);}
+ if(lookup_path>1&&!ctx.r3.u32){ctx.lr=kFallbackReturn;ctx.r3.u64=cuts;ctx.r4.u64=canonical;GenericFallback(ctx,base);}
+ if(other_stop_after_lookup){other_stop_after_lookup=false;PPCContext stop;stop.r3.u64=other;StopCutscene(stop,base);}
+ if(stop_after_lookup){stop_after_lookup=false;PPCContext stop;stop.r3.u64=rec;StopCutscene(stop,base);Record(rec,"prerace_intro_region_race");}
+ if(qualified_reprepare_after_lookup){qualified_reprepare_after_lookup=false;Prepare();}
+ if(reprepare_after_lookup){reprepare_after_lookup=false;Prepare(0x1234);}
+ ctx.r3.u64=last_result;
 }
-extern "C" REX_FUNC(OriginalCutsceneLookup){(void)base;ctx.r3.u64=first_result;}
+extern "C" REX_FUNC(OriginalGenericFallback){
+ ctx.lr=kVariantReturn;ctx.r3.u64=cuts;Str(key,"prerace_intro_variant");ctx.r4.u64=key;CutsceneLookup(ctx,base);
+ if(lookup_path>2&&!ctx.r3.u32){ctx.lr=0x1234;ctx.r3.u64=cuts;CutsceneLookup(ctx,base);ctx.r3.u64=last_result;}
+}
+extern "C" REX_FUNC(OriginalCutsceneLookup){(void)base;ctx.r3.u64=ctx.lr==kQualifiedReturn?first_result:ctx.lr==kTrackReturn?track_result:ctx.lr==kVariantReturn?variant_result:last_result;}
 extern "C" REX_FUNC(OriginalCutsceneMusicTrigger){
  const auto r=ctx.r3.u32; native_records.push_back(r);
  if(r==rec&&nested_unbound){nested_unbound=false;Music(other);}
@@ -48,6 +66,7 @@ extern "C" REX_FUNC(OriginalCutsceneMusicTrigger){
 }
 extern "C" REX_FUNC(OriginalStartEventMusic){
  ++originals;++side_effects;
+ if(rebind_in_helper){rebind_in_helper=false;Prepare();Music();}
  if(nested_helper){nested_helper=false;auto saved=ctx;PPCContext inner;inner.lr=0x1234;inner.r3.u64=player;StartEventMusic(inner,base);ctx=saved;}
  if(wrong_audio)Write(kAudioManager,audio+0x100);
  if(invalidate_before_queue){invalidate_before_queue=false;Copy();}
@@ -66,6 +85,18 @@ int main(int argc,char**argv){
  radio_keep_in_events=argc>1&&std::string(argv[1])=="on";
  if(!radio_keep_in_events){Reset();Prepare();Music();ExpectOriginal();std::cout<<"default original passed\n";return 0;}
  int cases=0;
+ Reset();first_result=0;lookup_path=1;track_result=rec;Record(rec,"prerace_intro_track");Prepare();Music();assert(free_calls==1&&event_calls==0);++cases;
+ Reset();first_result=0;lookup_path=2;variant_result=rec;Record(rec,"prerace_intro_variant");Prepare();Music();assert(free_calls==1&&event_calls==0);++cases;
+ Reset();first_result=0;lookup_path=3;Prepare();Music();ExpectOriginal();++cases;
+ Reset();first_result=0;lookup_path=2;variant_result=rec;last_result=other;Record(rec,"prerace_intro_variant");Prepare();Music();ExpectOriginal();++cases;
+ Reset();Prepare();Prepare(0x1234);Music();ExpectOriginal();++cases;
+ Reset();Prepare();PPCContext stop;stop.r3.u64=rec;StopCutscene(stop,mem.data());Record(rec,"prerace_intro_region_race");Music();ExpectOriginal();++cases;
+ Reset();other_stop_after_lookup=true;Prepare();Music();assert(free_calls==1&&event_calls==0);++cases;
+ Reset();stop_after_lookup=true;Prepare();Music();ExpectOriginal();++cases;
+ Reset();qualified_reprepare_after_lookup=true;Prepare();Music();ExpectOriginal();++cases;
+ Reset();reprepare_after_lookup=true;Prepare();Music();ExpectOriginal();++cases;
+ Reset();Prepare();rebind_in_helper=true;Music();assert(queue_trace.size()==2&&queue_trace[0].kind=='F'&&queue_trace[1].kind=='E');assert(marker_trace[0].flag==0&&marker_trace[1].flag==1);++cases;
+
  Reset();native_flag=true;Prepare();Music();assert(free_calls==1);++cases;
  if(kTu4){Reset();Prepare();invalidate_in_flag=true;Music();ExpectOriginal();++cases;}
  for(uint32_t type:{0u,1u,6u,8u,12u,17u,18u,19u,99u}){Reset();Write(settings+4,type);Copy(type);Prepare();Music();ExpectOriginal();++cases;}
@@ -89,7 +120,7 @@ int main(int argc,char**argv){
  Reset();Prepare();transition_in_queue=true;Music();assert(free_calls==1&&event_calls==0&&marker_flag==0&&marker_station==uint32_t(-1));Music();assert(event_calls==1);++cases;
  Reset();Prepare();nested_unbound=true;Music();assert(queue_trace.size()==2&&queue_trace[0].record==other&&queue_trace[0].kind=='E'&&queue_trace[1].record==rec&&queue_trace[1].kind=='F');assert(marker_trace[0].record==other&&marker_trace[0].flag==1&&marker_trace[1].record==rec&&marker_trace[1].flag==0);assert(free_calls==1&&event_calls==1&&markers==2&&queue_releases==2&&outer_releases==2&&marker_flag==0);++cases;
  Reset();Prepare();Str(canonical,"prerace_countdown");Str(key,"prerace_countdown_region_race");Record(other,"prerace_countdown_region_race");first_result=last_result=other;Prepare();nested_eligible=true;Music();assert(queue_trace.size()==2&&queue_trace[0].record==other&&queue_trace[0].kind=='F'&&queue_trace[1].record==rec&&queue_trace[1].kind=='F');assert(marker_trace[0].flag==0&&marker_trace[1].flag==0);assert(free_calls==2&&event_calls==0&&markers==2&&queue_releases==2);++cases;
- Reset();nested_lookup=true;Prepare();Music();assert(free_calls==1&&event_calls==0);++cases;
+ Reset();nested_lookup=true;Prepare();Music();ExpectOriginal();++cases;
  Reset();Prepare();nested_helper=true;Music();assert(free_calls==1&&event_calls==1&&markers==2&&queue_releases==2&&outer_releases==2&&marker_flag==0);++cases;
  Reset();wrong_receiver=true;Prepare();Music();ExpectOriginal();++cases;
  Reset();Prepare();wrong_audio=true;Music();ExpectOriginal();++cases;

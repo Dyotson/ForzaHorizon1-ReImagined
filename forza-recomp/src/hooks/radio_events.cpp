@@ -1,9 +1,10 @@
 // Opt-in radio preservation for career/Rally race-opening music cues.
 //
-// CPrepareCutscene's race-specific path resolves a fully qualified native key.
-// Only its first successful lookup of an exact pre-race canonical name binds a
-// record. Regional/shared fallbacks and unknown/story/post-race names confer no
-// authority. An accepted current load invalidates every old binding before its
+// CPrepareCutscene's race-specific path resolves exact pre-race canonical names.
+// The ordered native track/variant lookup chain may bind its selected full key;
+// numbered fallbacks and unknown/story/post-race names confer no authority.
+// Publication waits for native preparation to finish. Per-record revisions and
+// unique binding tickets revoke authority across stop/reprepare and nested reuse. An accepted current load invalidates every old binding before its
 // native copy runs; publication after the copy makes reentrant observations fail
 // closed. The request type must also agree with the native race settings.
 //
@@ -32,8 +33,12 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 REXCVAR_DEFINE_BOOL(radio_keep_in_events, false, "Audio", "Keep selected radio during career/Rally race-opening music cues, including Off");
+extern "C" REX_FUNC(OriginalPrepareCutscene);
+extern "C" REX_FUNC(OriginalGenericFallback);
+extern "C" REX_FUNC(OriginalStopCutscene);
 extern "C" REX_FUNC(OriginalEventRequestCopy);
 extern "C" REX_FUNC(OriginalRaceCutsceneLookup);
 extern "C" REX_FUNC(OriginalCutsceneLookup);
@@ -73,12 +78,14 @@ bool Canonical(const std::string& name) {
   return name == "prerace_intro" || name == "prerace_countdown" || name == "prerace_looping_01";
 }
 struct Token { uint8_t* base; uint32_t manager; uint64_t epoch; };
-struct Binding { Token token; uint32_t record; std::string full_key; };
+struct Binding { Token token; uint32_t record; std::string full_key; uint64_t ticket; };
 struct State {
   std::mutex mutex;
   uint8_t* base = nullptr;
   uint32_t manager = 0;
   uint64_t epoch = 0;
+  uint64_t revision = 0, next_ticket = 0;
+  std::unordered_map<uint32_t, uint64_t> record_revisions;
   unsigned transitions = 0;
   std::vector<Binding> bindings;
 } state;
@@ -117,16 +124,32 @@ template<class T> struct Scope {
   Scope(T*& target, T& value) : Scope(target, &value) {}
   ~Scope() { slot = previous; }
 };
-struct Query { Token token; uint32_t receiver; bool seen = false; uint32_t record = 0; std::string full_key; };
-thread_local Query* query = nullptr;
-void Bind(const Query& q) {
-  if (!q.record || q.full_key.empty() || !Current(q.token)) return;
-  const auto actual = String(q.token.base, q.record + 4);
-  if (!actual || *actual != q.full_key) return;
+uint64_t Revision() { std::lock_guard lock(state.mutex); return state.revision; }
+uint64_t Invalidate(uint32_t record) {
   std::lock_guard lock(state.mutex);
-  if (state.transitions || state.epoch != q.token.epoch || state.base != q.token.base || state.manager != q.token.manager) return;
+  std::erase_if(state.bindings, [&](const Binding& b) { return b.record == record; });
+  ++state.record_revisions[record];
+  return ++state.revision;
+}
+struct Query {
+  Token token; uint32_t receiver; std::string canonical;
+  uint64_t revision; unsigned next = 0; bool valid = true;
+  uint32_t record = 0; std::string full_key; uint64_t record_revision = 0;
+};
+struct Preparation { uint8_t* base; std::optional<Query> candidate; uint32_t record = 0; };
+thread_local Preparation* preparation = nullptr;
+thread_local Query* fallback = nullptr;
+thread_local Query* query = nullptr;
+bool Bind(const Query& q) {
+  if (!q.valid || !q.record || q.full_key.empty() || !Current(q.token)) return false;
+  const auto actual = String(q.token.base, q.record + 4);
+  if (!actual || *actual != q.full_key) return false;
+  std::lock_guard lock(state.mutex);
+  if (state.record_revisions[q.record] != q.record_revision || state.transitions || state.epoch != q.token.epoch || state.base != q.token.base || state.manager != q.token.manager) return false;
   std::erase_if(state.bindings, [&](const Binding& b) { return b.record == q.record; });
-  if (state.bindings.size() < 32) state.bindings.push_back({q.token, q.record, q.full_key});
+  if (state.bindings.size() >= 32) return false;
+  state.bindings.push_back({q.token, q.record, q.full_key, ++state.next_ticket});
+  return true;
 }
 std::optional<Binding> Active(uint8_t* base, uint32_t record) {
   const auto token = Snapshot(base);
@@ -146,7 +169,7 @@ thread_local Request* music = nullptr;
 thread_local Request* request = nullptr;
 bool Valid(const Request& r) {
   const auto active = Active(r.binding.token.base, r.binding.record);
-  return active && Same(active->token, r.binding.token) && active->full_key == r.binding.full_key &&
+  return active && Same(active->token, r.binding.token) && active->full_key == r.binding.full_key && active->ticket == r.binding.ticket &&
          Read(r.binding.token.base, kPlayer) == r.player;
 }
 }
@@ -157,34 +180,72 @@ extern "C" REX_FUNC(EventRequestCopy) {
   Transition transition(base, ctx.r3.u32);
   OriginalEventRequestCopy(ctx, base);
 }
+extern "C" REX_FUNC(PrepareCutscene) {
+  if (!Enabled()) { OriginalPrepareCutscene(ctx, base); return; }
+  Preparation p{base, {}};
+  Scope scope(preparation, p);
+  Scope mask(query, static_cast<Query*>(nullptr));
+  OriginalPrepareCutscene(ctx, base);
+  // A stale outer prepare may overwrite a nested prepare's music name on return.
+  // Revoke that record instead of leaving the nested binding alive.
+  if (!p.candidate || p.record != p.candidate->record || !Bind(*p.candidate)) Invalidate(p.record);
+}
+extern "C" REX_FUNC(StopCutscene) {
+  if (Enabled()) Invalidate(ctx.r3.u32); // Invalidate before native stop drains callbacks.
+  OriginalStopCutscene(ctx, base);
+}
 extern "C" REX_FUNC(RaceCutsceneLookup) {
   const auto caller = ctx.lr;
   const auto receiver = ctx.r3.u32;
-  const auto token = Enabled() && caller == kPrepareReturn ? Snapshot(base) : std::nullopt;
+  const auto token = Enabled() && preparation && preparation->base == base && caller == kPrepareReturn ? Snapshot(base) : std::nullopt;
   const auto name = token ? String(base, ctx.r4.u32) : std::nullopt;
   if (Enabled() && Trace()) {
     const auto diagnostic_name = String(base, ctx.r4.u32);
     REXLOG_INFO("RADIOEVENT race-lookup caller={:08X} token={} canonical={}", uint32_t(caller), bool(token), diagnostic_name.value_or("<empty>"));
   }
   if (!token || !name || !Canonical(*name)) { Scope mask(query, static_cast<Query*>(nullptr)); OriginalRaceCutsceneLookup(ctx, base); return; }
-  Query q{*token, receiver, false, 0, {}};
+  Query q{*token, receiver, *name, Revision(), 0, true, 0, {}};
   Scope scope(query, q);
   OriginalRaceCutsceneLookup(ctx, base);
-  // The native first lookup owns the full key; fallbacks never confer authority.
-  if (Trace()) REXLOG_INFO("RADIOEVENT qualified key={} first={:08X} final={:08X}", q.full_key, q.record, ctx.r3.u32);
-  if (receiver && q.record && ctx.r3.u32 == q.record) Bind(q);
+  if (Trace()) REXLOG_INFO("RADIOEVENT selected key={} record={:08X} final={:08X} valid={}", q.full_key, q.record, ctx.r3.u32, q.valid);
+  if (q.valid && receiver && q.record && ctx.r3.u32 == q.record) preparation->candidate = q;
+}
+extern "C" REX_FUNC(GenericFallback) {
+  auto* q = query;
+  const auto name = q ? String(base, ctx.r4.u32) : std::nullopt;
+  const bool qualified = Enabled() && q && q->valid && q->next == 2 && !q->record &&
+      q->token.base == base && ctx.lr == kFallbackReturn && ctx.r3.u32 == q->receiver &&
+      name && *name == q->canonical && Current(q->token) && Revision() == q->revision;
+  Scope scope(fallback, qualified ? q : nullptr);
+  if (!qualified) { Scope mask(query, static_cast<Query*>(nullptr)); OriginalGenericFallback(ctx, base); return; }
+  OriginalGenericFallback(ctx, base);
 }
 extern "C" REX_FUNC(CutsceneLookup) {
   const auto caller = ctx.lr;
   auto* q = query;
-  const bool first = Enabled() && q && caller == kQualifiedReturn && !q->seen &&
-                     q->token.base == base && ctx.r3.u32 == q->receiver && Current(q->token);
-  const auto key = first ? String(base, ctx.r4.u32) : std::nullopt;
-  const auto diagnostic_key = Enabled() && Trace() && q ? String(base, ctx.r4.u32) : std::nullopt;
-  if (first) q->seen = true;
+  const bool qualified = Enabled() && q && q->valid && !q->record && q->next < 3 &&
+      caller == (q->next == 0 ? kQualifiedReturn : q->next == 1 ? kTrackReturn : kVariantReturn) &&
+      (q->next != 2 || fallback == q) && q->token.base == base && ctx.r3.u32 == q->receiver &&
+      Current(q->token) && Revision() == q->revision;
+  const auto key = Enabled() && (qualified || Trace()) ? String(base, ctx.r4.u32) : std::nullopt;
+  if (q && !qualified) q->valid = false;
   OriginalCutsceneLookup(ctx, base);
-  if (diagnostic_key) REXLOG_INFO("RADIOEVENT lookup caller={:08X} key={} result={:08X}", uint32_t(caller), *diagnostic_key, ctx.r3.u32);
-  if (first && key && Current(q->token)) { q->record = ctx.r3.u32; q->full_key = *key; }
+  if (Enabled() && Trace() && key) REXLOG_INFO("RADIOEVENT lookup caller={:08X} key={} result={:08X}", uint32_t(caller), *key, ctx.r3.u32);
+  // A native prepare selecting this shared record revokes its previous authority.
+  // Revision checks prevent an in-flight query publishing across stop/reprepare.
+  if (Enabled() && preparation && preparation->base == base) {
+    preparation->record = ctx.r3.u32;
+    std::lock_guard lock(state.mutex);
+    const bool unchanged = !q || state.revision == q->revision;
+    std::erase_if(state.bindings, [&](const Binding& b) { return b.record == ctx.r3.u32; });
+    ++state.revision;
+    const auto record_revision = ++state.record_revisions[ctx.r3.u32];
+    if (q) {
+      q->valid = q->valid && qualified && unchanged && bool(key);
+      q->revision = state.revision;
+      if (q->valid) { ++q->next; q->record = ctx.r3.u32; q->full_key = *key; q->record_revision = record_revision; }
+    }
+  }
 }
 extern "C" REX_FUNC(CutsceneMusicTrigger) {
   const auto binding = Enabled() ? Active(base, ctx.r3.u32) : std::nullopt;

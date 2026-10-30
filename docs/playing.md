@@ -38,7 +38,7 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   selected stock or custom station, including Radio Off, through qualified career
   and Rally race-opening music cues. The original soundtrack remains the default.
   Story cinematics, post-race music, dialogue and sound effects keep their native
-  behavior; normal loading and finish fades still apply. Unrecognized or shared
+  behavior; normal loading and finish fades still apply. Unrecognized or numbered
   fallback cues retain the original soundtrack.
 - **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
   `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
