@@ -153,7 +153,7 @@ bool Valid(const Request& r) {
 
 extern "C" REX_FUNC(EventRequestCopy) {
   if (!Enabled()) { OriginalEventRequestCopy(ctx, base); return; }
-  if (Trace()) REXLOG_INFO("RADIOEVENT accepted-copy receiver={:08X} caller={:08X}", ctx.r3.u32, uint32_t(ctx.lr));
+  if (Trace()) REXLOG_INFO("RADIOEVENT request-copy receiver={:08X} caller={:08X}", ctx.r3.u32, uint32_t(ctx.lr));
   Transition transition(base, ctx.r3.u32);
   OriginalEventRequestCopy(ctx, base);
 }
@@ -180,8 +180,10 @@ extern "C" REX_FUNC(CutsceneLookup) {
   const bool first = Enabled() && q && caller == kQualifiedReturn && !q->seen &&
                      q->token.base == base && ctx.r3.u32 == q->receiver && Current(q->token);
   const auto key = first ? String(base, ctx.r4.u32) : std::nullopt;
+  const auto diagnostic_key = Enabled() && Trace() && q ? String(base, ctx.r4.u32) : std::nullopt;
   if (first) q->seen = true;
   OriginalCutsceneLookup(ctx, base);
+  if (diagnostic_key) REXLOG_INFO("RADIOEVENT lookup caller={:08X} key={} result={:08X}", uint32_t(caller), *diagnostic_key, ctx.r3.u32);
   if (first && key && Current(q->token)) { q->record = ctx.r3.u32; q->full_key = *key; }
 }
 extern "C" REX_FUNC(CutsceneMusicTrigger) {
