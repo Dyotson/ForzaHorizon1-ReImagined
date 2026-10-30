@@ -33,6 +33,11 @@ void Check(bool ok, const char* what) {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSeconds = 60.0;
+// The driver's rate is a setting (wheel_vibration_rate, 60 a second by default); the schedule is
+// checked at 30, the console's frame, so 60 fps sends fewer updates than before.
+constexpr int kRate = 30;
+const double kRumblePaceSeconds = RumblePaceSeconds(kRate);
+const double kRumblePaceEarlySeconds = kRumblePaceSeconds * kRumbleEarlyFraction;
 
 double Noise(uint32_t n) {  // 0 to 1, the same for the same n
   n = n * 1664525u + 1013904223u;
@@ -82,17 +87,17 @@ std::vector<Update> Play(double (*game)(double), int fps, bool paced) {
       send(t, level);
       continue;
     }
-    pace.Set(t, level);  // the game's rumble (ApplyRumbleLocked, PaceWave)
+    pace.Set(t, level, kRumblePaceSeconds);  // the game's rumble (ApplyRumbleLocked, PaceWave)
     if (sent <= 0 && RumbleMagnitude(level) > 0) {
-      pace.Take(t);  // from silence a vibration starts at once, with the game's level
+      pace.Take(t, kRumblePaceSeconds);  // from silence a vibration starts at once, with the game's level
       send(t, level);
-    } else if (pace.Due(t)) {
-      send(t, pace.Take(t));
+    } else if (pace.Due(t, kRumblePaceSeconds)) {
+      send(t, pace.Take(t, kRumblePaceSeconds));
     }
     for (int p = 1; p < 4; p++) {  // the state polls (PaceRumble)
       const double tp = t + frame * p / 4;
-      if (pace.Due(tp)) {
-        send(tp, pace.Take(tp));
+      if (pace.Due(tp, kRumblePaceSeconds)) {
+        send(tp, pace.Take(tp, kRumblePaceSeconds));
       }
     }
   }
@@ -154,37 +159,37 @@ int main(int argc, char** argv) {
 
   // --- the pace itself ------------------------------------------------------------------------
   RumblePace p;
-  Check(!p.Due(0), "nothing is due before the game's first rumble");
-  p.Set(10.0, 0.5f);
-  Check(!p.Due(10.0 + kRumblePaceSeconds / 2), "not due within the first pace");
-  Check(p.Due(10.0 + kRumblePaceSeconds - kRumblePaceEarlySeconds / 2), "due a pace on (a frame "
+  Check(!p.Due(0, kRumblePaceSeconds), "nothing is due before the game's first rumble");
+  p.Set(10.0, 0.5f, kRumblePaceSeconds);
+  Check(!p.Due(10.0 + kRumblePaceSeconds / 2, kRumblePaceSeconds), "not due within the first pace");
+  Check(p.Due(10.0 + kRumblePaceSeconds - kRumblePaceEarlySeconds / 2, kRumblePaceSeconds), "due a pace on (a frame "
         "slightly early counts)");
-  Check(std::fabs(p.Take(10.0 + kRumblePaceSeconds) - 0.5f) < 1e-6f, "a held level is itself");
+  Check(std::fabs(p.Take(10.0 + kRumblePaceSeconds, kRumblePaceSeconds) - 0.5f) < 1e-6f, "a held level is itself");
   // Half the interval at 1, half at 0: the root mean square, sqrt(1/2).
-  p.Set(10.0 + kRumblePaceSeconds, 1.0f);
-  p.Set(10.0 + 1.5 * kRumblePaceSeconds, 0.0f);
-  Check(std::fabs(p.Take(10.0 + 2 * kRumblePaceSeconds) - std::sqrt(0.5f)) < 1e-4f,
+  p.Set(10.0 + kRumblePaceSeconds, 1.0f, kRumblePaceSeconds);
+  p.Set(10.0 + 1.5 * kRumblePaceSeconds, 0.0f, kRumblePaceSeconds);
+  Check(std::fabs(p.Take(10.0 + 2 * kRumblePaceSeconds, kRumblePaceSeconds) - std::sqrt(0.5f)) < 1e-4f,
         "the root mean square over the interval");
   // A one-frame bump at 240 fps (4 ms at full) between two updates is still felt.
-  p.Set(10.0 + 2 * kRumblePaceSeconds + 0.010, 1.0f);
-  p.Set(10.0 + 2 * kRumblePaceSeconds + 0.010 + 1.0 / 240, 0.0f);
-  const float bump = p.Take(10.0 + 3 * kRumblePaceSeconds);
+  p.Set(10.0 + 2 * kRumblePaceSeconds + 0.010, 1.0f, kRumblePaceSeconds);
+  p.Set(10.0 + 2 * kRumblePaceSeconds + 0.010 + 1.0 / 240, 0.0f, kRumblePaceSeconds);
+  const float bump = p.Take(10.0 + 3 * kRumblePaceSeconds, kRumblePaceSeconds);
   Check(std::fabs(bump - std::sqrt((1.0 / 240) / kRumblePaceSeconds)) < 1e-3, "a short bump");
   // After a hitch (the game away for 300 ms) one update, not a burst to catch up.
-  p.Set(10.0 + 3 * kRumblePaceSeconds + 0.3, 0.2f);
-  Check(p.Due(10.0 + 3 * kRumblePaceSeconds + 0.3), "due after a hitch");
-  p.Take(10.0 + 3 * kRumblePaceSeconds + 0.3);
-  Check(!p.Due(10.0 + 3 * kRumblePaceSeconds + 0.3 + 0.001), "no burst after a hitch");
+  p.Set(10.0 + 3 * kRumblePaceSeconds + 0.3, 0.2f, kRumblePaceSeconds);
+  Check(p.Due(10.0 + 3 * kRumblePaceSeconds + 0.3, kRumblePaceSeconds), "due after a hitch");
+  p.Take(10.0 + 3 * kRumblePaceSeconds + 0.3, kRumblePaceSeconds);
+  Check(!p.Due(10.0 + 3 * kRumblePaceSeconds + 0.3 + 0.001, kRumblePaceSeconds), "no burst after a hitch");
   // The game's last rumble is 0 and it stops calling: the polls stop the vibration within a pace.
   RumblePace q;
-  q.Set(0.0, 0.8f);
-  q.Set(0.01, 0.0f);
+  q.Set(0.0, 0.8f, kRumblePaceSeconds);
+  q.Set(0.01, 0.0f, kRumblePaceSeconds);
   double t = 0.01;
   float last = 1.0f;
   while (t < 0.01 + 2 * kRumblePaceSeconds) {
     t += 0.004;
-    if (q.Due(t)) {
-      last = q.Take(t);
+    if (q.Due(t, kRumblePaceSeconds)) {
+      last = q.Take(t, kRumblePaceSeconds);
     }
   }
   Check(last == 0.0f, "a vibration the game set to 0 stops");
