@@ -217,6 +217,12 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Test scoped event radio wrappers (disc and TU4)
+        run: |
+          cmake -S forza-recomp/tests/radio-events -B "$RUNNER_TEMP/radio-events" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/radio-events" --config Release --parallel 1
+          ctest --test-dir "$RUNNER_TEMP/radio-events" -C Release --output-on-failure
+
       - name: Test Linux dependency retry handling
         run: python3 -m unittest launcher/test_ci_linux_sdk_setup.py
       - id: cache

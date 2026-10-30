@@ -41,6 +41,14 @@ tools/run_forza.sh 120        # a two-minute test run; logs in ${XDG_RUNTIME_DIR
   fixtures cover rapid retargeting and native locks; live sub-ramp input stress
   and scripted-event transitions were not exercised. Global music, dialogue,
   ducking and scripted-event fade rates retain their original values.
+- **Radio during races:** Audio > Radio > **Keep radio during races**
+  (`radio_keep_in_events = true`, off by default; restart after changing) restores the
+  selected stock or custom station, including Radio Off, at qualified career
+  and Rally race-opening music cues. Earlier unqualified intro music remains native.
+  The original soundtrack remains the default.
+  Story cinematics, post-race music, dialogue and sound effects keep their native
+  behavior; normal loading and finish fades still apply. Unrecognized or numbered
+  fallback cues retain the original soundtrack.
 - **Rubber banding (#433):** the game's CPU drivers race against where you are. Their event's
   `AIRubberbands` row (or their skill's) starts a slow-down mode 1-50 m ahead of you and cuts
   their torque from 10-600 m ahead (the weaker drivers' down to a fifth); 40-150 m behind (20

@@ -712,6 +712,12 @@ uses a 0.15 s repeat guard and 0.25 s station fades; Instant uses a 0.075 s guar
 stations. Stream startup and mixing still add latency; TU4 custom test-tone output
 crossed a fixed amplitude threshold after 0.216 and 0.250 s in two observations
 ([measurement and coverage limits](playing.md#running-the-game)).
+Audio > Radio > **Keep radio during races** (`radio_keep_in_events`, off by default)
+restores the chosen stock/custom station or Radio Off at qualified career/Rally
+race-opening music cues. Earlier unqualified intro music retains its native path.
+Restart after changing it. Story/post-race music and native dialogue, effects and
+loading/finish fades retain their behavior
+([scope](playing.md#running-the-game)).
 Gameplay > CPU drivers > **Rubber banding** (`ai_rubber_banding`, Game by default, #433): Off
 races every CPU driver at its own skill wherever you are, in single-player races and free roam;
 online races keep the game's AI ([playing.md](playing.md#running-the-game)).
