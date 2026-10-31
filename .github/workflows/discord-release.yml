@@ -15,7 +15,8 @@ on:
         required: true
 
 permissions:
-  contents: read
+  # write: the post's message id is kept in the release notes, so publishing again edits it
+  contents: write
 
 jobs:
   post:
@@ -39,7 +40,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,body,url,isPrerelease > release.json
           jq -n --slurpfile r release.json --arg repo "$GITHUB_REPOSITORY" --arg role "$ROLE" '
             $r[0] as $rel
-            | ($rel.body | if length > 3500 then .[0:3500] + "\n\n[...]" else . end) as $notes
+            | ($rel.body | gsub("\\s*<!-- discord-message: [0-9]+ -->\\s*"; "") | if length > 3500 then .[0:3500] + "\n\n[...]" else . end) as $notes
             | {
                 username: "Forza Horizon 1: ReImagined",
                 avatar_url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png",
@@ -54,5 +55,15 @@ jobs:
                 }],
                 allowed_mentions: { parse: [], roles: (if ($role | test("^[0-9]+$")) then [$role] else [] end) }
               }' > payload.json
-          curl -fsS -H "Content-Type: application/json" --data @payload.json "$WEBHOOK"
-          echo "Posted $TAG to Discord."
+          # One post per release: a release published again (or a manual re-run) edits the message
+          # posted the first time, whose id is kept in an HTML comment at the end of the notes.
+          MSG=$(jq -r '.body' release.json | sed -n 's/.*<!-- discord-message: \([0-9][0-9]*\) -->.*/\1/p' | tail -n 1)
+          if [ -n "$MSG" ] && curl -fsS -X PATCH -H "Content-Type: application/json" --data @payload.json "$WEBHOOK/messages/$MSG" > /dev/null; then
+            echo "Updated the Discord post of $TAG (message $MSG)."
+            exit 0
+          fi
+          MSG=$(curl -fsS -H "Content-Type: application/json" --data @payload.json "$WEBHOOK?wait=true" | jq -r '.id')
+          echo "Posted $TAG to Discord (message $MSG)."
+          jq -r '.body' release.json | sed 's/[[:space:]]*<!-- discord-message: [0-9]* -->[[:space:]]*$//' > notes.md
+          printf '\n\n<!-- discord-message: %s -->\n' "$MSG" >> notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md > /dev/null
