@@ -2,7 +2,7 @@
 
 This policy covers Forza Horizon 1: ReImagined: the Windows installer, the Linux packages, the launcher, the game the launcher builds on your PC, and the project's public Forza Live server. It says what is sent over the network, when, where it goes, what is stored and for how long, what is public, and how to turn each thing off.
 
-Last updated: 2026-10-30. Every change to this policy is a change to this file, so its history on GitHub lists them: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/commits/main/PRIVACY.md
+Last updated: 2026-10-31. Every change to this policy is a change to this file, so its history on GitHub lists them: https://github.com/FH1-ReImagined/ForzaHorizon1-ReImagined/commits/main/PRIVACY.md
 
 ## In short
 
@@ -18,6 +18,7 @@ Last updated: 2026-10-30. Every change to this policy is a change to this file, 
 - When you play online, the server receives your gamertag, a random player ID (your XUID) and your IP addresses. Other players see your gamertag and XUID.
 - Traffic to the game server is not encrypted. That includes chat messages. Your keys are not sent: the game and the launcher sign their requests with your signing key, and the server keeps only its public key. The one exception is your friends key from older versions, which the game sends once to the public server to move your account to the signing key.
 - The public server keeps most records with no time limit. Its status page and leaderboards are public.
+- What you choose to share is public: a photo mode **Big Shot** you upload is published on the project website with your gamertag, and paint jobs and vinyl groups you share on the storefront can be found, downloaded and rated by other players in the game. Your XUID is not published with them.
 
 ## Who is involved
 
@@ -103,7 +104,7 @@ While "Sign in to Xbox LIVE" is on (the default), the game also:
 - sends the chat messages you write, and the list of sessions you are in;
 - in Horizon World free roam, sends your car's in-game position, heading and speed four times a second, for head-to-head challenges (Settings > Online > "Head-to-head challenges" turns this off);
 - sends an invite only when you send one ("Show game invites" controls whether invites from others are shown to you);
-- uses the server's title services over plain HTTP: sign-in (gamertag and career level), profile progress (XP, credits, race history), race scores and lap times, Rivals ghost replays, photos you upload or share (image, preview, title, description), car clubs and the cars shared in them, auctions and gifts, and Message Center checks. Each of these requests carries your XUID and a signature made with your signing key (not the key itself).
+- uses the server's title services over plain HTTP: sign-in (gamertag and career level), profile progress (XP, credits, race history), race scores and lap times, Rivals ghost replays, photos you upload or share (image, preview, title, description), photo mode Big Shots you upload (a 3840x2160 picture and its file name), paint jobs and vinyl groups you share on the storefront (the design, its preview, title, description and keywords, and the car it is for), car clubs and the cars shared in them, auctions and gifts, and Message Center checks. Each of these requests carries your XUID and a signature made with your signing key (not the key itself).
 
 None of this traffic is encrypted.
 
@@ -161,6 +162,8 @@ Records are kept by XUID.
 - Scores and Rivals ghosts: your best score on each leaderboard, with gamertag, date, car, class and assists, and your best ghost replay. A new best replaces the old one. No time limit. The maintainer may use the driven lines in ghost replays to draw roads on the map on the project website; no names or player IDs are shown there.
 - Skill stats: rating and number of games, with gamertag. No time limit.
 - Photos you upload: image, preview, title, description and time, up to 100 per player. You can remove shared photos in the game, and the oldest can be replaced. No time limit.
+- Community photos (Big Shots), only from games that sign their requests: a 1920x1080 copy of the picture, with your gamertag at the time, the upload time and your XUID (kept private, to apply limits and bans). The 3840x2160 original is not kept. Up to 10 a day and 200 in total per player. The copy is kept until the maintainer removes it; to have a photo removed, see "Contact". New photos may be checked automatically for nudity, violence or hate symbols before they are published; that check runs on the server and sends the picture nowhere else.
+- Shared designs (paint jobs and vinyl groups): the design, its preview, title, description, keywords, car, share code, your XUID (private) and gamertag, the time, its downloads and ratings, and which players reported it. Up to 25 of each kind per player. The design itself contains your XUID, so it is only given to players who download it in the game, never published elsewhere. You can remove a design in the game (REMOVE in MY SHARED DESIGNS); a design reported by three players is hidden. No time limit.
 - Car clubs, auctions and gifts: club memberships, roles and history, shared cars, auction listings and bids, and gifts with their messages. No time limit.
 - Message Center notifications: removed when you clear them. After 30 days they are no longer shown, but they are not deleted.
 - Co-op campaign results: removed once they are handled, or after 30 days.
@@ -181,6 +184,8 @@ To have your records on the public server removed, see "Contact".
   - your gamertag, XUID, presence and car (to players in your room);
   - your scores and ghost replays;
   - your shared photos, with your gamertag and XUID;
+  - your shared paint jobs and vinyl groups: preview, title, description, car, share code, downloads, rating and your gamertag;
+- Community photos (Big Shots you upload): the 1920x1080 copy, your gamertag and the upload time, in the server's public gallery feed and on the project website's photo pages, for as long as the photo is kept.
   - in the car club invite list, the gamertag, XUID, career level and online XP of every player who has signed in to the server and is not in a club.
 - The published shader list, which contains no player IDs.
 - Your Discord activity, for your Discord contacts.
