@@ -43,7 +43,7 @@ jobs:
             | {
                 username: "Forza Horizon 1: ReImagined",
                 avatar_url: "https://raw.githubusercontent.com/\($repo)/main/docs/images/logo.png",
-                content: ((if ($role | test("^[0-9]+$")) then "<@&\($role)> " else "" end) + "New release: **\($rel.name)**"),
+                content: (if ($role | test("^[0-9]+$")) then "<@&\($role)>" else "" end),
                 embeds: [{
                   title: $rel.name,
                   url: $rel.url,
